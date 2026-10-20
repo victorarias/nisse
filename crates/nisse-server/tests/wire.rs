@@ -260,7 +260,7 @@ fn a_run_cut_off_by_a_crash_is_answered_after_reopening() {
 
 fn extension(root: &Path, name: &str, source: &str) {
     std::fs::create_dir_all(root.join(name)).unwrap();
-    std::fs::write(root.join(name).join("init.lua"), source).unwrap();
+    std::fs::write(root.join(name).join("init.luau"), source).unwrap();
 }
 
 const GUARD: &str = r#"

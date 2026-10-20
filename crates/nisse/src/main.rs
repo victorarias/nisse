@@ -128,9 +128,10 @@ async fn serve(home: &std::path::Path, stdio: bool, listen: Option<String>) -> R
         });
     }
     let socket = home.join("nisse.sock");
+    let listener = Server::bind_unix(&socket)?;
     eprintln!("nisse: serving on {}", socket.display());
     tokio::select! {
-        served = server.listen_unix(&socket) => served,
+        served = server.serve_unix(listener) => served,
         _ = tokio::signal::ctrl_c() => Ok(()),
     }
 }

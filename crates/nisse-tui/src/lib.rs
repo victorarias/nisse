@@ -12,7 +12,11 @@ use nisse_protocol::{
     ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
     ConversationSubscribeParams, Entry, Input, ServerNotification, UiChanged, WhenBusy,
 };
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::{
+    Terminal,
+    backend::Backend,
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+};
 use tokio::sync::mpsc;
 
 pub use theme::Theme;
@@ -34,12 +38,47 @@ pub struct App {
     model: String,
 }
 
+/// Takes over the process's terminal until the user quits.
 pub async fn run(
+    client: Client,
+    notifications: mpsc::UnboundedReceiver<ServerNotification>,
+    conversation_id: Option<String>,
+    theme: Theme,
+) -> Result<()> {
+    let (keys, pressed) = mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        while let Ok(event) = event::read() {
+            if keys.send(event).is_err() {
+                break;
+            }
+        }
+    });
+    let mut terminal = ratatui::init();
+    let outcome = drive(
+        &mut terminal,
+        pressed,
+        client,
+        notifications,
+        conversation_id,
+        theme,
+    )
+    .await;
+    ratatui::restore();
+    outcome
+}
+
+/// Draws on `terminal` and reads `pressed` until the user quits or `pressed` closes.
+pub async fn drive<B: Backend>(
+    terminal: &mut Terminal<B>,
+    mut pressed: mpsc::UnboundedReceiver<Event>,
     client: Client,
     mut notifications: mpsc::UnboundedReceiver<ServerNotification>,
     conversation_id: Option<String>,
     theme: Theme,
-) -> Result<()> {
+) -> Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     let conversation = match conversation_id {
         Some(id) => {
             client
@@ -83,34 +122,22 @@ pub async fn run(
         model: "echo".into(),
     };
 
-    let (keys, mut pressed) = mpsc::unbounded_channel();
-    std::thread::spawn(move || {
-        while let Ok(event) = event::read() {
-            if keys.send(event).is_err() {
-                break;
-            }
-        }
-    });
-
-    let mut terminal = ratatui::init();
-    let outcome = async {
-        loop {
-            terminal.draw(|frame| view::draw(frame, &app, &theme))?;
-            let tick = app.next_tick();
-            tokio::select! {
-                Some(event) = pressed.recv() => {
+    loop {
+        terminal.draw(|frame| view::draw(frame, &app, &theme))?;
+        let tick = app.next_tick();
+        tokio::select! {
+            event = pressed.recv() => match event {
+                Some(event) => {
                     if app.on_event(event, &client).await? {
                         return Ok(());
                     }
                 }
-                Some(notification) = notifications.recv() => app.on_notification(notification),
-                _ = sleep_until(tick) => app.on_tick(),
-            }
+                None => return Ok(()),
+            },
+            Some(notification) = notifications.recv() => app.on_notification(notification),
+            _ = sleep_until(tick) => app.on_tick(),
         }
     }
-    .await;
-    ratatui::restore();
-    outcome
 }
 
 async fn sleep_until(deadline: Option<Instant>) {

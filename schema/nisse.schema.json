@@ -1,0 +1,650 @@
+{
+  "client_request": {
+    "$defs": {
+      "ClientInfo": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "type": "object"
+      },
+      "ConversationCreateParams": {
+        "properties": {
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ConversationListParams": {
+        "type": "object"
+      },
+      "ConversationReadParams": {
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "since_seq": {
+            "default": 0,
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ],
+        "type": "object"
+      },
+      "ConversationSubmitParams": {
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/$defs/Input"
+          },
+          "request_id": {
+            "description": "Retrying with the same id returns the first submission instead of submitting twice.",
+            "type": "string"
+          },
+          "when_busy": {
+            "$ref": "#/$defs/WhenBusy",
+            "default": "follow_up"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "input",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ConversationSubscribeParams": {
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "since_seq": {
+            "default": 0,
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ],
+        "type": "object"
+      },
+      "InitializeParams": {
+        "properties": {
+          "client": {
+            "$ref": "#/$defs/ClientInfo"
+          },
+          "experimental": {
+            "default": false,
+            "type": "boolean"
+          },
+          "protocol_version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "client",
+          "protocol_version"
+        ],
+        "type": "object"
+      },
+      "Input": {
+        "oneOf": [
+          {
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "const": "text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "data": true,
+              "kind": {
+                "type": "string"
+              },
+              "type": {
+                "const": "write",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "kind",
+              "data"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WhenBusy": {
+        "enum": [
+          "steer",
+          "follow_up",
+          "reject"
+        ],
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Requests a client sends, keyed by method.",
+    "oneOf": [
+      {
+        "properties": {
+          "method": {
+            "const": "initialize",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/InitializeParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "conversation/create",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ConversationCreateParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "conversation/list",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ConversationListParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "conversation/read",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ConversationReadParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "conversation/subscribe",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ConversationSubscribeParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "conversation/submit",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ConversationSubmitParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "ClientRequest"
+  },
+  "message": {
+    "$defs": {
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/$defs/RpcError"
+          },
+          "id": {
+            "$ref": "#/$defs/RequestId"
+          }
+        },
+        "required": [
+          "id",
+          "error"
+        ],
+        "type": "object"
+      },
+      "Notification": {
+        "properties": {
+          "method": {
+            "type": "string"
+          },
+          "params": true
+        },
+        "required": [
+          "method"
+        ],
+        "type": "object"
+      },
+      "Request": {
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/RequestId"
+          },
+          "method": {
+            "type": "string"
+          },
+          "params": true
+        },
+        "required": [
+          "id",
+          "method"
+        ],
+        "type": "object"
+      },
+      "RequestId": {
+        "anyOf": [
+          {
+            "format": "int64",
+            "type": "integer"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "Response": {
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/RequestId"
+          },
+          "result": true
+        },
+        "required": [
+          "id",
+          "result"
+        ],
+        "type": "object"
+      },
+      "RpcError": {
+        "properties": {
+          "code": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "data": true,
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "anyOf": [
+      {
+        "$ref": "#/$defs/Request"
+      },
+      {
+        "$ref": "#/$defs/Response"
+      },
+      {
+        "$ref": "#/$defs/ErrorResponse"
+      },
+      {
+        "$ref": "#/$defs/Notification"
+      }
+    ],
+    "title": "Message"
+  },
+  "server_notification": {
+    "$defs": {
+      "Actor": {
+        "description": "Who caused an entry or a submission.",
+        "oneOf": [
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "person",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "conversation_id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "agent",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversation_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "extension",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "model",
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "model"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "const": "system",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Commit": {
+        "description": "One atomic write, as seen by subscribers of its conversation.",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/Entry"
+            },
+            "type": "array"
+          },
+          "seq": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ConversationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "seq",
+          "conversation_id",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "ConversationStatus": {
+        "enum": [
+          "idle",
+          "working",
+          "needs_approval",
+          "parked"
+        ],
+        "type": "string"
+      },
+      "Entry": {
+        "description": "One immutable transcript record.",
+        "properties": {
+          "author": {
+            "$ref": "#/$defs/Actor"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "created_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "data": true,
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "conversation_id",
+          "kind",
+          "author",
+          "data",
+          "created_at_ms"
+        ],
+        "type": "object"
+      },
+      "StatusChanged": {
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/$defs/ConversationStatus"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "status",
+          "seq"
+        ],
+        "type": "object"
+      },
+      "UiChanged": {
+        "oneOf": [
+          {
+            "properties": {
+              "extension": {
+                "type": "string"
+              },
+              "surface": {
+                "const": "status",
+                "type": "string"
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "surface",
+              "extension"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "extension": {
+                "type": "string"
+              },
+              "surface": {
+                "const": "toast",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "surface",
+              "extension",
+              "text"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Notifications the server sends, keyed by method.",
+    "oneOf": [
+      {
+        "properties": {
+          "method": {
+            "const": "conversation/committed",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/Commit"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "conversation/status",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/StatusChanged"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "ui/changed",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/UiChanged"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "ServerNotification"
+  }
+}

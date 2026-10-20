@@ -51,13 +51,15 @@ impl Server {
     }
 
     /// WebSocket over a unix socket. Whoever can open the socket is the owner.
-    pub async fn listen_unix(self: Arc<Self>, path: &Path) -> Result<()> {
+    pub fn bind_unix(path: &Path) -> Result<UnixListener> {
         if path.exists() {
             std::fs::remove_file(path)
                 .with_context(|| format!("removing stale {}", path.display()))?;
         }
-        let listener =
-            UnixListener::bind(path).with_context(|| format!("binding {}", path.display()))?;
+        UnixListener::bind(path).with_context(|| format!("binding {}", path.display()))
+    }
+
+    pub async fn serve_unix(self: Arc<Self>, listener: UnixListener) -> Result<()> {
         loop {
             let (stream, _) = listener.accept().await?;
             let server = self.clone();

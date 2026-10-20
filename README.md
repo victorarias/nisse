@@ -46,9 +46,9 @@ runs there. `NO_COLOR` or `NISSE_THEME=plain` turns the colours off.
 ## Extensions
 
 An extension is a folder in `NISSE_HOME/extensions/` or `.nisse/extensions/`
-with an `init.lua` that returns `function(on, options)`.
+with an `init.luau` that returns `function(on, options)`.
 
-```lua
+```luau
 return function(on)
   on("tool.call", { tool = "bash" }, function(nisse, e, next)
     if e.args.command:match("^rm ") then
@@ -61,8 +61,9 @@ return function(on)
 end
 ```
 
-Each extension gets its own Lua 5.4 VM without `io`, `os` or `require`, and a
-time budget per hook.
+Extensions are written in [Luau](https://luau.org). Each one gets its own
+sandboxed VM without `io`, `os` or `require`, with read-only globals and a time
+budget per hook.
 
 ## Layout
 

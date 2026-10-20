@@ -1,4 +1,4 @@
-//! Lua extensions. Each extension is a folder with `init.lua`, which returns `function(on, options)`.
+//! Luau extensions. Each extension is a folder with `init.luau`, which returns `function(on, options)`.
 //! Every hook is `hook(nisse, e, next)`: return without `next` to answer for the chain, or call
 //! `next(e)` to continue to later extensions and then Nisse's own behaviour.
 
@@ -9,13 +9,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use mlua::{Function, HookTriggers, Lua, LuaOptions, LuaSerdeExt, StdLib, Table, VmState};
+use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, StdLib, Table, VmState};
 use nisse_core::{Hooks, ToolCall, ToolOutcome};
 use nisse_protocol::UiChanged;
 use serde_json::{Value, json};
 
 const HOOK_BUDGET: Duration = Duration::from_millis(250);
-const BUDGET_CHECK_EVERY: u32 = 10_000;
 
 pub type UiSink = Arc<dyn Fn(UiChanged) + Send + Sync>;
 
@@ -50,7 +49,7 @@ impl LuaHost {
             .filter_map(|root| std::fs::read_dir(root).ok())
             .flatten()
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .filter(|path| path.join("init.lua").is_file())
+            .filter(|path| path.join("init.luau").is_file())
             .collect();
         folders.sort();
         let extensions = folders
@@ -144,21 +143,19 @@ impl Extension {
         )?;
         let deadline: Arc<Mutex<Option<Instant>>> = Arc::default();
         let budget = deadline.clone();
-        lua.set_hook(
-            HookTriggers::new().every_nth_instruction(BUDGET_CHECK_EVERY),
-            move |_, _| match *budget.lock().expect("deadline lock") {
-                Some(deadline) if Instant::now() > deadline => {
-                    Err(mlua::Error::runtime("hook ran past its time budget"))
-                }
-                _ => Ok(VmState::Continue),
-            },
-        )?;
+        lua.set_interrupt(move |_| match *budget.lock().expect("deadline lock") {
+            Some(deadline) if Instant::now() > deadline => {
+                Err(mlua::Error::runtime("hook ran past its time budget"))
+            }
+            _ => Ok(VmState::Continue),
+        });
         lua.globals().set("nisse", nisse_table(&lua, &name, ui)?)?;
+        lua.sandbox(true)?;
 
-        let source = std::fs::read_to_string(folder.join("init.lua"))?;
+        let source = std::fs::read_to_string(folder.join("init.luau"))?;
         let register: Function = lua
             .load(source)
-            .set_name(format!("@{name}/init.lua"))
+            .set_name(format!("@{name}/init.luau"))
             .eval()
             .with_context(|| format!("loading extension {name}"))?;
         let registered: Arc<Mutex<Vec<Hook>>> = Arc::default();
