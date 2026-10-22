@@ -17,7 +17,7 @@ use super::ToolOutcome;
 const OUTPUT_LIMIT: usize = 16 * 1024;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 pub const MAX_TIMEOUT_MS: u64 = 600_000;
-const KILL_GRACE: Duration = Duration::from_secs(1);
+const GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Deserialize)]
 pub struct Bash {
@@ -60,6 +60,7 @@ impl Tail {
     }
 }
 
+/// Ends when the shell exits, with the output written so far; processes it left running keep running.
 /// On a timeout, kills the command's process group: the command and what it started, nothing else.
 pub fn bash(args: Bash) -> ToolOutcome {
     let timeout_ms = args
@@ -111,15 +112,15 @@ pub fn bash(args: Bash) -> ToolOutcome {
     });
 
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    let (mut exited, mut closed) = (false, false);
+    let mut closed = false;
     let mut timed_out = false;
-    while !(exited && closed) {
+    loop {
         let wait = match timed_out {
             false => deadline.saturating_duration_since(Instant::now()),
-            true => KILL_GRACE,
+            true => GRACE,
         };
         match event.recv_timeout(wait) {
-            Ok(Event::Exited) => exited = true,
+            Ok(Event::Exited) => break,
             Ok(Event::OutputClosed) => closed = true,
             Err(mpsc::RecvTimeoutError::Timeout) if !timed_out => {
                 timed_out = true;
@@ -127,6 +128,9 @@ pub fn bash(args: Bash) -> ToolOutcome {
             }
             Err(_) => break,
         }
+    }
+    if !closed {
+        let _ = event.recv_timeout(GRACE);
     }
     let status = child.wait();
     let mut output = tail.lock().expect("tail lock").text();

@@ -608,6 +608,22 @@ async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first()
 }
 
 #[tokio::test]
+async fn a_command_that_leaves_a_server_running_returns_when_it_exits_not_as_a_timeout() {
+    let committed = run_allowing(serde_json::json!([
+        { "name": "bash", "args": { "command": "sleep 60 & echo $!" } },
+    ]))
+    .await;
+
+    let (output, is_error) = tool_results(&committed).remove(0);
+    let started = output.trim();
+    std::process::Command::new("kill")
+        .arg(started)
+        .status()
+        .unwrap();
+    assert!(!is_error && started.parse::<u32>().is_ok(), "{output}");
+}
+
+#[tokio::test]
 async fn a_command_past_its_timeout_is_killed_with_what_it_started() {
     let committed = run_allowing(serde_json::json!([
         { "name": "bash", "args": { "command": "sleep 60 & echo $!; sleep 60", "timeout_ms": 200 } },

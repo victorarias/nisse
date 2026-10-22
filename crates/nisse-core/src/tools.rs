@@ -137,8 +137,9 @@ pub fn builtin_tools() -> Vec<ToolSpec> {
         spec(
             "bash",
             "Run a command with `sh -c` in the working directory, with no terminal and no stdin. \
-             Returns stdout and stderr interleaved, keeping the last 16 KiB. After `timeout_ms` \
-             the command and every process it started are killed.",
+             Returns when the shell exits, with stdout and stderr interleaved, keeping the last 16 KiB; \
+             processes started in the background with `&` keep running. If the shell is still running \
+             after `timeout_ms`, it and every process it started are killed.",
             json!({
                 "type": "object",
                 "properties": {
