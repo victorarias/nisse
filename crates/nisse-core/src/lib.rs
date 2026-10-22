@@ -10,7 +10,9 @@ mod turn;
 pub use harness::{Harness, HarnessOptions, SubmitError};
 pub use provider::{Echo, Provider, ProviderFuture};
 pub use store::Store;
-pub use tools::{Hooks, NoHooks, ToolCall, ToolOutcome, run_builtin_tool};
+pub use tools::{
+    Hooks, NoHooks, ToolCall, ToolOutcome, ToolSpec, approval_for, builtin_tools, run_builtin_tool,
+};
 pub use turn::{Approval, Decision, LIVE_INTERVAL, Turn};
 
 pub fn now_ms() -> i64 {

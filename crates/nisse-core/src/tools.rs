@@ -1,7 +1,9 @@
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use crate::turn::Approval;
 
 const OUTPUT_LIMIT: usize = 16 * 1024;
 
@@ -57,6 +59,30 @@ pub trait Hooks: Send + Sync {
 pub struct NoHooks;
 
 impl Hooks for NoHooks {}
+
+/// A tool as a model sees it: `parameters` is a JSON Schema for its arguments.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+pub fn builtin_tools() -> Vec<ToolSpec> {
+    vec![ToolSpec {
+        name: "bash".into(),
+        description: "Runs a shell command with `sh -c` and returns its output.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": { "command": { "type": "string" } },
+            "required": ["command"],
+        }),
+    }]
+}
+
+pub fn approval_for(_name: &str) -> Approval {
+    Approval::Ask
+}
 
 pub fn run_builtin_tool(call: ToolCall) -> ToolOutcome {
     match call.name.as_str() {
