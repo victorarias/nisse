@@ -1435,9 +1435,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nisse-claude",
  "nisse-client",
  "nisse-core",
  "nisse-lua",
+ "nisse-openai",
  "nisse-protocol",
  "nisse-server",
  "nisse-tui",

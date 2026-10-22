@@ -26,6 +26,8 @@ async fn serve(home: &Path) -> Child {
         command
             .arg("--home")
             .arg(home)
+            .arg("--provider")
+            .arg("echo")
             .arg("serve")
             .current_dir(home)
             .env("NISSE_ECHO_THINK_MS", "0")
