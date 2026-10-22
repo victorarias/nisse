@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use nisse_client::Client;
-use nisse_core::{EchoModel, Harness, HarnessOptions};
+use nisse_core::{Echo, Harness, HarnessOptions};
 use nisse_lua::LuaHost;
 use nisse_protocol::{
     Actor, ClientRequest, Conversation, ConversationCreateParams, ConversationReadResult,
@@ -100,7 +100,7 @@ fn start_server(home: &std::path::Path) -> Result<Arc<Server>> {
     let harness = Harness::open(
         &home.join("nisse.sqlite"),
         HarnessOptions {
-            model: Arc::new(EchoModel {
+            provider: Arc::new(Echo {
                 think: Duration::from_millis(think),
             }),
             hooks: Arc::new(hooks),

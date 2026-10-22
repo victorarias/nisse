@@ -8,9 +8,9 @@ use nisse_core::{Harness, SubmitError};
 use std::collections::HashMap;
 
 use nisse_protocol::{
-    Actor, ClientInfo, ClientRequest, ConversationListResult, ConversationSubscribeParams,
-    ErrorResponse, InitializeResult, Message, PROTOCOL_VERSION, Request, RequestId, Response,
-    RpcError, Seq, ServerNotification, StatusChanged, UiChanged,
+    Actor, ApprovalResolveResult, ClientInfo, ClientRequest, ConversationListResult,
+    ConversationSubscribeParams, ErrorResponse, InitializeResult, Message, PROTOCOL_VERSION,
+    Request, RequestId, Response, RpcError, Seq, ServerNotification, StatusChanged, UiChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
@@ -174,6 +174,10 @@ impl Connection {
                 .read(&params.conversation_id, params.since_seq)
                 .map_err(not_found)
                 .and_then(to_result),
+            ClientRequest::ApprovalResolve(params) => harness
+                .resolve(params, self.actor.clone())
+                .map_err(internal)
+                .and_then(|accepted| to_result(ApprovalResolveResult { accepted })),
             ClientRequest::ConversationSubscribe(params) => {
                 let _ = self.subscribe.send((request.id.clone(), params));
                 return None;

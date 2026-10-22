@@ -2,14 +2,16 @@
 //! and a harness that runs conversations on it.
 
 mod harness;
-mod model;
+mod provider;
 mod store;
 mod tools;
+mod turn;
 
 pub use harness::{Harness, HarnessOptions, SubmitError};
-pub use model::{EchoModel, Model, ModelFuture, ModelResponse};
+pub use provider::{Echo, Provider, ProviderFuture};
 pub use store::Store;
 pub use tools::{Hooks, NoHooks, ToolCall, ToolOutcome, run_builtin_tool};
+pub use turn::{Approval, Decision, LIVE_INTERVAL, Turn};
 
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()

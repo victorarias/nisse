@@ -1,6 +1,31 @@
 {
   "client_request": {
     "$defs": {
+      "ApprovalResolveParams": {
+        "properties": {
+          "allow": {
+            "type": "boolean"
+          },
+          "call_id": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "conversation_id",
+          "call_id",
+          "allow"
+        ],
+        "type": "object"
+      },
       "ClientInfo": {
         "properties": {
           "name": {
@@ -252,6 +277,22 @@
           "params"
         ],
         "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "approval/resolve",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ApprovalResolveParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
       }
     ],
     "title": "ClientRequest"
@@ -458,6 +499,13 @@
               "$ref": "#/$defs/Entry"
             },
             "type": "array"
+          },
+          "live": {
+            "description": "The text the model is still writing; empty once it became an entry.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "seq": {
             "format": "int64",

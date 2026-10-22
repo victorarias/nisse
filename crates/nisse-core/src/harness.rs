@@ -1,29 +1,30 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::Path,
     sync::{Arc, Mutex},
 };
 
 use anyhow::{Result, anyhow};
 use nisse_protocol::{
-    Actor, Commit, Conversation, ConversationReadResult, ConversationStatus,
+    Actor, ApprovalResolveParams, Commit, Conversation, ConversationReadResult, ConversationStatus,
     ConversationSubmitParams, ConversationSubmitResult, Entry, Input, Seq, SubmissionStatus,
     WhenBusy, kinds,
 };
 use serde_json::json;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 
 use crate::{
-    model::{Model, ModelResponse},
     new_id,
+    provider::Provider,
     store::{Store, Submission, Tx},
-    tools::{Hooks, ToolCall, ToolOutcome, run_builtin_tool},
+    tools::{Hooks, ToolCall, ToolOutcome},
+    turn::{Decision, Turn},
 };
 
 const COMMIT_BACKLOG: usize = 4096;
 
 pub struct HarnessOptions {
-    pub model: Arc<dyn Model>,
+    pub provider: Arc<dyn Provider>,
     pub hooks: Arc<dyn Hooks>,
 }
 
@@ -37,7 +38,8 @@ struct Inner {
     store: Mutex<Store>,
     commits: broadcast::Sender<Commit>,
     running: Mutex<HashSet<String>>,
-    model: Arc<dyn Model>,
+    approvals: Mutex<HashMap<(String, String), oneshot::Sender<Decision>>>,
+    provider: Arc<dyn Provider>,
     hooks: Arc<dyn Hooks>,
 }
 
@@ -65,7 +67,8 @@ impl Harness {
                 store: Mutex::new(store),
                 commits,
                 running: Mutex::default(),
-                model: options.model,
+                approvals: Mutex::default(),
+                provider: options.provider,
                 hooks: options.hooks,
             }),
         }
@@ -102,6 +105,7 @@ impl Harness {
         Ok(ConversationReadResult {
             conversation,
             entries,
+            live: store.live(conversation_id)?,
             seq: store.head()?,
         })
     }
@@ -229,70 +233,83 @@ impl Harness {
         } else {
             let entries = self.store().entries(&conversation_id, 0)?;
             self.commit(&conversation_id, |tx| {
-                interrupt_dangling_tool_call(tx, &entries)
+                interrupt_dangling_tool_calls(tx, &entries)
             })?;
         }
 
-        let model_actor = Actor::Model {
-            model: self.inner.model.name().to_owned(),
+        let provider = self.inner.provider.clone();
+        let actor = Actor::Model {
+            model: provider.model().to_owned(),
         };
-        loop {
-            let transcript = self.store().entries(&conversation_id, 0)?;
-            let response = match self.inner.model.respond(&transcript).await {
-                Ok(response) => response,
-                Err(error) => {
-                    self.commit(&conversation_id, |tx| {
-                        tx.append(
-                            kinds::ASSISTANT,
-                            &model_actor,
-                            json!({ "text": format!("Model error: {error:#}"), "is_error": true }),
-                        )?;
-                        tx.settle_placed(SubmissionStatus::Unanswered)
-                    })?;
-                    return Ok(());
-                }
-            };
-            match response {
-                ModelResponse::Text(text) => {
-                    self.commit(&conversation_id, |tx| {
-                        tx.append(kinds::ASSISTANT, &model_actor, json!({ "text": text }))?;
-                        tx.settle_placed(SubmissionStatus::Answered)
-                    })?;
-                    return Ok(());
-                }
-                ModelResponse::ToolCall(call) => {
-                    self.commit(&conversation_id, |tx| {
-                        tx.append(kinds::TOOL_CALL, &model_actor, serde_json::to_value(&call)?)
-                    })?;
-                    let outcome = self.run_tool(call.clone()).await?;
-                    let steers: Vec<Submission> = self
-                        .store()
-                        .open_submissions(&conversation_id)?
-                        .into_iter()
-                        .filter(|open| {
-                            open.status == SubmissionStatus::Queued
-                                && open.when_busy == WhenBusy::Steer
-                        })
-                        .collect();
-                    self.commit(&conversation_id, |tx| {
-                        tx.append(
-                            kinds::TOOL_RESULT,
-                            &Actor::System,
-                            tool_result(&call, &outcome),
-                        )?;
-                        steers.iter().try_for_each(|steer| place(tx, steer))
-                    })?;
-                }
+        let turn = Turn::new(self.clone(), conversation_id.clone(), actor.clone());
+        let ran = provider.run(&turn).await;
+        self.commit(&conversation_id, |tx| match &ran {
+            Ok(()) => tx.settle_placed(SubmissionStatus::Answered),
+            Err(error) => {
+                tx.set_live("")?;
+                tx.append(
+                    kinds::ASSISTANT,
+                    &actor,
+                    json!({ "text": format!("Model error: {error:#}"), "is_error": true }),
+                )?;
+                tx.settle_placed(SubmissionStatus::Unanswered)
             }
-        }
+        })
     }
 
-    async fn run_tool(&self, call: ToolCall) -> Result<ToolOutcome> {
-        let hooks = self.inner.hooks.clone();
-        Ok(tokio::task::spawn_blocking(move || hooks.tool_call(call, &run_builtin_tool)).await?)
+    /// Answers a pending approval. The first answer wins; later ones are not accepted.
+    pub fn resolve(&self, params: ApprovalResolveParams, author: Actor) -> Result<bool> {
+        let key = (params.conversation_id.clone(), params.call_id.clone());
+        let mut approvals = self.inner.approvals.lock().expect("approvals lock");
+        let Some(waiter) = approvals.remove(&key) else {
+            return Ok(false);
+        };
+        let still_waiting = approvals
+            .keys()
+            .any(|(conversation_id, _)| *conversation_id == params.conversation_id);
+        drop(approvals);
+        self.commit(&params.conversation_id, |tx| {
+            tx.append(
+                kinds::APPROVAL,
+                &author,
+                json!({ "call_id": params.call_id, "allow": params.allow, "reason": params.reason }),
+            )?;
+            if !still_waiting {
+                tx.set_status(ConversationStatus::Working)?;
+            }
+            Ok(())
+        })?;
+        let decision = if params.allow {
+            Decision::Allow
+        } else {
+            let who = match &author {
+                Actor::Person { name, .. } => name.clone(),
+                _ => "someone".into(),
+            };
+            Decision::Deny(params.reason.unwrap_or_else(|| format!("{who} declined")))
+        };
+        let _ = waiter.send(decision);
+        Ok(true)
     }
 
-    fn commit<T>(
+    pub(crate) fn wait_for_approval(
+        &self,
+        conversation_id: &str,
+        call_id: &str,
+        answer: oneshot::Sender<Decision>,
+    ) {
+        self.inner
+            .approvals
+            .lock()
+            .expect("approvals lock")
+            .insert((conversation_id.to_owned(), call_id.to_owned()), answer);
+    }
+
+    pub(crate) fn hooks(&self) -> Arc<dyn Hooks> {
+        self.inner.hooks.clone()
+    }
+
+    pub(crate) fn commit<T>(
         &self,
         conversation_id: &str,
         write: impl FnOnce(&mut Tx<'_>) -> Result<T>,
@@ -303,7 +320,7 @@ impl Harness {
         Ok(value)
     }
 
-    fn store(&self) -> std::sync::MutexGuard<'_, Store> {
+    pub(crate) fn store(&self) -> std::sync::MutexGuard<'_, Store> {
         self.inner.store.lock().expect("store lock")
     }
 }
@@ -316,29 +333,53 @@ fn place(tx: &mut Tx<'_>, submission: &Submission) -> Result<()> {
     tx.set_status(ConversationStatus::Working)
 }
 
-/// A tool call whose result never landed was cut off by a crash. It is not replay-safe, so the
-/// model is told it was interrupted.
-fn interrupt_dangling_tool_call(tx: &mut Tx<'_>, entries: &[Entry]) -> Result<()> {
+/// Steers wait for the current tool round to end, then join the run.
+pub(crate) fn place_steers(tx: &mut Tx<'_>) -> Result<()> {
+    let steers: Vec<Submission> = tx
+        .open_submissions()?
+        .into_iter()
+        .filter(|open| open.status == SubmissionStatus::Queued && open.when_busy == WhenBusy::Steer)
+        .collect();
+    steers.iter().try_for_each(|steer| place(tx, steer))
+}
+
+/// A tool call whose result never landed was cut off by a crash. One that was still waiting for
+/// approval never ran; any other is not replay-safe, so the model is told it was interrupted.
+fn interrupt_dangling_tool_calls(tx: &mut Tx<'_>, entries: &[Entry]) -> Result<()> {
     tx.set_status(ConversationStatus::Working)?;
-    let Some(last) = entries.last() else {
-        return Ok(());
+    tx.set_live("")?;
+    let answered = |kind: &str, call_id: &str| {
+        entries
+            .iter()
+            .any(|entry| entry.kind == kind && entry.data["call_id"] == call_id)
     };
-    if last.kind != kinds::TOOL_CALL {
-        return Ok(());
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.kind == kinds::TOOL_CALL)
+    {
+        let call: ToolCall = serde_json::from_value(entry.data.clone())?;
+        if answered(kinds::TOOL_RESULT, &call.id) {
+            continue;
+        }
+        let outcome = if answered(kinds::APPROVAL_REQUEST, &call.id)
+            && !answered(kinds::APPROVAL, &call.id)
+        {
+            ToolOutcome::error("not run: nisse restarted before this call was approved")
+        } else {
+            ToolOutcome::error(
+                "interrupted: nisse stopped while this ran; it may or may not have taken effect",
+            )
+        };
+        tx.append(
+            kinds::TOOL_RESULT,
+            &Actor::System,
+            tool_result(&call, &outcome),
+        )?;
     }
-    let call: ToolCall = serde_json::from_value(last.data.clone())?;
-    let outcome = ToolOutcome::error(
-        "interrupted: nisse stopped while this ran; it may or may not have taken effect",
-    );
-    tx.append(
-        kinds::TOOL_RESULT,
-        &Actor::System,
-        tool_result(&call, &outcome),
-    )?;
     Ok(())
 }
 
-fn tool_result(call: &ToolCall, outcome: &ToolOutcome) -> serde_json::Value {
+pub(crate) fn tool_result(call: &ToolCall, outcome: &ToolOutcome) -> serde_json::Value {
     json!({
         "call_id": call.id,
         "name": call.name,

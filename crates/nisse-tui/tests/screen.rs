@@ -7,7 +7,7 @@ use std::{
 };
 
 use nisse_client::Client;
-use nisse_core::{EchoModel, Harness, HarnessOptions, NoHooks, Store};
+use nisse_core::{Echo, Harness, HarnessOptions, NoHooks, Store};
 use nisse_protocol::Actor;
 use nisse_server::Server;
 use ratatui::{
@@ -73,7 +73,7 @@ impl Tui {
         let harness = Harness::with_store(
             Store::open_in_memory().unwrap(),
             HarnessOptions {
-                model: Arc::new(EchoModel {
+                provider: Arc::new(Echo {
                     think: Duration::ZERO,
                 }),
                 hooks: Arc::new(NoHooks),

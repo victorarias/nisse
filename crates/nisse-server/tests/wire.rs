@@ -3,7 +3,9 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use nisse_client::Client;
-use nisse_core::{EchoModel, Harness, HarnessOptions, Hooks, Model, ModelFuture, NoHooks, Store};
+use nisse_core::{
+    Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, ProviderFuture, Store, Turn,
+};
 use nisse_lua::LuaHost;
 use nisse_protocol::{
     Actor, ClientRequest, Conversation, ConversationCreateParams, ConversationReadResult,
@@ -24,17 +26,17 @@ fn owner() -> Actor {
 
 fn start(
     store: Store,
-    model: Arc<dyn Model>,
+    provider: Arc<dyn Provider>,
     hooks: Arc<dyn Hooks>,
     ui: broadcast::Sender<UiChanged>,
 ) -> Arc<Server> {
-    let harness = Harness::with_store(store, HarnessOptions { model, hooks });
+    let harness = Harness::with_store(store, HarnessOptions { provider, hooks });
     harness.resume().unwrap();
     Server::new(harness, ui, owner())
 }
 
-fn echo() -> Arc<dyn Model> {
-    Arc::new(EchoModel {
+fn echo() -> Arc<dyn Provider> {
+    Arc::new(Echo {
         think: Duration::ZERO,
     })
 }
@@ -204,12 +206,12 @@ async fn subscribing_since_a_seq_replays_only_later_commits() {
 
 struct Hanging;
 
-impl Model for Hanging {
-    fn name(&self) -> &str {
+impl Provider for Hanging {
+    fn model(&self) -> &str {
         "hanging"
     }
 
-    fn respond<'a>(&'a self, _transcript: &'a [Entry]) -> ModelFuture<'a> {
+    fn run<'a>(&'a self, _turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(std::future::pending())
     }
 }
@@ -360,4 +362,137 @@ async fn a_hook_keeps_its_time_budget_while_a_slow_command_runs_inside_it() {
         (extension.as_str(), text.as_deref()),
         ("guard", Some("last command failed"))
     );
+}
+
+/// Asks to run each input as a shell command, streaming a few words before it does.
+struct Careful;
+
+impl Provider for Careful {
+    fn model(&self) -> &str {
+        "careful"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let transcript = turn.transcript()?;
+            let command = transcript.last().unwrap().data["text"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            turn.stream("Let me");
+            turn.stream("Let me run that.");
+            tokio::time::sleep(nisse_core::LIVE_INTERVAL * 3).await;
+            turn.say("Let me run that.")?;
+            let call = nisse_core::ToolCall {
+                id: format!("call-{command}"),
+                name: "bash".into(),
+                args: serde_json::json!({ "command": command }),
+            };
+            let outcome = turn
+                .call_tool(
+                    call,
+                    nisse_core::Approval::Ask,
+                    nisse_core::run_builtin_tool,
+                )
+                .await?;
+            turn.answer(outcome.denied.as_deref().unwrap_or(outcome.output.trim()))
+        })
+    }
+}
+
+async fn resolve(client: &Client, conversation: &Conversation, call_id: &str, allow: bool) -> bool {
+    let result: nisse_protocol::ApprovalResolveResult = client
+        .request(ClientRequest::ApprovalResolve(
+            nisse_protocol::ApprovalResolveParams {
+                conversation_id: conversation.id.clone(),
+                call_id: call_id.into(),
+                allow,
+                reason: None,
+            },
+        ))
+        .await
+        .unwrap();
+    result.accepted
+}
+
+#[tokio::test]
+async fn a_call_waits_for_approval_and_only_the_first_answer_counts() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Careful),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let (other, _) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "echo approved").await;
+    let asked = until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    let first = resolve(&client, &conversation, "call-echo approved", true).await;
+    let second = resolve(&other, &conversation, "call-echo approved", false).await;
+    let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
+
+    assert!(asked.iter().any(|notification| matches!(notification,
+        ServerNotification::Status(changed) if changed.status == ConversationStatus::NeedsApproval)));
+    assert!(first && !second);
+    let approval = answered
+        .iter()
+        .find(|entry| entry.kind == kinds::APPROVAL)
+        .unwrap();
+    assert_eq!(
+        (approval.data["allow"].as_bool(), &approval.author),
+        (Some(true), &owner())
+    );
+    assert_eq!(answered.last().unwrap().data["text"], "approved");
+}
+
+#[tokio::test]
+async fn a_declined_call_never_runs_and_the_model_hears_why() {
+    let workspace = tempfile::tempdir().unwrap();
+    let marker = workspace.path().join("made");
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Careful),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+    let command = format!("touch {}", marker.display());
+
+    submit(&client, &conversation, &command).await;
+    until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    resolve(&client, &conversation, &format!("call-{command}"), false).await;
+    let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
+
+    assert!(!marker.exists());
+    assert_eq!(answered.last().unwrap().data["text"], "owner declined");
+}
+
+#[tokio::test]
+async fn streamed_text_shows_live_until_the_message_is_committed() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Careful),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "true").await;
+    let seen = until_entry(&mut notifications, kinds::ASSISTANT).await;
+
+    let live: Vec<&str> = seen
+        .iter()
+        .filter_map(|notification| match notification {
+            ServerNotification::Committed(commit) => commit.live.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(live, ["Let me run that.", ""]);
 }

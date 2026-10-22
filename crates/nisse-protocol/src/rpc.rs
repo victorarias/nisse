@@ -86,6 +86,8 @@ pub enum ClientRequest {
     ConversationSubscribe(ConversationSubscribeParams),
     #[serde(rename = "conversation/submit")]
     ConversationSubmit(ConversationSubmitParams),
+    #[serde(rename = "approval/resolve")]
+    ApprovalResolve(ApprovalResolveParams),
 }
 
 impl ClientRequest {
@@ -122,6 +124,7 @@ const KNOWN_METHODS: &[&str] = &[
     "conversation/read",
     "conversation/subscribe",
     "conversation/submit",
+    "approval/resolve",
 ];
 
 /// Notifications the server sends, keyed by method.

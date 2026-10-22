@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{new_id, now_ms};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// One SQLite file. Every change goes through `commit`, which is atomic and gets the next `seq`.
 pub struct Store {
@@ -31,6 +31,7 @@ pub struct Tx<'a> {
     conversation_id: String,
     entries: Vec<Entry>,
     status: Option<ConversationStatus>,
+    live: Option<String>,
 }
 
 impl Store {
@@ -71,6 +72,15 @@ impl Store {
                 COMMIT;",
             )?;
         }
+        if version < 2 {
+            db.execute_batch(
+                "BEGIN;
+                ALTER TABLE conversations ADD COLUMN live TEXT NOT NULL DEFAULT '';
+                ALTER TABLE conversations ADD COLUMN provider_state TEXT NOT NULL DEFAULT 'null';
+                PRAGMA user_version = 2;
+                COMMIT;",
+            )?;
+        }
         Ok(Self { db })
     }
 
@@ -88,12 +98,14 @@ impl Store {
             conversation_id: conversation_id.to_owned(),
             entries: Vec::new(),
             status: None,
+            live: None,
         };
         let value = write(&mut writer)?;
         let Tx {
             tx,
             entries,
             status,
+            live,
             ..
         } = writer;
         tx.commit()?;
@@ -104,6 +116,7 @@ impl Store {
                 conversation_id: conversation_id.to_owned(),
                 entries,
                 status,
+                live,
             },
         ))
     }
@@ -133,6 +146,23 @@ impl Store {
         )?;
         let rows = statement.query_map([], conversation_from_row)?;
         rows.map(|row| row?).collect()
+    }
+
+    pub fn live(&self, conversation_id: &str) -> Result<String> {
+        Ok(self.db.query_row(
+            "SELECT live FROM conversations WHERE id = ?1",
+            [conversation_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn provider_state(&self, conversation_id: &str) -> Result<Value> {
+        let state: String = self.db.query_row(
+            "SELECT provider_state FROM conversations WHERE id = ?1",
+            [conversation_id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&state)?)
     }
 
     pub fn entries(&self, conversation_id: &str, since_seq: Seq) -> Result<Vec<Entry>> {
@@ -170,11 +200,7 @@ impl Store {
 
     /// The submission a run is answering, then the queued ones, oldest first.
     pub fn open_submissions(&self, conversation_id: &str) -> Result<Vec<Submission>> {
-        self.submissions_where(
-            "conversation_id = ?1 AND status IN ('placed', 'queued')
-             ORDER BY status = 'queued', seq",
-            params![conversation_id],
-        )
+        self.submissions_where(OPEN_SUBMISSIONS, params![conversation_id])
     }
 
     pub fn conversations_with_open_submissions(&self) -> Result<Vec<String>> {
@@ -190,22 +216,7 @@ impl Store {
         condition: &str,
         values: impl rusqlite::Params,
     ) -> Result<Vec<Submission>> {
-        let mut statement = self.db.prepare(&format!(
-            "SELECT id, conversation_id, status, when_busy, input, author FROM submissions WHERE {condition}"
-        ))?;
-        let rows = statement.query_map(values, |row| {
-            Ok((|| {
-                Ok(Submission {
-                    id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    status: from_text(&row.get::<_, String>(2)?)?,
-                    when_busy: from_text(&row.get::<_, String>(3)?)?,
-                    input: serde_json::from_str(&row.get::<_, String>(4)?)?,
-                    author: serde_json::from_str(&row.get::<_, String>(5)?)?,
-                })
-            })())
-        })?;
-        rows.map(|row| row?).collect()
+        submissions_where(&self.db, condition, values)
     }
 }
 
@@ -272,6 +283,28 @@ impl Tx<'_> {
         Ok(())
     }
 
+    pub fn set_live(&mut self, text: &str) -> Result<()> {
+        self.tx.execute(
+            "UPDATE conversations SET live = ?1 WHERE id = ?2",
+            params![text, self.conversation_id],
+        )?;
+        self.live = Some(text.to_owned());
+        Ok(())
+    }
+
+    /// What a provider keeps to pick a conversation up again, such as Claude's session.
+    pub fn set_provider_state(&mut self, state: &Value) -> Result<()> {
+        self.tx.execute(
+            "UPDATE conversations SET provider_state = ?1 WHERE id = ?2",
+            params![serde_json::to_string(state)?, self.conversation_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn open_submissions(&self) -> Result<Vec<Submission>> {
+        submissions_where(&self.tx, OPEN_SUBMISSIONS, params![self.conversation_id])
+    }
+
     pub fn insert_submission(
         &mut self,
         request_id: &str,
@@ -312,6 +345,32 @@ impl Tx<'_> {
         )?;
         Ok(())
     }
+}
+
+const OPEN_SUBMISSIONS: &str = "conversation_id = ?1 AND status IN ('placed', 'queued')
+     ORDER BY status = 'queued', seq";
+
+fn submissions_where(
+    db: &Connection,
+    condition: &str,
+    values: impl rusqlite::Params,
+) -> Result<Vec<Submission>> {
+    let mut statement = db.prepare(&format!(
+        "SELECT id, conversation_id, status, when_busy, input, author FROM submissions WHERE {condition}"
+    ))?;
+    let rows = statement.query_map(values, |row| {
+        Ok((|| {
+            Ok(Submission {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                status: from_text(&row.get::<_, String>(2)?)?,
+                when_busy: from_text(&row.get::<_, String>(3)?)?,
+                input: serde_json::from_str(&row.get::<_, String>(4)?)?,
+                author: serde_json::from_str(&row.get::<_, String>(5)?)?,
+            })
+        })())
+    })?;
+    rows.map(|row| row?).collect()
 }
 
 fn conversation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<Conversation>> {
