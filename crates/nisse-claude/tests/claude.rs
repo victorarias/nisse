@@ -88,6 +88,31 @@ impl Scenario {
         Server::new(harness, broadcast::channel(16).0, owner())
     }
 
+    /// Deletes the transcripts the real CLI keeps of this workspace's sessions, as Claude Code's
+    /// own cleanup of old transcripts does. A replayed claude keeps none.
+    fn forget_claude_sessions(&self) {
+        if live_claude().is_none() {
+            return;
+        }
+        let config = std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".claude"));
+        let project: String = self
+            .workspace
+            .path()
+            .to_string_lossy()
+            .chars()
+            .map(|char| {
+                if char.is_ascii_alphanumeric() {
+                    char
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        std::fs::remove_dir_all(config.join("projects").join(project)).unwrap();
+    }
+
     /// In a live run, keeps what the real CLI did as this scenario's fixture.
     fn keep_recording(&self, conversation: &Conversation) {
         if live_claude().is_none() {
@@ -219,7 +244,8 @@ impl Watch {
         .await;
         assert!(
             waited.is_ok(),
-            "waited in vain for {what}; entries: {:#?}",
+            "waited in vain for {what}; status {:?}, entries: {:#?}",
+            self.status,
             self.entries
                 .iter()
                 .map(|entry| (&entry.kind, &entry.data))
@@ -593,4 +619,193 @@ fn a_run_killed_mid_tool_resumes_claudes_session_where_nisse_last_committed() {
         );
         scenario.keep_recording(&watch.conversation);
     });
+}
+
+#[tokio::test]
+async fn every_tool_a_subagent_calls_gets_its_result() {
+    let scenario = Scenario::new("subagent");
+    std::fs::write(
+        scenario.workspace.path().join("notes.txt"),
+        "the gnome lives under the floor\n",
+    )
+    .unwrap();
+    let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
+    let mut watch = Watch::new_conversation(&server).await;
+
+    watch
+        .submit(
+            "Use the Task tool to start a general-purpose subagent that reads notes.txt with the \
+             Read tool and reports where the gnome lives. Do not read it yourself. Then reply \
+             with where the gnome lives, in three words.",
+            WhenBusy::FollowUp,
+        )
+        .await;
+    watch.until_idle().await;
+
+    let calls: Vec<&Entry> = watch
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == kinds::TOOL_CALL)
+        .collect();
+    assert!(
+        calls.iter().any(|call| call.data["name"] == "Read"),
+        "the subagent read nothing; calls: {calls:#?}"
+    );
+    for call in &calls {
+        let result = watch.entries.iter().find(|entry| {
+            entry.kind == kinds::TOOL_RESULT && entry.data["call_id"] == call.data["id"]
+        });
+        assert!(
+            result.is_some(),
+            "the {} call never got a result",
+            call.data["name"]
+        );
+    }
+    let read = watch
+        .entries
+        .iter()
+        .find(|entry| entry.kind == kinds::TOOL_RESULT && entry.data["name"] == "Read")
+        .unwrap();
+    assert!(
+        read.data["output"]
+            .as_str()
+            .unwrap()
+            .contains("the gnome lives under the floor")
+    );
+    assert!(watch.final_text().to_lowercase().contains("floor"));
+    scenario.keep_recording(&watch.conversation);
+}
+
+const REMEMBER: &str = "Remember the word PLUM. Reply with exactly: noted";
+const RECALL: &str = "Which word did I ask you to remember? Reply with that word only.";
+
+impl Watch {
+    fn remembered_plum(&self) -> bool {
+        self.final_text().to_lowercase().contains("plum")
+    }
+
+    fn no_model_errors(&self) -> bool {
+        !self
+            .entries
+            .iter()
+            .any(|entry| entry.kind == kinds::ASSISTANT && entry.data["is_error"] == true)
+    }
+
+    async fn until_answered(&mut self, answers: usize) {
+        self.until("the answer", |watch| {
+            watch.status == ConversationStatus::Idle
+                && watch
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.kind == kinds::ASSISTANT)
+                    .count()
+                    == answers
+        })
+        .await;
+    }
+}
+
+/// The claude processes this test process started that work in `workspace`.
+fn claudes_working_in(workspace: &Path) -> Vec<i32> {
+    let workspace = workspace.canonicalize().unwrap();
+    std::fs::read_dir("/proc/self/task")
+        .unwrap()
+        .flatten()
+        .filter_map(|task| std::fs::read_to_string(task.path().join("children")).ok())
+        .flat_map(|children| {
+            children
+                .split_whitespace()
+                .filter_map(|pid| pid.parse().ok())
+                .collect::<Vec<i32>>()
+        })
+        .filter(|pid| {
+            std::fs::read_link(format!("/proc/{pid}/cwd")).is_ok_and(|cwd| cwd == workspace)
+        })
+        .collect()
+}
+
+/// Kills a claude this test process started, and returns once it has exited, leaving it for
+/// Nisse to reap.
+async fn kill(pid: i32) {
+    use nix::{
+        sys::{
+            signal::{Signal, killpg},
+            wait::{Id, WaitPidFlag, waitid},
+        },
+        unistd::Pid,
+    };
+    killpg(Pid::from_raw(pid), Signal::SIGKILL).unwrap();
+    let exited = tokio::task::spawn_blocking(move || {
+        waitid(
+            Id::Pid(Pid::from_raw(pid)),
+            WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT,
+        )
+    });
+    tokio::time::timeout(patience(), exited)
+        .await
+        .expect("the killed claude exited")
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_claude_that_died_while_idle_resumes_for_the_next_message() {
+    let scenario = Scenario::new("died_while_idle");
+    let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
+    let mut watch = Watch::new_conversation(&server).await;
+    watch.submit(REMEMBER, WhenBusy::FollowUp).await;
+    watch.until_answered(1).await;
+
+    let parked = claudes_working_in(scenario.workspace.path());
+    assert_eq!(parked.len(), 1, "one claude waits for the next message");
+    kill(parked[0]).await;
+
+    watch.submit(RECALL, WhenBusy::FollowUp).await;
+    watch.until_answered(2).await;
+
+    assert!(watch.no_model_errors(), "the next message failed");
+    assert!(
+        watch.remembered_plum(),
+        "claude answered: {}",
+        watch.final_text()
+    );
+    scenario.keep_recording(&watch.conversation);
+}
+
+#[tokio::test]
+async fn a_conversation_whose_claude_session_is_gone_goes_on_from_its_transcript() {
+    let scenario = Scenario::new("session_gone");
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("nisse.sqlite");
+
+    let server = scenario.start(Store::open(&path).unwrap(), Arc::new(NoHooks));
+    let mut watch = Watch::new_conversation(&server).await;
+    watch.submit(REMEMBER, WhenBusy::FollowUp).await;
+    watch.until_answered(1).await;
+    let conversation = watch.conversation.clone();
+    drop((watch, server));
+
+    scenario.forget_claude_sessions();
+    let server = scenario.start(Store::open(&path).unwrap(), Arc::new(NoHooks));
+    let mut watch = Watch::existing(&server, conversation).await;
+    watch.submit(RECALL, WhenBusy::FollowUp).await;
+    watch.until_answered(2).await;
+
+    assert!(watch.no_model_errors(), "the conversation failed");
+    assert!(
+        watch.remembered_plum(),
+        "claude answered: {}",
+        watch.final_text()
+    );
+    watch
+        .submit("Now reply with that word in lowercase.", WhenBusy::FollowUp)
+        .await;
+    watch.until_answered(3).await;
+    assert!(watch.no_model_errors(), "the next message failed");
+    assert!(
+        watch.remembered_plum(),
+        "claude answered: {}",
+        watch.final_text()
+    );
+    scenario.keep_recording(&watch.conversation);
 }

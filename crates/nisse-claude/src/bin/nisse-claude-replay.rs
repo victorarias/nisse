@@ -1,5 +1,6 @@
 //! Plays a recorded claude to Nisse. It reads the fixture `.nisse-claude-replay.ndjson` from its
-//! working directory, picks the recorded process whose argv matches its own, prints that
+//! working directory, takes the recorded processes in the order they were started (counting
+//! starts in `.nisse-claude-replay.started`) and checks that its argv matches, prints that
 //! process's inbound frames in order, and checks every frame Nisse writes against the recorded
 //! one. `"<any>"` matches any value; `<request:N>` binds to the id Nisse chose; `<session>`,
 //! `<workspace>` and `<home>` stand for this run's values. A mismatch exits with status 1.
@@ -7,12 +8,14 @@
 use std::{
     collections::HashMap,
     io::{BufRead, Write},
+    path::Path,
     process::ExitCode,
 };
 
 use serde_json::Value;
 
 const FIXTURE: &str = ".nisse-claude-replay.ndjson";
+const STARTED: &str = ".nisse-claude-replay.started";
 
 enum Step {
     Emit(Value),
@@ -50,7 +53,7 @@ fn replay() -> Result<(), String> {
         bindings.insert("<session>".into(), session);
     }
 
-    let steps = process_steps(&fixture, &argv, &mut bindings)?;
+    let steps = process_steps(&cwd, &fixture, &argv, &mut bindings)?;
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     let mut stdout = std::io::stdout().lock();
@@ -119,8 +122,10 @@ fn replay() -> Result<(), String> {
     }
 }
 
-/// The steps of the recorded process whose argv matches this one.
+/// The steps of the next recorded process: the nth claude started in this workspace plays the
+/// nth one, and its argv must match.
 fn process_steps(
+    cwd: &Path,
     fixture: &str,
     argv: &[String],
     bindings: &mut Bindings,
@@ -150,18 +155,27 @@ fn process_steps(
             _ => {}
         }
     }
+    let started_path = cwd.join(STARTED);
+    let started: usize = std::fs::read_to_string(&started_path)
+        .ok()
+        .and_then(|count| count.trim().parse().ok())
+        .unwrap_or(0);
+    std::fs::write(&started_path, (started + 1).to_string())
+        .map_err(|error| format!("could not write {STARTED}: {error}"))?;
     let actual = Value::from(argv.to_vec());
-    let recorded: Vec<String> = processes.iter().map(|(argv, _)| argv.to_string()).collect();
-    processes
-        .into_iter()
-        .find(|(expected, _)| matches(expected, &actual, bindings))
-        .map(|(_, steps)| steps)
-        .ok_or_else(|| {
-            format!(
-                "no recorded process was started with {actual}; recorded:\n{}",
-                recorded.join("\n")
-            )
-        })
+    let Some((expected, steps)) = processes.into_iter().nth(started) else {
+        return Err(format!(
+            "claude was started {} times, more than the recording holds, with {actual}",
+            started + 1
+        ));
+    };
+    if !matches(&expected, &actual, bindings) {
+        return Err(format!(
+            "start {} of claude was recorded with {expected} but was started with {actual}",
+            started + 1
+        ));
+    }
+    Ok(steps)
 }
 
 fn matches(expected: &Value, actual: &Value, bindings: &mut Bindings) -> bool {

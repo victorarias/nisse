@@ -21,7 +21,7 @@ use tokio::task::AbortHandle;
 use crate::{
     process::Process,
     record::Recorder,
-    session::{PRE_TOOL_USE, ProviderState, Session},
+    session::{PRE_TOOL_USE, ProviderState, Session, Unresumable},
 };
 
 /// A conversation's claude process is stopped after this long without a turn; the next turn
@@ -67,36 +67,37 @@ impl Claude {
 
     async fn run_turn(&self, turn: &Turn) -> Result<()> {
         let conversation_id = turn.conversation_id().to_owned();
-        let parked = self
+        let mut parked = self
             .idle
             .lock()
             .expect("idle lock")
-            .remove(&conversation_id);
+            .remove(&conversation_id)
+            .map(|parked| parked.session);
+        parked.take_if(|session| session.has_stopped());
         let mut session = match parked {
-            Some(parked) => parked.session,
-            None => self.start(turn)?,
+            Some(session) => session,
+            None => self.start(turn, resumable_state(turn)?)?,
         };
-        session.answer(turn).await?;
+        if let Err(error) = session.answer(turn).await {
+            if !error.is::<Unresumable>() {
+                return Err(error);
+            }
+            drop(session);
+            session = self.start(turn, None)?.retelling();
+            session.answer(turn).await?;
+        }
         self.park(conversation_id, session);
         Ok(())
     }
 
-    fn start(&self, turn: &Turn) -> Result<Session> {
-        let saved: Option<ProviderState> =
-            serde_json::from_value(turn.provider_state()?).unwrap_or(None);
-        let resumable = saved.filter(|state| state.head.is_some());
-        let state = match resumable {
-            Some(state) => state,
-            None => {
-                let fresh = ProviderState {
-                    session: new_id(),
-                    head: None,
-                    delivered: 0,
-                };
-                turn.set_provider_state(&serde_json::to_value(&fresh)?)?;
-                fresh
-            }
-        };
+    /// Starts claude on the session it saved, or on a new one when there is none to resume.
+    /// A new session reaches the provider state once Claude holds some of the conversation.
+    fn start(&self, turn: &Turn, resumable: Option<ProviderState>) -> Result<Session> {
+        let state = resumable.unwrap_or_else(|| ProviderState {
+            session: new_id(),
+            head: None,
+            delivered: 0,
+        });
 
         let mut args: Vec<String> = [
             "--output-format",
@@ -171,6 +172,12 @@ impl Claude {
             },
         );
     }
+}
+
+fn resumable_state(turn: &Turn) -> Result<Option<ProviderState>> {
+    let saved: Option<ProviderState> =
+        serde_json::from_value(turn.provider_state()?).unwrap_or(None);
+    Ok(saved.filter(|state| state.head.is_some()))
 }
 
 async fn stop_when_idle(

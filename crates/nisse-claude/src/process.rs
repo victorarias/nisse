@@ -110,6 +110,14 @@ impl Process {
         let _ = self.outbound.send(frame);
     }
 
+    pub(crate) fn has_exited(&mut self) -> bool {
+        let exited = self
+            .child
+            .as_mut()
+            .is_none_or(|child| !matches!(child.try_wait(), Ok(None)));
+        exited || self.inbound.is_closed()
+    }
+
     /// Why the process stopped answering, for the model error a person sees.
     pub(crate) async fn exit_reason(&mut self) -> String {
         let deadline = Instant::now() + EXIT_PATIENCE;

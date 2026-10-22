@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use futures_util::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use nisse_core::{Approval, Decision, ToolCall, ToolOutcome, Turn};
 use nisse_protocol::{Entry, Seq, kinds};
@@ -14,6 +14,9 @@ pub(crate) const PRE_TOOL_USE: &str = "nisse_pre_tool_use";
 
 const RESTARTED: &str = "Nisse restarted before you finished. Continue where you left off.";
 
+const RETOLD: &str = "Your earlier Claude Code session of this conversation could not be resumed. \
+                      This is the conversation so far; continue it.";
+
 /// What Nisse keeps per conversation: Claude's session, the newest Claude message whose
 /// content Nisse committed, and the newest seq Claude's session holds up to that message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,10 +26,26 @@ pub(crate) struct ProviderState {
     pub(crate) delivered: Seq,
 }
 
+/// Claude could not resume the conversation's session: claude stopped before it answered
+/// `initialize`, as it does when the session or the message to resume at is gone.
+#[derive(Debug)]
+pub(crate) struct Unresumable(String);
+
+impl std::fmt::Display for Unresumable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Unresumable {}
+
 /// A conversation's live claude process and what Nisse knows of its session.
 pub(crate) struct Session {
-    pub(crate) process: Process,
+    process: Process,
     state: ProviderState,
+    resumed: bool,
+    initialized: bool,
+    retell: bool,
     chain: Chain,
     sent: Seq,
     unacked: VecDeque<Seq>,
@@ -64,6 +83,9 @@ impl Session {
     pub(crate) fn new(process: Process, state: ProviderState) -> Self {
         Self {
             process,
+            resumed: state.head.is_some(),
+            initialized: false,
+            retell: false,
             chain: Chain {
                 head: state.head.clone(),
                 delivered: state.delivered,
@@ -79,6 +101,17 @@ impl Session {
         }
     }
 
+    /// For a session that replaces one Claude lost: its first message retells the whole
+    /// transcript, Claude's own part included.
+    pub(crate) fn retelling(mut self) -> Self {
+        self.retell = true;
+        self
+    }
+
+    pub(crate) fn has_stopped(&mut self) -> bool {
+        self.process.has_exited()
+    }
+
     /// Hands Claude what the conversation gained since it last heard, and commits Claude's
     /// work until it answers all of it.
     pub(crate) async fn answer(&mut self, turn: &Turn) -> Result<()> {
@@ -91,10 +124,14 @@ impl Session {
             tokio::select! {
                 frame = self.process.inbound.recv(), if !committing => {
                     let Some(frame) = frame else {
-                        bail!(self.process.exit_reason().await);
+                        let reason = self.process.exit_reason().await;
+                        return Err(self.stopped(reason));
                     };
+                    if frame["type"] == "result" && !self.initialized {
+                        return Err(self.stopped(result_text(&frame)));
+                    }
                     if frame["type"] == "result" && self.unacked.is_empty() {
-                        self.calls.retain(|_, call| !call.done);
+                        self.calls.clear();
                         return finish(turn, &frame, said);
                     }
                     self.on_frame(turn, frame, &started, &mut pending, &mut said)?;
@@ -104,6 +141,14 @@ impl Session {
                     self.on_event(turn, event)?;
                 }
             }
+        }
+    }
+
+    fn stopped(&self, reason: String) -> anyhow::Error {
+        if self.resumed && !self.initialized {
+            Unresumable(reason).into()
+        } else {
+            anyhow!(reason)
         }
     }
 
@@ -121,10 +166,16 @@ impl Session {
         let Some(newest) = entries.last().map(|entry| entry.seq) else {
             return Ok(());
         };
-        let mut blocks: Vec<Value> = entries
-            .iter()
-            .filter(|entry| entry.seq > self.sent)
-            .filter_map(|entry| self.told(entry))
+        let unheard = entries.iter().filter(|entry| entry.seq > self.sent);
+        let texts: Vec<String> = if std::mem::take(&mut self.retell) {
+            std::iter::once(RETOLD.to_owned())
+                .chain(unheard.filter_map(retold))
+                .collect()
+        } else {
+            unheard.filter_map(|entry| self.told(entry)).collect()
+        };
+        let mut blocks: Vec<Value> = texts
+            .into_iter()
             .map(|text| json!({ "type": "text", "text": text }))
             .collect();
         if blocks.is_empty() {
@@ -173,7 +224,8 @@ impl Session {
         match frame["type"].as_str() {
             Some("stream_event") if is_main_chain => self.on_stream(turn, &frame["event"]),
             Some("assistant") if is_main_chain => self.on_assistant(turn, &frame, said)?,
-            Some("user") if is_main_chain => self.on_user(turn, &frame)?,
+            Some("user") => self.on_user(turn, &frame, is_main_chain)?,
+            Some("control_response") => self.initialized = true,
             Some("control_request") => self.on_control_request(turn, &frame, started, pending),
             _ => {}
         }
@@ -221,14 +273,29 @@ impl Session {
         self.persist(turn)
     }
 
-    fn on_user(&mut self, turn: &Turn, frame: &Value) -> Result<()> {
-        let uuid = frame["uuid"].as_str().unwrap_or_default();
-        if frame["isReplay"] == true {
-            let delivered = self.unacked.pop_front();
-            self.chain.push(uuid, 0, delivered);
-            return self.persist(turn);
+    /// Results reach their calls from Claude's main chain and from its subagents alike; only
+    /// the main chain is Claude's session, so only it moves the head.
+    fn on_user(&mut self, turn: &Turn, frame: &Value, is_main_chain: bool) -> Result<()> {
+        let reported = self.hand_over_results(frame);
+        if !is_main_chain {
+            return Ok(());
         }
-        let mut waiting_for = Vec::new();
+        let uuid = frame["uuid"].as_str().unwrap_or_default();
+        let delivered = if frame["isReplay"] == true {
+            self.unacked.pop_front()
+        } else {
+            None
+        };
+        let link = self.chain.push(uuid, reported.len(), delivered);
+        self.results
+            .extend(reported.into_iter().map(|id| (id, link)));
+        self.persist(turn)
+    }
+
+    /// Hands each result Claude reported to the call waiting for it, and names the calls whose
+    /// results are now on their way into the transcript.
+    fn hand_over_results(&mut self, frame: &Value) -> Vec<String> {
+        let mut reported = Vec::new();
         for block in content(frame).filter(|block| block["type"] == "tool_result") {
             let id = block["tool_use_id"].as_str().unwrap_or_default().to_owned();
             match self.calls.get_mut(&id) {
@@ -238,7 +305,7 @@ impl Session {
                         outcome.denied = call.denied.clone();
                         let _ = waiter.send(outcome);
                     }
-                    waiting_for.push(id);
+                    reported.push(id);
                 }
                 Some(_) => {}
                 None => {
@@ -248,10 +315,7 @@ impl Session {
                 }
             }
         }
-        let link = self.chain.push(uuid, waiting_for.len(), None);
-        self.results
-            .extend(waiting_for.into_iter().map(|id| (id, link)));
-        self.persist(turn)
+        reported
     }
 
     fn on_control_request<'a>(
@@ -425,28 +489,62 @@ impl Session {
 }
 
 fn finish(turn: &Turn, result: &Value, said: bool) -> Result<()> {
-    let text = result["result"].as_str().unwrap_or_default();
     if result["is_error"] == true || result["subtype"] != "success" {
-        let errors = result["errors"]
-            .as_array()
-            .map(|errors| {
-                errors
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            })
-            .unwrap_or_default();
-        let subtype = result["subtype"].as_str().unwrap_or("error");
-        return Err(anyhow!(
-            "claude: {subtype}: {}",
-            [text, errors.as_str()].join(" ").trim()
-        ));
+        return Err(anyhow!(result_text(result)));
     }
+    let text = result["result"].as_str().unwrap_or_default();
     if !said && !text.trim().is_empty() {
         turn.answer(text)?;
     }
     Ok(())
+}
+
+fn result_text(result: &Value) -> String {
+    let text = result["result"].as_str().unwrap_or_default();
+    let errors = result["errors"]
+        .as_array()
+        .map(|errors| {
+            errors
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .unwrap_or_default();
+    let subtype = result["subtype"].as_str().unwrap_or("error");
+    format!(
+        "claude: {subtype}: {}",
+        [text, errors.as_str()].join(" ").trim()
+    )
+}
+
+/// An entry as a session that never held it hears it: what people said, as they said it, and
+/// Claude's own part as a record of what it did.
+fn retold(entry: &Entry) -> Option<String> {
+    let data = &entry.data;
+    let name = data["name"].as_str().unwrap_or("tool");
+    match entry.kind.as_str() {
+        kinds::USER => data["text"].as_str().map(str::to_owned),
+        kinds::ASSISTANT if data["is_error"] != true => data["text"]
+            .as_str()
+            .map(|text| format!("You answered: {text}")),
+        kinds::TOOL_CALL => Some(format!(
+            "You called {name} ({}) with {}",
+            data["id"].as_str().unwrap_or_default(),
+            data["args"]
+        )),
+        kinds::TOOL_RESULT => {
+            let call_id = data["call_id"].as_str().unwrap_or_default();
+            Some(match data["denied"].as_str() {
+                Some(reason) => format!("Your {name} call {call_id} was denied: {reason}"),
+                None => format!(
+                    "Your {name} call {call_id} returned: {}",
+                    data["output"].as_str().unwrap_or_default()
+                ),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn content(frame: &Value) -> impl Iterator<Item = &Value> {
