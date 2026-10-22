@@ -2,7 +2,7 @@
 
 A durable, multiplayer coding agent. One Rust app server owns every conversation
 and commits each step to SQLite before anyone sees it; thin clients draw what it
-commits. The first is an 80s neon terminal UI, which is also how
+commits. The first is a neon cyberpunk terminal UI, which is also how
 [attn](https://github.com/SolenesInc/attn) hosts Nisse. Luau extensions change
 what the agent does and what every client draws.
 

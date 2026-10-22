@@ -1,6 +1,6 @@
 [package]
 name = "nisse-tui"
-description = "Nisse's 80s neon terminal UI"
+description = "Nisse's neon cyberpunk terminal UI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

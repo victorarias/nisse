@@ -145,15 +145,15 @@ fn without_conversation_id(screen: &str) -> String {
 #[tokio::test]
 async fn a_new_conversation_opens_on_the_splash() {
     let tui = Tui::start().await;
-    let screen = tui.screen.shows(&["WAITING"]).await;
+    let screen = tui.screen.shows(&["READY"]).await;
     insta::assert_snapshot!(without_conversation_id(&screen));
 }
 
 #[tokio::test]
 async fn a_command_and_its_output_appear_in_the_transcript() {
     let tui = Tui::start().await;
-    tui.screen.shows(&["WAITING"]).await;
+    tui.screen.shows(&["READY"]).await;
     tui.type_line("!echo neon");
-    let screen = tui.screen.shows(&["The command ran:", "WAITING"]).await;
+    let screen = tui.screen.shows(&["The command ran:", "READY"]).await;
     insta::assert_snapshot!(without_conversation_id(&screen));
 }
