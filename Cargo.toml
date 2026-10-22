@@ -20,9 +20,12 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 crossterm = "0.29"
 insta = "1"
+globset = "0.4"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 mlua = { version = "0.12", features = ["luau", "send", "serde"] }
 ratatui = "0.30"
+regex = "1"
+rustix = { version = "1", features = ["process"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

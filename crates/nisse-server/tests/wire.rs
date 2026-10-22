@@ -496,3 +496,137 @@ async fn streamed_text_shows_live_until_the_message_is_committed() {
         .collect();
     assert_eq!(live, ["Let me run that.", ""]);
 }
+
+/// Runs the calls its input lists, as JSON `[{"name", "args"}]`, with the built-in tools.
+struct Scripted;
+
+impl Provider for Scripted {
+    fn model(&self) -> &str {
+        "scripted"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let transcript = turn.transcript()?;
+            let script = transcript.last().unwrap().data["text"].as_str().unwrap();
+            let calls: Vec<serde_json::Value> = serde_json::from_str(script)?;
+            for (index, call) in calls.into_iter().enumerate() {
+                let call = nisse_core::ToolCall {
+                    id: format!("call-{index}"),
+                    name: call["name"].as_str().unwrap().into(),
+                    args: call["args"].clone(),
+                };
+                let approval = nisse_core::approval_for(&call.name);
+                turn.call_tool(call, approval, nisse_core::run_builtin_tool)
+                    .await?;
+            }
+            turn.answer("done")
+        })
+    }
+}
+
+/// Runs `script` on the scripted model, allowing every call that asks, and returns what the
+/// conversation committed until the answer.
+async fn run_allowing(script: serde_json::Value) -> Vec<Entry> {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Scripted),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+    submit(&client, &conversation, &script.to_string()).await;
+    let mut seen = Vec::new();
+    tokio::time::timeout(PATIENCE, async {
+        while let Some(notification) = notifications.recv().await {
+            for entry in entries(&[notification]) {
+                if entry.kind == kinds::APPROVAL_REQUEST {
+                    let call_id = entry.data["call_id"].as_str().unwrap();
+                    resolve(&client, &conversation, call_id, true).await;
+                }
+                let answered = entry.kind == kinds::ASSISTANT;
+                seen.push(entry);
+                if answered {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("the script was answered in time");
+    seen
+}
+
+fn tool_results(entries: &[Entry]) -> Vec<(String, bool)> {
+    entries
+        .iter()
+        .filter(|entry| entry.kind == kinds::TOOL_RESULT)
+        .map(|entry| {
+            (
+                entry.data["output"].as_str().unwrap().to_owned(),
+                entry.data["is_error"].as_bool().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first() {
+    let workspace = tempfile::tempdir().unwrap();
+    let file = workspace.path().join("notes/todo.txt");
+    let path = file.to_str().unwrap();
+    let root = workspace.path().to_str().unwrap();
+
+    let committed = run_allowing(serde_json::json!([
+        { "name": "write", "args": { "path": path, "content": "milk\neggs\nmilk\n" } },
+        { "name": "edit", "args": { "path": path, "old_string": "milk", "new_string": "tea" } },
+        { "name": "edit", "args": { "path": path, "old_string": "eggs\n", "new_string": "eggs\nbread\n" } },
+        { "name": "read", "args": { "path": path, "offset": 2 } },
+        { "name": "grep", "args": { "pattern": "^b", "path": root, "glob": "*.txt" } },
+    ]))
+    .await;
+
+    let asked: Vec<&str> = committed
+        .iter()
+        .filter(|entry| entry.kind == kinds::APPROVAL_REQUEST)
+        .map(|entry| entry.data["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(asked, ["write", "edit", "edit"]);
+    let results = tool_results(&committed);
+    assert!(results[1].1 && results[1].0.contains("appears 2 times"));
+    assert_eq!(
+        results[3],
+        ("     2\teggs\n     3\tbread\n     4\tmilk\n".into(), false)
+    );
+    assert_eq!(results[4], (format!("{path}:3:bread"), false));
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "milk\neggs\nbread\nmilk\n"
+    );
+}
+
+#[tokio::test]
+async fn a_command_past_its_timeout_is_killed_with_what_it_started() {
+    let committed = run_allowing(serde_json::json!([
+        { "name": "bash", "args": { "command": "sleep 60 & echo $!; sleep 60", "timeout_ms": 200 } },
+    ]))
+    .await;
+
+    let (output, is_error) = tool_results(&committed).remove(0);
+    assert!(is_error && output.contains("timed out after 200 ms"));
+    let started: u32 = output.lines().next().unwrap().parse().unwrap();
+    #[cfg(target_os = "linux")]
+    tokio::time::timeout(PATIENCE, async {
+        let alive = || {
+            std::fs::read_to_string(format!("/proc/{started}/stat"))
+                .is_ok_and(|stat| !stat.contains(") Z ") && !stat.contains(") X "))
+        };
+        while alive() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the command's background process was killed");
+}

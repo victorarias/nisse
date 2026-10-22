@@ -691,6 +691,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "globset"
+version = "0.4.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07c34a9410465b45bd9787443bc7370f37735bad04b0f0cd57ff1a3186c98988"
+dependencies = [
+ "aho-corasick",
+ "bstr",
+ "log",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1054,8 +1067,11 @@ name = "nisse-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "globset",
  "nisse-protocol",
+ "regex",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

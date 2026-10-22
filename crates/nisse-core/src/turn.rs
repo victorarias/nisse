@@ -16,6 +16,7 @@ use crate::{
 /// Streamed text is committed at most this often, so a crash loses at most this much of it.
 pub const LIVE_INTERVAL: Duration = Duration::from_millis(100);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Approval {
     NotNeeded,
     Ask,
