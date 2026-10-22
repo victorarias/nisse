@@ -280,7 +280,7 @@ end
 "#;
 
 #[tokio::test]
-async fn a_lua_extension_denies_a_tool_call_and_rewrites_a_prompt() {
+async fn a_luau_extension_denies_a_tool_call_and_rewrites_a_prompt() {
     let root = tempfile::tempdir().unwrap();
     extension(root.path(), "guard", GUARD);
     let ui = broadcast::channel(16).0;
@@ -328,5 +328,36 @@ async fn a_lua_extension_denies_a_tool_call_and_rewrites_a_prompt() {
     assert_eq!(
         status.await.unwrap(),
         ("guard".to_owned(), Some("last command failed".to_owned()))
+    );
+}
+
+#[tokio::test]
+async fn a_hook_keeps_its_time_budget_while_a_slow_command_runs_inside_it() {
+    let root = tempfile::tempdir().unwrap();
+    extension(root.path(), "guard", GUARD);
+    let ui = broadcast::channel(16).0;
+    let sink = ui.clone();
+    let host = LuaHost::load(
+        &[root.path().to_path_buf()],
+        Arc::new(move |changed| {
+            let _ = sink.send(changed);
+        }),
+    )
+    .unwrap();
+    let mut statuses = ui.subscribe();
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(host), ui);
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "!sleep 0.5; false").await;
+    entries_until(&mut notifications, kinds::ASSISTANT).await;
+
+    let UiChanged::Status { extension, text } = statuses.try_recv().unwrap() else {
+        panic!("expected a status from the guard");
+    };
+    assert_eq!(
+        (extension.as_str(), text.as_deref()),
+        ("guard", Some("last command failed"))
     );
 }

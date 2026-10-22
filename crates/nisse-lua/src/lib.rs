@@ -97,7 +97,11 @@ fn run_chain(
     *extension.deadline.lock().expect("deadline lock") = Some(Instant::now() + HOOK_BUDGET);
     let ran = extension.lua.scope(|scope| {
         let next = scope.create_function(|lua, e: mlua::Value| {
+            let paused = extension.deadline.lock().expect("deadline lock").take();
+            let left = paused.map(|deadline| deadline.saturating_duration_since(Instant::now()));
             let result = run_chain(rest, lua.from_value(e)?, engine);
+            *extension.deadline.lock().expect("deadline lock") =
+                left.map(|left| Instant::now() + left);
             *continued.lock().expect("continued lock") = Some(result.clone());
             lua.to_value(&result)
         })?;
