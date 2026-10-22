@@ -15,6 +15,7 @@ nisse-lua = { path = "crates/nisse-lua" }
 nisse-server = { path = "crates/nisse-server" }
 nisse-client = { path = "crates/nisse-client" }
 nisse-tui = { path = "crates/nisse-tui" }
+nisse-claude = { path = "crates/nisse-claude" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }

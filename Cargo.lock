@@ -1038,6 +1038,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "nisse-claude"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "nisse-client",
+ "nisse-core",
+ "nisse-protocol",
+ "nisse-server",
+ "nix 0.31.3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "nisse-client"
 version = "0.1.0"
 dependencies = [

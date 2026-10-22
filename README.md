@@ -71,6 +71,7 @@ budget per hook.
 | `nisse-protocol` | Wire types, the JSON-RPC envelope, transports, schema export |
 | `nisse-core` | The store, conversations, the inbox and runs, the model and tool traits |
 | `nisse-lua` | Extension loading and the `nisse` table |
+| `nisse-claude` | Claude through Claude Code's stream-json control protocol, and its replay |
 | `nisse-server` | Connections and fan-out |
 | `nisse-client` | A typed client |
 | `nisse-tui` | The neon terminal UI |
