@@ -1,0 +1,28 @@
+---
+source: crates/nisse-tui/tests/screen.rs
+expression: without_conversation_id(&screen)
+---
+░▒▓ N I S S E ▓▒░ // conversation [id]
+
+  OWNER ▓▒░ ───────────────────────────────────────────────────────────────────
+   !echo neon
+
+ ┏━ ⚙ BASH  echo neon
+ ┃ neon
+ ┗━ ✓ DONE
+
+  NISSE ▓▒░ ───────────────────────────────────────────────────────────────────
+   The command ran:
+   neon
+
+
+
+
+
+
+
+
+╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
+│ ❯ ▍type a message, or !cmd to run a shell command                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ■ READY ▓▒░                                               echo  │  nisse 0.1.0
