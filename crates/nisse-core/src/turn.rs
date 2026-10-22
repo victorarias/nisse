@@ -109,7 +109,7 @@ impl Turn {
         })
     }
 
-    fn settled_live<T>(
+    pub(crate) fn settled_live<T>(
         &self,
         write: impl FnOnce(&mut crate::store::Tx<'_>, &Actor) -> Result<T>,
     ) -> Result<T> {

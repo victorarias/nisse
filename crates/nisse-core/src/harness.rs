@@ -243,13 +243,12 @@ impl Harness {
         };
         let turn = Turn::new(self.clone(), conversation_id.clone(), actor.clone());
         let ran = provider.run(&turn).await;
-        self.commit(&conversation_id, |tx| match &ran {
+        turn.settled_live(|tx, actor| match &ran {
             Ok(()) => tx.settle_placed(SubmissionStatus::Answered),
             Err(error) => {
-                tx.set_live("")?;
                 tx.append(
                     kinds::ASSISTANT,
-                    &actor,
+                    actor,
                     json!({ "text": format!("Model error: {error:#}"), "is_error": true }),
                 )?;
                 tx.settle_placed(SubmissionStatus::Unanswered)

@@ -435,7 +435,14 @@ impl Nisse {
 
     /// The first text the model is still writing that reaches clients.
     pub async fn live(&mut self) -> String {
-        tokio::time::timeout(PATIENCE, async {
+        self.live_within(PATIENCE)
+            .await
+            .expect("live text arrived in time")
+    }
+
+    /// The first text the model is still writing that reaches clients within `window`, if any.
+    pub async fn live_within(&mut self, window: Duration) -> Option<String> {
+        tokio::time::timeout(window, async {
             loop {
                 if let Some(ServerNotification::Committed(commit)) = self.notifications.recv().await
                 {
@@ -447,7 +454,7 @@ impl Nisse {
             }
         })
         .await
-        .expect("live text arrived in time")
+        .ok()
     }
 
     pub async fn finish(&mut self, allow: bool) -> Vec<Entry> {

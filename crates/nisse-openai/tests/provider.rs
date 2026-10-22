@@ -5,6 +5,7 @@ mod common;
 use std::os::unix::fs::PermissionsExt;
 
 use common::{ACCOUNT, Fake, Nisse, access_token, assert_requests, exchange, sign_in};
+use nisse_core::LIVE_INTERVAL;
 use nisse_protocol::kinds;
 use serde_json::{Value, json};
 
@@ -168,6 +169,19 @@ async fn a_stream_cut_before_the_response_finished_is_an_error_not_a_hang() {
         text.contains("ended before the response finished"),
         "{text}"
     );
+}
+
+#[tokio::test]
+async fn a_message_cut_off_by_a_failed_stream_does_not_stay_live() {
+    let fake = Fake::start().await;
+    let (_home, auth_path) = signed_in(&fake, 3600).await;
+    fake.play("stream_cut");
+    let mut nisse = Nisse::start(&fake, &auth_path).await;
+
+    nisse.converse("hello", true).await;
+    let late_live = nisse.live_within(LIVE_INTERVAL * 3).await;
+
+    assert_eq!(late_live, None);
 }
 
 #[tokio::test]
