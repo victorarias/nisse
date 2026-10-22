@@ -16,6 +16,7 @@ nisse-server = { path = "crates/nisse-server" }
 nisse-client = { path = "crates/nisse-client" }
 nisse-tui = { path = "crates/nisse-tui" }
 nisse-openai = { path = "crates/nisse-openai" }
+nisse-claude = { path = "crates/nisse-claude" }
 
 anyhow = "1"
 base64 = "0.22"
