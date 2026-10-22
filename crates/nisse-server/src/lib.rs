@@ -15,7 +15,7 @@ use nisse_protocol::{
 };
 use serde::Serialize;
 use tokio::{
-    net::{TcpListener, UnixListener},
+    net::UnixListener,
     sync::{
         broadcast,
         mpsc::{self, error::TrySendError},
@@ -60,28 +60,6 @@ impl Server {
     }
 
     pub async fn serve_unix(self: Arc<Self>, listener: UnixListener) -> Result<()> {
-        loop {
-            let (stream, _) = listener.accept().await?;
-            let server = self.clone();
-            tokio::spawn(async move {
-                match tokio_tungstenite::accept_async(stream).await {
-                    Ok(socket) => {
-                        server
-                            .clone()
-                            .serve(transport::websocket(socket), server.owner.clone())
-                            .await
-                    }
-                    Err(error) => eprintln!("nisse: websocket handshake failed: {error}"),
-                }
-            });
-        }
-    }
-
-    /// WebSocket over TCP, for the web app. Until per-person identity lands, bind it to loopback.
-    pub async fn listen_tcp(self: Arc<Self>, address: &str) -> Result<()> {
-        let listener = TcpListener::bind(address)
-            .await
-            .with_context(|| format!("binding {address}"))?;
         loop {
             let (stream, _) = listener.accept().await?;
             let server = self.clone();

@@ -2,9 +2,9 @@
 
 A durable, multiplayer coding agent. One Rust app server owns every conversation
 and commits each step to SQLite before anyone sees it; thin clients draw what it
-commits: an 80s neon terminal UI, [attn](https://github.com/SolenesInc/attn),
-and (soon) a web app. Lua extensions change what the agent does and what every
-client draws.
+commits. The first is an 80s neon terminal UI, which is also how
+[attn](https://github.com/SolenesInc/attn) hosts Nisse. Luau extensions change
+what the agent does and what every client draws.
 
 ![The neon TUI](docs/chat.png)
 
@@ -14,14 +14,13 @@ Design: [Nisse: architecture and design](https://claude.ai/artifact/PNaHXc93Mxhq
 
 Milestone 0, the scaffold. What runs today:
 
-- The app server over an in-process channel, stdio, a unix-socket WebSocket, and
-  TCP WebSocket.
+- The app server over an in-process channel, stdio, and a unix-socket WebSocket.
 - A SQLite commit log of conversations, entries and submissions. Inputs are
   idempotent by `request_id`, queue as follow-ups or steers, and a run cut off
   by a crash is answered after reopening.
 - An echo model that runs `bash` for input starting with `!`, so the
   tool path and its hooks are real before the providers land.
-- Lua extensions with `tool.call` and `prompt.submit` hooks, `nisse.ui.status`
+- Luau extensions with `tool.call` and `prompt.submit` hooks, `nisse.ui.status`
   and `nisse.ui.toast`.
 - The neon TUI, which attaches to a running server or embeds one.
 

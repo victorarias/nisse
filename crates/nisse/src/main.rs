@@ -36,9 +36,6 @@ enum Command {
         /// Serve one client on stdin and stdout.
         #[arg(long)]
         stdio: bool,
-        /// Also listen for WebSocket clients on this TCP address, such as 127.0.0.1:7477.
-        #[arg(long)]
-        listen: Option<String>,
     },
     /// Send one prompt and print the run as it commits.
     Exec { prompt: String },
@@ -55,7 +52,7 @@ async fn main() -> Result<()> {
             .join(".nisse"),
     };
     match cli.command {
-        Some(Command::Serve { stdio, listen }) => serve(&home, stdio, listen).await,
+        Some(Command::Serve { stdio }) => serve(&home, stdio).await,
         Some(Command::Exec { prompt }) => {
             let (client, notifications, _server) = connect(&home, cli.connect).await?;
             exec(client, notifications, prompt).await
@@ -113,19 +110,11 @@ fn start_server(home: &std::path::Path) -> Result<Arc<Server>> {
     Ok(Server::new(harness, ui, owner()))
 }
 
-async fn serve(home: &std::path::Path, stdio: bool, listen: Option<String>) -> Result<()> {
+async fn serve(home: &std::path::Path, stdio: bool) -> Result<()> {
     let server = start_server(home)?;
     if stdio {
         server.serve_stdio().await;
         return Ok(());
-    }
-    if let Some(address) = listen {
-        let tcp = server.clone();
-        tokio::spawn(async move {
-            if let Err(error) = tcp.listen_tcp(&address).await {
-                eprintln!("nisse: {error:#}");
-            }
-        });
     }
     let socket = home.join("nisse.sock");
     let listener = Server::bind_unix(&socket)?;
