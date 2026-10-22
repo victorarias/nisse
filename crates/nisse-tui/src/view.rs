@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    App,
+    App, gnome,
     theme::{LOGO, Theme},
 };
 
@@ -76,14 +76,11 @@ fn short_id(id: &str) -> String {
 }
 
 fn draw_splash(frame: &mut Frame, area: Rect, theme: &Theme) {
-    let logo_fits = area.width as usize > LOGO[0].chars().count() + 4;
-    let mut lines: Vec<Line> = if logo_fits {
-        LOGO.iter()
-            .zip(theme.logo)
-            .map(|(row, color)| logo_row(row, color, theme))
-            .collect()
+    let logo_width = LOGO[0].chars().count();
+    let mut lines: Vec<Line> = if area.width as usize > gnome::WIDTH + GNOME_GAP + logo_width {
+        gnome_beside_logo(theme)
     } else {
-        vec![Line::styled("N I S S E", theme.glow(theme.cyan))]
+        gnome::rows(theme).into_iter().map(Line::from).collect()
     };
     lines.push(Line::raw(""));
     lines.push(Line::styled(
@@ -106,6 +103,29 @@ fn draw_splash(frame: &mut Frame, area: Rect, theme: &Theme) {
         ..area
     };
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), centred);
+}
+
+const GNOME_GAP: usize = 4;
+
+/// The gnome on the left, the wordmark beside it, centred on the gnome's height.
+fn gnome_beside_logo(theme: &Theme) -> Vec<Line<'static>> {
+    let logo_width = LOGO[0].chars().count();
+    let first_logo_row = (gnome::HEIGHT - LOGO.len()) / 2;
+    gnome::rows(theme)
+        .into_iter()
+        .enumerate()
+        .map(|(row, mut spans)| {
+            spans.push(Span::raw(" ".repeat(GNOME_GAP)));
+            match row
+                .checked_sub(first_logo_row)
+                .and_then(|index| LOGO.get(index).zip(theme.logo.get(index)))
+            {
+                Some((logo, color)) => spans.extend(logo_row(logo, *color, theme).spans),
+                None => spans.push(Span::raw(" ".repeat(logo_width))),
+            }
+            Line::from(spans)
+        })
+        .collect()
 }
 
 fn logo_row(row: &str, color: Color, theme: &Theme) -> Line<'static> {

@@ -1,5 +1,6 @@
 //! Nisse's terminal UI: a client of the app server that draws only when something changed.
 
+mod gnome;
 mod theme;
 mod view;
 
