@@ -22,6 +22,7 @@ use crate::{
 };
 
 const COMMIT_BACKLOG: usize = 4096;
+const RESERVED_KINDS: &str = "nisse.";
 
 type Approvals = HashMap<(String, String), oneshot::Sender<Decision>>;
 
@@ -53,6 +54,8 @@ pub enum SubmitError {
     Busy,
     #[error("denied: {0}")]
     Denied(String),
+    #[error("only Nisse writes {0} entries")]
+    ReservedKind(String),
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
@@ -127,6 +130,11 @@ impl Harness {
         author: Actor,
     ) -> Result<ConversationSubmitResult, SubmitError> {
         let conversation_id = params.conversation_id.clone();
+        if let Input::Write { kind, .. } = &params.input
+            && kind.starts_with(RESERVED_KINDS)
+        {
+            return Err(SubmitError::ReservedKind(kind.clone()));
+        }
         {
             let store = self.store();
             if store.conversation(&conversation_id)?.is_none() {
@@ -155,17 +163,20 @@ impl Harness {
         };
 
         if let Input::Write { kind, data } = &input {
-            let submission_id = self.commit(&conversation_id, |tx| {
+            let submitted = self.commit(&conversation_id, |tx| {
+                if let Some(earlier) = tx.submission_by_request(&params.request_id)? {
+                    return Ok(earlier);
+                }
                 let id =
                     tx.insert_submission(&params.request_id, params.when_busy, &input, &author)?;
                 tx.append(kind, &author, data.clone())?;
                 tx.set_submission_status(&id, SubmissionStatus::Answered)?;
-                Ok(id)
+                Ok(ConversationSubmitResult {
+                    submission_id: id,
+                    status: SubmissionStatus::Answered,
+                })
             })?;
-            return Ok(ConversationSubmitResult {
-                submission_id,
-                status: SubmissionStatus::Answered,
-            });
+            return Ok(submitted);
         }
 
         let is_busy = self
@@ -177,14 +188,22 @@ impl Harness {
         if is_busy && params.when_busy == WhenBusy::Reject {
             return Err(SubmitError::Busy);
         }
-        let submission_id = self.commit(&conversation_id, |tx| {
-            tx.insert_submission(&params.request_id, params.when_busy, &input, &author)
+        let submitted = self.commit(&conversation_id, |tx| {
+            if let Some(earlier) = tx.submission_by_request(&params.request_id)? {
+                return Ok(earlier);
+            }
+            Ok(ConversationSubmitResult {
+                submission_id: tx.insert_submission(
+                    &params.request_id,
+                    params.when_busy,
+                    &input,
+                    &author,
+                )?,
+                status: SubmissionStatus::Queued,
+            })
         })?;
         self.wake(&conversation_id);
-        Ok(ConversationSubmitResult {
-            submission_id,
-            status: SubmissionStatus::Queued,
-        })
+        Ok(submitted)
     }
 
     fn wake(&self, conversation_id: &str) {

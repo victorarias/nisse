@@ -190,6 +190,9 @@ impl Connection {
                         RpcError::INVALID_PARAMS,
                         format!("no conversation {id}"),
                     )),
+                    Err(error @ SubmitError::ReservedKind(_)) => {
+                        Err(RpcError::new(RpcError::INVALID_PARAMS, error.to_string()))
+                    }
                     Err(error @ (SubmitError::Busy | SubmitError::Denied(_))) => Err(RpcError {
                         code: RpcError::INVALID_REQUEST,
                         message: error.to_string(),

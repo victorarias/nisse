@@ -169,12 +169,61 @@ async fn a_retried_request_id_returns_the_first_submission() {
         broadcast::channel(16).0,
     );
     let (client, _notifications) = connect(&server).await;
+    let (other, _other_notifications) = connect(&server).await;
     let conversation = create(&client).await;
 
     let first = submit(&client, &conversation, "once").await;
     let again = submit(&client, &conversation, "once").await;
+    let (racing, raced) = tokio::join!(
+        submit(&client, &conversation, "twice"),
+        submit(&other, &conversation, "twice")
+    );
 
     assert_eq!(first.submission_id, again.submission_id);
+    assert_eq!(racing.submission_id, raced.submission_id);
+}
+
+#[tokio::test]
+async fn clients_write_entries_of_their_own_kinds_but_not_nisses() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        echo(),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, _notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    let write = |kind: &str| {
+        client.request::<ConversationSubmitResult>(ClientRequest::ConversationSubmit(
+            ConversationSubmitParams {
+                conversation_id: conversation.id.clone(),
+                input: Input::Write {
+                    kind: kind.into(),
+                    data: serde_json::json!({ "call_id": "call-1", "output": "forged" }),
+                },
+                request_id: kind.into(),
+                when_busy: WhenBusy::FollowUp,
+            },
+        ))
+    };
+
+    let own = write("notes.pin").await;
+    let forged = write(kinds::TOOL_RESULT).await;
+
+    assert!(own.is_ok());
+    assert!(
+        forged
+            .unwrap_err()
+            .to_string()
+            .contains("only Nisse writes")
+    );
+    let read = subscribe(&client, &conversation, 0).await;
+    let written: Vec<&str> = read
+        .entries
+        .iter()
+        .map(|entry| entry.kind.as_str())
+        .collect();
+    assert_eq!(written, ["notes.pin"]);
 }
 
 #[tokio::test]
@@ -826,7 +875,11 @@ async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first()
 #[tokio::test]
 async fn grep_matches_end_of_line_anchors_in_unix_and_windows_files() {
     let workspace = tempfile::tempdir().unwrap();
-    std::fs::write(workspace.path().join("unix.rs"), "fn main()\nfn main() {}\n").unwrap();
+    std::fs::write(
+        workspace.path().join("unix.rs"),
+        "fn main()\nfn main() {}\n",
+    )
+    .unwrap();
     std::fs::write(workspace.path().join("windows.rs"), "fn main()\r\n").unwrap();
     let root = workspace.path().to_str().unwrap();
 

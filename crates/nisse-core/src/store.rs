@@ -2,7 +2,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use nisse_protocol::{
-    Actor, Commit, Conversation, ConversationStatus, Entry, Input, Seq, SubmissionStatus, WhenBusy,
+    Actor, Commit, Conversation, ConversationStatus, ConversationSubmitResult, Entry, Input, Seq,
+    SubmissionStatus, WhenBusy,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
@@ -174,11 +175,8 @@ impl Store {
         conversation_id: &str,
         request_id: &str,
     ) -> Result<Option<Submission>> {
-        self.submissions_where(
-            "conversation_id = ?1 AND request_id = ?2",
-            params![conversation_id, request_id],
-        )
-        .map(|mut found| found.pop())
+        self.submissions_where(BY_REQUEST, params![conversation_id, request_id])
+            .map(|mut found| found.pop())
     }
 
     /// The submission a run is answering, then the queued ones, oldest first.
@@ -288,6 +286,22 @@ impl Tx<'_> {
         submissions_where(&self.tx, OPEN_SUBMISSIONS, params![self.conversation_id])
     }
 
+    pub fn submission_by_request(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<ConversationSubmitResult>> {
+        Ok(submissions_where(
+            &self.tx,
+            BY_REQUEST,
+            params![self.conversation_id, request_id],
+        )?
+        .pop()
+        .map(|earlier| ConversationSubmitResult {
+            submission_id: earlier.id,
+            status: earlier.status,
+        }))
+    }
+
     /// The conversation's entries, this commit's own included.
     pub fn entries(&self) -> Result<Vec<Entry>> {
         entries_since(&self.tx, &self.conversation_id, 0)
@@ -355,6 +369,8 @@ fn entries_since(db: &Connection, conversation_id: &str, since_seq: Seq) -> Resu
     })?;
     rows.map(|row| row?).collect()
 }
+
+const BY_REQUEST: &str = "conversation_id = ?1 AND request_id = ?2";
 
 const OPEN_SUBMISSIONS: &str = "conversation_id = ?1 AND status IN ('placed', 'queued')
      ORDER BY status = 'queued', seq";
