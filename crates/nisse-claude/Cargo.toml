@@ -17,6 +17,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 nisse-client.workspace = true
+rustix = { workspace = true, features = ["event"] }
 nisse-server.workspace = true
 tempfile.workspace = true
 

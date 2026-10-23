@@ -7,7 +7,10 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use rustix::process::{Pid, Signal, kill_process_group};
+use rustix::{
+    io::Errno,
+    process::{Pid, Signal, WaitId, WaitIdOptions, WaitIdStatus, kill_process_group, waitid},
+};
 use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -43,8 +46,9 @@ const PARENT_SESSION_VARS: &[&str] = &[
 ];
 
 /// One claude process in its own process group. Dropping it stops claude with SIGTERM, which
-/// lets it stop the tools it runs in groups of their own, and kills the group if claude has not
-/// exited by `STOP_PATIENCE`. The process is reaped only here, so its pid stays ours until then.
+/// lets it stop the tools it runs in groups of their own, then kills what is left of its group
+/// once claude has exited or `STOP_PATIENCE` has passed. The process is reaped only then, so its
+/// pid, and with it the group's id, stays ours until the group is killed.
 pub(crate) struct Process {
     child: Option<Child>,
     pub(crate) inbound: mpsc::Receiver<Value>,
@@ -110,8 +114,8 @@ impl Process {
     pub(crate) fn has_exited(&mut self) -> bool {
         let exited = self
             .child
-            .as_mut()
-            .is_none_or(|child| !matches!(child.try_wait(), Ok(None)));
+            .as_ref()
+            .is_none_or(|child| exit_status(child).is_some());
         exited || self.inbound.is_closed()
     }
 
@@ -119,17 +123,14 @@ impl Process {
     pub(crate) async fn exit_reason(&mut self) -> String {
         let deadline = Instant::now() + EXIT_PATIENCE;
         let mut status = None;
-        while let Some(child) = self.child.as_mut() {
-            status = child.try_wait().ok().flatten();
+        while let Some(child) = self.child.as_ref() {
+            status = exit_status(child);
             if status.is_some() || Instant::now() >= deadline {
                 break;
             }
             tokio::time::sleep(EXIT_POLL).await;
         }
-        let status = status.map_or_else(
-            || "it closed its output".to_owned(),
-            |status| status.to_string(),
-        );
+        let status = status.map_or_else(|| "it closed its output".to_owned(), describe);
         let stderr = self.stderr.lock().expect("stderr lock").trim().to_owned();
         if stderr.is_empty() {
             format!("claude stopped ({status})")
@@ -148,23 +149,35 @@ impl Drop for Process {
 }
 
 fn stop(mut child: Child) {
-    if let Ok(Some(_)) = child.try_wait() {
-        return;
-    }
     let group = Pid::from_child(&child);
     let _ = kill_process_group(group, Signal::TERM);
     std::thread::spawn(move || {
         let deadline = Instant::now() + STOP_PATIENCE;
-        while Instant::now() < deadline {
-            if let Ok(Some(_)) = child.try_wait() {
-                return;
-            }
+        while exit_status(&child).is_none() && Instant::now() < deadline {
             std::thread::sleep(EXIT_POLL);
         }
         let _ = kill_process_group(group, Signal::KILL);
-        let _ = child.kill();
         let _ = child.wait();
     });
+}
+
+/// How the process ended, without reaping it.
+fn exit_status(child: &Child) -> Option<WaitIdStatus> {
+    let options = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
+    loop {
+        match waitid(WaitId::Pid(Pid::from_child(child)), options) {
+            Err(Errno::INTR) => {}
+            ended => return ended.ok().flatten(),
+        }
+    }
+}
+
+fn describe(status: WaitIdStatus) -> String {
+    match (status.exit_status(), status.terminating_signal()) {
+        (Some(code), _) => format!("exit status: {code}"),
+        (None, Some(signal)) => format!("signal: {signal}"),
+        (None, None) => "it ended".to_owned(),
+    }
 }
 
 async fn write_frames(

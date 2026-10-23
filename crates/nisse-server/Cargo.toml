@@ -17,6 +17,7 @@ tokio-tungstenite.workspace = true
 
 [dev-dependencies]
 nisse-client.workspace = true
+rustix = { workspace = true, features = ["event"] }
 tempfile.workspace = true
 
 [lints]

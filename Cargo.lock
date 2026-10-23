@@ -1593,6 +1593,7 @@ dependencies = [
  "nisse-core",
  "nisse-lua",
  "nisse-protocol",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

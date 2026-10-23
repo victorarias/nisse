@@ -556,13 +556,21 @@ async fn a_steer_sent_during_a_tool_reaches_claude_in_the_same_run() {
     scenario.keep_recording(&watch.conversation);
 }
 
-const LONG_COMMAND: &str = "touch started.txt && python3 -c 'import time; time.sleep(120)'";
+const LONG_COMMAND: &str =
+    "echo started > started.fifo && python3 -c 'import time; time.sleep(120)'";
 
 #[test]
 fn a_run_killed_mid_tool_resumes_claudes_session_where_nisse_last_committed() {
     let scenario = Scenario::new("resume_after_kill");
     let home = tempfile::tempdir().unwrap();
     let path = home.path().join("nisse.sqlite");
+
+    let started = scenario.workspace.path().join("started.fifo");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&started)
+        .status()
+        .unwrap();
+    assert!(made.success());
 
     let crashed = tokio::runtime::Runtime::new().unwrap();
     let conversation = crashed.block_on(async {
@@ -582,13 +590,11 @@ fn a_run_killed_mid_tool_resumes_claudes_session_where_nisse_last_committed() {
             .await;
         watch.until_kind(kinds::APPROVAL).await;
         if live_claude().is_some() {
-            let started = scenario.workspace.path().join("started.txt");
-            let ran = tokio::time::timeout(patience(), async {
-                while !started.exists() {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            });
-            ran.await.expect("the command started");
+            let ran = tokio::task::spawn_blocking(move || std::fs::read_to_string(started));
+            let said = tokio::time::timeout(patience(), ran)
+                .await
+                .expect("the command started in time");
+            assert_eq!(said.unwrap().unwrap(), "started\n");
         }
         watch.conversation.clone()
     });
@@ -745,6 +751,66 @@ async fn kill(pid: i32) {
         .expect("the killed claude exited")
         .unwrap()
         .unwrap();
+}
+
+/// Waits, with a deadline, for a process this test did not start to end.
+async fn ends(pid: i32) {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        process::{Pid, PidfdFlags, pidfd_open},
+    };
+    let Ok(pidfd) = pidfd_open(Pid::from_raw(pid).unwrap(), PidfdFlags::empty()) else {
+        return;
+    };
+    let deadline = Timespec {
+        tv_sec: patience().as_secs() as i64,
+        tv_nsec: 0,
+    };
+    let ready = tokio::task::spawn_blocking(move || {
+        poll(&mut [PollFd::new(&pidfd, PollFlags::IN)], Some(&deadline))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(ready, 1, "process {pid} kept running");
+}
+
+#[tokio::test]
+async fn a_claude_that_crashes_leaves_nothing_it_started_running() {
+    use std::os::unix::fs::PermissionsExt;
+    let workspace = tempfile::tempdir().unwrap();
+    let crashing = workspace.path().join("claude");
+    std::fs::write(
+        &crashing,
+        "#!/bin/sh\nsleep 600 > /dev/null 2>&1 &\necho $! > started.pid\nexit 3\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&crashing, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let claude = Arc::new(Claude::new(ClaudeOptions {
+        binary: crashing,
+        cwd: workspace.path().to_path_buf(),
+        model: None,
+        record: None,
+    }));
+    let server = serve(Store::open_in_memory().unwrap(), claude, Arc::new(NoHooks));
+    let mut watch = Watch::new_conversation(&server).await;
+
+    watch.submit("hello", WhenBusy::FollowUp).await;
+    watch
+        .until("the model error", |watch| {
+            watch.status == ConversationStatus::Idle && watch.has(kinds::ASSISTANT)
+        })
+        .await;
+
+    assert!(
+        watch
+            .final_text()
+            .contains("claude stopped (exit status: 3)"),
+        "{}",
+        watch.final_text()
+    );
+    let started = std::fs::read_to_string(workspace.path().join("started.pid")).unwrap();
+    ends(started.trim().parse().unwrap()).await;
 }
 
 #[tokio::test]
