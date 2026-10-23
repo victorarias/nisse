@@ -96,9 +96,14 @@ impl Turn {
 
     /// One finished message from the model, in the middle of a run.
     pub fn say(&self, text: &str) -> Result<()> {
+        self.say_with_state(text, None)
+    }
+
+    /// `say`, committing `provider_state` with the message when there is one.
+    pub fn say_with_state(&self, text: &str, provider_state: Option<&Value>) -> Result<()> {
         self.settled_live(|tx, actor| {
             tx.append(kinds::ASSISTANT, actor, json!({ "text": text }))?;
-            Ok(())
+            provider_state.map_or(Ok(()), |state| tx.set_provider_state(state))
         })
     }
 
@@ -133,9 +138,31 @@ impl Turn {
     where
         F: FnOnce(ToolCall) -> ToolOutcome + Send + 'static,
     {
+        self.call_tool_with_state(call, approval, run, || Ok(None))
+            .await
+    }
+
+    /// `call_tool`, committing the provider state `provider_state` returns, when it returns
+    /// one, together with the call and again with its result. It is asked as each of the two
+    /// is committed.
+    pub async fn call_tool_with_state<F, S>(
+        &self,
+        call: ToolCall,
+        approval: Approval,
+        run: F,
+        mut provider_state: S,
+    ) -> Result<ToolOutcome>
+    where
+        F: FnOnce(ToolCall) -> ToolOutcome + Send + 'static,
+        S: FnMut() -> Result<Option<Value>> + Send,
+    {
+        let mut keep_provider_state = |tx: &mut crate::store::Tx<'_>| match provider_state()? {
+            Some(state) => tx.set_provider_state(&state),
+            None => Ok(()),
+        };
         self.settled_live(|tx, actor| {
             tx.append(kinds::TOOL_CALL, actor, serde_json::to_value(&call)?)?;
-            Ok(())
+            keep_provider_state(tx)
         })?;
         let hooks = self.harness.hooks();
         let committed_call = call.clone();
@@ -172,6 +199,7 @@ impl Turn {
                 &Actor::System,
                 tool_result(&committed_call, &outcome),
             )?;
+            keep_provider_state(tx)?;
             place_steers(tx)
         })?;
         Ok(outcome)

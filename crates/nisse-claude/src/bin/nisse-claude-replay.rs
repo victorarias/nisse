@@ -2,7 +2,7 @@
 //! working directory, takes the recorded processes in the order they were started (counting
 //! starts in `.nisse-claude-replay.started`) and checks that its argv matches, prints that
 //! process's inbound frames in order, and checks every frame Nisse writes against the recorded
-//! one. `"<any>"` matches any value; `<request:N>` binds to the id Nisse chose; `<session>`,
+//! one. `"<any>"` matches any value; `<nisse:N>` binds to the id Nisse chose there; `<session>`,
 //! `<workspace>` and `<home>` stand for this run's values. A mismatch exits with status 1.
 
 use std::{
@@ -208,7 +208,7 @@ fn matches(expected: &Value, actual: &Value, bindings: &mut Bindings) -> bool {
 }
 
 fn is_binding(text: &str) -> bool {
-    text.strip_prefix("<request:")
+    text.strip_prefix("<nisse:")
         .and_then(|rest| rest.strip_suffix('>'))
         .is_some_and(|number| number.chars().all(|digit| digit.is_ascii_digit()))
 }

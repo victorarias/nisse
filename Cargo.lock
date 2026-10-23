@@ -1501,7 +1501,7 @@ dependencies = [
  "nisse-core",
  "nisse-protocol",
  "nisse-server",
- "nix 0.31.3",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
