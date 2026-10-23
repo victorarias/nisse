@@ -899,3 +899,71 @@ async fn a_command_past_its_timeout_is_killed_with_what_it_started() {
     .await
     .expect("the command's background process was killed");
 }
+
+/// Asks to run two commands at once, the way models issue parallel tool calls.
+struct TwoAtOnce;
+
+impl Provider for TwoAtOnce {
+    fn model(&self) -> &str {
+        "two-at-once"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let call = |id: &str| nisse_core::ToolCall {
+                id: id.into(),
+                name: "Bash".into(),
+                args: serde_json::json!({ "command": format!("echo {id}") }),
+            };
+            let (first, second) = tokio::join!(
+                turn.call_tool(
+                    call("first"),
+                    nisse_core::Approval::Ask,
+                    nisse_core::run_builtin_tool
+                ),
+                turn.call_tool(
+                    call("second"),
+                    nisse_core::Approval::Ask,
+                    nisse_core::run_builtin_tool
+                ),
+            );
+            turn.answer(&format!(
+                "{} {}",
+                first?.output.trim(),
+                second?.output.trim()
+            ))
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_luau_hook_waiting_on_one_approval_does_not_hold_up_a_parallel_call() {
+    let root = tempfile::tempdir().unwrap();
+    extension(root.path(), "guard", GUARD);
+    let host = LuaHost::load(&[root.path().to_path_buf()], Arc::new(|_| {})).unwrap();
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(TwoAtOnce),
+        Arc::new(host),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "go").await;
+    let mut asked = Vec::new();
+    while asked.len() < 2 {
+        asked.extend(
+            entries_until(&mut notifications, kinds::APPROVAL_REQUEST)
+                .await
+                .into_iter()
+                .filter(|entry| entry.kind == kinds::APPROVAL_REQUEST),
+        );
+    }
+    resolve(&client, &conversation, "second", true).await;
+    resolve(&client, &conversation, "first", true).await;
+    let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
+
+    assert_eq!(answered.last().unwrap().data["text"], "first second");
+}

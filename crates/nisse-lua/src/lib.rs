@@ -1,6 +1,9 @@
 //! Luau extensions. Each extension is a folder with `init.luau`, which returns `function(on, options)`.
 //! Every hook is `hook(nisse, e, next)`: return without `next` to answer for the chain, or call
 //! `next(e)` to continue to later extensions and then Nisse's own behaviour.
+//!
+//! Each hook runs as a coroutine and `next` yields it, so an extension's VM is free while the rest
+//! of the chain runs: a tool, an approval, or the same extension's hook for a parallel call.
 
 use std::{
     path::{Path, PathBuf},
@@ -9,7 +12,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use mlua::{Function, Lua, LuaOptions, LuaSerdeExt, StdLib, Table, VmState};
+use mlua::{
+    Function, IntoLuaMulti, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, Table, VmState,
+};
 use nisse_core::{Hooks, ToolCall, ToolOutcome};
 use nisse_protocol::UiChanged;
 use serde_json::{Value, json};
@@ -26,7 +31,15 @@ struct Extension {
     name: String,
     lua: Lua,
     hooks: Vec<Hook>,
+    next: Function,
+    next_marker: Table,
+    resuming: Mutex<()>,
     deadline: Arc<Mutex<Option<Instant>>>,
+}
+
+enum Step {
+    Next(Value),
+    Returned(Value),
 }
 
 struct Hook {
@@ -93,37 +106,34 @@ fn run_chain(
     let Some(((extension, hook), rest)) = chain.split_first() else {
         return engine(input);
     };
-    let continued: Mutex<Option<Value>> = Mutex::new(None);
-    *extension.deadline.lock().expect("deadline lock") = Some(Instant::now() + HOOK_BUDGET);
-    let ran = extension.lua.scope(|scope| {
-        let next = scope.create_function(|lua, e: mlua::Value| {
-            let paused = extension.deadline.lock().expect("deadline lock").take();
-            let left = paused.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-            let result = run_chain(rest, lua.from_value(e)?, engine);
-            *extension.deadline.lock().expect("deadline lock") =
-                left.map(|left| Instant::now() + left);
-            *continued.lock().expect("continued lock") = Some(result.clone());
-            lua.to_value(&result)
-        })?;
-        let nisse: Table = extension.lua.globals().get("nisse")?;
-        let returned: mlua::Value =
-            hook.function
-                .call((nisse, extension.lua.to_value(&input)?, next))?;
-        extension.lua.from_value::<Value>(returned)
-    });
-    *extension.deadline.lock().expect("deadline lock") = None;
+    let mut continued: Option<Value> = None;
+    let ran = (|| -> mlua::Result<Value> {
+        let lua = &extension.lua;
+        let coroutine = lua.create_thread(hook.function.clone())?;
+        let nisse: Table = lua.globals().get("nisse")?;
+        let mut budget = HOOK_BUDGET;
+        let mut args =
+            (nisse, lua.to_value(&input)?, extension.next.clone()).into_lua_multi(lua)?;
+        loop {
+            match extension.resume(&coroutine, args, &mut budget)? {
+                Step::Returned(Value::Null) => return Ok(continued.clone().unwrap_or(Value::Null)),
+                Step::Returned(result) => return Ok(result),
+                Step::Next(e) => {
+                    let result = run_chain(rest, e, engine);
+                    args = lua.to_value(&result)?.into_lua_multi(lua)?;
+                    continued = Some(result);
+                }
+            }
+        }
+    })();
     match ran {
-        Ok(Value::Null) => continued
-            .into_inner()
-            .expect("continued lock")
-            .unwrap_or(Value::Null),
         Ok(result) => result,
         Err(error) => {
             eprintln!(
                 "nisse: extension {}: {} hook failed: {error}",
                 extension.name, hook.event
             );
-            match continued.into_inner().expect("continued lock") {
+            match continued {
                 Some(result) => result,
                 None if hook.event == "tool.call" => {
                     json!({ "deny": format!("{}: its guard failed", extension.name) })
@@ -135,6 +145,36 @@ fn run_chain(
 }
 
 impl Extension {
+    /// Runs the hook until it calls `next` or returns, spending its time budget.
+    fn resume(
+        &self,
+        coroutine: &mlua::Thread,
+        args: MultiValue,
+        budget: &mut Duration,
+    ) -> mlua::Result<Step> {
+        let _one_at_a_time = self.resuming.lock().expect("resuming lock");
+        let started = Instant::now();
+        *self.deadline.lock().expect("deadline lock") = Some(started + *budget);
+        let out = coroutine.resume::<MultiValue>(args);
+        *self.deadline.lock().expect("deadline lock") = None;
+        *budget = budget.saturating_sub(started.elapsed());
+        let mut out = out?.into_iter();
+        if coroutine.status() != mlua::thread::ThreadStatus::Resumable {
+            return Ok(Step::Returned(
+                self.lua
+                    .from_value(out.next().unwrap_or(mlua::Value::Nil))?,
+            ));
+        }
+        match (out.next(), out.next()) {
+            (Some(mlua::Value::Table(marker)), Some(e)) if marker == self.next_marker => {
+                Ok(Step::Next(self.lua.from_value(e)?))
+            }
+            _ => Err(mlua::Error::runtime(
+                "a hook may only yield by calling next",
+            )),
+        }
+    }
+
     fn load(folder: &Path, ui: UiSink) -> Result<Self> {
         let name = folder
             .file_name()
@@ -154,6 +194,10 @@ impl Extension {
             _ => Ok(VmState::Continue),
         });
         lua.globals().set("nisse", nisse_table(&lua, &name, ui)?)?;
+        let next_marker = lua.create_table()?;
+        let next: Function = lua
+            .load("local marker = ...; local yield = coroutine.yield; return function(e) return yield(marker, e) end")
+            .call(next_marker.clone())?;
         lua.sandbox(true)?;
 
         let source = std::fs::read_to_string(folder.join("init.luau"))?;
@@ -194,6 +238,9 @@ impl Extension {
             name,
             lua,
             hooks,
+            next,
+            next_marker,
+            resuming: Mutex::new(()),
             deadline,
         })
     }
