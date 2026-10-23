@@ -77,15 +77,7 @@ impl Scenario {
     }
 
     fn start(&self, store: Store, hooks: Arc<dyn Hooks>) -> Arc<Server> {
-        let harness = Harness::with_store(
-            store,
-            HarnessOptions {
-                provider: self.claude(),
-                hooks,
-            },
-        );
-        harness.resume().unwrap();
-        Server::new(harness, broadcast::channel(16).0, owner())
+        serve(store, self.claude(), hooks)
     }
 
     /// Deletes the transcripts the real CLI keeps of this workspace's sessions, as Claude Code's
@@ -136,6 +128,18 @@ impl Scenario {
         fixture.push('\n');
         std::fs::write(fixture_path(self.name), fixture).unwrap();
     }
+}
+
+fn serve(store: Store, claude: Arc<Claude>, hooks: Arc<dyn Hooks>) -> Arc<Server> {
+    let harness = Harness::with_store(
+        store,
+        HarnessOptions {
+            provider: claude,
+            hooks,
+        },
+    );
+    harness.resume().unwrap();
+    Server::new(harness, broadcast::channel(16).0, owner())
 }
 
 fn owner() -> Actor {
@@ -727,18 +731,13 @@ fn claudes_working_in(workspace: &Path) -> Vec<i32> {
 /// Kills a claude this test process started, and returns once it has exited, leaving it for
 /// Nisse to reap.
 async fn kill(pid: i32) {
-    use nix::{
-        sys::{
-            signal::{Signal, killpg},
-            wait::{Id, WaitPidFlag, waitid},
-        },
-        unistd::Pid,
-    };
-    killpg(Pid::from_raw(pid), Signal::SIGKILL).unwrap();
+    use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
+    let pid = Pid::from_raw(pid).expect("a claude's pid");
+    kill_process_group(pid, Signal::KILL).unwrap();
     let exited = tokio::task::spawn_blocking(move || {
         waitid(
-            Id::Pid(Pid::from_raw(pid)),
-            WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT,
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
         )
     });
     tokio::time::timeout(patience(), exited)
@@ -808,4 +807,321 @@ async fn a_conversation_whose_claude_session_is_gone_goes_on_from_its_transcript
         watch.final_text()
     );
     scenario.keep_recording(&watch.conversation);
+}
+
+/// A stand-in for a Luau extension whose `tool.call` hook takes its time before it lets a call
+/// through. Like a Luau state, the extension runs one hook at a time, the engine included.
+struct OneAtATime(std::sync::Mutex<()>);
+
+impl Hooks for OneAtATime {
+    fn tool_call(
+        &self,
+        call: ToolCall,
+        engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
+    ) -> ToolOutcome {
+        let _state = self.0.lock().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        engine(call)
+    }
+}
+
+#[tokio::test]
+async fn parallel_reads_through_a_one_at_a_time_tool_hook_both_finish_and_claude_answers() {
+    let scenario = Scenario::new("parallel_reads_hooked");
+    std::fs::write(scenario.workspace.path().join("a.txt"), "apple\n").unwrap();
+    std::fs::write(scenario.workspace.path().join("b.txt"), "banana\n").unwrap();
+    let hooks = Arc::new(OneAtATime(std::sync::Mutex::new(())));
+    let server = scenario.start(Store::open_in_memory().unwrap(), hooks);
+    let mut watch = Watch::new_conversation(&server).await;
+
+    watch
+        .submit(
+            "In a single message, call the Read tool twice in parallel: once on a.txt and once \
+             on b.txt. Then reply with both contents, separated by a comma.",
+            WhenBusy::FollowUp,
+        )
+        .await;
+    watch.until_idle().await;
+
+    let reads: Vec<&Entry> = watch
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == kinds::TOOL_CALL && entry.data["name"] == "Read")
+        .collect();
+    assert_eq!(reads.len(), 2, "claude read in parallel: {reads:#?}");
+    for read in &reads {
+        let result = watch
+            .entries
+            .iter()
+            .find(|entry| {
+                entry.kind == kinds::TOOL_RESULT && entry.data["call_id"] == read.data["id"]
+            })
+            .expect("every read got its result");
+        assert_eq!(result.data["is_error"], false);
+    }
+    let answer = watch.final_text().to_lowercase();
+    assert!(
+        answer.contains("apple") && answer.contains("banana"),
+        "claude answered: {answer}"
+    );
+    scenario.keep_recording(&watch.conversation);
+}
+
+const BANANA: &str = "Also end your reply with the word BANANA.";
+const CHERRY: &str = "And start your reply with the word CHERRY.";
+
+#[tokio::test]
+async fn two_steers_in_one_claude_turn_both_reach_claude_and_the_next_message_still_runs() {
+    let scenario = Scenario::new("two_steers");
+    let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
+    let mut watch = Watch::new_conversation(&server).await;
+
+    watch
+        .submit(
+            "Run the bash command `touch one.txt` with the Bash tool, then, as a separate call, \
+             run `touch two.txt` with the Bash tool, then reply with exactly: done",
+            WhenBusy::FollowUp,
+        )
+        .await;
+    for steer in [BANANA, CHERRY] {
+        let asked = watch.count(kinds::APPROVAL_REQUEST) + 1;
+        watch
+            .until("the next approval request", |watch| {
+                watch.count(kinds::APPROVAL_REQUEST) == asked
+            })
+            .await;
+        let request = watch.last(kinds::APPROVAL_REQUEST).clone();
+        watch.submit(steer, WhenBusy::Steer).await;
+        watch
+            .resolve(request.data["call_id"].as_str().unwrap(), true)
+            .await;
+    }
+    watch
+        .until("an answer that heard both steers", |watch| {
+            watch.status == ConversationStatus::Idle
+                && watch.has(kinds::ASSISTANT)
+                && watch.final_text().contains("BANANA")
+                && watch.final_text().contains("CHERRY")
+        })
+        .await;
+    assert_eq!(watch.count(kinds::USER), 3);
+
+    let answers = watch.count(kinds::ASSISTANT);
+    watch
+        .submit("Reply with exactly: still here", WhenBusy::FollowUp)
+        .await;
+    watch.until_answered(answers + 1).await;
+    assert!(watch.no_model_errors(), "the next message failed");
+    assert!(
+        watch.final_text().contains("still here"),
+        "claude answered: {}",
+        watch.final_text()
+    );
+    scenario.keep_recording(&watch.conversation);
+}
+
+impl Watch {
+    fn count(&self, kind: &str) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.kind == kind)
+            .count()
+    }
+}
+
+/// The store as a crash right after each of its commits would leave it on disk: a copy of the
+/// database with its write-ahead log cut after that commit.
+fn crash_points(database: &Path) -> Vec<tempfile::TempDir> {
+    let main = std::fs::read(database).unwrap();
+    let log = std::fs::read(format!("{}-wal", database.display())).unwrap();
+    let word = |at: usize| u32::from_be_bytes(log[at..at + 4].try_into().unwrap());
+    let frame = 24 + word(8) as usize;
+    let salts = &log[16..24];
+    let mut points = Vec::new();
+    let mut end = 32;
+    while end + frame <= log.len() && log[end + 8..end + 16] == *salts {
+        let ends_a_commit = word(end + 4) != 0;
+        end += frame;
+        if ends_a_commit {
+            let copy = tempfile::tempdir().unwrap();
+            std::fs::write(copy.path().join("nisse.sqlite"), &main).unwrap();
+            std::fs::write(copy.path().join("nisse.sqlite-wal"), &log[..end]).unwrap();
+            points.push(copy);
+        }
+    }
+    assert!(
+        (end - 32) / frame < 1000,
+        "the log was checkpointed during the run, so the database no longer shows its start"
+    );
+    points
+}
+
+/// One of Claude's own messages in its main chain, and what Nisse commits of it.
+struct ClaudeMessage {
+    uuid: String,
+    texts: Vec<String>,
+    calls: Vec<String>,
+    results: Vec<String>,
+}
+
+fn claude_chain(fixture: &Path) -> Vec<ClaudeMessage> {
+    let fixture = std::fs::read_to_string(fixture).unwrap();
+    let blocks = |frame: &Value, kind: &str, field: &str| -> Vec<String> {
+        frame["message"]["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|block| block["type"] == kind)
+            .filter_map(|block| block[field].as_str())
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    fixture
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|record| record["type"] == "emit_inbound")
+        .map(|record| record["frame"].clone())
+        .filter(|frame| frame["parent_tool_use_id"].is_null() && frame["isReplay"] != true)
+        .filter(|frame| frame["type"] == "assistant" || frame["type"] == "user")
+        .map(|frame| ClaudeMessage {
+            uuid: frame["uuid"].as_str().unwrap().to_owned(),
+            texts: blocks(&frame, "text", "text"),
+            calls: blocks(&frame, "tool_use", "id"),
+            results: blocks(&frame, "tool_result", "tool_use_id"),
+        })
+        .collect()
+}
+
+/// Whether `transcript` holds each part of Claude's message that the finished run committed.
+fn committed_parts(message: &ClaudeMessage, transcript: &[Entry], finished: &[Entry]) -> Vec<bool> {
+    let said = |entries: &[Entry], text: &str| {
+        entries
+            .iter()
+            .any(|entry| entry.kind == kinds::ASSISTANT && entry.data["text"] == text)
+    };
+    let holds = |entries: &[Entry], kind: &str, field: &str, id: &str| {
+        entries.iter().any(|entry| {
+            entry.kind == kind && entry.data[field] == id && entry.data["denied"].is_null()
+        })
+    };
+    let texts = message
+        .texts
+        .iter()
+        .filter(|text| said(finished, text))
+        .map(|text| said(transcript, text));
+    let calls = message
+        .calls
+        .iter()
+        .filter(|id| holds(finished, kinds::TOOL_CALL, "id", id))
+        .map(|id| holds(transcript, kinds::TOOL_CALL, "id", id));
+    let results = message
+        .results
+        .iter()
+        .filter(|id| holds(finished, kinds::TOOL_RESULT, "call_id", id))
+        .map(|id| holds(transcript, kinds::TOOL_RESULT, "call_id", id));
+    texts.chain(calls).chain(results).collect()
+}
+
+/// Starts Nisse on a store and returns the message Nisse first resumes Claude's session at,
+/// as a stand-in claude that records how it was started sees it.
+fn resumed_at(store: &Path, conversation: &Conversation) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let claude_dir = tempfile::tempdir().unwrap();
+    let claude = claude_dir.path().join("claude");
+    std::fs::write(
+        &claude,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$(dirname \"$0\")/started\"\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let provider = Arc::new(Claude::new(ClaudeOptions {
+            binary: claude.clone(),
+            cwd: claude_dir.path().to_path_buf(),
+            model: Some(MODEL.into()),
+            record: None,
+        }));
+        let server = serve(Store::open(store).unwrap(), provider, Arc::new(NoHooks));
+        let mut watch = Watch::existing(&server, conversation.clone()).await;
+        watch.submit("Go on.", WhenBusy::FollowUp).await;
+        watch
+            .until("claude to be started", |watch| !watch.no_model_errors())
+            .await;
+    });
+    runtime.shutdown_background();
+    let started = std::fs::read_to_string(claude_dir.path().join("started")).unwrap();
+    let first: Vec<&str> = started.lines().next().unwrap().split(' ').collect();
+    first
+        .windows(2)
+        .find(|pair| pair[0] == "--resume-session-at")
+        .map(|pair| pair[1].to_owned())
+}
+
+#[test]
+fn a_crash_after_any_commit_resumes_claude_exactly_where_the_transcript_ends() {
+    let scenario = Scenario::new("crash_points");
+    std::fs::write(
+        scenario.workspace.path().join("notes.txt"),
+        "the gnome lives under the floor\n",
+    )
+    .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("nisse.sqlite");
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (conversation, finished, crashes) = runtime.block_on(async {
+        let server = scenario.start(Store::open(&path).unwrap(), Arc::new(NoHooks));
+        let mut watch = Watch::new_conversation(&server).await;
+        watch
+            .submit(
+                "First write one short sentence saying that you will read the notes. Then use \
+                 the Read tool to read notes.txt. Then reply with where the gnome lives, in \
+                 three words.",
+                WhenBusy::FollowUp,
+            )
+            .await;
+        watch.until_idle().await;
+        scenario.keep_recording(&watch.conversation);
+        (
+            watch.conversation.clone(),
+            watch.entries.clone(),
+            crash_points(&path),
+        )
+    });
+    runtime.shutdown_background();
+
+    let chain = claude_chain(&fixture_path(scenario.name));
+    assert!(
+        chain.iter().any(|message| !message.texts.is_empty())
+            && chain.iter().any(|message| !message.calls.is_empty()),
+        "the run has text and a call to commit"
+    );
+    for (commit, crash) in crashes.iter().enumerate() {
+        let store = crash.path().join("nisse.sqlite");
+        let transcript = {
+            let store = Store::open(&store).unwrap();
+            if store.conversation(&conversation.id).unwrap().is_none() {
+                continue;
+            }
+            store.entries(&conversation.id, 0).unwrap()
+        };
+        let head = resumed_at(&store, &conversation);
+        let covered = head.as_ref().map_or(0, |head| {
+            1 + chain
+                .iter()
+                .position(|message| message.uuid == *head)
+                .unwrap_or_else(|| panic!("resumed at {head}, which is not Claude's message"))
+        });
+        for (at, message) in chain.iter().enumerate() {
+            let parts = committed_parts(message, &transcript, &finished);
+            assert!(
+                parts.iter().all(|committed| *committed == (at < covered)),
+                "a crash after commit {commit} resumes claude at {head:?}, but the transcript \
+                 holds {parts:?} of message {}",
+                message.uuid
+            );
+        }
+    }
 }

@@ -22,11 +22,13 @@ const SYSTEM_INIT_FIELDS: &[&str] = &[
 
 /// Writes a replay fixture of one conversation's claude traffic: what Nisse wrote, as
 /// `expect_outbound`, and what claude printed, as `emit_inbound`, in the order they happened.
-/// Values tied to this machine or account are replaced by placeholders the replay binds again.
+/// Values tied to this machine or account are replaced by placeholders the replay binds again,
+/// and so are the ids Nisse chose for this process: its requests' ids and its messages' uuids
+/// become `<nisse:N>`, numbered in the order Nisse wrote them.
 pub(crate) struct Recorder {
     file: Mutex<File>,
     placeholders: Vec<(String, String)>,
-    nisse_requests: Vec<String>,
+    chosen: Mutex<Vec<String>>,
 }
 
 impl Recorder {
@@ -35,7 +37,6 @@ impl Recorder {
         conversation_id: &str,
         session: &str,
         cwd: &Path,
-        nisse_requests: &[String],
     ) -> Result<Self> {
         std::fs::create_dir_all(dir)?;
         let path = dir.join(format!("{conversation_id}.ndjson"));
@@ -58,12 +59,7 @@ impl Recorder {
             )?;
         }
 
-        let mut placeholders: Vec<(String, String)> = nisse_requests
-            .iter()
-            .enumerate()
-            .map(|(index, id)| (id.clone(), format!("<request:{}>", index + 1)))
-            .collect();
-        placeholders.push((session.to_owned(), "<session>".into()));
+        let mut placeholders = vec![(session.to_owned(), "<session>".to_owned())];
         let mut workspaces = vec![cwd.to_string_lossy().into_owned()];
         if let Ok(canonical) = cwd.canonicalize() {
             workspaces.push(canonical.to_string_lossy().into_owned());
@@ -82,11 +78,19 @@ impl Recorder {
         Ok(Self {
             file: Mutex::new(file),
             placeholders,
-            nisse_requests: nisse_requests.to_vec(),
+            chosen: Mutex::default(),
         })
     }
 
     pub(crate) fn outbound(&self, frame: &Value) {
+        let chosen = match frame["type"].as_str() {
+            Some("control_request") => frame["request_id"].as_str(),
+            Some("user") => frame["uuid"].as_str(),
+            _ => None,
+        };
+        if let Some(id) = chosen {
+            self.chosen.lock().expect("chosen lock").push(id.to_owned());
+        }
         self.write("expect_outbound", self.normalized(frame.clone()));
     }
 
@@ -105,9 +109,13 @@ impl Recorder {
     /// account listings of the initialize reply, and the tool and plugin listings of `init`.
     fn pruned(&self, mut frame: Value) -> Value {
         let answers_nisse = frame["type"] == "control_response"
-            && frame["response"]["request_id"]
-                .as_str()
-                .is_some_and(|id| self.nisse_requests.iter().any(|ours| ours == id));
+            && frame["response"]["request_id"].as_str().is_some_and(|id| {
+                self.chosen
+                    .lock()
+                    .expect("chosen lock")
+                    .iter()
+                    .any(|ours| ours == id)
+            });
         if answers_nisse && let Some(response) = frame["response"].get_mut("response") {
             let version = response.get("claude_code_version").cloned();
             *response = match version {
@@ -144,9 +152,18 @@ impl Recorder {
     }
 
     fn placeheld(&self, mut text: String) -> String {
-        for (real, placeholder) in &self.placeholders {
-            if text.contains(real.as_str()) {
-                text = text.replace(real.as_str(), placeholder);
+        let chosen = self.chosen.lock().expect("chosen lock");
+        let chosen = chosen
+            .iter()
+            .enumerate()
+            .map(|(index, id)| (id.as_str(), format!("<nisse:{}>", index + 1)));
+        let fixed = self
+            .placeholders
+            .iter()
+            .map(|(real, placeholder)| (real.as_str(), placeholder.clone()));
+        for (real, placeholder) in chosen.chain(fixed) {
+            if text.contains(real) {
+                text = text.replace(real, &placeholder);
             }
         }
         text

@@ -1,8 +1,11 @@
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{Result, anyhow};
 use futures_util::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
-use nisse_core::{Approval, Decision, ToolCall, ToolOutcome, Turn};
+use nisse_core::{Approval, Decision, ToolCall, ToolOutcome, Turn, new_id};
 use nisse_protocol::{Entry, Seq, kinds};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -42,17 +45,28 @@ impl std::error::Error for Unresumable {}
 /// A conversation's live claude process and what Nisse knows of its session.
 pub(crate) struct Session {
     process: Process,
-    state: ProviderState,
     resumed: bool,
     initialized: bool,
     retell: bool,
-    chain: Chain,
+    heads: Arc<Mutex<Heads>>,
     sent: Seq,
-    unacked: VecDeque<Seq>,
+    unacked: VecDeque<Delivery>,
     calls: HashMap<String, Call>,
-    uses: HashMap<String, usize>,
-    results: HashMap<String, usize>,
+    held: VecDeque<Held>,
     streaming: String,
+}
+
+/// A user message Nisse sent, which Claude acknowledges by replaying its uuid.
+struct Delivery {
+    uuid: String,
+    through: Seq,
+}
+
+/// A frame Claude sent whose commits wait for the calls before it: `text` is its link in the
+/// chain when it carries text to commit.
+struct Held {
+    frame: Value,
+    text: Option<usize>,
 }
 
 struct Call {
@@ -86,17 +100,11 @@ impl Session {
             resumed: state.head.is_some(),
             initialized: false,
             retell: false,
-            chain: Chain {
-                head: state.head.clone(),
-                delivered: state.delivered,
-                ..Chain::default()
-            },
             sent: state.delivered,
-            state,
+            heads: Arc::new(Mutex::new(Heads::new(state))),
             unacked: VecDeque::new(),
             calls: HashMap::new(),
-            uses: HashMap::new(),
-            results: HashMap::new(),
+            held: VecDeque::new(),
             streaming: String::new(),
         }
     }
@@ -113,30 +121,38 @@ impl Session {
     }
 
     /// Hands Claude what the conversation gained since it last heard, and commits Claude's
-    /// work until it answers all of it.
+    /// work until it answers all of it. Claude's frames are read as they come, so a tool's
+    /// result reaches its call while other calls still wait; what they commit waits its turn.
     pub(crate) async fn answer(&mut self, turn: &Turn) -> Result<()> {
         self.deliver(turn, true)?;
         let (started, mut runs) = mpsc::unbounded_channel();
         let mut pending: FuturesUnordered<BoxFuture<'_, Event>> = FuturesUnordered::new();
         let mut said = false;
         loop {
-            let committing = self.committing();
+            while !self.committing()
+                && let Some(Held { frame, text }) = self.held.pop_front()
+            {
+                if frame["type"] == "result" {
+                    if !self.initialized {
+                        return Err(self.stopped(result_text(&frame)));
+                    }
+                    if self.unacked.is_empty() {
+                        self.calls.clear();
+                        return finish(turn, &frame, said);
+                    }
+                    continue;
+                }
+                self.on_frame(turn, frame, text, &started, &mut pending, &mut said)?;
+            }
             tokio::select! {
-                frame = self.process.inbound.recv(), if !committing => {
+                frame = self.process.inbound.recv() => {
                     let Some(frame) = frame else {
                         let reason = self.process.exit_reason().await;
                         return Err(self.stopped(reason));
                     };
-                    if frame["type"] == "result" && !self.initialized {
-                        return Err(self.stopped(result_text(&frame)));
-                    }
-                    if frame["type"] == "result" && self.unacked.is_empty() {
-                        self.calls.clear();
-                        return finish(turn, &frame, said);
-                    }
-                    self.on_frame(turn, frame, &started, &mut pending, &mut said)?;
+                    self.on_read(turn, frame)?;
                 }
-                Some((id, call)) = runs.recv() => self.on_run(turn, &id, call)?,
+                Some((id, call)) = runs.recv() => self.on_run(&id, call),
                 Some(event) = pending.next(), if !pending.is_empty() => {
                     self.on_event(turn, event)?;
                 }
@@ -185,12 +201,17 @@ impl Session {
             blocks.push(json!({ "type": "text", "text": RESTARTED }));
         }
         self.sent = self.sent.max(newest);
-        self.unacked.push_back(self.sent);
+        let uuid = new_id();
         self.process.send(json!({
             "type": "user",
             "message": { "role": "user", "content": blocks },
             "parent_tool_use_id": null,
+            "uuid": uuid,
         }));
+        self.unacked.push_back(Delivery {
+            uuid,
+            through: self.sent,
+        });
         Ok(())
     }
 
@@ -212,10 +233,25 @@ impl Session {
         }
     }
 
+    /// Takes a frame in as soon as Claude sends it: tool results go to their calls and Claude's
+    /// messages join the chain in Claude's order. Whatever the frame commits is held until the
+    /// calls before it have committed theirs.
+    fn on_read(&mut self, turn: &Turn, frame: Value) -> Result<()> {
+        let is_main_chain = frame["parent_tool_use_id"].is_null();
+        let text = match frame["type"].as_str() {
+            Some("user") => return self.on_user(turn, &frame, is_main_chain),
+            Some("assistant") if is_main_chain => self.chain_assistant(&frame),
+            _ => None,
+        };
+        self.held.push_back(Held { frame, text });
+        Ok(())
+    }
+
     fn on_frame<'a>(
         &mut self,
         turn: &'a Turn,
         frame: Value,
+        text: Option<usize>,
         started: &Started,
         pending: &mut FuturesUnordered<BoxFuture<'a, Event>>,
         said: &mut bool,
@@ -223,8 +259,7 @@ impl Session {
         let is_main_chain = frame["parent_tool_use_id"].is_null();
         match frame["type"].as_str() {
             Some("stream_event") if is_main_chain => self.on_stream(turn, &frame["event"]),
-            Some("assistant") if is_main_chain => self.on_assistant(turn, &frame, said)?,
-            Some("user") => self.on_user(turn, &frame, is_main_chain)?,
+            Some("assistant") if is_main_chain => self.on_assistant(turn, &frame, text, said)?,
             Some("control_response") => self.initialized = true,
             Some("control_request") => self.on_control_request(turn, &frame, started, pending),
             _ => {}
@@ -244,52 +279,85 @@ impl Session {
         }
     }
 
-    fn on_assistant(&mut self, turn: &Turn, frame: &Value, said: &mut bool) -> Result<()> {
-        let mut waiting_for = Vec::new();
-        for block in content(frame) {
-            match block["type"].as_str() {
-                Some("text") => {
-                    let text = block["text"].as_str().unwrap_or_default();
-                    if !text.trim().is_empty() {
-                        turn.say(text)?;
-                        *said = true;
-                    }
-                    self.streaming.clear();
-                }
-                Some("tool_use") => {
-                    let id = block["id"].as_str().unwrap_or_default();
-                    if !self.calls.get(id).is_some_and(|call| call.hook_answered) {
-                        waiting_for.push(id.to_owned());
-                    }
-                }
-                _ => {}
+    /// Puts Claude's message in the chain, waiting for its text and for the calls it makes to
+    /// be committed, and names its link when it has text to commit.
+    fn chain_assistant(&mut self, frame: &Value) -> Option<usize> {
+        let uuid = frame["uuid"].as_str()?;
+        let speaks = texts(frame).next().is_some();
+        let calls: Vec<String> = content(frame)
+            .filter(|block| block["type"] == "tool_use")
+            .filter_map(|block| block["id"].as_str().map(str::to_owned))
+            .collect();
+        let mut heads = self.heads.lock().expect("heads lock");
+        let link = heads
+            .chain
+            .push(Some(uuid), calls.len() + usize::from(speaks), None);
+        heads.uses.extend(calls.into_iter().map(|id| (id, link)));
+        speaks.then_some(link)
+    }
+
+    /// Commits Claude's text, the last of it together with the head that now covers it.
+    fn on_assistant(
+        &mut self,
+        turn: &Turn,
+        frame: &Value,
+        link: Option<usize>,
+        said: &mut bool,
+    ) -> Result<()> {
+        let texts: Vec<&str> = texts(frame).collect();
+        let Some((last, earlier)) = texts.split_last() else {
+            return Ok(());
+        };
+        self.streaming.clear();
+        for text in earlier {
+            turn.say(text)?;
+        }
+        let state = {
+            let mut heads = self.heads.lock().expect("heads lock");
+            if let Some(link) = link {
+                heads.chain.release(link);
             }
-        }
-        if let Some(uuid) = frame["uuid"].as_str() {
-            let link = self.chain.push(uuid, waiting_for.len(), None);
-            self.uses
-                .extend(waiting_for.into_iter().map(|id| (id, link)));
-        }
-        self.persist(turn)
+            heads.moved()?
+        };
+        turn.say_with_state(last, state.as_ref())?;
+        *said = true;
+        Ok(())
     }
 
     /// Results reach their calls from Claude's main chain and from its subagents alike; only
-    /// the main chain is Claude's session, so only it moves the head.
+    /// the main chain is Claude's session, so only it moves the head. A replay of a message
+    /// Nisse sent acknowledges it and every message sent before it.
     fn on_user(&mut self, turn: &Turn, frame: &Value, is_main_chain: bool) -> Result<()> {
         let reported = self.hand_over_results(frame);
         if !is_main_chain {
             return Ok(());
         }
-        let uuid = frame["uuid"].as_str().unwrap_or_default();
-        let delivered = if frame["isReplay"] == true {
-            self.unacked.pop_front()
+        let uuid = frame["uuid"].as_str();
+        let (named, delivered) = if frame["isReplay"] == true {
+            (None, self.acknowledge(uuid))
         } else {
-            None
+            (uuid, None)
         };
-        let link = self.chain.push(uuid, reported.len(), delivered);
-        self.results
-            .extend(reported.into_iter().map(|id| (id, link)));
-        self.persist(turn)
+        let state = {
+            let mut heads = self.heads.lock().expect("heads lock");
+            let link = heads.chain.push(named, reported.len(), delivered);
+            heads
+                .results
+                .extend(reported.into_iter().map(|id| (id, link)));
+            heads.moved()?
+        };
+        save(turn, state)
+    }
+
+    fn acknowledge(&mut self, uuid: Option<&str>) -> Option<Seq> {
+        let replayed = self
+            .unacked
+            .iter()
+            .position(|delivery| Some(delivery.uuid.as_str()) == uuid)?;
+        self.unacked
+            .drain(..=replayed)
+            .next_back()
+            .map(|delivery| delivery.through)
     }
 
     /// Hands each result Claude reported to the call waiting for it, and names the calls whose
@@ -309,8 +377,9 @@ impl Session {
                 }
                 Some(_) => {}
                 None => {
-                    if let Some(link) = self.uses.remove(&id) {
-                        self.chain.release(link);
+                    let mut heads = self.heads.lock().expect("heads lock");
+                    if let Some(link) = heads.uses.remove(&id) {
+                        heads.chain.release(link);
                     }
                 }
             }
@@ -355,9 +424,14 @@ impl Session {
                         ToolOutcome::error("claude stopped before the tool finished")
                     })
                 };
+                let heads = self.heads.clone();
+                let settled = call.id.clone();
+                let head = move || heads.lock().expect("heads lock").settle(&settled);
                 pending.push(Box::pin(async move {
                     let id = call.id.clone();
-                    let outcome = turn.call_tool(call, Approval::NotNeeded, run).await;
+                    let outcome = turn
+                        .call_tool_with_state(call, Approval::NotNeeded, run, head)
+                        .await;
                     Event::CallDone { id, outcome }
                 }));
             }
@@ -397,9 +471,9 @@ impl Session {
     }
 
     /// The hooks let the call through: Claude runs it, with the hooks' arguments.
-    fn on_run(&mut self, turn: &Turn, id: &str, call: ToolCall) -> Result<()> {
+    fn on_run(&mut self, id: &str, call: ToolCall) {
         let Some(asked) = self.calls.get_mut(id) else {
-            return Ok(());
+            return;
         };
         asked.hook_answered = true;
         let hook_request = asked.hook_request.clone();
@@ -408,12 +482,7 @@ impl Session {
             allow["hookSpecificOutput"] =
                 json!({ "hookEventName": "PreToolUse", "updatedInput": call.args });
         }
-        if let Some(link) = self.uses.remove(id) {
-            self.chain.release(link);
-        }
-        self.persist(turn)?;
         self.reply(&hook_request, allow);
-        Ok(())
     }
 
     fn on_event(&mut self, turn: &Turn, event: Event) -> Result<()> {
@@ -439,12 +508,6 @@ impl Session {
                         );
                     }
                 }
-                for links in [&mut self.uses, &mut self.results] {
-                    if let Some(link) = links.remove(&id) {
-                        self.chain.release(link);
-                    }
-                }
-                self.persist(turn)?;
                 self.deliver(turn, false)
             }
             Event::Asked {
@@ -476,16 +539,10 @@ impl Session {
             "response": { "subtype": "success", "request_id": request_id, "response": response },
         }));
     }
+}
 
-    fn persist(&mut self, turn: &Turn) -> Result<()> {
-        self.chain.advance();
-        if self.chain.head == self.state.head && self.chain.delivered == self.state.delivered {
-            return Ok(());
-        }
-        self.state.head = self.chain.head.clone();
-        self.state.delivered = self.chain.delivered;
-        turn.set_provider_state(&serde_json::to_value(&self.state)?)
-    }
+fn save(turn: &Turn, state: Option<Value>) -> Result<()> {
+    state.map_or(Ok(()), |state| turn.set_provider_state(&state))
 }
 
 fn finish(turn: &Turn, result: &Value, said: bool) -> Result<()> {
@@ -568,27 +625,83 @@ fn tool_outcome(block: &Value) -> ToolOutcome {
     }
 }
 
-/// Claude's main chain as Nisse has seen it. The head is the newest message such that every
-/// message up to it has had its content committed; resuming there loses nothing a client saw
-/// and keeps nothing it did not.
+fn texts(frame: &Value) -> impl Iterator<Item = &str> {
+    content(frame)
+        .filter(|block| block["type"] == "text")
+        .filter_map(|block| block["text"].as_str())
+        .filter(|text| !text.trim().is_empty())
+}
+
+/// Claude's chain, the calls whose entries its links wait for, and the provider state Nisse
+/// committed last. It is shared with the calls, whose results commit the head that covers them.
+struct Heads {
+    chain: Chain,
+    uses: HashMap<String, usize>,
+    results: HashMap<String, usize>,
+    saved: ProviderState,
+}
+
+impl Heads {
+    fn new(saved: ProviderState) -> Self {
+        Self {
+            chain: Chain {
+                head: saved.head.clone(),
+                delivered: saved.delivered,
+                heard: saved.delivered,
+                ..Chain::default()
+            },
+            uses: HashMap::new(),
+            results: HashMap::new(),
+            saved,
+        }
+    }
+
+    /// One of the call's entries is being committed: the link that waited for it is released.
+    fn settle(&mut self, id: &str) -> Result<Option<Value>> {
+        for links in [&mut self.uses, &mut self.results] {
+            if let Some(link) = links.remove(id) {
+                self.chain.release(link);
+            }
+        }
+        self.moved()
+    }
+
+    /// The provider state to commit now, when the head has moved since the last one.
+    fn moved(&mut self) -> Result<Option<Value>> {
+        self.chain.advance();
+        if self.chain.head == self.saved.head && self.chain.delivered == self.saved.delivered {
+            return Ok(None);
+        }
+        self.saved.head = self.chain.head.clone();
+        self.saved.delivered = self.chain.delivered;
+        Ok(Some(serde_json::to_value(&self.saved)?))
+    }
+}
+
+/// Claude's main chain as Nisse has seen it. The head is the newest of Claude's own messages
+/// such that every message up to it has had its content committed; resuming there loses
+/// nothing a client saw and keeps nothing it did not. Replays of Nisse's messages never name
+/// the head; what they acknowledge counts as delivered once a message of Claude's after them
+/// does.
 #[derive(Default)]
 struct Chain {
     passed: usize,
     links: VecDeque<Link>,
     head: Option<String>,
     delivered: Seq,
+    heard: Seq,
 }
 
 struct Link {
-    uuid: String,
+    uuid: Option<String>,
     waiting: usize,
     delivered: Option<Seq>,
 }
 
 impl Chain {
-    fn push(&mut self, uuid: &str, waiting: usize, delivered: Option<Seq>) -> usize {
+    fn push(&mut self, uuid: Option<&str>, waiting: usize, delivered: Option<Seq>) -> usize {
         self.links.push_back(Link {
-            uuid: uuid.to_owned(),
+            uuid: uuid.map(str::to_owned),
             waiting,
             delivered,
         });
@@ -608,11 +721,12 @@ impl Chain {
         while self.links.front().is_some_and(|link| link.waiting == 0) {
             let link = self.links.pop_front().expect("a front link");
             self.passed += 1;
-            if !link.uuid.is_empty() {
-                self.head = Some(link.uuid);
-            }
             if let Some(delivered) = link.delivered {
-                self.delivered = self.delivered.max(delivered);
+                self.heard = self.heard.max(delivered);
+            }
+            if let Some(uuid) = link.uuid {
+                self.head = Some(uuid);
+                self.delivered = self.heard;
             }
         }
     }

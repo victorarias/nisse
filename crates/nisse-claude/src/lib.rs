@@ -135,7 +135,6 @@ impl Claude {
                     turn.conversation_id(),
                     &state.session,
                     &self.options.cwd,
-                    std::slice::from_ref(&initialize),
                 )?;
                 recorder.outbound(&json!({ "argv": args }));
                 Some(Arc::new(recorder))

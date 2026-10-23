@@ -7,10 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use nix::{
-    sys::signal::{Signal, killpg},
-    unistd::Pid,
-};
+use rustix::process::{Pid, Signal, kill_process_group};
 use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -154,10 +151,8 @@ fn stop(mut child: Child) {
     if let Ok(Some(_)) = child.try_wait() {
         return;
     }
-    let group = i32::try_from(child.id()).ok().map(Pid::from_raw);
-    if let Some(group) = group {
-        let _ = killpg(group, Signal::SIGTERM);
-    }
+    let group = Pid::from_child(&child);
+    let _ = kill_process_group(group, Signal::TERM);
     std::thread::spawn(move || {
         let deadline = Instant::now() + STOP_PATIENCE;
         while Instant::now() < deadline {
@@ -166,9 +161,7 @@ fn stop(mut child: Child) {
             }
             std::thread::sleep(EXIT_POLL);
         }
-        if let Some(group) = group {
-            let _ = killpg(group, Signal::SIGKILL);
-        }
+        let _ = kill_process_group(group, Signal::KILL);
         let _ = child.kill();
         let _ = child.wait();
     });
