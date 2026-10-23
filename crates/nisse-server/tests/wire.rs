@@ -267,7 +267,7 @@ fn extension(root: &Path, name: &str, source: &str) {
 
 const GUARD: &str = r#"
 return function(on)
-  on("tool.call", { tool = "bash" }, function(nisse, e, next)
+  on("tool.call", { tool = "Bash" }, function(nisse, e, next)
     if e.args.command:match("^rm ") then
       return { deny = "guard: no rm here" }
     end
@@ -385,7 +385,7 @@ impl Provider for Careful {
             turn.say("Let me run that.")?;
             let call = nisse_core::ToolCall {
                 id: format!("call-{command}"),
-                name: "bash".into(),
+                name: "Bash".into(),
                 args: serde_json::json!({ "command": command }),
             };
             let outcome = turn
@@ -796,11 +796,11 @@ async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first()
     let root = workspace.path().to_str().unwrap();
 
     let committed = run_allowing(serde_json::json!([
-        { "name": "write", "args": { "path": path, "content": "milk\neggs\nmilk\n" } },
-        { "name": "edit", "args": { "path": path, "old_string": "milk", "new_string": "tea" } },
-        { "name": "edit", "args": { "path": path, "old_string": "eggs\n", "new_string": "eggs\nbread\n" } },
-        { "name": "read", "args": { "path": path, "offset": 2 } },
-        { "name": "grep", "args": { "pattern": "^b", "path": root, "glob": "*.txt" } },
+        { "name": "Write", "args": { "file_path": path, "content": "milk\neggs\nmilk\n" } },
+        { "name": "Edit", "args": { "file_path": path, "old_string": "milk", "new_string": "tea" } },
+        { "name": "Edit", "args": { "file_path": path, "old_string": "eggs\n", "new_string": "eggs\nbread\n" } },
+        { "name": "Read", "args": { "file_path": path, "offset": 2 } },
+        { "name": "Grep", "args": { "pattern": "^b", "path": root, "glob": "*.txt" } },
     ]))
     .await;
 
@@ -809,7 +809,7 @@ async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first()
         .filter(|entry| entry.kind == kinds::APPROVAL_REQUEST)
         .map(|entry| entry.data["name"].as_str().unwrap())
         .collect();
-    assert_eq!(asked, ["write", "edit", "edit"]);
+    assert_eq!(asked, ["Write", "Edit", "Edit"]);
     let results = tool_results(&committed);
     assert!(results[1].1 && results[1].0.contains("appears 2 times"));
     assert_eq!(
@@ -824,9 +824,46 @@ async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first()
 }
 
 #[tokio::test]
+async fn grep_skips_gitignored_hidden_and_binary_files() {
+    let workspace = tempfile::tempdir().unwrap();
+    let write = |name: &str, content: &[u8]| {
+        let file = workspace.path().join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, content).unwrap();
+    };
+    write(".gitignore", b"target/\n*.log\n");
+    write("src/main.rs", b"// gnome\n");
+    write("src/lib.rs", b"// gnome\n");
+    write("target/debug/out.rs", b"// gnome\n");
+    write("build.log", b"gnome\n");
+    write(".hidden/notes.rs", b"// gnome\n");
+    write("logo.bin", b"gnome\0\x01");
+    let root = workspace.path().to_str().unwrap();
+
+    let committed = run_allowing(serde_json::json!([
+        { "name": "Grep", "args": { "pattern": "gnome", "path": root } },
+        { "name": "Grep", "args": { "pattern": "gnome", "path": root, "glob": "src/**/m*.rs" } },
+    ]))
+    .await;
+
+    let results = tool_results(&committed);
+    assert_eq!(
+        results[0],
+        (
+            format!("{root}/src/lib.rs:1:// gnome\n{root}/src/main.rs:1:// gnome"),
+            false
+        )
+    );
+    assert_eq!(
+        results[1],
+        (format!("{root}/src/main.rs:1:// gnome"), false)
+    );
+}
+
+#[tokio::test]
 async fn a_command_that_leaves_a_server_running_returns_when_it_exits_not_as_a_timeout() {
     let committed = run_allowing(serde_json::json!([
-        { "name": "bash", "args": { "command": "sleep 60 & echo $!" } },
+        { "name": "Bash", "args": { "command": "sleep 60 & echo $!" } },
     ]))
     .await;
 
@@ -842,7 +879,7 @@ async fn a_command_that_leaves_a_server_running_returns_when_it_exits_not_as_a_t
 #[tokio::test]
 async fn a_command_past_its_timeout_is_killed_with_what_it_started() {
     let committed = run_allowing(serde_json::json!([
-        { "name": "bash", "args": { "command": "sleep 60 & echo $!; sleep 60", "timeout_ms": 200 } },
+        { "name": "Bash", "args": { "command": "sleep 60 & echo $!; sleep 60", "timeout": 200 } },
     ]))
     .await;
 

@@ -22,7 +22,7 @@ const GRACE: Duration = Duration::from_secs(1);
 #[derive(Deserialize)]
 pub struct Bash {
     command: String,
-    timeout_ms: Option<u64>,
+    timeout: Option<u64>,
 }
 
 enum Event {
@@ -64,7 +64,7 @@ impl Tail {
 /// On a timeout, kills the command's process group: the command and what it started, nothing else.
 pub fn bash(args: Bash) -> ToolOutcome {
     let timeout_ms = args
-        .timeout_ms
+        .timeout
         .unwrap_or(DEFAULT_TIMEOUT_MS)
         .clamp(1, MAX_TIMEOUT_MS);
     let (mut reader, writer) = match std::io::pipe() {

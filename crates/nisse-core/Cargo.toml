@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-globset.workspace = true
+ignore.workspace = true
 nisse-protocol.workspace = true
 regex.workspace = true
 rusqlite.workspace = true

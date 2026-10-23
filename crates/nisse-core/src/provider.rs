@@ -17,7 +17,7 @@ pub trait Provider: Send + Sync {
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a>;
 }
 
-/// A stand-in model: it echoes, and runs `bash` for input that starts with `!`.
+/// A stand-in model: it echoes, and runs `Bash` for input that starts with `!`.
 pub struct Echo {
     pub think: Duration,
 }
@@ -52,7 +52,7 @@ impl Provider for Echo {
                 };
                 let call = ToolCall {
                     id: crate::new_id(),
-                    name: "bash".into(),
+                    name: "Bash".into(),
                     args: serde_json::json!({ "command": command.trim() }),
                 };
                 turn.call_tool(call, Approval::NotNeeded, run_builtin_tool)

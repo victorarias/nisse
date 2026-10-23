@@ -26,7 +26,6 @@ pub struct OpenAiOptions {
     pub auth_base: String,
     pub base_url: String,
     pub model: String,
-    pub reasoning_effort: Option<String>,
     pub instructions: String,
     /// A folder to write one fixture per turn into.
     pub record: Option<PathBuf>,
@@ -39,7 +38,6 @@ impl OpenAiOptions {
             auth_base: AUTH_BASE.into(),
             base_url: BASE_URL.into(),
             model: MODEL.into(),
-            reasoning_effort: None,
             instructions: instructions.into(),
             record: None,
         }
@@ -108,7 +106,7 @@ impl OpenAi {
                 })
             })
             .collect();
-        let mut body = json!({
+        json!({
             "model": self.options.model,
             "instructions": self.options.instructions,
             "input": transcript.iter().filter_map(input_item).collect::<Vec<_>>(),
@@ -118,11 +116,7 @@ impl OpenAi {
             "store": false,
             "stream": true,
             "prompt_cache_key": conversation_id,
-        });
-        if let Some(effort) = &self.options.reasoning_effort {
-            body["reasoning"] = json!({ "effort": effort });
-        }
-        body
+        })
     }
 
     async fn respond(
