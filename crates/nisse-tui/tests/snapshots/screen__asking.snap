@@ -8,7 +8,7 @@ expression: without_conversation_id(&asking)
    clean up
 
  ┏━ ⏸ APPROVE BASH  rm -rf build
- ┗━ y allow · n deny
+ ┗━ ^Y allow · ^N deny
 
 
 
@@ -23,6 +23,6 @@ expression: without_conversation_id(&asking)
 
 
 ╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
-│ ❯ ▍y to allow, n to deny, or type a message                                  │
+│ ❯ ▍^Y to allow, ^N to deny, or type a message                                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ⏸ APPROVAL ▓▒░                                          asking  │  nisse 0.1.0

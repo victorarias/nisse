@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use nisse_client::Client;
 use nisse_protocol::{
-    Actor, ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
+    ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
     ConversationCreateParams, ConversationReadResult, ConversationStatus, ConversationSubmitParams,
     ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
     UiChanged, WhenBusy,
@@ -45,6 +45,7 @@ pub struct App {
 pub async fn run(
     client: Client,
     notifications: mpsc::UnboundedReceiver<ServerNotification>,
+    model: String,
     conversation_id: Option<String>,
     theme: Theme,
 ) -> Result<()> {
@@ -62,6 +63,7 @@ pub async fn run(
         pressed,
         client,
         notifications,
+        model,
         conversation_id,
         theme,
     )
@@ -70,12 +72,14 @@ pub async fn run(
     outcome
 }
 
-/// Draws on `terminal` and reads `pressed` until the user quits or `pressed` closes.
+/// Draws on `terminal` and reads `pressed` until the user quits or `pressed` closes. `model` is
+/// the one the server named when `client` initialized.
 pub async fn drive<B: Backend>(
     terminal: &mut Terminal<B>,
     mut pressed: mpsc::UnboundedReceiver<Event>,
     client: Client,
     mut notifications: mpsc::UnboundedReceiver<ServerNotification>,
+    model: String,
     conversation_id: Option<String>,
     theme: Theme,
 ) -> Result<()>
@@ -110,7 +114,6 @@ where
             },
         ))
         .await?;
-    let model = last_model(&snapshot.entries).unwrap_or("echo").to_owned();
     let mut app = App {
         status: snapshot.conversation.status,
         working_since: (snapshot.conversation.status == ConversationStatus::Working)
@@ -179,9 +182,6 @@ impl App {
             ServerNotification::Committed(commit)
                 if commit.conversation_id == self.conversation.id =>
             {
-                if let Some(model) = last_model(&commit.entries) {
-                    self.model = model.to_owned();
-                }
                 if let Some(live) = commit.live {
                     self.live = live;
                 }
@@ -225,8 +225,7 @@ impl App {
         else {
             return Ok(false);
         };
-        if let (KeyCode::Char(answer @ ('y' | 'n')), KeyModifiers::NONE) = (code, modifiers)
-            && self.input.is_empty()
+        if let (KeyCode::Char(answer @ ('y' | 'n')), KeyModifiers::CONTROL) = (code, modifiers)
             && let Some(call_id) = view::pending_approval(&self.entries)
         {
             let call_id = call_id.to_owned();
@@ -276,11 +275,4 @@ impl App {
             .await;
         self.error = resolved.err().map(|error| error.to_string());
     }
-}
-
-fn last_model(entries: &[Entry]) -> Option<&str> {
-    entries.iter().rev().find_map(|entry| match &entry.author {
-        Actor::Model { model } => Some(model.as_str()),
-        _ => None,
-    })
 }

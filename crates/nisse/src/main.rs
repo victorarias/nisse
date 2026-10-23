@@ -7,12 +7,7 @@ use nisse_client::Client;
 use nisse_core::{Echo, Harness, HarnessOptions, Provider};
 use nisse_lua::LuaHost;
 use nisse_openai::{LoginMethod, LoginPrompt, OpenAi, OpenAiOptions};
-use nisse_protocol::{
-    Actor, ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
-    ConversationCreateParams, ConversationReadResult, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, ConversationSubscribeParams, Input, ServerNotification, WhenBusy,
-    kinds,
-};
+use nisse_protocol::{Actor, InitializeResult, ServerNotification};
 use nisse_server::Server;
 use tokio::sync::{broadcast, mpsc};
 
@@ -109,8 +104,15 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Command::Serve { stdio }) => serve(&config, stdio).await,
         Some(Command::Exec { prompt }) => {
-            let (client, notifications, _server) = connect(&config, cli.connect).await?;
-            exec(client, notifications, prompt).await
+            let (client, mut notifications, _, _embedded) = connect(&config, cli.connect).await?;
+            nisse::exec(
+                &client,
+                &mut notifications,
+                prompt,
+                tokio::io::BufReader::new(tokio::io::stdin()),
+                &mut std::io::stdout(),
+            )
+            .await
         }
         Some(Command::Login {
             provider: LoginProvider::Openai { device },
@@ -145,10 +147,11 @@ async fn main() -> Result<()> {
             Ok(())
         }
         None => {
-            let (client, notifications, _server) = connect(&config, cli.connect).await?;
+            let (client, notifications, hello, _embedded) = connect(&config, cli.connect).await?;
             nisse_tui::run(
                 client,
                 notifications,
+                hello.model,
                 cli.conversation,
                 nisse_tui::Theme::from_env(),
             )
@@ -246,6 +249,7 @@ async fn connect(
 ) -> Result<(
     Client,
     mpsc::UnboundedReceiver<ServerNotification>,
+    InitializeResult,
     Option<Arc<Server>>,
 )> {
     let explicit = socket.is_some();
@@ -259,102 +263,6 @@ async fn connect(
             (client, notifications, Some(server))
         }
     };
-    client.initialize("nisse-cli").await?;
-    Ok((client, notifications, server))
-}
-
-async fn exec(
-    client: Client,
-    mut notifications: mpsc::UnboundedReceiver<ServerNotification>,
-    prompt: String,
-) -> Result<()> {
-    let conversation: Conversation = client
-        .request(ClientRequest::ConversationCreate(
-            ConversationCreateParams::default(),
-        ))
-        .await?;
-    let _: ConversationReadResult = client
-        .request(ClientRequest::ConversationSubscribe(
-            ConversationSubscribeParams {
-                conversation_id: conversation.id.clone(),
-                since_seq: 0,
-            },
-        ))
-        .await?;
-    let _: ConversationSubmitResult = client
-        .request(ClientRequest::ConversationSubmit(
-            ConversationSubmitParams {
-                conversation_id: conversation.id.clone(),
-                input: Input::Text { text: prompt },
-                request_id: uuid::Uuid::now_v7().to_string(),
-                when_busy: WhenBusy::Reject,
-            },
-        ))
-        .await?;
-    let mut answered = false;
-    while let Some(notification) = notifications.recv().await {
-        let commit = match notification {
-            ServerNotification::Committed(commit) => commit,
-            ServerNotification::Status(changed)
-                if answered
-                    && changed.conversation_id == conversation.id
-                    && changed.status == ConversationStatus::Idle =>
-            {
-                println!("conversation {}", conversation.id);
-                return Ok(());
-            }
-            _ => continue,
-        };
-        for entry in commit.entries {
-            let text = entry.data["text"].as_str().unwrap_or_default();
-            match entry.kind.as_str() {
-                kinds::USER => println!("> {text}"),
-                kinds::TOOL_CALL => println!(
-                    "⚡ {} {}",
-                    entry.data["name"].as_str().unwrap_or("tool"),
-                    entry.data["args"]
-                ),
-                kinds::TOOL_RESULT => println!(
-                    "{}",
-                    entry.data["denied"]
-                        .as_str()
-                        .unwrap_or(entry.data["output"].as_str().unwrap_or_default())
-                        .trim_end()
-                ),
-                kinds::APPROVAL_REQUEST => {
-                    let allow = ask_on_stdin(&format!(
-                        "Allow {} {}? [y/N] ",
-                        entry.data["name"].as_str().unwrap_or("tool"),
-                        entry.data["args"]
-                    ))
-                    .await?;
-                    let _: ApprovalResolveResult = client
-                        .request(ClientRequest::ApprovalResolve(ApprovalResolveParams {
-                            conversation_id: conversation.id.clone(),
-                            call_id: entry.data["call_id"].as_str().unwrap_or_default().into(),
-                            allow,
-                            reason: None,
-                        }))
-                        .await?;
-                }
-                kinds::ASSISTANT => {
-                    println!("{text}");
-                    answered = true;
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn ask_on_stdin(question: &str) -> Result<bool> {
-    eprint!("{question}");
-    let mut line = String::new();
-    tokio::io::AsyncBufReadExt::read_line(
-        &mut tokio::io::BufReader::new(tokio::io::stdin()),
-        &mut line,
-    )
-    .await?;
-    Ok(matches!(line.trim(), "y" | "Y" | "yes"))
+    let hello = client.initialize("nisse-cli").await?;
+    Ok((client, notifications, hello, server))
 }

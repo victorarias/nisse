@@ -160,6 +160,7 @@ impl Connection {
                     },
                     protocol_version: PROTOCOL_VERSION,
                     actor: self.actor.clone(),
+                    model: harness.model().to_owned(),
                 })
             }
             ClientRequest::ConversationCreate(params) => harness

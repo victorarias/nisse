@@ -25,4 +25,4 @@ expression: steady(&without_conversation_id(&streaming))
 ╭ QUEUE ───────────────────────────────────────────────────────────────────────╮
 │ ❯ ▍type to queue a follow-up                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ⣿ WORKING ▓▒░ 00:00:00                                    echo  │  nisse 0.1.0
+ ⣿ WORKING ▓▒░ 00:00:00                                thinking  │  nisse 0.1.0

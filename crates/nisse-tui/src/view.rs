@@ -356,9 +356,9 @@ fn approval_lines(
     if waiting {
         lines.push(Line::from(vec![
             Span::styled("┗━ ", theme.fg(theme.faint)),
-            Span::styled("y", theme.glow(theme.yellow)),
+            Span::styled("^Y", theme.glow(theme.yellow)),
             Span::styled(" allow · ", theme.fg(theme.dim)),
-            Span::styled("n", theme.glow(theme.yellow)),
+            Span::styled("^N", theme.glow(theme.yellow)),
             Span::styled(" deny", theme.fg(theme.dim)),
         ]));
         return lines;
@@ -505,7 +505,7 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         spans.push(Span::styled("▍", theme.glow(theme.magenta)));
         spans.push(Span::styled(
             if pending_approval(&app.entries).is_some() {
-                "y to allow, n to deny, or type a message"
+                "^Y to allow, ^N to deny, or type a message"
             } else if working {
                 "type to queue a follow-up"
             } else {

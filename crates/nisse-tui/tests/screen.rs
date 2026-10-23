@@ -93,7 +93,7 @@ impl Tui {
         };
         let server = Server::new(harness, broadcast::channel(16).0, owner);
         let (client, notifications) = Client::new(server.connect_in_process());
-        client.initialize("screen-test").await.unwrap();
+        let hello = client.initialize("screen-test").await.unwrap();
 
         let screen = Screen {
             parser: Arc::new(Mutex::new(vt100::Parser::new(HEIGHT, WIDTH, 0))),
@@ -114,6 +114,7 @@ impl Tui {
                 pressed,
                 client,
                 notifications,
+                hello.model,
                 None,
                 nisse_tui::Theme::NEON,
             )
@@ -124,15 +125,23 @@ impl Tui {
     }
 
     fn type_line(&self, text: &str) {
-        for typed in text.chars() {
-            self.press(KeyCode::Char(typed));
-        }
+        self.type_text(text);
         self.press(KeyCode::Enter);
     }
 
+    fn type_text(&self, text: &str) {
+        for typed in text.chars() {
+            self.press(KeyCode::Char(typed));
+        }
+    }
+
     fn press(&self, code: KeyCode) {
+        self.chord(code, KeyModifiers::NONE);
+    }
+
+    fn chord(&self, code: KeyCode, modifiers: KeyModifiers) {
         self.keys
-            .send(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+            .send(Event::Key(KeyEvent::new(code, modifiers)))
             .unwrap();
     }
 }
@@ -249,15 +258,26 @@ async fn the_model_s_unfinished_message_shows_live_until_it_is_committed() {
 }
 
 #[tokio::test]
-async fn pressing_y_allows_the_call_waiting_for_approval() {
+async fn the_status_bar_names_the_server_s_model_before_it_answers() {
+    let tui = Tui::with_model(Arc::new(Thinking {
+        finish: Arc::new(Notify::new()),
+    }))
+    .await;
+    let screen = tui.screen.shows(&["READY"]).await;
+    let status_bar = screen.lines().last().unwrap();
+    assert!(status_bar.contains("thinking"), "{status_bar}");
+}
+
+#[tokio::test]
+async fn ctrl_y_allows_the_call_waiting_for_approval() {
     let tui = Tui::with_model(Arc::new(Asking)).await;
     tui.screen.shows(&["READY"]).await;
     tui.type_line("clean up");
     let asking = tui
         .screen
-        .shows(&["APPROVE BASH", "y allow · n deny", "APPROVAL"])
+        .shows(&["APPROVE BASH", "^Y allow · ^N deny", "APPROVAL"])
         .await;
-    tui.press(KeyCode::Char('y'));
+    tui.chord(KeyCode::Char('y'), KeyModifiers::CONTROL);
     let allowed = tui
         .screen
         .shows(&["ALLOWED by owner", "Done: removed build", "READY"])
@@ -265,4 +285,20 @@ async fn pressing_y_allows_the_call_waiting_for_approval() {
 
     insta::assert_snapshot!("asking", without_conversation_id(&asking));
     insta::assert_snapshot!("allowed", without_conversation_id(&allowed));
+}
+
+#[tokio::test]
+async fn a_message_typed_while_a_call_waits_for_approval_does_not_answer_it() {
+    let tui = Tui::with_model(Arc::new(Asking)).await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("clean up");
+    tui.screen.shows(&["APPROVE BASH", "APPROVAL"]).await;
+    tui.type_text("yes, but keep the logs");
+    let typed = tui.screen.shows(&["❯ yes, but keep the logs▍"]).await;
+    assert!(typed.contains("^Y allow · ^N deny"), "{typed}");
+    assert!(!typed.contains("ALLOWED"), "{typed}");
+
+    tui.chord(KeyCode::Char('n'), KeyModifiers::CONTROL);
+    let denied = tui.screen.shows(&["DENIED", "READY"]).await;
+    assert!(denied.contains("❯ yes, but keep the logs▍"), "{denied}");
 }
