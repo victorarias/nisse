@@ -48,8 +48,10 @@ target/debug/nisse schema                  # the protocol's JSON Schema
 ```
 
 `NISSE_HOME` (default `~/.nisse`) holds `nisse.sqlite`, `nisse.sock`,
-`auth/` and `extensions/`. A TUI or `exec` attaches to `NISSE_HOME/nisse.sock`
-when a server runs there; otherwise it runs one in-process.
+`auth/` and `extensions/`. One process serves a home at a time. A TUI or
+`exec` attaches to `NISSE_HOME/nisse.sock` when a server runs there; otherwise
+it runs the server in-process and serves the socket itself, so the next client
+attaches to it.
 
 | Setting | What it does |
 | --- | --- |

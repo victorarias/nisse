@@ -50,7 +50,8 @@ impl Server {
         self.serve(channels, owner).await;
     }
 
-    /// WebSocket over a unix socket. Whoever can open the socket is the owner.
+    /// WebSocket over a unix socket. Whoever can open the socket is the owner. Whatever socket is
+    /// at `path` is replaced, so only the process that serves the socket's home binds it.
     pub fn bind_unix(path: &Path) -> Result<UnixListener> {
         if path.exists() {
             std::fs::remove_file(path)

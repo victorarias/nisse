@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use nisse_claude::{Claude, ClaudeOptions};
 use nisse_client::Client;
@@ -209,9 +209,26 @@ fn instructions(cwd: &std::path::Path) -> String {
     )
 }
 
-fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
+/// A server and its hold on the home: one process serves a home's store and runs at a time.
+struct Owner {
+    server: Arc<Server>,
+    _home: std::fs::File,
+}
+
+/// Starts this home's server, unless another process already serves it.
+fn start_server(config: &ServerConfig) -> Result<Option<Owner>> {
     let home = &config.home;
     std::fs::create_dir_all(home).with_context(|| format!("creating {}", home.display()))?;
+    let hold = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(home.join("nisse.lock"))?;
+    match hold.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+    }
     let (ui, _) = broadcast::channel(256);
     let sink = ui.clone();
     let roots = [home.join("extensions"), PathBuf::from(".nisse/extensions")];
@@ -224,25 +241,31 @@ fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
         },
     )?;
     harness.resume()?;
-    Ok(Server::new(harness, ui, owner()))
+    Ok(Some(Owner {
+        server: Server::new(harness, ui, owner()),
+        _home: hold,
+    }))
 }
 
 async fn serve(config: &ServerConfig, stdio: bool) -> Result<()> {
-    let server = start_server(config)?;
+    let Some(owner) = start_server(config)? else {
+        bail!("another nisse already serves {}", config.home.display());
+    };
     if stdio {
-        server.serve_stdio().await;
+        owner.server.clone().serve_stdio().await;
         return Ok(());
     }
     let socket = config.home.join("nisse.sock");
     let listener = Server::bind_unix(&socket)?;
     eprintln!("nisse: serving on {}", socket.display());
     tokio::select! {
-        served = server.serve_unix(listener) => served,
+        served = owner.server.clone().serve_unix(listener) => served,
         _ = tokio::signal::ctrl_c() => Ok(()),
     }
 }
 
-/// Attaches to a running server when there is one; otherwise runs one in this process.
+/// Attaches to the server of the home when one runs; otherwise runs it in this process, serving
+/// the home's socket too, so the next client attaches here instead of opening the store again.
 async fn connect(
     config: &ServerConfig,
     socket: Option<PathBuf>,
@@ -250,19 +273,32 @@ async fn connect(
     Client,
     mpsc::UnboundedReceiver<ServerNotification>,
     InitializeResult,
-    Option<Arc<Server>>,
+    Option<Owner>,
 )> {
     let explicit = socket.is_some();
     let socket = socket.unwrap_or_else(|| config.home.join("nisse.sock"));
-    let (client, notifications, server) = match Client::connect_unix(&socket).await {
+    let (client, notifications, owner) = match Client::connect_unix(&socket).await {
         Ok((client, notifications)) => (client, notifications, None),
         Err(error) if explicit => return Err(error),
-        Err(_) => {
-            let server = start_server(config)?;
-            let (client, notifications) = Client::new(server.connect_in_process());
-            (client, notifications, Some(server))
-        }
+        Err(_) => match start_server(config)? {
+            Some(owner) => {
+                let listener = Server::bind_unix(&socket)?;
+                tokio::spawn(owner.server.clone().serve_unix(listener));
+                let (client, notifications) = Client::new(owner.server.connect_in_process());
+                (client, notifications, Some(owner))
+            }
+            None => {
+                let (client, notifications) =
+                    Client::connect_unix(&socket).await.with_context(|| {
+                        format!(
+                            "another nisse serves {} without its socket, as `nisse serve --stdio` does",
+                            config.home.display()
+                        )
+                    })?;
+                (client, notifications, None)
+            }
+        },
     };
     let hello = client.initialize("nisse-cli").await?;
-    Ok((client, notifications, hello, server))
+    Ok((client, notifications, hello, owner))
 }
