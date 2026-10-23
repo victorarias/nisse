@@ -21,7 +21,8 @@ Milestone 1, a real agent. What runs today:
   sign-in, as the Codex CLI does, with Nisse running the agent loop and its own
   `Read`, `Write`, `Edit`, `Bash` and `Grep` tools, named and shaped like Claude
   Code's so one Luau hook works for both providers.
-- Streaming text, committed at most every 100 ms, so a crash loses at most that.
+- Streaming text, committed at most every 100 ms so every client sees the same
+  words; a run a restart cut off answers again from the start.
 - Approvals as entries: anyone in the conversation answers, once, from any
   client.
 - A SQLite commit log of conversations, entries and submissions. Inputs are
