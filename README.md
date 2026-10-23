@@ -89,6 +89,10 @@ return function(on)
 end
 ```
 
+A `tool.call` hook can deny a call, answer it itself, or pass it on with
+rewritten `args`; the tool stays the one the model called, so a call can't get
+past an approval by turning into another tool.
+
 Extensions are written in [Luau](https://luau.org). Each one gets its own
 sandboxed VM without `io`, `os` or `require`, with read-only globals and a time
 budget per hook.

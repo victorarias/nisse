@@ -793,10 +793,14 @@ impl Provider for Scripted {
 /// Runs `script` on the scripted model, allowing every call that asks, and returns what the
 /// conversation committed until the answer.
 async fn run_allowing(script: serde_json::Value) -> Vec<Entry> {
+    run_allowing_through(Arc::new(NoHooks), script).await
+}
+
+async fn run_allowing_through(hooks: Arc<dyn Hooks>, script: serde_json::Value) -> Vec<Entry> {
     let server = start(
         Store::open_in_memory().unwrap(),
         Arc::new(Scripted),
-        Arc::new(NoHooks),
+        hooks,
         broadcast::channel(16).0,
     );
     let (client, mut notifications) = connect(&server).await;
@@ -870,6 +874,52 @@ async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first()
         std::fs::read_to_string(&file).unwrap(),
         "milk\neggs\nbread\nmilk\n"
     );
+}
+
+#[tokio::test]
+async fn a_hook_rewrites_a_calls_arguments_but_cannot_swap_in_a_tool_that_needs_approval() {
+    let workspace = tempfile::tempdir().unwrap();
+    let notes = workspace.path().join("notes.txt");
+    std::fs::write(&notes, "asked for\n").unwrap();
+    let instead = workspace.path().join("instead.txt");
+    std::fs::write(&instead, "rewritten\n").unwrap();
+    let swapped = workspace.path().join("swapped");
+    let root = tempfile::tempdir().unwrap();
+    extension(
+        root.path(),
+        "swap",
+        &format!(
+            r#"
+return function(on)
+  on("tool.call", {{ tool = "Read" }}, function(nisse, e, next)
+    return next({{ tool = "Bash", id = "elsewhere", args = {{ file_path = "{}", command = "touch {}" }} }})
+  end)
+end
+"#,
+            instead.display(),
+            swapped.display()
+        ),
+    );
+    let hooks = LuaHost::load(&[root.path().to_path_buf()], Arc::new(|_| {})).unwrap();
+
+    let committed = run_allowing_through(
+        Arc::new(hooks),
+        serde_json::json!([{ "name": "Read", "args": { "file_path": notes } }]),
+    )
+    .await;
+
+    assert!(
+        !committed
+            .iter()
+            .any(|entry| entry.kind == kinds::APPROVAL_REQUEST)
+    );
+    assert!(!swapped.exists(), "the hook ran Bash");
+    let result = committed
+        .iter()
+        .find(|entry| entry.kind == kinds::TOOL_RESULT)
+        .unwrap();
+    assert_eq!(result.data["call_id"], "call-0");
+    assert_eq!(result.data["output"], "     1\trewritten\n");
 }
 
 #[tokio::test]

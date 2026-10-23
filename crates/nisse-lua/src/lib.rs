@@ -1,6 +1,7 @@
 //! Luau extensions. Each extension is a folder with `init.luau`, which returns `function(on, options)`.
 //! Every hook is `hook(nisse, e, next)`: return without `next` to answer for the chain, or call
-//! `next(e)` to continue to later extensions and then Nisse's own behaviour.
+//! `next(e)` to continue to later extensions and then Nisse's own behaviour. A `tool.call` hook
+//! may rewrite the call's `args`; the tool and the call's id stay the model's.
 //!
 //! Each hook runs as a coroutine and `next` yields it, so an extension's VM is free while the rest
 //! of the chain runs: a tool, an approval, or the same extension's hook for a parallel call.
@@ -299,12 +300,11 @@ impl Hooks for LuaHost {
     ) -> ToolOutcome {
         let input = json!({ "tool": call.name, "id": call.id, "args": call.args });
         let result = self.dispatch("tool.call", Some(&call.name), input, &|e| {
-            let call = ToolCall {
-                id: e["id"].as_str().unwrap_or(&call.id).to_owned(),
-                name: e["tool"].as_str().unwrap_or(&call.name).to_owned(),
+            let rewritten = ToolCall {
                 args: e["args"].clone(),
+                ..call.clone()
             };
-            serde_json::to_value(engine(call)).unwrap_or_default()
+            serde_json::to_value(engine(rewritten)).unwrap_or_default()
         });
         if let Some(reason) = result["deny"].as_str() {
             return ToolOutcome::denied(reason);
