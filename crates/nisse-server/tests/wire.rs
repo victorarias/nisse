@@ -1009,19 +1009,32 @@ async fn a_command_past_its_timeout_is_killed_with_what_it_started() {
 
     let (output, is_error) = tool_results(&committed).remove(0);
     assert!(is_error && output.contains("timed out after 200 ms"));
-    let started: u32 = output.lines().next().unwrap().parse().unwrap();
+    let started: i32 = output.lines().next().unwrap().parse().unwrap();
     #[cfg(target_os = "linux")]
-    tokio::time::timeout(PATIENCE, async {
-        let alive = || {
-            std::fs::read_to_string(format!("/proc/{started}/stat"))
-                .is_ok_and(|stat| !stat.contains(") Z ") && !stat.contains(") X "))
-        };
-        while alive() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+    ends(started).await;
+}
+
+/// Waits, with a deadline, for a process this test did not start to end.
+#[cfg(target_os = "linux")]
+async fn ends(pid: i32) {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        process::{Pid, PidfdFlags, pidfd_open},
+    };
+    let Ok(pidfd) = pidfd_open(Pid::from_raw(pid).unwrap(), PidfdFlags::empty()) else {
+        return;
+    };
+    let deadline = Timespec {
+        tv_sec: PATIENCE.as_secs() as i64,
+        tv_nsec: 0,
+    };
+    let ready = tokio::task::spawn_blocking(move || {
+        poll(&mut [PollFd::new(&pidfd, PollFlags::IN)], Some(&deadline))
     })
     .await
-    .expect("the command's background process was killed");
+    .unwrap()
+    .unwrap();
+    assert_eq!(ready, 1, "process {pid} kept running");
 }
 
 /// Asks to run two commands at once, the way models issue parallel tool calls.
