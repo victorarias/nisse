@@ -57,6 +57,7 @@ impl Provider for Echo {
                 };
                 turn.call_tool(call, Approval::NotNeeded, run_builtin_tool)
                     .await?;
+                turn.place_steers()?;
             }
         })
     }

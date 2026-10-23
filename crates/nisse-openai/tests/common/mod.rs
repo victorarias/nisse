@@ -419,6 +419,10 @@ impl Nisse {
     }
 
     pub async fn submit(&self, text: &str) {
+        self.send(text, WhenBusy::FollowUp).await;
+    }
+
+    async fn send(&self, text: &str, when_busy: WhenBusy) {
         let _: ConversationSubmitResult = self
             .client
             .request(ClientRequest::ConversationSubmit(
@@ -426,7 +430,7 @@ impl Nisse {
                     conversation_id: self.conversation.id.clone(),
                     input: Input::Text { text: text.into() },
                     request_id: text.into(),
-                    when_busy: WhenBusy::FollowUp,
+                    when_busy,
                 },
             ))
             .await
@@ -458,12 +462,20 @@ impl Nisse {
     }
 
     pub async fn finish(&mut self, allow: bool) -> Vec<Entry> {
+        self.finish_steering(allow, None).await
+    }
+
+    /// `finish`, sending `steer` while the first approval waits.
+    pub async fn finish_steering(&mut self, allow: bool, mut steer: Option<&str>) -> Vec<Entry> {
         tokio::time::timeout(PATIENCE, async {
             while let Some(notification) = self.notifications.recv().await {
                 match notification {
                     ServerNotification::Committed(commit) => {
                         for entry in commit.entries {
                             if entry.kind == kinds::APPROVAL_REQUEST {
+                                if let Some(steer) = steer.take() {
+                                    self.send(steer, WhenBusy::Steer).await;
+                                }
                                 self.resolve(&entry, allow).await;
                             }
                             self.committed.push(entry);

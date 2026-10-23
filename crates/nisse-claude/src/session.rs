@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -17,7 +17,7 @@ pub(crate) const PRE_TOOL_USE: &str = "nisse_pre_tool_use";
 
 const RESTARTED: &str = "Nisse restarted before you finished. Continue where you left off.";
 
-const RETOLD: &str = "Your earlier Claude Code session of this conversation could not be resumed. \
+const RETOLD: &str = "This Claude Code session joins a conversation it does not hold. \
                       This is the conversation so far; continue it.";
 
 /// What Nisse keeps per conversation: Claude's session, the newest Claude message whose
@@ -52,6 +52,7 @@ pub(crate) struct Session {
     sent: Seq,
     unacked: VecDeque<Delivery>,
     calls: HashMap<String, Call>,
+    unanswered_uses: HashSet<String>,
     held: VecDeque<Held>,
     streaming: String,
 }
@@ -104,13 +105,14 @@ impl Session {
             heads: Arc::new(Mutex::new(Heads::new(state))),
             unacked: VecDeque::new(),
             calls: HashMap::new(),
+            unanswered_uses: HashSet::new(),
             held: VecDeque::new(),
             streaming: String::new(),
         }
     }
 
-    /// For a session that replaces one Claude lost: its first message retells the whole
-    /// transcript, Claude's own part included.
+    /// For a session that does not hold the conversation so far: its first message retells the
+    /// whole transcript, Claude's own part included.
     pub(crate) fn retelling(mut self) -> Self {
         self.retell = true;
         self
@@ -138,6 +140,7 @@ impl Session {
                     }
                     if self.unacked.is_empty() {
                         self.calls.clear();
+                        self.unanswered_uses.clear();
                         return finish(turn, &frame, said);
                     }
                     continue;
@@ -178,11 +181,9 @@ impl Session {
     }
 
     fn deliver(&mut self, turn: &Turn, must_speak: bool) -> Result<()> {
-        let entries = turn.transcript()?;
-        let Some(newest) = entries.last().map(|entry| entry.seq) else {
-            return Ok(());
-        };
-        let unheard = entries.iter().filter(|entry| entry.seq > self.sent);
+        let entries = turn.entries_since(self.sent)?;
+        let newest = entries.last().map_or(self.sent, |entry| entry.seq);
+        let unheard = entries.iter();
         let texts: Vec<String> = if std::mem::take(&mut self.retell) {
             std::iter::once(RETOLD.to_owned())
                 .chain(unheard.filter_map(retold))
@@ -215,22 +216,30 @@ impl Session {
         Ok(())
     }
 
-    /// What Claude must hear about an entry it has not seen: what people said, and calls a
-    /// restart cut off, which Claude's session no longer holds a result for.
+    /// What Claude must hear about an entry it has not seen: what people said, and calls Nisse
+    /// cut off, which Claude's session holds no result for.
     fn told(&self, entry: &Entry) -> Option<String> {
         match entry.kind.as_str() {
             kinds::USER => entry.data["text"].as_str().map(str::to_owned),
-            kinds::TOOL_RESULT => {
+            kinds::TOOL_RESULT if entry.data["cut_off"] == true => {
                 let call_id = entry.data["call_id"].as_str()?;
                 let output = entry.data["output"].as_str()?;
-                let cut_off = output.starts_with("interrupted:") || output.starts_with("not run:");
-                (cut_off && !self.calls.contains_key(call_id)).then(|| {
+                (!self.calls.contains_key(call_id)).then(|| {
                     let name = entry.data["name"].as_str().unwrap_or("tool");
-                    format!("Your {name} call {call_id} was cut off when Nisse restarted: {output}")
+                    format!("Your {name} call {call_id} was cut off: {output}")
                 })
             }
             _ => None,
         }
+    }
+
+    /// Steers wait for Claude's round of calls to end: once every call Claude made has its
+    /// result committed, they join the run and Claude hears them.
+    fn deliver_steers(&mut self, turn: &Turn) -> Result<()> {
+        if self.unanswered_uses.is_empty() && self.calls.values().all(|call| call.done) {
+            turn.place_steers()?;
+        }
+        self.deliver(turn, false)
     }
 
     /// Takes a frame in as soon as Claude sends it: tool results go to their calls and Claude's
@@ -288,6 +297,7 @@ impl Session {
             .filter(|block| block["type"] == "tool_use")
             .filter_map(|block| block["id"].as_str().map(str::to_owned))
             .collect();
+        self.unanswered_uses.extend(calls.iter().cloned());
         let mut heads = self.heads.lock().expect("heads lock");
         let link = heads
             .chain
@@ -346,7 +356,8 @@ impl Session {
                 .extend(reported.into_iter().map(|id| (id, link)));
             heads.moved()?
         };
-        save(turn, state)
+        save(turn, state)?;
+        self.deliver_steers(turn)
     }
 
     fn acknowledge(&mut self, uuid: Option<&str>) -> Option<Seq> {
@@ -366,6 +377,7 @@ impl Session {
         let mut reported = Vec::new();
         for block in content(frame).filter(|block| block["type"] == "tool_result") {
             let id = block["tool_use_id"].as_str().unwrap_or_default().to_owned();
+            self.unanswered_uses.remove(&id);
             match self.calls.get_mut(&id) {
                 Some(call) if !call.done => {
                     if let Some(waiter) = call.waiter.take() {
@@ -508,7 +520,7 @@ impl Session {
                         );
                     }
                 }
-                self.deliver(turn, false)
+                self.deliver_steers(turn)
             }
             Event::Asked {
                 request_id,

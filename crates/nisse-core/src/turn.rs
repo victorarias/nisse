@@ -4,12 +4,12 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use nisse_protocol::{Actor, ConversationStatus, Entry, SubmissionStatus, kinds};
+use nisse_protocol::{Actor, ConversationStatus, Entry, Seq, SubmissionStatus, kinds};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    harness::{Harness, place_steers, tool_result},
+    harness::{Harness, is_steer, place_steers, tool_result},
     tools::{ToolCall, ToolOutcome},
 };
 
@@ -58,7 +58,13 @@ impl Turn {
     }
 
     pub fn transcript(&self) -> Result<Vec<Entry>> {
-        self.harness.store().entries(&self.conversation_id, 0)
+        self.entries_since(0)
+    }
+
+    pub fn entries_since(&self, since_seq: Seq) -> Result<Vec<Entry>> {
+        self.harness
+            .store()
+            .entries(&self.conversation_id, since_seq)
     }
 
     pub fn provider_state(&self) -> Result<Value> {
@@ -128,7 +134,7 @@ impl Turn {
     }
 
     /// Commits the call, runs it through the extensions' `tool.call` hooks and, when asked, an
-    /// approval, then commits its result together with any steers that arrived meanwhile.
+    /// approval, then commits its result.
     pub async fn call_tool<F>(
         &self,
         call: ToolCall,
@@ -199,10 +205,24 @@ impl Turn {
                 &Actor::System,
                 tool_result(&committed_call, &outcome),
             )?;
-            keep_provider_state(tx)?;
-            place_steers(tx)
+            keep_provider_state(tx)
         })?;
         Ok(outcome)
+    }
+
+    /// Steers wait for the model's round of tool calls to end: call this once every call of the
+    /// round has its result, and the steers that arrived meanwhile join the run.
+    pub fn place_steers(&self) -> Result<()> {
+        let waiting = self
+            .harness
+            .store()
+            .open_submissions(&self.conversation_id)?
+            .iter()
+            .any(is_steer);
+        if !waiting {
+            return Ok(());
+        }
+        self.harness.commit(&self.conversation_id, place_steers)
     }
 
     /// Asks the people in the conversation whether `call` may run, and waits for the first answer.

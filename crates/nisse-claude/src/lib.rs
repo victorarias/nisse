@@ -15,6 +15,7 @@ use std::{
 
 use anyhow::Result;
 use nisse_core::{Provider, ProviderFuture, Turn, new_id};
+use nisse_protocol::kinds;
 use serde_json::json;
 use tokio::task::AbortHandle;
 
@@ -83,16 +84,22 @@ impl Claude {
                 return Err(error);
             }
             drop(session);
-            session = self.start(turn, None)?.retelling();
+            session = self.start(turn, None)?;
             session.answer(turn).await?;
         }
         self.park(conversation_id, session);
         Ok(())
     }
 
-    /// Starts claude on the session it saved, or on a new one when there is none to resume.
-    /// A new session reaches the provider state once Claude holds some of the conversation.
+    /// Starts claude on the session it saved, or on a new one when there is none to resume. A
+    /// new session reaches the provider state once Claude holds some of the conversation, and
+    /// is retold the conversation when it holds more than people's words.
     fn start(&self, turn: &Turn, resumable: Option<ProviderState>) -> Result<Session> {
+        let retell = resumable.is_none()
+            && turn
+                .transcript()?
+                .iter()
+                .any(|entry| entry.kind != kinds::USER);
         let state = resumable.unwrap_or_else(|| ProviderState {
             session: new_id(),
             head: None,
@@ -150,7 +157,8 @@ impl Claude {
                 "hooks": { "PreToolUse": [{ "hookCallbackIds": [PRE_TOOL_USE] }] },
             },
         }));
-        Ok(Session::new(process, state))
+        let session = Session::new(process, state);
+        Ok(if retell { session.retelling() } else { session })
     }
 
     fn park(&self, conversation_id: String, session: Session) {

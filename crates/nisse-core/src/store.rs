@@ -302,9 +302,13 @@ impl Tx<'_> {
         }))
     }
 
-    /// The conversation's entries, this commit's own included.
-    pub fn entries(&self) -> Result<Vec<Entry>> {
-        entries_since(&self.tx, &self.conversation_id, 0)
+    pub fn seq(&self) -> Seq {
+        self.seq
+    }
+
+    /// The conversation's entries after `since_seq`, this commit's own included.
+    pub fn entries_since(&self, since_seq: Seq) -> Result<Vec<Entry>> {
+        entries_since(&self.tx, &self.conversation_id, since_seq)
     }
 
     pub fn insert_submission(

@@ -149,6 +149,31 @@ async fn a_tool_call_runs_and_its_output_goes_back_to_the_model() {
 }
 
 #[tokio::test]
+async fn a_steer_waits_until_every_call_the_model_made_at_once_has_its_result() {
+    let fake = Fake::start().await;
+    let (_home, auth_path) = signed_in(&fake, 3600).await;
+    let expected = fake.play("steer_after_parallel_calls");
+    let mut nisse = Nisse::start(&fake, &auth_path).await;
+
+    nisse.submit("echo one and two").await;
+    let entries = exchange(&nisse.finish_steering(true, Some("and three")).await);
+
+    assert_eq!(
+        texts(&entries),
+        [
+            (kinds::USER, "echo one and two"),
+            (kinds::TOOL_CALL, ""),
+            (kinds::TOOL_RESULT, "one\n"),
+            (kinds::TOOL_CALL, ""),
+            (kinds::TOOL_RESULT, "two\n"),
+            (kinds::USER, "and three"),
+            (kinds::ASSISTANT, "One, two, and three."),
+        ]
+    );
+    assert_requests(&fake, &expected);
+}
+
+#[tokio::test]
 async fn a_denied_tool_call_is_reported_to_the_model_as_denied() {
     let fake = Fake::start().await;
     let (_home, auth_path) = signed_in(&fake, 3600).await;

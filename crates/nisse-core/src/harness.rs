@@ -219,12 +219,14 @@ impl Harness {
             tokio::spawn(async move {
                 if let Err(error) = harness.drain(&conversation_id).await {
                     eprintln!("nisse: run in {conversation_id} failed: {error:#}");
-                    harness
-                        .inner
-                        .running
-                        .lock()
-                        .expect("running lock")
-                        .remove(&conversation_id);
+                    let mut running = harness.inner.running.lock().expect("running lock");
+                    let idle = harness.commit(&conversation_id, |tx| {
+                        tx.set_status(ConversationStatus::Idle)
+                    });
+                    if let Err(error) = idle {
+                        eprintln!("nisse: could not mark {conversation_id} idle: {error:#}");
+                    }
+                    running.remove(&conversation_id);
                 }
             });
         }
@@ -254,15 +256,16 @@ impl Harness {
 
     async fn answer(&self, submission: Submission) -> Result<()> {
         let conversation_id = submission.conversation_id.clone();
-        if submission.status == SubmissionStatus::Queued {
-            self.commit(&conversation_id, |tx| place(tx, &submission))?;
-        } else {
-            self.commit(&conversation_id, |tx| {
+        let began = self.commit(&conversation_id, |tx| {
+            if submission.status == SubmissionStatus::Queued {
+                place(tx, &submission)?;
+            } else {
                 tx.set_status(ConversationStatus::Working)?;
                 tx.set_live("")?;
-                close_dangling_calls(tx, Cutoff::Restart)
-            })?;
-        }
+                close_dangling_calls(tx, Cutoff::Restart, 0)?;
+            }
+            Ok(tx.seq())
+        })?;
 
         let provider = self.inner.provider.clone();
         let actor = Actor::Model {
@@ -273,7 +276,7 @@ impl Harness {
         let mut approvals = self.approvals();
         approvals.retain(|(asked_in, _), _| *asked_in != conversation_id);
         turn.settled_live(|tx, actor| {
-            close_dangling_calls(tx, Cutoff::RunEnded)?;
+            close_dangling_calls(tx, Cutoff::RunEnded, began)?;
             match &ran {
                 Ok(()) => tx.settle_placed(SubmissionStatus::Answered),
                 Err(error) => {
@@ -370,12 +373,15 @@ fn place(tx: &mut Tx<'_>, submission: &Submission) -> Result<()> {
     tx.set_status(ConversationStatus::Working)
 }
 
-/// Steers wait for the current tool round to end, then join the run.
+pub(crate) fn is_steer(open: &Submission) -> bool {
+    open.status == SubmissionStatus::Queued && open.when_busy == WhenBusy::Steer
+}
+
 pub(crate) fn place_steers(tx: &mut Tx<'_>) -> Result<()> {
     let steers: Vec<Submission> = tx
         .open_submissions()?
         .into_iter()
-        .filter(|open| open.status == SubmissionStatus::Queued && open.when_busy == WhenBusy::Steer)
+        .filter(is_steer)
         .collect();
     steers.iter().try_for_each(|steer| place(tx, steer))
 }
@@ -406,11 +412,11 @@ impl Cutoff {
     }
 }
 
-/// Gives every call left without a result one, so no client offers it and the model hears how
-/// it ended. One that was still waiting for approval never ran; any other is not replay-safe, so
-/// the model is told it was interrupted.
-fn close_dangling_calls(tx: &mut Tx<'_>, cutoff: Cutoff) -> Result<()> {
-    let entries = tx.entries()?;
+/// Gives every call after `since` left without a result one, marked `cut_off`, so no client
+/// offers it and the model hears how it ended. One that was still waiting for approval never
+/// ran; any other is not replay-safe, so the model is told it was interrupted.
+fn close_dangling_calls(tx: &mut Tx<'_>, cutoff: Cutoff, since: Seq) -> Result<()> {
+    let entries = tx.entries_since(since)?;
     let call_ids = |kind: &str| -> HashSet<String> {
         entries
             .iter()
@@ -447,11 +453,9 @@ fn close_dangling_calls(tx: &mut Tx<'_>, cutoff: Cutoff) -> Result<()> {
         } else {
             cutoff.interrupted()
         });
-        tx.append(
-            kinds::TOOL_RESULT,
-            &Actor::System,
-            tool_result(&call, &outcome),
-        )?;
+        let mut result = tool_result(&call, &outcome);
+        result["cut_off"] = true.into();
+        tx.append(kinds::TOOL_RESULT, &Actor::System, result)?;
     }
     Ok(())
 }

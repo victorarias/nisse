@@ -90,6 +90,7 @@ impl OpenAi {
                 let approval = approval_for(&call.name);
                 turn.call_tool(call, approval, run_builtin_tool).await?;
             }
+            turn.place_steers()?;
         }
     }
 
