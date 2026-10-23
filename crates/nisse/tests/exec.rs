@@ -37,7 +37,7 @@ impl Provider for TwoCommands {
             for (id, command) in [("first", "make"), ("second", "make install")] {
                 let call = ToolCall {
                     id: id.into(),
-                    name: "bash".into(),
+                    name: "Bash".into(),
                     args: serde_json::json!({ "command": command }),
                 };
                 turn.call_tool(call, Approval::Ask, move |_| ToolOutcome {

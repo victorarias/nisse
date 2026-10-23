@@ -489,7 +489,7 @@ async fn until_idle(notifications: &mut UnboundedReceiver<ServerNotification>) {
 fn ask_to_run(command: &str) -> nisse_core::ToolCall {
     nisse_core::ToolCall {
         id: format!("call-{command}"),
-        name: "bash".into(),
+        name: "Bash".into(),
         args: serde_json::json!({ "command": command }),
     }
 }
