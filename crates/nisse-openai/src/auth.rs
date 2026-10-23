@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -241,9 +242,20 @@ async fn browser_login(
     )?;
     notify(LoginPrompt::OpenUrl { url: url.into() });
 
+    let mut reading = FuturesUnordered::new();
     loop {
-        let (mut stream, _) = listener.accept().await?;
-        let Ok(target) = request_target(&mut stream).await else {
+        let (mut stream, target) = tokio::select! {
+            accepted = listener.accept() => {
+                let (mut stream, _) = accepted?;
+                reading.push(async move {
+                    let target = request_target(&mut stream).await;
+                    (stream, target)
+                });
+                continue;
+            }
+            Some(read) = reading.next(), if !reading.is_empty() => read,
+        };
+        let Ok(target) = target else {
             continue;
         };
         let code = match callback(&target, &state) {

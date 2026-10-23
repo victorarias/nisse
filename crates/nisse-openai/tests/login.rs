@@ -36,6 +36,50 @@ async fn the_browser_callback_exchanges_its_code_for_saved_tokens() {
 }
 
 #[tokio::test]
+async fn a_silent_connection_to_the_callback_does_not_hold_up_the_browsers_answer() {
+    let fake = Fake::start().await;
+    fake.issue_tokens("first", 3600);
+    let home = tempfile::tempdir().unwrap();
+    let auth_path = home.path().join("openai.json");
+    let (prompts, mut prompted) = tokio::sync::mpsc::unbounded_channel();
+    let server = fake.auth_server();
+    let path = auth_path.clone();
+    let login = tokio::spawn(async move {
+        login_with(&server, &path, LoginMethod::Browser, move |prompt| {
+            let _ = prompts.send(prompt);
+        })
+        .await
+    });
+    let Some(LoginPrompt::OpenUrl { url }) = prompted.recv().await else {
+        panic!("the browser flow asks to open a URL");
+    };
+    let url = reqwest::Url::parse(&url).unwrap();
+    let param = |name: &str| {
+        url.query_pairs()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into_owned())
+            .unwrap()
+    };
+    let callback = reqwest::Url::parse(&param("redirect_uri")).unwrap();
+
+    let _preconnected = tokio::net::TcpStream::connect(("127.0.0.1", callback.port().unwrap()))
+        .await
+        .unwrap();
+    let answered = tokio::time::timeout(PATIENCE, async {
+        let browser = reqwest::get(format!("{callback}?code=the-code&state={}", param("state")))
+            .await
+            .unwrap();
+        login.await.unwrap().unwrap();
+        browser.status()
+    })
+    .await
+    .expect("the browser's answer got through");
+
+    assert_eq!(answered, reqwest::StatusCode::OK);
+    assert!(auth_path.exists());
+}
+
+#[tokio::test]
 async fn the_browser_flow_proves_it_asked_with_pkce() {
     let fake = Fake::start().await;
     fake.issue_tokens("first", 3600);
