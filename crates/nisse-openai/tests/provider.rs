@@ -322,3 +322,71 @@ async fn a_recorded_turn_replays_as_a_fixture() {
     assert_eq!(expected[0]["prompt_cache_key"], "<any>");
     assert_requests(&replay, &expected);
 }
+
+const RECORDED_PROMPT: &str = "what does `echo hi` print?";
+
+#[tokio::test]
+async fn a_real_chatgpt_answer_replays_as_the_assistants_message() {
+    let fake = Fake::start().await;
+    let (_home, auth_path) = signed_in(&fake, 3600).await;
+    let expected = fake.play("recorded_text_answer");
+    let mut nisse = Nisse::start(&fake, &auth_path).await;
+
+    let entries = exchange(&nisse.converse(RECORDED_PROMPT, true).await);
+
+    assert_eq!(
+        texts(&entries),
+        [
+            (kinds::USER, RECORDED_PROMPT),
+            (kinds::ASSISTANT, "`echo hi` prints:\n\n```text\nhi\n```")
+        ]
+    );
+    assert_requests(&fake, &expected);
+}
+
+#[tokio::test]
+async fn recording_a_real_exchange_keeps_none_of_its_response_or_message_ids() {
+    let committed = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/recorded_text_answer.ndjson"
+    ))
+    .unwrap();
+    let as_served = committed
+        .replace(
+            "<resp:1>",
+            "resp_00bd91aafa8ad59c016adbe32715d8819188c22535ac5ed206",
+        )
+        .replace(
+            "<msg:1>",
+            "msg_00bd91aafa8ad59c016adbe32841a48191bb5fbc1a23541f9b",
+        )
+        .replace(
+            "<msg:2>",
+            "msg_00bd91aafa8ad59c016adbe32716a88191a8205bd38af81e1c",
+        );
+    let served = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(served.path(), as_served).unwrap();
+    let fake = Fake::start().await;
+    let (_home, auth_path) = signed_in(&fake, 3600).await;
+    fake.play_file(served.path());
+    let recordings = tempfile::tempdir().unwrap();
+    let mut nisse = Nisse::recording(&fake, &auth_path, Some(recordings.path())).await;
+
+    nisse.converse(RECORDED_PROMPT, true).await;
+
+    let recording = std::fs::read_dir(recordings.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let lines = |text: &str| -> Vec<Value> {
+        text.lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    };
+    assert_eq!(
+        lines(&std::fs::read_to_string(recording).unwrap()),
+        lines(&committed)
+    );
+}
