@@ -115,14 +115,15 @@ fn search(regex: &Regex, path: &Path, shown: &str, matches: &mut Matches) {
     let mut number = 0;
     while let Ok(Some(_)) = next_line(&mut reader, SCANNED_LINE_BYTES, &mut line) {
         number += 1;
-        if !regex.is_match(&line) {
+        let content = line.strip_suffix(b"\n").unwrap_or(&line);
+        let content = content.strip_suffix(b"\r").unwrap_or(content);
+        if !regex.is_match(content) {
             continue;
         }
-        let text = String::from_utf8_lossy(&line);
-        let text = text.trim_end_matches(['\n', '\r']);
+        let text = String::from_utf8_lossy(content);
         let text = match text.char_indices().nth(LINE_CHARS) {
             Some((cut, _)) => format!("{} [line cut]", &text[..cut]),
-            None => text.to_owned(),
+            None => text.into_owned(),
         };
         if !matches.add(format!("{shown}:{number}:{text}")) {
             return;

@@ -824,6 +824,27 @@ async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first()
 }
 
 #[tokio::test]
+async fn grep_matches_end_of_line_anchors_in_unix_and_windows_files() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("unix.rs"), "fn main()\nfn main() {}\n").unwrap();
+    std::fs::write(workspace.path().join("windows.rs"), "fn main()\r\n").unwrap();
+    let root = workspace.path().to_str().unwrap();
+
+    let committed = run_allowing(serde_json::json!([
+        { "name": "Grep", "args": { "pattern": "main\\(\\)$", "path": root } },
+    ]))
+    .await;
+
+    assert_eq!(
+        tool_results(&committed)[0],
+        (
+            format!("{root}/unix.rs:1:fn main()\n{root}/windows.rs:1:fn main()"),
+            false
+        )
+    );
+}
+
+#[tokio::test]
 async fn grep_skips_gitignored_hidden_and_binary_files() {
     let workspace = tempfile::tempdir().unwrap();
     let write = |name: &str, content: &[u8]| {
