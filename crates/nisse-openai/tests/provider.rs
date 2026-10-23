@@ -81,14 +81,44 @@ async fn requests_carry_the_sign_in_and_the_conversation() {
     assert_eq!(header("originator"), Some("nisse"));
     assert_eq!(header("session-id"), Some(conversation_id));
     assert_eq!(sent.json()["prompt_cache_key"], conversation_id);
-    let tools = sent.json()["tools"].clone();
-    assert!(
-        tools
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|tool| tool["type"] == "function" && tool["name"] == "bash"),
-        "the built-in tools are offered: {tools:#}"
+}
+
+#[tokio::test]
+async fn the_model_is_offered_claude_codes_tool_names_and_arguments_so_one_hook_fits_both() {
+    let fake = Fake::start().await;
+    let (_home, auth_path) = signed_in(&fake, 3600).await;
+    fake.play("text_answer");
+    let mut nisse = Nisse::start(&fake, &auth_path).await;
+
+    nisse.converse("hello", true).await;
+
+    let sent = fake.received("/codex/responses")[0].json();
+    let offered: Vec<(&str, &str, Vec<&str>)> = sent["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| {
+            let arguments = tool["parameters"]["properties"].as_object().unwrap();
+            (
+                tool["type"].as_str().unwrap(),
+                tool["name"].as_str().unwrap(),
+                arguments.keys().map(String::as_str).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        offered,
+        [
+            ("function", "Read", vec!["file_path", "limit", "offset"]),
+            ("function", "Write", vec!["content", "file_path"]),
+            (
+                "function",
+                "Edit",
+                vec!["file_path", "new_string", "old_string", "replace_all"]
+            ),
+            ("function", "Bash", vec!["command", "timeout"]),
+            ("function", "Grep", vec!["glob", "path", "pattern"]),
+        ]
     );
 }
 
@@ -113,7 +143,7 @@ async fn a_tool_call_runs_and_its_output_goes_back_to_the_model() {
     );
     assert_eq!(
         entries[2].1,
-        json!({ "id": "call_1", "name": "bash", "args": { "command": "echo hi" } })
+        json!({ "id": "call_1", "name": "Bash", "args": { "command": "echo hi" } })
     );
     assert_requests(&fake, &expected);
 }

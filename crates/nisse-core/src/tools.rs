@@ -88,73 +88,74 @@ fn spec(name: &str, description: &str, parameters: Value) -> ToolSpec {
 pub fn builtin_tools() -> Vec<ToolSpec> {
     vec![
         spec(
-            "read",
+            "Read",
             "Read a text file. Returns each line prefixed with its 1-based number and a tab, \
              up to 2000 lines from `offset`; very long lines are cut. When more lines remain, \
              the output ends with the offset to continue from.",
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "The file to read; relative paths resolve against the working directory." },
+                    "file_path": { "type": "string", "description": "The file to read; relative paths resolve against the working directory." },
                     "offset": { "type": "integer", "minimum": 1, "description": "The first line to read, counting from 1. Default 1." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": files::READ_LINES, "description": "How many lines to read. Default 2000." }
                 },
-                "required": ["path"],
+                "required": ["file_path"],
                 "additionalProperties": false
             }),
         ),
         spec(
-            "write",
+            "Write",
             "Write `content` to a file, replacing the file if it exists and creating missing \
-             parent directories. To change part of an existing file, use `edit`.",
+             parent directories. To change part of an existing file, use `Edit`.",
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "The file to write; relative paths resolve against the working directory." },
+                    "file_path": { "type": "string", "description": "The file to write; relative paths resolve against the working directory." },
                     "content": { "type": "string", "description": "The file's whole new content." }
                 },
-                "required": ["path", "content"],
+                "required": ["file_path", "content"],
                 "additionalProperties": false
             }),
         ),
         spec(
-            "edit",
+            "Edit",
             "Replace exact text in a file. `old_string` must match the file exactly, whitespace \
              and indentation included, and appear exactly once; include surrounding lines to make \
              it unique, or set `replace_all` to replace every occurrence.",
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "The file to edit; relative paths resolve against the working directory." },
+                    "file_path": { "type": "string", "description": "The file to edit; relative paths resolve against the working directory." },
                     "old_string": { "type": "string", "description": "The exact text to replace." },
                     "new_string": { "type": "string", "description": "The text to put in its place; must differ from old_string." },
                     "replace_all": { "type": "boolean", "description": "Replace every occurrence instead of exactly one. Default false." }
                 },
-                "required": ["path", "old_string", "new_string"],
+                "required": ["file_path", "old_string", "new_string"],
                 "additionalProperties": false
             }),
         ),
         spec(
-            "bash",
+            "Bash",
             "Run a command with `sh -c` in the working directory, with no terminal and no stdin. \
              Returns when the shell exits, with stdout and stderr interleaved, keeping the last 16 KiB; \
              processes started in the background with `&` keep running. If the shell is still running \
-             after `timeout_ms`, it and every process it started are killed.",
+             after `timeout`, it and every process it started are killed.",
             json!({
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "The shell command to run." },
-                    "timeout_ms": { "type": "integer", "minimum": 1, "maximum": bash::MAX_TIMEOUT_MS, "description": "Milliseconds before the command is killed. Default 120000." }
+                    "timeout": { "type": "integer", "minimum": 1, "maximum": bash::MAX_TIMEOUT_MS, "description": "Milliseconds before the command is killed. Default 120000." }
                 },
                 "required": ["command"],
                 "additionalProperties": false
             }),
         ),
         spec(
-            "grep",
+            "Grep",
             "Search file contents for a regular expression (Rust regex syntax, as in ripgrep). \
-             Returns `path:line:text` for each matching line, up to 200 matches. Skips hidden \
-             and binary files.",
+             Returns `path:line:text` for each matching line, in path order, up to 200 matches; \
+             very long lines are cut. Skips hidden files, binary files and files that a \
+             `.gitignore` or `.ignore` excludes.",
             json!({
                 "type": "object",
                 "properties": {
@@ -172,18 +173,18 @@ pub fn builtin_tools() -> Vec<ToolSpec> {
 /// Whether a built-in call needs a person's approval before it runs. Unknown names need one.
 pub fn approval_for(name: &str) -> Approval {
     match name {
-        "read" | "grep" => Approval::NotNeeded,
+        "Read" | "Grep" => Approval::NotNeeded,
         _ => Approval::Ask,
     }
 }
 
 pub fn run_builtin_tool(call: ToolCall) -> ToolOutcome {
     match call.name.as_str() {
-        "read" => parsed(&call, files::read),
-        "write" => parsed(&call, files::write),
-        "edit" => parsed(&call, edit::edit),
-        "bash" => parsed(&call, bash::bash),
-        "grep" => parsed(&call, grep::grep),
+        "Read" => parsed(&call, files::read),
+        "Write" => parsed(&call, files::write),
+        "Edit" => parsed(&call, edit::edit),
+        "Bash" => parsed(&call, bash::bash),
+        "Grep" => parsed(&call, grep::grep),
         other => ToolOutcome::error(format!("no tool named {other}")),
     }
 }

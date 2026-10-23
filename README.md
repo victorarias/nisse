@@ -19,7 +19,8 @@ Milestone 1, a real agent. What runs today:
   message and tool call, runs the Luau hooks on each call, and turns Claude
   Code's permission asks into Nisse approvals. **OpenAI** runs through a ChatGPT
   sign-in, as the Codex CLI does, with Nisse running the agent loop and its own
-  `read`, `write`, `edit`, `bash` and `grep` tools.
+  `Read`, `Write`, `Edit`, `Bash` and `Grep` tools, named and shaped like Claude
+  Code's so one Luau hook works for both providers.
 - Streaming text, committed at most every 100 ms, so a crash loses at most that.
 - Approvals as entries: anyone in the conversation answers, once, from any
   client.
@@ -77,7 +78,7 @@ with an `init.luau` that returns `function(on, options)`.
 
 ```luau
 return function(on)
-  on("tool.call", { tool = "bash" }, function(nisse, e, next)
+  on("tool.call", { tool = "Bash" }, function(nisse, e, next)
     if e.args.command:match("^rm ") then
       return { deny = "guard: no rm here" }
     end

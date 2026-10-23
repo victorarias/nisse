@@ -1,5 +1,5 @@
 return function(on)
-  on("tool.call", { tool = "bash" }, function(nisse, e, next)
+  on("tool.call", { tool = "Bash" }, function(nisse, e, next)
     if e.args.command:match("^rm ") then
       return { deny = "guard: no rm here" }
     end

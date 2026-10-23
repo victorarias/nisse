@@ -14,19 +14,19 @@ const LINE_BYTES: usize = 2000;
 
 #[derive(Deserialize)]
 pub struct Read {
-    path: PathBuf,
+    file_path: PathBuf,
     offset: Option<usize>,
     limit: Option<usize>,
 }
 
 pub fn read(args: Read) -> ToolOutcome {
-    let path = args.path.display();
-    if args.path.is_dir() {
+    let path = args.file_path.display();
+    if args.file_path.is_dir() {
         return ToolOutcome::error(format!(
-            "{path} is a directory; use grep or bash to list it"
+            "{path} is a directory; use Grep or Bash to list it"
         ));
     }
-    let file = match File::open(&args.path) {
+    let file = match File::open(&args.file_path) {
         Ok(file) => file,
         Err(error) => return ToolOutcome::error(format!("could not open {path}: {error}")),
     };
@@ -106,21 +106,21 @@ pub fn next_line(
 
 #[derive(Deserialize)]
 pub struct Write {
-    path: PathBuf,
+    file_path: PathBuf,
     content: String,
 }
 
 pub fn write(args: Write) -> ToolOutcome {
-    let path = args.path.display();
+    let path = args.file_path.display();
     if let Some(parent) = args
-        .path
+        .file_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         && let Err(error) = std::fs::create_dir_all(parent)
     {
         return ToolOutcome::error(format!("could not create {}: {error}", parent.display()));
     }
-    match std::fs::write(&args.path, &args.content) {
+    match std::fs::write(&args.file_path, &args.content) {
         Ok(()) => ToolOutcome::ok(format!("Wrote {} bytes to {path}.", args.content.len())),
         Err(error) => ToolOutcome::error(format!("could not write {path}: {error}")),
     }
