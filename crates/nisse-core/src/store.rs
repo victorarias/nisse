@@ -166,24 +166,7 @@ impl Store {
     }
 
     pub fn entries(&self, conversation_id: &str, since_seq: Seq) -> Result<Vec<Entry>> {
-        let mut statement = self.db.prepare(
-            "SELECT id, seq, conversation_id, kind, author, data, created_at_ms FROM entries
-             WHERE conversation_id = ?1 AND seq > ?2 ORDER BY seq, rowid",
-        )?;
-        let rows = statement.query_map(params![conversation_id, since_seq], |row| {
-            Ok((|| {
-                Ok(Entry {
-                    id: row.get(0)?,
-                    seq: row.get(1)?,
-                    conversation_id: row.get(2)?,
-                    kind: row.get(3)?,
-                    author: serde_json::from_str(&row.get::<_, String>(4)?)?,
-                    data: serde_json::from_str(&row.get::<_, String>(5)?)?,
-                    created_at_ms: row.get(6)?,
-                })
-            })())
-        })?;
-        rows.map(|row| row?).collect()
+        entries_since(&self.db, conversation_id, since_seq)
     }
 
     pub fn submission_by_request(
@@ -305,6 +288,11 @@ impl Tx<'_> {
         submissions_where(&self.tx, OPEN_SUBMISSIONS, params![self.conversation_id])
     }
 
+    /// The conversation's entries, this commit's own included.
+    pub fn entries(&self) -> Result<Vec<Entry>> {
+        entries_since(&self.tx, &self.conversation_id, 0)
+    }
+
     pub fn insert_submission(
         &mut self,
         request_id: &str,
@@ -345,6 +333,27 @@ impl Tx<'_> {
         )?;
         Ok(())
     }
+}
+
+fn entries_since(db: &Connection, conversation_id: &str, since_seq: Seq) -> Result<Vec<Entry>> {
+    let mut statement = db.prepare(
+        "SELECT id, seq, conversation_id, kind, author, data, created_at_ms FROM entries
+         WHERE conversation_id = ?1 AND seq > ?2 ORDER BY seq, rowid",
+    )?;
+    let rows = statement.query_map(params![conversation_id, since_seq], |row| {
+        Ok((|| {
+            Ok(Entry {
+                id: row.get(0)?,
+                seq: row.get(1)?,
+                conversation_id: row.get(2)?,
+                kind: row.get(3)?,
+                author: serde_json::from_str(&row.get::<_, String>(4)?)?,
+                data: serde_json::from_str(&row.get::<_, String>(5)?)?,
+                created_at_ms: row.get(6)?,
+            })
+        })())
+    })?;
+    rows.map(|row| row?).collect()
 }
 
 const OPEN_SUBMISSIONS: &str = "conversation_id = ?1 AND status IN ('placed', 'queued')

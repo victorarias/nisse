@@ -472,6 +472,222 @@ async fn a_declined_call_never_runs_and_the_model_hears_why() {
     assert_eq!(answered.last().unwrap().data["text"], "owner declined");
 }
 
+async fn until_idle(notifications: &mut UnboundedReceiver<ServerNotification>) {
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            if let Some(ServerNotification::Status(changed)) = notifications.recv().await
+                && changed.status == ConversationStatus::Idle
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("the conversation went idle");
+}
+
+fn ask_to_run(command: &str) -> nisse_core::ToolCall {
+    nisse_core::ToolCall {
+        id: format!("call-{command}"),
+        name: "bash".into(),
+        args: serde_json::json!({ "command": command }),
+    }
+}
+
+/// Asks to run `first`, and gives up on it when told the model went away, as Claude does when
+/// it exits mid-ask. Then it fails, or asks to run `second` and answers with its output.
+struct GivesUp {
+    gone: tokio::sync::Notify,
+    second: Option<&'static str>,
+}
+
+impl Provider for GivesUp {
+    fn model(&self) -> &str {
+        "gives-up"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let first = turn.call_tool(
+                ask_to_run("first"),
+                nisse_core::Approval::Ask,
+                nisse_core::run_builtin_tool,
+            );
+            tokio::select! {
+                ran = first => { ran?; }
+                () = self.gone.notified() => {}
+            }
+            let Some(second) = self.second else {
+                anyhow::bail!("the model went away");
+            };
+            let outcome = turn
+                .call_tool(
+                    ask_to_run(second),
+                    nisse_core::Approval::Ask,
+                    nisse_core::run_builtin_tool,
+                )
+                .await?;
+            turn.answer(outcome.output.trim())
+        })
+    }
+}
+
+#[tokio::test]
+async fn an_approval_left_open_by_a_failed_run_is_closed_and_answering_it_keeps_the_conversation_idle()
+ {
+    let provider = Arc::new(GivesUp {
+        gone: tokio::sync::Notify::new(),
+        second: None,
+    });
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        provider.clone(),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "go").await;
+    until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    provider.gone.notify_one();
+    let settled = until_entry(&mut notifications, kinds::ASSISTANT).await;
+    until_idle(&mut notifications).await;
+    let accepted = resolve(&client, &conversation, "call-first", true).await;
+    let after = subscribe(&client, &conversation, 0).await;
+
+    let ServerNotification::Committed(settle) = settled.last().unwrap() else {
+        panic!("the run settled in a commit");
+    };
+    let result = settle
+        .entries
+        .iter()
+        .find(|entry| entry.kind == kinds::TOOL_RESULT)
+        .expect("the open call got its result as the run settled");
+    assert_eq!(result.data["call_id"], "call-first");
+    assert!(
+        result.data["output"]
+            .as_str()
+            .unwrap()
+            .starts_with("not run:")
+    );
+    assert!(!accepted);
+    assert_eq!(after.conversation.status, ConversationStatus::Idle);
+    assert!(
+        !after
+            .entries
+            .iter()
+            .any(|entry| entry.kind == kinds::APPROVAL)
+    );
+}
+
+#[tokio::test]
+async fn approving_the_live_call_resumes_work_while_the_call_its_run_abandoned_cannot_be_answered()
+{
+    let provider = Arc::new(GivesUp {
+        gone: tokio::sync::Notify::new(),
+        second: Some("echo second"),
+    });
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        provider.clone(),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "go").await;
+    until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    provider.gone.notify_one();
+    until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    let live = resolve(&client, &conversation, "call-echo second", true).await;
+    let abandoned = resolve(&client, &conversation, "call-first", true).await;
+    let answered = until_entry(&mut notifications, kinds::ASSISTANT).await;
+
+    let approved = answered
+        .iter()
+        .find_map(|notification| match notification {
+            ServerNotification::Committed(commit)
+                if commit
+                    .entries
+                    .iter()
+                    .any(|entry| entry.kind == kinds::APPROVAL) =>
+            {
+                Some(commit)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(live && !abandoned);
+    assert_eq!(approved.status, Some(ConversationStatus::Working));
+    assert_eq!(entries(&answered).last().unwrap().data["text"], "second");
+}
+
+#[test]
+fn a_call_waiting_for_approval_when_nisse_restarts_is_not_run_and_the_model_hears_it() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("nisse.sqlite");
+    let marker = home.path().join("made");
+    let command = format!("touch {}", marker.display());
+
+    let crashed = tokio::runtime::Runtime::new().unwrap();
+    let conversation = crashed.block_on(async {
+        let server = start(
+            Store::open(&path).unwrap(),
+            Arc::new(Careful),
+            Arc::new(NoHooks),
+            broadcast::channel(16).0,
+        );
+        let (client, mut notifications) = connect(&server).await;
+        let conversation = create(&client).await;
+        subscribe(&client, &conversation, 0).await;
+        submit(&client, &conversation, &command).await;
+        until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+        conversation
+    });
+    crashed.shutdown_background();
+
+    let reopened = tokio::runtime::Runtime::new().unwrap();
+    reopened.block_on(async {
+        let server = start(
+            Store::open(&path).unwrap(),
+            echo(),
+            Arc::new(NoHooks),
+            broadcast::channel(16).0,
+        );
+        let (client, mut notifications) = connect(&server).await;
+        let mut entries = subscribe(&client, &conversation, 0).await.entries;
+        let rerun_answered = |entries: &[Entry]| {
+            entries
+                .iter()
+                .skip_while(|entry| entry.kind != kinds::TOOL_RESULT)
+                .any(|entry| entry.kind == kinds::ASSISTANT)
+        };
+        while !rerun_answered(&entries) {
+            entries.extend(entries_until(&mut notifications, kinds::ASSISTANT).await);
+        }
+        let accepted = resolve(&client, &conversation, &format!("call-{command}"), true).await;
+
+        let result = entries
+            .iter()
+            .find(|entry| entry.kind == kinds::TOOL_RESULT)
+            .unwrap();
+        let output = result.data["output"].as_str().unwrap();
+        assert!(output.starts_with("not run:"), "{output}");
+        assert!(
+            entries.last().unwrap().data["text"]
+                .as_str()
+                .unwrap()
+                .contains(output)
+        );
+        assert!(!accepted);
+        assert!(!marker.exists());
+    });
+}
+
 #[tokio::test]
 async fn streamed_text_shows_live_until_the_message_is_committed() {
     let server = start(

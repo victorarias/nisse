@@ -179,10 +179,7 @@ impl Turn {
 
     /// Asks the people in the conversation whether `call` may run, and waits for the first answer.
     pub async fn ask(&self, call: &ToolCall, reason: Option<String>) -> Result<Decision> {
-        let (answer, answered) = oneshot::channel();
-        self.harness
-            .wait_for_approval(&self.conversation_id, &call.id, answer);
-        self.harness.commit(&self.conversation_id, |tx| {
+        let answered = self.harness.ask(&self.conversation_id, &call.id, |tx| {
             tx.append(
                 kinds::APPROVAL_REQUEST,
                 &self.actor,
