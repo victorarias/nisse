@@ -36,6 +36,8 @@ pub struct InitializeResult {
     pub server: ClientInfo,
     pub protocol_version: u32,
     pub actor: Actor,
+    /// The model that answers this server's conversations.
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

@@ -76,6 +76,11 @@ impl Harness {
         }
     }
 
+    /// The model that answers every run on this harness.
+    pub fn model(&self) -> &str {
+        self.inner.provider.model()
+    }
+
     /// Continues every run a previous process left unfinished.
     pub fn resume(&self) -> Result<()> {
         let unfinished = self.store().conversations_with_open_submissions()?;
