@@ -109,14 +109,15 @@ pub enum Open {
     New(ConversationStartParams),
 }
 
-/// Takes over the process's terminal until the user quits. A `notice` shows where errors do.
+/// Takes over the process's terminal until the user quits, and returns the conversation's id. A
+/// `notice` shows where errors do.
 pub async fn run(
     client: Client,
     notifications: mpsc::UnboundedReceiver<ServerNotification>,
     open: Open,
     notice: Option<String>,
     theme: Theme,
-) -> Result<()> {
+) -> Result<String> {
     let mut terminal = ratatui::init();
     let outcome = drive(
         &mut terminal,
@@ -132,7 +133,8 @@ pub async fn run(
     outcome
 }
 
-/// Draws on `terminal` and follows `host`'s events until the user quits or the host has no more.
+/// Draws on `terminal` and follows `host`'s events until the user quits or the host has no more,
+/// and returns the conversation's id.
 pub async fn drive<B: Backend>(
     terminal: &mut Terminal<B>,
     mut host: impl Host,
@@ -141,43 +143,34 @@ pub async fn drive<B: Backend>(
     open: Open,
     notice: Option<String>,
     theme: Theme,
-) -> Result<()>
+) -> Result<String>
 where
     B::Error: Send + Sync + 'static,
 {
-    let conversation = match open {
-        Open::Existing(id) => {
-            client
-                .request::<ConversationReadResult>(ClientRequest::ConversationRead(
-                    nisse_protocol::ConversationReadParams {
-                        conversation_id: id,
-                        since_seq: 0,
-                    },
-                ))
-                .await?
-                .conversation
-        }
+    let conversation_id = match open {
+        Open::Existing(id) => id,
         Open::New(start) => {
             client
-                .request(ClientRequest::ConversationStart(start))
+                .request::<Conversation>(ClientRequest::ConversationStart(start))
                 .await?
+                .id
         }
     };
     let snapshot: ConversationReadResult = client
         .request(ClientRequest::ConversationSubscribe(
             ConversationSubscribeParams {
-                conversation_id: conversation.id.clone(),
+                conversation_id,
                 since_seq: 0,
             },
         ))
         .await?;
+    let conversation = snapshot.conversation;
     let (listed, mut lists) = mpsc::unbounded_channel();
     let (models, mut model_lists) = mpsc::unbounded_channel();
     let (followed, mut follows) = mpsc::unbounded_channel();
     let mut app = App {
-        status: snapshot.conversation.status,
-        working_since: (snapshot.conversation.status == ConversationStatus::Working)
-            .then(Instant::now),
+        status: conversation.status,
+        working_since: (conversation.status == ConversationStatus::Working).then(Instant::now),
         conversation,
         entries: snapshot.entries,
         live: snapshot.live,
@@ -206,10 +199,10 @@ where
             event = host.next_event() => match event {
                 Some(event) => {
                     if app.on_event(event, &client, &host).await? {
-                        return Ok(());
+                        return Ok(app.conversation.id);
                     }
                 }
-                None => return Ok(()),
+                None => return Ok(app.conversation.id),
             },
             Some(notification) = notifications.recv() => {
                 if let Some((command, env)) = app.on_notification(notification, &client, &mut host) {

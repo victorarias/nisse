@@ -44,6 +44,7 @@ Next: many clients on one conversation (M2). See the design doc for the plan.
 ```sh
 cargo build
 target/debug/nisse                         # the TUI, with Claude, in this directory
+target/debug/nisse --conversation <id>     # back to a conversation; the TUI prints this on exit
 target/debug/nisse providers               # each provider and how it stands
 target/debug/nisse models                  # each provider's models and efforts
 target/debug/nisse login openai            # sign in with ChatGPT (--device on a headless box)
