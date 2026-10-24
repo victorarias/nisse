@@ -16,7 +16,7 @@ use anyhow::{Context, Result, bail};
 use mlua::{
     Function, IntoLuaMulti, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, Table, VmState,
 };
-use nisse_core::{Hooks, ToolCall, ToolOutcome};
+use nisse_core::{CallContext, Hooks, ToolCall, ToolOutcome};
 use nisse_protocol::UiChanged;
 use serde_json::{Value, json};
 
@@ -295,10 +295,16 @@ impl Hooks for LuaHost {
 
     fn tool_call(
         &self,
+        context: &CallContext,
         call: ToolCall,
         engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
     ) -> ToolOutcome {
-        let input = json!({ "tool": call.name, "id": call.id, "args": call.args });
+        let input = json!({
+            "tool": call.name,
+            "id": call.id,
+            "args": call.args,
+            "conversation": context,
+        });
         let result = self.dispatch("tool.call", Some(&call.name), input, &|e| {
             let rewritten = ToolCall {
                 args: e["args"].clone(),

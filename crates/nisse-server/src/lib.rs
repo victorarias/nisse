@@ -10,10 +10,10 @@ use nisse_core::{Harness, StartError, SubmitError};
 
 use nisse_protocol::{
     Actor, ApprovalResolveResult, AuthAccepted, ClientInfo, ClientRequest, Commit,
-    ConversationListResult, ConversationSubscribeParams, ErrorResponse, InitializeResult, Message,
-    ModelsListResult, PROTOCOL_VERSION, ProvidersListResult, Request, RequestId, Response,
-    RpcError, Seq, ServerNotification, ServerStopResult, SkillsListResult, StatusChanged,
-    UiChanged,
+    ConversationInterruptResult, ConversationListResult, ConversationSubscribeParams,
+    ErrorResponse, InitializeResult, Message, ModelsListResult, PROTOCOL_VERSION,
+    ProvidersListResult, Request, RequestId, Response, RpcError, Seq, ServerNotification,
+    ServerStopResult, SkillsListResult, StatusChanged, UiChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
@@ -316,27 +316,33 @@ impl Connection {
                 let _ = self.subscribe.send((request.id.clone(), params));
                 return None;
             }
-            ClientRequest::ConversationSubmit(params) => {
-                match harness.submit(params, self.actor.clone()).await {
-                    Ok(result) => to_result(result),
-                    Err(SubmitError::NotFound(id)) => Err(RpcError::new(
-                        RpcError::INVALID_PARAMS,
-                        format!("no conversation {id}"),
-                    )),
-                    Err(error @ SubmitError::ReservedKind(_)) => {
-                        Err(RpcError::new(RpcError::INVALID_PARAMS, error.to_string()))
-                    }
-                    Err(error @ (SubmitError::Busy | SubmitError::Denied(_))) => Err(RpcError {
-                        code: RpcError::INVALID_REQUEST,
-                        message: error.to_string(),
-                        data: Some(serde_json::json!({
-                            "reason": if matches!(error, SubmitError::Busy) { "busy" } else { "denied" }
-                        })),
-                    }),
-                    Err(SubmitError::Failed(error)) => Err(internal(error)),
-                }
-            }
+            ClientRequest::ConversationSubmit(params) => harness
+                .submit(params, self.actor.clone())
+                .await
+                .map_err(refused)
+                .and_then(to_result),
+            ClientRequest::ConversationInterrupt(params) => harness
+                .interrupt(&params.conversation_id)
+                .map_err(refused)
+                .and_then(|interrupted| to_result(ConversationInterruptResult { interrupted })),
         })
+    }
+}
+
+fn refused(error: SubmitError) -> RpcError {
+    let reason = match error {
+        SubmitError::Failed(error) => return internal(error),
+        SubmitError::NotFound(_) | SubmitError::ReservedKind(_) => {
+            return RpcError::new(RpcError::INVALID_PARAMS, error.to_string());
+        }
+        SubmitError::Busy => "busy",
+        SubmitError::Denied(_) => "denied",
+        SubmitError::Hosted => "hosted",
+    };
+    RpcError {
+        code: RpcError::INVALID_REQUEST,
+        message: error.to_string(),
+        data: Some(serde_json::json!({ "reason": reason })),
     }
 }
 

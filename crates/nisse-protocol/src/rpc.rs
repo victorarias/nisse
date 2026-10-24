@@ -88,6 +88,8 @@ pub enum ClientRequest {
     ConversationSubmit(ConversationSubmitParams),
     #[serde(rename = "conversation/select_model")]
     ConversationSelectModel(ConversationSelectModelParams),
+    #[serde(rename = "conversation/interrupt")]
+    ConversationInterrupt(ConversationInterruptParams),
     #[serde(rename = "approval/resolve")]
     ApprovalResolve(ApprovalResolveParams),
     #[serde(rename = "skills/list")]
@@ -145,6 +147,7 @@ const KNOWN_METHODS: &[&str] = &[
     "conversation/subscribe",
     "conversation/submit",
     "conversation/select_model",
+    "conversation/interrupt",
     "approval/resolve",
     "skills/list",
     "server/stop",

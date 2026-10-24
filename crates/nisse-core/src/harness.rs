@@ -8,13 +8,14 @@ use anyhow::{Result, anyhow};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, Commit, Conversation, ConversationReadResult,
     ConversationSelectModelParams, ConversationStartParams, ConversationStatus,
-    ConversationSubmitParams, ConversationSubmitResult, Entry, Input, ModelSelection, Seq, Skill,
-    SubmissionStatus, WhenBusy, kinds,
+    ConversationSubmitParams, ConversationSubmitResult, Entry, Input, Lineage, Mail, MailKind,
+    ModelSelection, Seq, Skill, SubmissionStatus, WhenBusy, kinds,
 };
 use serde_json::json;
 use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::{
+    agents::{self, Limits},
     new_id,
     provider::Provider,
     store::{NewConversation, Store, Submission, Tx},
@@ -40,6 +41,7 @@ pub struct HarnessOptions {
     pub providers: Vec<(String, Arc<dyn Provider>)>,
     pub hooks: LoadHooks,
     pub default_model: DefaultModel,
+    pub agents: Limits,
 }
 
 /// The same extensions in every directory.
@@ -64,11 +66,14 @@ struct Inner {
     commits: broadcast::Sender<Commit>,
     running: Mutex<HashSet<String>>,
     runs: watch::Sender<usize>,
+    /// Each run going, by conversation, and what stops it.
+    stops: Mutex<HashMap<String, watch::Sender<bool>>>,
     approvals: Mutex<Approvals>,
     providers: Vec<(String, Arc<dyn Provider>)>,
     load_hooks: LoadHooks,
     hooks: Mutex<HashMap<PathBuf, Arc<dyn Hooks>>>,
     default_model: DefaultModel,
+    limits: Limits,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,6 +102,8 @@ pub enum SubmitError {
     Denied(String),
     #[error("only Nisse writes {0} entries")]
     ReservedKind(String),
+    #[error("a subagent its parent's provider runs takes input through its parent")]
+    Hosted,
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
@@ -114,11 +121,13 @@ impl Harness {
                 commits,
                 running: Mutex::default(),
                 runs: watch::Sender::new(0),
+                stops: Mutex::default(),
                 approvals: Mutex::default(),
                 providers: options.providers,
                 load_hooks: options.hooks,
                 hooks: Mutex::default(),
                 default_model: options.default_model,
+                limits: options.agents,
             }),
         }
     }
@@ -130,6 +139,21 @@ impl Harness {
 
     /// Continues every run a previous process left unfinished.
     pub fn resume(&self) -> Result<()> {
+        let stranded: Vec<Conversation> = self
+            .store()
+            .conversations()?
+            .into_iter()
+            .filter(|conversation| {
+                conversation.status != ConversationStatus::Idle
+                    && conversation
+                        .lineage
+                        .as_ref()
+                        .is_some_and(|lineage| lineage.hosted)
+            })
+            .collect();
+        for child in stranded {
+            self.strand(&child.id)?;
+        }
         let unfinished = self.store().conversations_with_open_submissions()?;
         for conversation_id in unfinished {
             self.wake(&conversation_id);
@@ -181,8 +205,73 @@ impl Harness {
             creator: creator.clone(),
             cwd: params.cwd,
             selection,
+            lineage: None,
         };
         Ok(self.commit(&new_id(), |tx| tx.create_conversation(start))?)
+    }
+
+    /// Starts a subagent of `parent` for its tool call `call_id`, on the parent's provider and in
+    /// its directory. The parent's transcript gets a `nisse.subagent` entry that names it.
+    pub(crate) fn start_child(
+        &self,
+        parent: &Conversation,
+        title: &str,
+        selection: ModelSelection,
+        lineage: Lineage,
+        actor: &Actor,
+    ) -> Result<Conversation> {
+        let call_id = lineage.call_id.clone();
+        let agent_type = lineage.agent_type.clone();
+        let start = NewConversation {
+            title: Some(title.to_owned()),
+            creator: Actor::Agent {
+                conversation_id: parent.id.clone(),
+            },
+            cwd: parent.cwd.clone(),
+            selection,
+            lineage: Some(lineage),
+        };
+        let child = self.commit(&new_id(), |tx| tx.create_conversation(start))?;
+        self.commit(&parent.id, |tx| {
+            tx.append(
+                kinds::SUBAGENT,
+                actor,
+                json!({
+                    "call_id": call_id,
+                    "conversation_id": child.id,
+                    "title": title,
+                    "agent_type": agent_type,
+                }),
+            )
+        })?;
+        Ok(child)
+    }
+
+    /// The conversation, with every conversation under the same root.
+    pub(crate) fn family(&self, conversation: &Conversation) -> Result<Vec<Conversation>> {
+        let root = conversation
+            .lineage
+            .as_ref()
+            .map_or(conversation.id.as_str(), |lineage| lineage.root.as_str());
+        let store = self.store();
+        let mut family: Vec<Conversation> = store.conversation(root)?.into_iter().collect();
+        family.extend(store.tree(root)?);
+        Ok(family)
+    }
+
+    pub(crate) fn conversation(&self, id: &str) -> Result<Conversation> {
+        self.store()
+            .conversation(id)?
+            .ok_or_else(|| anyhow!("no conversation {id}"))
+    }
+
+    pub(crate) fn provider_of(&self, conversation: &Conversation) -> Result<Arc<dyn Provider>> {
+        self.provider(&conversation.selection.provider)
+            .ok_or_else(|| anyhow!("no provider named {}", conversation.selection.provider))
+    }
+
+    pub(crate) fn limits(&self) -> Limits {
+        self.inner.limits
     }
 
     /// Switches the conversation's model from its next run on. Anyone in it sees who switched,
@@ -304,6 +393,13 @@ impl Harness {
             let Some(conversation) = store.conversation(&conversation_id)? else {
                 return Err(SubmitError::NotFound(conversation_id));
             };
+            if conversation
+                .lineage
+                .as_ref()
+                .is_some_and(|lineage| lineage.hosted)
+            {
+                return Err(SubmitError::Hosted);
+            }
             if let Some(existing) =
                 store.submission_by_request(&conversation_id, &params.request_id)?
             {
@@ -350,6 +446,7 @@ impl Harness {
                     params.when_busy,
                     &input,
                     &[],
+                    None,
                     &author,
                 )?;
                 tx.append(kind, &author, data.clone())?;
@@ -381,6 +478,7 @@ impl Harness {
                     params.when_busy,
                     &input,
                     &skills,
+                    None,
                     &author,
                 )?,
                 status: SubmissionStatus::Queued,
@@ -388,6 +486,65 @@ impl Harness {
         })?;
         self.wake(&conversation_id);
         Ok(submitted)
+    }
+
+    /// Hands `text` from one agent to another. A new task starts a run when the recipient has
+    /// none; any other mail joins the recipient's run at its next step, or its transcript right
+    /// away when it has no run.
+    pub(crate) fn deliver(
+        &self,
+        conversation_id: &str,
+        text: &str,
+        mail: Mail,
+        author: &Actor,
+    ) -> Result<()> {
+        let starts_a_run = mail.kind.starts_a_run();
+        {
+            let running = self.inner.running.lock().expect("running lock");
+            if !starts_a_run && !running.contains(conversation_id) {
+                return self.commit(conversation_id, |tx| {
+                    tx.append(kinds::USER, author, json!({ "text": text, "mail": mail }))
+                        .map(drop)
+                });
+            }
+            let input = Input::Text { text: text.into() };
+            self.commit(conversation_id, |tx| {
+                tx.insert_submission(&new_id(), WhenBusy::Steer, &input, &[], Some(&mail), author)
+                    .map(drop)
+            })?;
+        }
+        if starts_a_run {
+            self.wake(conversation_id);
+        }
+        Ok(())
+    }
+
+    /// Stops the conversation's run and the runs of every subagent under it. Says whether any
+    /// was going.
+    pub fn interrupt(&self, conversation_id: &str) -> Result<bool, SubmitError> {
+        let Some(conversation) = self.store().conversation(conversation_id)? else {
+            return Err(SubmitError::NotFound(conversation_id.to_owned()));
+        };
+        if conversation
+            .lineage
+            .as_ref()
+            .is_some_and(|lineage| lineage.hosted)
+        {
+            return Err(SubmitError::Hosted);
+        }
+        let family = self.family(&conversation)?;
+        let stopping = agents::descendants(&family, conversation_id);
+        let stops = self.inner.stops.lock().expect("stops lock");
+        let mut stopped = false;
+        for id in
+            std::iter::once(conversation_id).chain(stopping.iter().map(|child| child.id.as_str()))
+        {
+            if let Some(stop) = stops.get(id) {
+                stop.send_replace(true);
+                stopped = true;
+            }
+        }
+        Ok(stopped)
     }
 
     fn wake(&self, conversation_id: &str) {
@@ -423,12 +580,14 @@ impl Harness {
                 .store()
                 .open_submissions(conversation_id)?
                 .into_iter()
-                .next();
+                .find(|open| open.status == SubmissionStatus::Placed || open.starts_a_run());
             let Some(submission) = next else {
                 let mut running = self.inner.running.lock().expect("running lock");
-                if self.store().open_submissions(conversation_id)?.is_empty() {
+                let open = self.store().open_submissions(conversation_id)?;
+                if open.iter().all(|open| !open.starts_a_run()) {
                     running.remove(conversation_id);
                     self.commit(conversation_id, |tx| {
+                        take_in_mail(tx)?;
                         tx.set_status(ConversationStatus::Idle)
                     })?;
                     self.inner.runs.send_replace(running.len());
@@ -444,6 +603,7 @@ impl Harness {
         let conversation_id = submission.conversation_id.clone();
         let (began, conversation, provider_changed) = self.commit(&conversation_id, |tx| {
             if submission.status == SubmissionStatus::Queued {
+                take_in_mail(tx)?;
                 place(tx, &submission)?;
             } else {
                 tx.set_status(ConversationStatus::Working)?;
@@ -462,29 +622,133 @@ impl Harness {
                 .unwrap_or_else(|| selection.provider.clone()),
         };
         let provider = self.provider(&selection.provider);
-        let turn = Turn::new(self.clone(), &conversation, actor, provider_changed);
+        let (stop, mut stopped) = watch::channel(false);
+        self.inner
+            .stops
+            .lock()
+            .expect("stops lock")
+            .insert(conversation_id.clone(), stop);
+        let turn = Turn::new(
+            self.clone(),
+            &conversation,
+            actor,
+            provider_changed,
+            stopped.clone(),
+        );
         let ran = match provider {
-            Some(provider) => provider.run(&turn).await,
+            Some(provider) => tokio::select! {
+                biased;
+                _ = stopped.wait_for(|stopped| *stopped) => Ok(Ended::Interrupted),
+                ran = provider.run(&turn) => ran.map(|()| Ended::Answered),
+            },
             None => Err(anyhow!(
                 "this server has no provider named {}",
                 selection.provider
             )),
         };
-        let mut approvals = self.approvals();
-        approvals.retain(|(asked_in, _), _| *asked_in != conversation_id);
-        turn.settled_live(|tx, actor| {
-            close_dangling_calls(tx, Cutoff::RunEnded, began)?;
+        self.inner
+            .stops
+            .lock()
+            .expect("stops lock")
+            .remove(&conversation_id);
+        {
+            let mut approvals = self.approvals();
+            approvals.retain(|(asked_in, _), _| *asked_in != conversation_id);
+        }
+        let final_answer = turn.settled_live(|tx, actor| {
+            let cutoff = match &ran {
+                Ok(Ended::Interrupted) => Cutoff::Interrupted,
+                _ => Cutoff::RunEnded,
+            };
+            close_dangling_calls(tx, cutoff, began)?;
+            take_in_mail(tx)?;
             match &ran {
-                Ok(()) => tx.settle_placed(SubmissionStatus::Answered),
+                Ok(Ended::Answered) => {
+                    tx.settle_placed(SubmissionStatus::Answered)?;
+                    Ok(Some(
+                        last_said(&tx.entries_since(began)?)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ))
+                }
+                Ok(Ended::Interrupted) => {
+                    tx.append(
+                        kinds::ASSISTANT,
+                        actor,
+                        json!({ "text": "Interrupted.", "is_error": true, "interrupted": true }),
+                    )?;
+                    tx.settle_placed(SubmissionStatus::Unanswered)?;
+                    Ok(None)
+                }
                 Err(error) => {
                     tx.append(
                         kinds::ASSISTANT,
                         actor,
                         json!({ "text": format!("Model error: {error:#}"), "is_error": true }),
                     )?;
-                    tx.settle_placed(SubmissionStatus::Unanswered)
+                    tx.settle_placed(SubmissionStatus::Unanswered)?;
+                    Ok(Some(agents::errored(&format!("{error:#}"))))
                 }
             }
+        })?;
+        self.strand_hosted_children(&conversation)?;
+        if let Some(text) = final_answer {
+            self.report_to_parent(&conversation, &text)?;
+        }
+        Ok(())
+    }
+
+    /// A subagent's run ended: its parent hears its last message.
+    fn report_to_parent(&self, child: &Conversation, text: &str) -> Result<()> {
+        let Some(Lineage {
+            parent,
+            task: Some(task),
+            ..
+        }) = &child.lineage
+        else {
+            return Ok(());
+        };
+        let parent = self.conversation(parent)?;
+        let mail = Mail {
+            kind: MailKind::FinalAnswer,
+            task: agents::task_of(&parent),
+            sender: task.clone(),
+        };
+        let author = Actor::Agent {
+            conversation_id: child.id.clone(),
+        };
+        self.deliver(&parent.id, text, mail, &author)
+    }
+
+    /// The subagents a provider ran inside this conversation's run stop with it.
+    fn strand_hosted_children(&self, conversation: &Conversation) -> Result<()> {
+        let stranded: Vec<Conversation> =
+            self.family(conversation)?
+                .into_iter()
+                .filter(|child| {
+                    child.status != ConversationStatus::Idle
+                        && child.lineage.as_ref().is_some_and(|lineage| {
+                            lineage.hosted && lineage.parent == conversation.id
+                        })
+                })
+                .collect();
+        for child in stranded {
+            self.strand(&child.id)?;
+        }
+        Ok(())
+    }
+
+    fn strand(&self, child: &str) -> Result<()> {
+        self.approvals()
+            .retain(|(asked_in, _), _| asked_in != child);
+        self.commit(child, |tx| {
+            close_dangling_calls(tx, Cutoff::ParentEnded, 0)?;
+            tx.append(
+                kinds::ASSISTANT,
+                &Actor::System,
+                json!({ "text": "Stopped: its parent's run ended first.", "is_error": true }),
+            )?;
+            tx.set_status(ConversationStatus::Idle)
         })
     }
 
@@ -584,16 +848,50 @@ fn chosen(
     }
 }
 
+enum Ended {
+    Answered,
+    Interrupted,
+}
+
+/// The newest thing the model said, unless it was an error.
+fn last_said(entries: &[Entry]) -> Option<&str> {
+    entries
+        .iter()
+        .rev()
+        .find(|entry| entry.kind == kinds::ASSISTANT)
+        .filter(|entry| entry.data["is_error"] != true)
+        .and_then(|entry| entry.data["text"].as_str())
+}
+
 fn place(tx: &mut Tx<'_>, submission: &Submission) -> Result<()> {
+    append_input(tx, submission)?;
+    tx.set_submission_status(&submission.id, SubmissionStatus::Placed)?;
+    tx.set_status(ConversationStatus::Working)
+}
+
+fn append_input(tx: &mut Tx<'_>, submission: &Submission) -> Result<()> {
     if let Input::Text { text } = &submission.input {
         let mut data = json!({ "text": text });
         if !submission.skills.is_empty() {
             data["skills"] = serde_json::to_value(&submission.skills)?;
         }
+        if let Some(mail) = &submission.mail {
+            data["mail"] = serde_json::to_value(mail)?;
+        }
         tx.append(kinds::USER, &submission.author, data)?;
     }
-    tx.set_submission_status(&submission.id, SubmissionStatus::Placed)?;
-    tx.set_status(ConversationStatus::Working)
+    Ok(())
+}
+
+/// Takes the mail that waits for no run into the transcript, as no run will place it.
+fn take_in_mail(tx: &mut Tx<'_>) -> Result<()> {
+    for waiting in tx.open_submissions()? {
+        if waiting.status == SubmissionStatus::Queued && !waiting.starts_a_run() {
+            append_input(tx, &waiting)?;
+            tx.set_submission_status(&waiting.id, SubmissionStatus::Answered)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn is_steer(open: &Submission) -> bool {
@@ -613,6 +911,8 @@ pub(crate) fn place_steers(tx: &mut Tx<'_>) -> Result<()> {
 enum Cutoff {
     Restart,
     RunEnded,
+    Interrupted,
+    ParentEnded,
 }
 
 impl Cutoff {
@@ -620,6 +920,8 @@ impl Cutoff {
         match self {
             Self::Restart => "not run: nisse restarted before this call was approved",
             Self::RunEnded => "not run: the run ended before this call was approved",
+            Self::Interrupted => "not run: the run was interrupted before this call was approved",
+            Self::ParentEnded => "not run: the parent's run ended before this call was approved",
         }
     }
 
@@ -630,6 +932,12 @@ impl Cutoff {
             }
             Self::RunEnded => {
                 "interrupted: the run ended while this ran; it may or may not have taken effect"
+            }
+            Self::Interrupted => {
+                "interrupted: someone stopped the run while this ran; it may or may not have taken effect"
+            }
+            Self::ParentEnded => {
+                "interrupted: the parent's run ended while this ran; it may or may not have taken effect"
             }
         }
     }

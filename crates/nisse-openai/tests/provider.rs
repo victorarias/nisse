@@ -5,7 +5,7 @@ mod common;
 use std::os::unix::fs::PermissionsExt;
 
 use common::{
-    ACCOUNT, Fake, INSTRUCTIONS, Nisse, access_token, assert_requests, exchange, sign_in,
+    ACCOUNT, Fake, INSTRUCTIONS, Nisse, Received, access_token, assert_requests, exchange, sign_in,
 };
 use nisse_core::LIVE_INTERVAL;
 use nisse_protocol::kinds;
@@ -91,7 +91,7 @@ async fn requests_carry_the_sign_in_and_the_conversation() {
 }
 
 #[tokio::test]
-async fn the_model_is_offered_claude_codes_tool_names_and_arguments_so_one_hook_fits_both() {
+async fn the_model_is_offered_claude_codes_tools_so_one_hook_fits_both_and_codexs_agent_tools() {
     let fake = Fake::start().await;
     let (_home, auth_path) = signed_in(&fake, 3600).await;
     fake.play("text_answer");
@@ -125,6 +125,23 @@ async fn the_model_is_offered_claude_codes_tool_names_and_arguments_so_one_hook_
             ),
             ("function", "Bash", vec!["command", "timeout"]),
             ("function", "Grep", vec!["glob", "path", "pattern"]),
+            (
+                "function",
+                "spawn_agent",
+                vec![
+                    "agent_type",
+                    "fork_turns",
+                    "message",
+                    "model",
+                    "reasoning_effort",
+                    "task_name"
+                ]
+            ),
+            ("function", "send_message", vec!["message", "target"]),
+            ("function", "followup_task", vec!["message", "target"]),
+            ("function", "wait_agent", vec!["timeout_ms"]),
+            ("function", "list_agents", vec!["path_prefix"]),
+            ("function", "interrupt_agent", vec!["target"]),
         ]
     );
 }
@@ -420,5 +437,53 @@ async fn recording_a_real_exchange_keeps_none_of_its_response_or_message_ids() {
     assert_eq!(
         lines(&std::fs::read_to_string(recording).unwrap()),
         lines(&committed)
+    );
+}
+
+#[tokio::test]
+async fn a_spawned_agent_starts_from_its_parent_s_history_and_its_answer_reaches_the_parent() {
+    let fake = Fake::start().await;
+    let (_home, auth_path) = signed_in(&fake, 3600).await;
+    fake.play("subagent");
+    let mut nisse = Nisse::start(&fake, &auth_path).await;
+
+    let entries = exchange(
+        &nisse
+            .converse("Ask a scout where the gnome lives.", true)
+            .await,
+    );
+
+    let sent: Vec<Value> = fake
+        .received("/codex/responses")
+        .iter()
+        .map(Received::json)
+        .collect();
+    assert_eq!(sent.len(), 3);
+    let child_input = &sent[1]["input"];
+    assert_eq!(
+        child_input[0]["content"][0]["text"],
+        "Ask a scout where the gnome lives."
+    );
+    assert_eq!(
+        child_input.as_array().unwrap().last().unwrap()["content"][0]["text"],
+        "Message Type: NEW_TASK\nTask name: /root/scout\nSender: /root\nPayload:\nFind the gnome."
+    );
+    let child_tools: Vec<&str> = sent[1]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(!child_tools.contains(&"spawn_agent"), "{child_tools:?}");
+    let parent_heard = sent[2]["input"].to_string();
+    assert!(
+        parent_heard.contains(
+            "Message Type: FINAL_ANSWER\\nTask name: /root\\nSender: /root/scout\\nPayload:\\nUnder the floor."
+        ),
+        "{parent_heard}"
+    );
+    assert_eq!(
+        entries.last().unwrap().1["text"],
+        "The scout says: under the floor."
     );
 }

@@ -34,6 +34,7 @@ Milestone 1, a real agent. What runs today:
 - One server per home, shared by every client. A TUI or `exec` starts it when
   none runs, and it exits once nothing needs it. Each conversation keeps its
   own directory, and its own model, which anyone in it can switch.
+- Subagents, each a conversation of its own under the one that started it.
 - The neon TUI.
 
 Next: many clients on one conversation (M2). See the design doc for the plan.
@@ -135,6 +136,35 @@ the ones Claude Code offers; OpenAI's come from ChatGPT, saved in
 `NISSE_HOME/cache/` for starts that can't ask it, and from the list Codex
 bundles before that.
 
+### Subagents
+
+A subagent works in a conversation of its own, under the one that started it,
+on its parent's provider and in its directory. The parent's transcript shows a
+card for each: what it last did, and whether it works, waits on a person or
+ended. An approval a subagent waits on shows on its card too, and `^Y` or `^N`
+answers it from the parent. `Esc` stops a run, and every subagent under it.
+
+Claude keeps Claude Code's own subagents: Nisse commits what each one does
+into its conversation and runs its tool calls through the same hooks and
+approvals. A Claude subagent takes input only through its parent. On OpenAI,
+Nisse runs Codex's agent tools: `spawn_agent`, `send_message`,
+`followup_task`, `wait_agent`, `list_agents` and `interrupt_agent`. A spawned
+agent starts from its parent's history unless asked not to, may name another
+model of the same provider, and hands its last message to its parent when it
+finishes. For a subagent on another provider, start another attn session.
+
+Both providers read agent types from `.claude/agents/*.md`, from the directory
+up to the repository root, and from Claude Code's config dir's `agents/`. On
+OpenAI a type's `model` applies only when it names an OpenAI model. How deep
+subagents nest and how many run at once in one tree are set in
+`NISSE_HOME/config.toml`, with Codex's defaults:
+
+```toml
+[agents]
+max_depth = 1
+max_threads = 6
+```
+
 ### Recording fixtures
 
 Provider tests replay real exchanges. To record OpenAI ones with your sign-in:
@@ -189,7 +219,10 @@ end
 
 A `tool.call` hook can deny a call, answer it itself, or pass it on with
 rewritten `args`; the tool stays the one the model called, so a call can't get
-past an approval by turning into another tool.
+past an approval by turning into another tool. `e.conversation.id` is the
+conversation the call is made in, and `e.conversation.parent` the one that
+started it, when it is a subagent. A hook on `Agent` or `spawn_agent` can deny
+or rewrite a spawn.
 
 Extensions are written in [Luau](https://luau.org). Each one gets its own
 sandboxed VM without `io`, `os` or `require`, with read-only globals and a time

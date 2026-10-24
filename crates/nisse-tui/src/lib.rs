@@ -6,18 +6,22 @@ mod picker;
 mod theme;
 mod view;
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use nisse_client::Client;
 use nisse_protocol::{
     ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthCancelParams, AuthInteraction,
     AuthMethod, AuthPhase, AuthRespondParams, AuthResponse, AuthStartParams, AuthState,
-    ClientRequest, Conversation, ConversationReadResult, ConversationSelectModelParams,
-    ConversationStartParams, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ModelSelection,
-    ModelsListParams, ModelsListResult, ProviderModels, ProviderSnapshot, ProviderStatus,
-    ProvidersListParams, ProvidersListResult, ServerNotification, UiChanged, WhenBusy, kinds,
+    ClientRequest, Commit, Conversation, ConversationInterruptParams, ConversationInterruptResult,
+    ConversationReadResult, ConversationSelectModelParams, ConversationStartParams,
+    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
+    ConversationSubscribeParams, Entry, Input, ModelSelection, ModelsListParams, ModelsListResult,
+    ProviderModels, ProviderSnapshot, ProviderStatus, ProvidersListParams, ProvidersListResult,
+    Seq, ServerNotification, StatusChanged, UiChanged, WhenBusy, kinds,
 };
 use ratatui::{
     Terminal,
@@ -56,6 +60,47 @@ pub struct App {
     /// The `/model` picker, while it is open.
     picker: Option<Picker>,
     models: mpsc::UnboundedSender<Vec<ProviderModels>>,
+    /// The subagents this conversation started, and theirs, by conversation id.
+    subagents: HashMap<String, Subagent>,
+    followed: mpsc::UnboundedSender<ConversationReadResult>,
+}
+
+/// A subagent as far as this client has heard: what it committed, and its status as of
+/// `status_seq`.
+struct Subagent {
+    status: ConversationStatus,
+    status_seq: Seq,
+    entries: Vec<Entry>,
+}
+
+impl Subagent {
+    fn on_snapshot(&mut self, snapshot: ConversationReadResult) {
+        let later = std::mem::take(&mut self.entries)
+            .into_iter()
+            .filter(|entry| entry.seq > snapshot.seq);
+        self.entries = snapshot.entries.into_iter().chain(later).collect();
+        if snapshot.seq >= self.status_seq {
+            self.status_seq = snapshot.seq;
+            self.status = snapshot.conversation.status;
+        }
+    }
+
+    fn on_commit(&mut self, commit: Commit) {
+        let newest = self.entries.last().map_or(0, |entry| entry.seq);
+        self.entries.extend(
+            commit
+                .entries
+                .into_iter()
+                .filter(|entry| entry.seq > newest),
+        );
+    }
+
+    fn on_status(&mut self, changed: &StatusChanged) {
+        if changed.seq >= self.status_seq {
+            self.status_seq = changed.seq;
+            self.status = changed.status;
+        }
+    }
 }
 
 /// Which conversation the TUI shows.
@@ -128,6 +173,7 @@ where
         .await?;
     let (listed, mut lists) = mpsc::unbounded_channel();
     let (models, mut model_lists) = mpsc::unbounded_channel();
+    let (followed, mut follows) = mpsc::unbounded_channel();
     let mut app = App {
         status: snapshot.conversation.status,
         working_since: (snapshot.conversation.status == ConversationStatus::Working)
@@ -147,8 +193,11 @@ where
         listed,
         picker: None,
         models,
+        subagents: HashMap::new(),
+        followed,
     };
     app.list_providers(&client);
+    app.follow_subagents(&client);
 
     loop {
         terminal.draw(|frame| view::draw(frame, &app, &theme))?;
@@ -170,6 +219,7 @@ where
                 }
             }
             Some(providers) = lists.recv() => app.providers = providers,
+            Some(snapshot) = follows.recv() => app.on_followed(snapshot, &client),
             Some(models) = model_lists.recv() => {
                 if let Some(picker) = &mut app.picker {
                     picker.list(models, &app.conversation.selection);
@@ -219,6 +269,57 @@ impl App {
                 let _ = listed.send(list.providers);
             }
         });
+    }
+
+    /// Subscribes to each subagent a followed conversation started that this client does not
+    /// follow yet.
+    fn follow_subagents(&mut self, client: &Client) {
+        let started: Vec<String> = std::iter::once(&self.entries)
+            .chain(self.subagents.values().map(|subagent| &subagent.entries))
+            .flatten()
+            .filter(|entry| entry.kind == kinds::SUBAGENT)
+            .filter_map(|entry| entry.data["conversation_id"].as_str())
+            .filter(|id| !self.subagents.contains_key(*id))
+            .map(str::to_owned)
+            .collect();
+        for conversation_id in started {
+            self.subagents.insert(
+                conversation_id.clone(),
+                Subagent {
+                    status_seq: 0,
+                    status: ConversationStatus::Working,
+                    entries: Vec::new(),
+                },
+            );
+            let client = client.clone();
+            let followed = self.followed.clone();
+            tokio::spawn(async move {
+                let request = ClientRequest::ConversationSubscribe(ConversationSubscribeParams {
+                    conversation_id,
+                    since_seq: 0,
+                });
+                if let Ok(snapshot) = client.request::<ConversationReadResult>(request).await {
+                    let _ = followed.send(snapshot);
+                }
+            });
+        }
+    }
+
+    fn on_followed(&mut self, snapshot: ConversationReadResult, client: &Client) {
+        if let Some(subagent) = self.subagents.get_mut(&snapshot.conversation.id) {
+            subagent.on_snapshot(snapshot);
+            self.follow_subagents(client);
+        }
+    }
+
+    /// The oldest approval waiting here, else in a subagent, as `(conversation, call)`.
+    fn pending_approval(&self) -> Option<(&str, &str)> {
+        if let Some(call_id) = view::pending_approval(&self.entries) {
+            return Some((&self.conversation.id, call_id));
+        }
+        self.subagents.iter().find_map(|(id, subagent)| {
+            view::pending_approval(&subagent.entries).map(|call_id| (id.as_str(), call_id))
+        })
     }
 
     /// Lists every provider's models in the background, for the picker.
@@ -298,11 +399,23 @@ impl App {
                     }
                     self.entries.extend(commit.entries);
                     self.scroll_back = 0;
+                    self.follow_subagents(client);
+                }
+            }
+            ServerNotification::Committed(commit) => {
+                if let Some(subagent) = self.subagents.get_mut(&commit.conversation_id) {
+                    subagent.on_commit(commit);
+                    self.follow_subagents(client);
                 }
             }
             ServerNotification::Status(changed)
-                if changed.conversation_id == self.conversation.id =>
+                if changed.conversation_id != self.conversation.id =>
             {
+                if let Some(subagent) = self.subagents.get_mut(&changed.conversation_id) {
+                    subagent.on_status(&changed);
+                }
+            }
+            ServerNotification::Status(changed) => {
                 self.status = changed.status;
                 self.working_since = match changed.status {
                     ConversationStatus::Working => {
@@ -320,7 +433,6 @@ impl App {
             ServerNotification::UiChanged(UiChanged::Toast { extension, text }) => {
                 self.toast = Some((format!("{extension}: {text}"), Instant::now()));
             }
-            _ => {}
         }
         None
     }
@@ -457,10 +569,11 @@ impl App {
             return Ok(false);
         };
         if let (KeyCode::Char(answer @ ('y' | 'n')), KeyModifiers::CONTROL) = (code, modifiers)
-            && let Some(call_id) = view::pending_approval(&self.entries)
+            && let Some((conversation_id, call_id)) = self.pending_approval()
         {
-            let call_id = call_id.to_owned();
-            self.resolve(client, call_id, answer == 'y').await;
+            let (conversation_id, call_id) = (conversation_id.to_owned(), call_id.to_owned());
+            self.resolve(client, conversation_id, call_id, answer == 'y')
+                .await;
             return Ok(false);
         }
         if let (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) = (code, modifiers) {
@@ -474,6 +587,16 @@ impl App {
                 self.start_sign_in(client, host).await
             }
             (KeyCode::Esc, _) if self.sign_in.is_some() => self.cancel_sign_in(client).await,
+            (KeyCode::Esc, _) if self.status != ConversationStatus::Idle => {
+                let interrupted = client
+                    .request::<ConversationInterruptResult>(ClientRequest::ConversationInterrupt(
+                        ConversationInterruptParams {
+                            conversation_id: self.conversation.id.clone(),
+                        },
+                    ))
+                    .await;
+                self.error = interrupted.err().map(|error| error.to_string());
+            }
             (KeyCode::Enter, _)
                 if self.awaits_callback() && self.input.trim().starts_with("http") =>
             {
@@ -513,11 +636,17 @@ impl App {
         Ok(false)
     }
 
-    async fn resolve(&mut self, client: &Client, call_id: String, allow: bool) {
+    async fn resolve(
+        &mut self,
+        client: &Client,
+        conversation_id: String,
+        call_id: String,
+        allow: bool,
+    ) {
         let resolved = client
             .request::<ApprovalResolveResult>(ClientRequest::ApprovalResolve(
                 ApprovalResolveParams {
-                    conversation_id: self.conversation.id.clone(),
+                    conversation_id,
                     call_id,
                     allow,
                     reason: None,

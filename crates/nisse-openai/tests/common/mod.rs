@@ -446,7 +446,8 @@ impl Nisse {
         hooks: Arc<dyn Hooks>,
         workspace: Workspace,
     ) -> Self {
-        let mut options = OpenAiOptions::new(auth_path, INSTRUCTIONS, workspace.home);
+        let mut options = OpenAiOptions::new(auth_path, INSTRUCTIONS, &workspace.home);
+        options.claude_config = workspace.home.join(".claude");
         options.base_url = fake.base.clone();
         options.auth = fake.auth_server();
         change(&mut options);
@@ -457,6 +458,7 @@ impl Nisse {
                 providers: vec![(PROVIDER.into(), provider)],
                 hooks: same_hooks(hooks),
                 default_model: no_default_model(),
+                agents: Default::default(),
             },
         );
         let server = Server::new(harness, broadcast::channel(16).0, owner());
@@ -621,7 +623,8 @@ impl Nisse {
                         }
                     }
                     ServerNotification::Status(changed)
-                        if changed.status == ConversationStatus::Idle
+                        if changed.conversation_id == self.conversation.id
+                            && changed.status == ConversationStatus::Idle
                             && self.committed.iter().any(|entry| entry.kind == kinds::USER) =>
                     {
                         return;

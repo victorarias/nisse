@@ -55,6 +55,16 @@ impl ToolOutcome {
     }
 }
 
+/// The conversation a tool call is made in, as extensions see it.
+#[derive(Debug, Clone, Serialize)]
+pub struct CallContext {
+    #[serde(rename = "id")]
+    pub conversation_id: String,
+    /// The conversation that started this one, when it is a subagent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
 /// What extensions can change. `engine` is Nisse's own behaviour: the end of every chain.
 pub trait Hooks: Send + Sync {
     fn prompt_submit(&self, text: String) -> Result<String, String> {
@@ -63,9 +73,11 @@ pub trait Hooks: Send + Sync {
 
     fn tool_call(
         &self,
+        context: &CallContext,
         call: ToolCall,
         engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
     ) -> ToolOutcome {
+        let _ = context;
         engine(call)
     }
 }
@@ -179,6 +191,7 @@ pub fn builtin_tools() -> Vec<ToolSpec> {
 pub fn approval_for(name: &str) -> Approval {
     match name {
         "Read" | "Grep" => Approval::NotNeeded,
+        agent if crate::agents::is_agent_tool(agent) => Approval::NotNeeded,
         _ => Approval::Ask,
     }
 }

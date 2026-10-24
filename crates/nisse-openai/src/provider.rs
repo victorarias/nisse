@@ -5,10 +5,13 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use nisse_core::{
-    Approval, HealthFuture, ModelsFuture, Provider, ProviderFuture, SignIn, ToolCall, ToolOutcome,
-    Turn, Workspace, approval_for, builtin_tools, run_builtin_tool,
+    AgentType, Approval, HealthFuture, ModelsFuture, Provider, ProviderFuture, SignIn, ToolCall,
+    ToolOutcome, ToolSpec, Turn, Workspace, approval_for, builtin_tools, is_agent_tool,
+    run_builtin_tool,
 };
-use nisse_protocol::{AuthMethod, Entry, ProviderHealth, ProviderStatus, Skill, kinds};
+use nisse_protocol::{
+    AuthMethod, Entry, Mail, MailKind, ProviderHealth, ProviderStatus, Skill, kinds,
+};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -44,6 +47,8 @@ pub struct OpenAiOptions {
     pub instructions: String,
     /// The Nisse home, for its own AGENTS.md and skills.
     pub home: PathBuf,
+    /// Claude Code's config directory, whose `agents/` hold the person's own agent types.
+    pub claude_config: PathBuf,
     /// Where the model list ChatGPT sent last is saved, for starts that can't ask it.
     pub model_list: PathBuf,
     /// A folder to write one fixture per turn into.
@@ -66,12 +71,21 @@ impl OpenAiOptions {
             base_url: BASE_URL.into(),
             instructions: instructions.into(),
             model_list: home.join("cache").join("openai-models.json"),
+            claude_config: claude_config_dir(),
             home,
             record: None,
             code_mode_host: HOST_PROGRAM.into(),
             nested_tools: NestedTools::default(),
         }
     }
+}
+
+/// `CLAUDE_CONFIG_DIR`, else `~/.claude`.
+fn claude_config_dir() -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))
+        .unwrap_or_else(|| PathBuf::from(".claude"))
 }
 
 pub struct OpenAi {
@@ -132,26 +146,40 @@ impl OpenAi {
 
     async fn answer(&self, turn: &Turn) -> Result<()> {
         let model = turn.model().unwrap_or(MODEL);
+        let types = self
+            .workspace(turn.cwd())
+            .agent_types(&self.options.claude_config);
+        let agent_tools = turn.agent_tools(&types);
         let run = self
             .catalog
             .wants_code_mode(model)
-            .then(|| self.code_mode.begin(turn))
+            .then(|| self.code_mode.begin(turn, agent_tools.clone()))
             .transpose()?;
-        let answered = self.answer_in(turn, model, run.as_ref()).await;
+        let answered = self
+            .answer_in(turn, model, run.as_ref(), &types, &agent_tools)
+            .await;
         if let Some(run) = run {
             run.finish().await;
         }
         answered
     }
 
-    async fn answer_in(&self, turn: &Turn, model: &str, run: Option<&Run>) -> Result<()> {
+    async fn answer_in(
+        &self,
+        turn: &Turn,
+        model: &str,
+        run: Option<&Run>,
+        types: &[AgentType],
+        agent_tools: &[ToolSpec],
+    ) -> Result<()> {
         let mut recorder = Recorder::start(self.options.record.as_deref(), model)?;
-        let instructions = self.instructions(turn.cwd());
+        let instructions = self.instructions(turn, types);
         loop {
             let body = self.request_body(
                 turn,
                 model,
                 run.is_some(),
+                agent_tools,
                 &instructions,
                 &turn.transcript()?,
             );
@@ -184,6 +212,10 @@ impl OpenAi {
                         })
                         .await?;
                     }
+                    None if is_agent_tool(&call.name) => {
+                        turn.call_tool(call, Approval::NotNeeded, turn.run_agent_tool())
+                            .await?;
+                    }
                     None => {
                         let approval = approval_for(&call.name);
                         turn.call_tool(call, approval, run_builtin_tool(turn.cwd()))
@@ -202,8 +234,10 @@ impl OpenAi {
         }
     }
 
-    /// Nisse's instructions, then each AGENTS.md file, then the skills, read when a run starts.
-    fn instructions(&self, cwd: &Path) -> String {
+    /// Nisse's instructions, then each AGENTS.md file, then the skills, read when a run starts,
+    /// and a subagent's agent type last.
+    fn instructions(&self, turn: &Turn, types: &[AgentType]) -> String {
+        let cwd = turn.cwd();
         let workspace = self.workspace(cwd);
         let mut instructions = format!(
             "{}\nThe working directory is {}.\n",
@@ -228,6 +262,16 @@ impl OpenAi {
                 ));
             }
         }
+        let agent_type = turn
+            .lineage()
+            .and_then(|lineage| lineage.agent_type.as_deref())
+            .and_then(|name| types.iter().find(|kind| kind.name == name));
+        if let Some(kind) = agent_type {
+            instructions.push_str(&format!(
+                "\n# You are a {} agent\n\n{}\n",
+                kind.name, kind.instructions
+            ));
+        }
         instructions
     }
 
@@ -236,13 +280,15 @@ impl OpenAi {
         turn: &Turn,
         model: &str,
         in_code_mode: bool,
+        agent_tools: &[ToolSpec],
         instructions: &str,
         transcript: &[Entry],
     ) -> Value {
         let tools: Vec<Value> = match in_code_mode {
-            true => self.code_mode.tools(),
+            true => self.code_mode.tools(agent_tools),
             false => builtin_tools()
                 .into_iter()
+                .chain(agent_tools.iter().cloned())
                 .map(|tool| {
                     json!({
                         "type": "function",
@@ -370,6 +416,10 @@ impl Provider for OpenAi {
         self.workspace(cwd).skills()
     }
 
+    fn agent_types(&self, cwd: &Path) -> Vec<AgentType> {
+        self.workspace(cwd).agent_types(&self.options.claude_config)
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(self.answer(turn))
     }
@@ -430,6 +480,14 @@ fn input_item(entry: &Entry) -> Option<Value> {
         return None;
     }
     match entry.kind.as_str() {
+        kinds::USER if data["mail"].is_object() => {
+            let mail: Mail = serde_json::from_value(data["mail"].clone()).ok()?;
+            Some(json!({
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": mail_text(&mail, data["text"].as_str().unwrap_or_default()) }],
+            }))
+        }
         kinds::USER => {
             let skills = data["skills"]
                 .as_array()
@@ -482,6 +540,19 @@ fn input_item(entry: &Entry) -> Option<Value> {
         })),
         _ => None,
     }
+}
+
+/// Mail as Codex's models read it.
+fn mail_text(mail: &Mail, payload: &str) -> String {
+    let kind = match mail.kind {
+        MailKind::NewTask => "NEW_TASK",
+        MailKind::Message => "MESSAGE",
+        MailKind::FinalAnswer => "FINAL_ANSWER",
+    };
+    format!(
+        "Message Type: {kind}\nTask name: {}\nSender: {}\nPayload:\n{payload}",
+        mail.task, mail.sender
+    )
 }
 
 fn tool_output(result: &Value) -> String {

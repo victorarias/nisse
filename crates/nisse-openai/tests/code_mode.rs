@@ -8,7 +8,7 @@ use std::{os::unix::fs::PermissionsExt, sync::Arc};
 use common::{
     CODE_MODE_MODEL, Fake, Nisse, assert_requests, code_mode_host, exchange, in_code_mode, sign_in,
 };
-use nisse_core::{Hooks, NoHooks, ToolCall, ToolOutcome};
+use nisse_core::{CallContext, Hooks, NoHooks, ToolCall, ToolOutcome};
 use nisse_openai::NestedTools;
 use nisse_protocol::{Entry, kinds};
 use serde_json::{Value, json};
@@ -102,6 +102,7 @@ struct DenyBash;
 impl Hooks for DenyBash {
     fn tool_call(
         &self,
+        _: &CallContext,
         call: ToolCall,
         engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
     ) -> ToolOutcome {

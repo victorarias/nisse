@@ -11,17 +11,17 @@ use std::{
 use nisse_claude::{Claude, ClaudeOptions};
 use nisse_client::Client;
 use nisse_core::{
-    Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, Store, ToolCall, ToolOutcome,
-    no_default_model, same_hooks,
+    CallContext, Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, Store, ToolCall,
+    ToolOutcome, no_default_model, same_hooks,
 };
 use nisse_protocol::{
     Actor, ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthInteraction, AuthMethod,
     AuthPhase, AuthRespondParams, AuthResponse, AuthStartParams, AuthState, ClientRequest,
-    Conversation, ConversationReadResult, ConversationSelectModelParams, ConversationStartParams,
-    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
-    ConversationSubscribeParams, Entry, Input, ModelSelection, ModelsListParams, ModelsListResult,
-    ProviderSnapshot, ProviderStatus, ProvidersListParams, ProvidersListResult, ServerNotification,
-    WhenBusy, kinds,
+    Conversation, ConversationReadParams, ConversationReadResult, ConversationSelectModelParams,
+    ConversationStartParams, ConversationStatus, ConversationSubmitParams,
+    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ModelSelection,
+    ModelsListParams, ModelsListResult, ProviderSnapshot, ProviderStatus, ProvidersListParams,
+    ProvidersListResult, ServerNotification, WhenBusy, kinds,
 };
 use nisse_server::Server;
 use serde_json::Value;
@@ -150,6 +150,7 @@ fn serve_providers(
             providers,
             hooks: same_hooks(hooks),
             default_model: no_default_model(),
+            agents: Default::default(),
         },
     );
     harness.resume().unwrap();
@@ -519,6 +520,7 @@ struct NoTouching;
 impl Hooks for NoTouching {
     fn tool_call(
         &self,
+        _: &CallContext,
         call: ToolCall,
         engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
     ) -> ToolOutcome {
@@ -562,6 +564,7 @@ struct Rewrite;
 impl Hooks for Rewrite {
     fn tool_call(
         &self,
+        _: &CallContext,
         mut call: ToolCall,
         engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
     ) -> ToolOutcome {
@@ -714,7 +717,7 @@ fn a_run_killed_mid_tool_resumes_claudes_session_where_nisse_last_committed() {
 }
 
 #[tokio::test]
-async fn every_tool_a_subagent_calls_gets_its_result() {
+async fn a_subagent_claude_starts_works_in_a_conversation_of_its_own_under_its_parent() {
     let scenario = Scenario::new("subagent");
     std::fs::write(
         scenario.workspace.path().join("notes.txt"),
@@ -734,37 +737,64 @@ async fn every_tool_a_subagent_calls_gets_its_result() {
         .await;
     watch.until_idle().await;
 
-    let calls: Vec<&Entry> = watch
-        .entries
-        .iter()
-        .filter(|entry| entry.kind == kinds::TOOL_CALL)
-        .collect();
+    let card = watch.last(kinds::SUBAGENT);
+    let launched_by = watch.last(kinds::TOOL_CALL);
+    assert_eq!(launched_by.data["name"], "Agent");
+    assert_eq!(card.data["call_id"], launched_by.data["id"]);
     assert!(
-        calls.iter().any(|call| call.data["name"] == "Read"),
-        "the subagent read nothing; calls: {calls:#?}"
+        !watch
+            .entries
+            .iter()
+            .any(|entry| entry.kind == kinds::TOOL_CALL && entry.data["name"] == "Read"),
+        "the subagent's call landed in its parent"
     );
-    for call in &calls {
-        let result = watch.entries.iter().find(|entry| {
-            entry.kind == kinds::TOOL_RESULT && entry.data["call_id"] == call.data["id"]
-        });
-        assert!(
-            result.is_some(),
-            "the {} call never got a result",
-            call.data["name"]
-        );
-    }
-    let read = watch
+    let child: ConversationReadResult = watch
+        .client
+        .request(ClientRequest::ConversationRead(ConversationReadParams {
+            conversation_id: card.data["conversation_id"].as_str().unwrap().into(),
+            since_seq: 0,
+        }))
+        .await
+        .unwrap();
+    let lineage = child.conversation.lineage.as_ref().unwrap();
+    assert_eq!(lineage.parent, watch.conversation.id);
+    assert_eq!(child.conversation.status, ConversationStatus::Idle);
+    let read = child
         .entries
         .iter()
-        .find(|entry| entry.kind == kinds::TOOL_RESULT && entry.data["name"] == "Read")
-        .unwrap();
+        .find(|entry| entry.kind == kinds::TOOL_CALL && entry.data["name"] == "Read")
+        .expect("the subagent read nothing");
+    let result = child
+        .entries
+        .iter()
+        .find(|entry| entry.kind == kinds::TOOL_RESULT && entry.data["call_id"] == read.data["id"])
+        .expect("the subagent's Read never got a result");
     assert!(
-        read.data["output"]
+        result.data["output"]
             .as_str()
             .unwrap()
             .contains("the gnome lives under the floor")
     );
     assert!(watch.final_text().to_lowercase().contains("floor"));
+    let steered = watch
+        .client
+        .request::<ConversationSubmitResult>(ClientRequest::ConversationSubmit(
+            ConversationSubmitParams {
+                conversation_id: child.conversation.id.clone(),
+                input: Input::Text {
+                    text: "look again".into(),
+                },
+                request_id: "look again".into(),
+                when_busy: WhenBusy::FollowUp,
+            },
+        ))
+        .await;
+    assert!(
+        steered
+            .unwrap_err()
+            .to_string()
+            .contains("takes input through its parent")
+    );
     scenario.keep_recording(&watch.conversation);
 }
 
@@ -959,6 +989,7 @@ struct OneAtATime(std::sync::Mutex<()>);
 impl Hooks for OneAtATime {
     fn tool_call(
         &self,
+        _: &CallContext,
         call: ToolCall,
         engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
     ) -> ToolOutcome {
@@ -1020,6 +1051,7 @@ struct OffLimitsOnceSteered(std::sync::Mutex<std::sync::mpsc::Receiver<()>>);
 impl Hooks for OffLimitsOnceSteered {
     fn tool_call(
         &self,
+        _: &CallContext,
         call: ToolCall,
         engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
     ) -> ToolOutcome {

@@ -81,6 +81,32 @@ pub struct Conversation {
     /// Read by each run as it starts.
     #[serde(flatten)]
     pub selection: ModelSelection,
+    /// Set for a subagent: the conversation and tool call that started it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<Lineage>,
+}
+
+/// Where a subagent comes from. It runs on its parent's provider, in its parent's directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Lineage {
+    pub parent: ConversationId,
+    /// The conversation people started, at the top of the tree.
+    pub root: ConversationId,
+    /// The parent's tool call that started it.
+    pub call_id: String,
+    /// Its canonical task name, such as `/root/explore`, which agents address it by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    /// The agent type it was started as, from Claude Code's agent files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+    /// Its parent's provider runs it inside the parent's own session, as Claude Code runs its
+    /// subagents: it takes no input of its own, and stops when the parent's run does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosted: bool,
+    /// It starts from its parent's transcript before this commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_at: Option<Seq>,
 }
 
 /// Switches the conversation's model from its next run on, with a `nisse.model` entry.
@@ -150,6 +176,18 @@ pub struct ConversationSubmitParams {
     pub when_busy: WhenBusy,
 }
 
+/// Stops the conversation's run, if it has one, and the runs of every subagent under it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationInterruptParams {
+    pub conversation_id: ConversationId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationInterruptResult {
+    /// False when nothing was running.
+    pub interrupted: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ConversationSubmitResult {
     pub submission_id: String,
@@ -195,6 +233,37 @@ pub mod kinds {
     pub const APPROVAL: &str = "nisse.approval";
     /// Someone switched the conversation's model; its data is the new `ModelSelection`.
     pub const MODEL: &str = "nisse.model";
+    /// A tool call started a subagent: `call_id`, the child's `conversation_id`, its `title`
+    /// and its `agent_type`.
+    pub const SUBAGENT: &str = "nisse.subagent";
+}
+
+/// What one agent sent another, carried by the `nisse.user` entry it became, as `mail`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Mail {
+    #[serde(rename = "type")]
+    pub kind: MailKind,
+    /// The recipient's task name.
+    pub task: String,
+    /// The sender's task name.
+    pub sender: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MailKind {
+    /// Work to do: it starts a run when the recipient has none.
+    NewTask,
+    /// Taken in at the recipient's next step, without starting a run.
+    Message,
+    /// A subagent's last message of a run, for its parent.
+    FinalAnswer,
+}
+
+impl MailKind {
+    pub fn starts_a_run(self) -> bool {
+        self == Self::NewTask
+    }
 }
 
 /// One atomic write, as seen by subscribers of its conversation.
