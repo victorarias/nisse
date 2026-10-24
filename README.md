@@ -43,6 +43,7 @@ Next: many clients on one conversation (M2). See the design doc for the plan.
 ```sh
 cargo build
 target/debug/nisse                         # the TUI, with Claude, in this directory
+target/debug/nisse providers               # each provider and how it stands
 target/debug/nisse login openai            # sign in with ChatGPT (--device on a headless box)
 target/debug/nisse --provider openai       # the TUI, with OpenAI
 target/debug/nisse exec 'what is in here?' # one prompt, headless; asks on stdin to approve
@@ -51,17 +52,18 @@ target/debug/nisse serve --restart         # replace the running server once its
 target/debug/nisse schema                  # the protocol's JSON Schema
 ```
 
-`NISSE_HOME` (default `~/.nisse`) holds `nisse.sqlite`, `nisse.sock`,
-`auth/`, `extensions/`, and your own `AGENTS.md` and `skills/`. One process
-serves a home at a time. A TUI or `exec` attaches to `NISSE_HOME/nisse.sock`,
-and when nothing answers there it starts `nisse serve` in the background,
-logging to `NISSE_HOME/nisse.log`. The server exits 30 seconds after the last client leaves and the last run settles.
+`NISSE_HOME` (default `~/.nisse`) holds `config.toml`, `nisse.sqlite`,
+`nisse.sock`, `auth/`, `extensions/`, and your own `AGENTS.md` and `skills/`.
+One process serves a home at a time. A TUI or `exec` attaches to
+`NISSE_HOME/nisse.sock`, and when nothing answers there it starts `nisse serve`
+in the background, logging to `NISSE_HOME/nisse.log`. The server exits 30
+seconds after the last client leaves and the last run settles.
 A conversation runs in the directory its client started it in: tools run
 there, Claude Code starts there, and its `.nisse/extensions/` load for it.
 
 | Setting | What it does |
 | --- | --- |
-| `--provider` / `NISSE_PROVIDER` | Who answers a new conversation: `claude` (default), `openai`, or `echo`, which echoes and runs `!command` without a model |
+| `--provider` / `NISSE_PROVIDER` | Who answers a new conversation: `claude` (default), `openai`, one `config.toml` names, or `echo`, which echoes and runs `!command` without a model |
 | `--model` / `NISSE_MODEL` | The new conversation's model; Claude Code's default, or `gpt-6.1-sol` |
 | `--claude` / `NISSE_CLAUDE` | The `claude` binary a server this starts drives |
 | `--code-mode-host` / `NISSE_CODE_MODE_HOST` | Codex's `codex-code-mode-host`, which runs code-mode scripts in a server this starts; otherwise `NISSE_HOME/bin/`, then `PATH` |
@@ -81,6 +83,29 @@ scripts/code-mode-host.sh   # into NISSE_HOME/bin
 ```
 
 `gpt-5.5` keeps direct tools and needs no host.
+### Providers and sign-in
+
+A provider is a driver and an account. There are always `claude`, `openai` and
+`echo`; `NISSE_HOME/config.toml` adds more, or changes those:
+
+```toml
+[providers.claude-personal]
+driver = "claude"
+config_dir = "~/.claude-personal"   # Claude Code's CLAUDE_CONFIG_DIR: its own account
+binary = "/opt/claude/bin/claude"   # optional, like env = { ... } and args = [ ... ]
+
+[providers.openai-work]
+driver = "openai"                   # a second ChatGPT account, in auth/openai-work.json
+```
+
+Claude Code keeps Claude's credentials: Nisse only asks it how it is signed in,
+and signing in runs `claude auth login` with the instance's config dir. Nisse
+keeps the ChatGPT sign-in itself, readable only by you. The TUI's splash shows
+every provider, and `^L` signs in to the first one that is signed out: a
+browser opens, or over SSH a code appears to enter on any device. A browser
+on another machine can't reach this one, so paste the address it ends on into
+the prompt. `nisse login <provider>` and `nisse logout <provider>` do the same
+from a shell.
 
 ### Recording fixtures
 

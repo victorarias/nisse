@@ -245,3 +245,178 @@ pub struct ServerStopParams {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ServerStopResult {}
+
+/// A configured provider instance's name, such as `claude` or `openai-work`.
+pub type ProviderId = String;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ProvidersListParams {
+    /// Check every instance again instead of answering with what was last found.
+    #[serde(default)]
+    pub refresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProvidersListResult {
+    pub providers: Vec<ProviderSnapshot>,
+}
+
+/// What a provider instance is and how it stands, without asking its model anything.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ProviderSnapshot {
+    pub id: ProviderId,
+    /// `claude`, `openai` or `echo`.
+    pub driver: String,
+    /// The ways this instance can be signed in to, the first one preferred.
+    pub sign_in: Vec<AuthMethod>,
+    #[serde(flatten)]
+    pub health: ProviderHealth,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ProviderHealth {
+    pub status: ProviderStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Who it is signed in as, and on what plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// Why it is not ready, or what to do about it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub checked_at_ms: i64,
+}
+
+impl ProviderHealth {
+    /// Found just now, with nothing more to say.
+    pub fn new(status: ProviderStatus) -> Self {
+        let checked_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default();
+        Self {
+            status,
+            version: None,
+            account: None,
+            message: None,
+            checked_at_ms,
+        }
+    }
+
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = Some(message.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderStatus {
+    Ready,
+    SignedOut,
+    /// It can't run: not installed, or it failed to start.
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMethod {
+    /// A browser on the server's machine signs in and calls back to it.
+    Browser,
+    /// Any device signs in with a short code.
+    DeviceCode,
+    /// The provider's own sign-in command runs in a terminal on the server's machine.
+    Terminal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuthStartParams {
+    pub provider: ProviderId,
+    /// The instance's preferred method when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<AuthMethod>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuthRespondParams {
+    pub provider: ProviderId,
+    pub flow_id: String,
+    pub response: AuthResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuthCancelParams {
+    pub provider: ProviderId,
+    pub flow_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuthLogoutParams {
+    pub provider: ProviderId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuthAccepted {
+    /// False when the flow already ended, or waits for nothing of this kind.
+    pub accepted: bool,
+}
+
+/// One sign-in, as every connection sees it. A provider has at most one at a time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AuthState {
+    pub provider: ProviderId,
+    pub flow_id: String,
+    pub phase: AuthPhase,
+    /// What a person must do now, while the flow waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interaction: Option<AuthInteraction>,
+    /// Who it signed in as, or why it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthPhase {
+    Starting,
+    Waiting,
+    Verifying,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl AuthPhase {
+    pub fn is_over(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuthInteraction {
+    /// Open `url` and sign in. A browser on another machine can't call back: paste the address
+    /// it ends on with a `callback` response.
+    Browser { url: String },
+    /// Open `url` on any device and enter `code`.
+    DeviceCode { url: String, code: String },
+    /// Run `command` with `env` in a terminal on the server's machine, then answer
+    /// `terminal_exited`.
+    Terminal {
+        command: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        env: std::collections::BTreeMap<String, String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuthResponse {
+    /// The address the browser ended on after signing in.
+    Callback {
+        url: String,
+    },
+    TerminalExited {
+        success: bool,
+    },
+}

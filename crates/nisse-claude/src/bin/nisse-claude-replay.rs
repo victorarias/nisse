@@ -1,5 +1,5 @@
-//! Plays a recorded claude to Nisse. It reads the fixture `.nisse-claude-replay.ndjson` from its
-//! working directory, takes the recorded processes in the order they were started (counting
+//! Plays a recorded claude to Nisse. It reads the fixture `.nisse-claude-replay.ndjson` from
+//! `NISSE_CLAUDE_REPLAY_DIR`, or else its working directory, takes the recorded processes in the order they were started (counting
 //! starts in `.nisse-claude-replay.started`) and checks that its argv matches, prints that
 //! process's inbound frames in order, and checks every frame Nisse writes against the recorded
 //! one. `"<any>"` matches any value; `<nisse:N>` binds to the id Nisse chose there; `<session>`,
@@ -8,7 +8,7 @@
 use std::{
     collections::HashMap,
     io::{BufRead, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::ExitCode,
 };
 
@@ -36,7 +36,9 @@ fn main() -> ExitCode {
 
 fn replay() -> Result<(), String> {
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-    let fixture = std::fs::read_to_string(cwd.join(FIXTURE))
+    let dir =
+        std::env::var_os("NISSE_CLAUDE_REPLAY_DIR").map_or_else(|| cwd.clone(), PathBuf::from);
+    let fixture = std::fs::read_to_string(dir.join(FIXTURE))
         .map_err(|error| format!("could not read {FIXTURE}: {error}"))?;
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
@@ -53,7 +55,7 @@ fn replay() -> Result<(), String> {
         bindings.insert("<session>".into(), session);
     }
 
-    let steps = process_steps(&cwd, &fixture, &argv, &mut bindings)?;
+    let steps = process_steps(&dir, &fixture, &argv, &mut bindings)?;
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     let mut stdout = std::io::stdout().lock();
@@ -125,7 +127,7 @@ fn replay() -> Result<(), String> {
 /// The steps of the next recorded process: the nth claude started in this workspace plays the
 /// nth one, and its argv must match.
 fn process_steps(
-    cwd: &Path,
+    dir: &Path,
     fixture: &str,
     argv: &[String],
     bindings: &mut Bindings,
@@ -155,7 +157,7 @@ fn process_steps(
             _ => {}
         }
     }
-    let started_path = cwd.join(STARTED);
+    let started_path = dir.join(STARTED);
     let started: usize = std::fs::read_to_string(&started_path)
         .ok()
         .and_then(|count| count.trim().parse().ok())

@@ -26,6 +26,129 @@
         ],
         "type": "object"
       },
+      "AuthCancelParams": {
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "flow_id"
+        ],
+        "type": "object"
+      },
+      "AuthLogoutParams": {
+        "properties": {
+          "provider": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "AuthMethod": {
+        "oneOf": [
+          {
+            "const": "browser",
+            "description": "A browser on the server's machine signs in and calls back to it.",
+            "type": "string"
+          },
+          {
+            "const": "device_code",
+            "description": "Any device signs in with a short code.",
+            "type": "string"
+          },
+          {
+            "const": "terminal",
+            "description": "The provider's own sign-in command runs in a terminal on the server's machine.",
+            "type": "string"
+          }
+        ]
+      },
+      "AuthRespondParams": {
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "response": {
+            "$ref": "#/$defs/AuthResponse"
+          }
+        },
+        "required": [
+          "provider",
+          "flow_id",
+          "response"
+        ],
+        "type": "object"
+      },
+      "AuthResponse": {
+        "oneOf": [
+          {
+            "description": "The address the browser ended on after signing in.",
+            "properties": {
+              "type": {
+                "const": "callback",
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "url"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "success": {
+                "type": "boolean"
+              },
+              "type": {
+                "const": "terminal_exited",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "success"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "AuthStartParams": {
+        "properties": {
+          "method": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AuthMethod"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The instance's preferred method when absent."
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
       "ClientInfo": {
         "properties": {
           "name": {
@@ -191,6 +314,16 @@
           }
         ]
       },
+      "ProvidersListParams": {
+        "properties": {
+          "refresh": {
+            "default": false,
+            "description": "Check every instance again instead of answering with what was last found.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "ServerStopParams": {
         "type": "object"
       },
@@ -354,6 +487,86 @@
           },
           "params": {
             "$ref": "#/$defs/ServerStopParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "providers/list",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ProvidersListParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "auth/start",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/AuthStartParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "auth/respond",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/AuthRespondParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "auth/cancel",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/AuthCancelParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "auth/logout",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/AuthLogoutParams"
           }
         },
         "required": [
@@ -556,6 +769,123 @@
           }
         ]
       },
+      "AuthInteraction": {
+        "oneOf": [
+          {
+            "description": "Open `url` and sign in. A browser on another machine can't call back: paste the address\nit ends on with a `callback` response.",
+            "properties": {
+              "type": {
+                "const": "browser",
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "url"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Open `url` on any device and enter `code`.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "type": {
+                "const": "device_code",
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "url",
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Run `command` with `env` in a terminal on the server's machine, then answer\n`terminal_exited`.",
+            "properties": {
+              "command": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "env": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": {
+                "const": "terminal",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "command"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "AuthPhase": {
+        "enum": [
+          "starting",
+          "waiting",
+          "verifying",
+          "succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "AuthState": {
+        "description": "One sign-in, as every connection sees it. A provider has at most one at a time.",
+        "properties": {
+          "flow_id": {
+            "type": "string"
+          },
+          "interaction": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AuthInteraction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What a person must do now, while the flow waits."
+          },
+          "message": {
+            "description": "Who it signed in as, or why it failed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "$ref": "#/$defs/AuthPhase"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "flow_id",
+          "phase"
+        ],
+        "type": "object"
+      },
       "Commit": {
         "description": "One atomic write, as seen by subscribers of its conversation.",
         "properties": {
@@ -752,6 +1082,22 @@
           },
           "params": {
             "$ref": "#/$defs/UiChanged"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "auth/state",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/AuthState"
           }
         },
         "required": [

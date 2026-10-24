@@ -11,7 +11,7 @@ mod workspace;
 pub use harness::{
     Harness, HarnessOptions, LoadHooks, StartError, SubmitError, same_hooks, with_nested_results,
 };
-pub use provider::{Echo, Provider, ProviderFuture};
+pub use provider::{Echo, HealthFuture, Provider, ProviderFuture, SignIn};
 pub use store::Store;
 pub use tools::{
     Hooks, NoHooks, ToolCall, ToolOutcome, ToolSpec, approval_for, builtin_tools, run_builtin_tool,

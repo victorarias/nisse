@@ -1,17 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{Context, Result, anyhow, bail};
 use nisse_core::{
-    Approval, Provider, ProviderFuture, ToolCall, ToolOutcome, Turn, Workspace, approval_for,
-    builtin_tools, run_builtin_tool,
+    Approval, HealthFuture, Provider, ProviderFuture, SignIn, ToolCall, ToolOutcome, Turn,
+    Workspace, approval_for, builtin_tools, run_builtin_tool,
 };
-use nisse_protocol::{Entry, Skill, kinds};
+use nisse_protocol::{AuthMethod, Entry, ProviderHealth, ProviderStatus, Skill, kinds};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::{AUTH_BASE, Credentials, ORIGINATOR},
+    auth::{AuthServer, Credentials, ORIGINATOR},
     catalog::wants_code_mode,
     code_mode::{CodeMode, EXEC, HOST_PROGRAM, NestedTools, Run, WAIT},
     record::Recorder,
@@ -31,10 +34,10 @@ follow it. Relative paths in a skill are relative to its folder.
 ";
 
 pub struct OpenAiOptions {
-    /// The tokens `login` saved.
+    /// Where the sign-in's tokens are saved.
     pub auth_path: PathBuf,
-    /// Where expired tokens are refreshed.
-    pub auth_base: String,
+    /// Where people sign in and expired tokens are refreshed.
+    pub auth: AuthServer,
     pub base_url: String,
     /// Nisse's own instructions; the conversation's directory, its AGENTS.md files and its
     /// skills are added to them.
@@ -56,7 +59,7 @@ impl OpenAiOptions {
     ) -> Self {
         Self {
             auth_path: auth_path.into(),
-            auth_base: AUTH_BASE.into(),
+            auth: AuthServer::default(),
             base_url: BASE_URL.into(),
             instructions: instructions.into(),
             home: home.into(),
@@ -72,6 +75,8 @@ pub struct OpenAi {
     http: reqwest::Client,
     signing_in: Mutex<()>,
     code_mode: CodeMode,
+    /// ChatGPT refused to refresh the saved sign-in: only signing in again helps.
+    rejected: AtomicBool,
 }
 
 #[derive(Default)]
@@ -88,6 +93,7 @@ impl OpenAi {
             http: crate::http_client()?,
             signing_in: Mutex::new(()),
             code_mode,
+            rejected: AtomicBool::new(false),
         })
     }
 
@@ -287,14 +293,36 @@ impl OpenAi {
 
     async fn refresh(&self, credentials: &Credentials) -> Result<Credentials> {
         let fresh = credentials
-            .refreshed(&self.http, &self.options.auth_base)
-            .await?;
+            .refreshed(&self.http, &self.options.auth.base)
+            .await
+            .inspect_err(|_| self.rejected.store(true, Ordering::Relaxed))?;
         fresh.save(&self.options.auth_path)?;
         Ok(fresh)
+    }
+
+    fn current_health(&self) -> ProviderHealth {
+        let signed_out = ProviderHealth::new(ProviderStatus::SignedOut);
+        if !self.options.auth_path.exists() {
+            return signed_out.with_message("not signed in to ChatGPT");
+        }
+        if self.rejected.load(Ordering::Relaxed) {
+            return signed_out.with_message("the ChatGPT sign-in expired; sign in again");
+        }
+        match Credentials::load(&self.options.auth_path) {
+            Ok(credentials) => ProviderHealth {
+                account: credentials.account(),
+                ..ProviderHealth::new(ProviderStatus::Ready)
+            },
+            Err(error) => signed_out.with_message(format!("{error:#}")),
+        }
     }
 }
 
 impl Provider for OpenAi {
+    fn driver(&self) -> &str {
+        "openai"
+    }
+
     fn default_model(&self) -> Option<&str> {
         Some(MODEL)
     }
@@ -305,6 +333,39 @@ impl Provider for OpenAi {
 
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(self.answer(turn))
+    }
+
+    fn health(&self, _refresh: bool) -> HealthFuture<'_> {
+        Box::pin(async { self.current_health() })
+    }
+
+    fn sign_in_methods(&self) -> Vec<AuthMethod> {
+        vec![AuthMethod::Browser, AuthMethod::DeviceCode]
+    }
+
+    fn sign_in(&self, method: AuthMethod, mut flow: SignIn) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            crate::auth::sign_in(
+                &self.http,
+                &self.options.auth,
+                &self.options.auth_path,
+                method,
+                &mut flow,
+            )
+            .await?;
+            self.rejected.store(false, Ordering::Relaxed);
+            Ok(())
+        })
+    }
+
+    fn sign_out(&self) -> ProviderFuture<'_> {
+        Box::pin(async {
+            let _held = self.signing_in.lock().await;
+            match std::fs::remove_file(&self.options.auth_path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                _ => Ok(()),
+            }
+        })
     }
 }
 

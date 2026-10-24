@@ -11,7 +11,7 @@ mod sse;
 
 use std::time::Duration;
 
-pub use auth::{AUTH_BASE, AuthServer, CALLBACK_PORT, LoginMethod, LoginPrompt, login, login_with};
+pub use auth::{AUTH_BASE, AuthServer, CALLBACK_PORT};
 pub use code_mode::{HOST_PROGRAM, NestedTools};
 pub use provider::{BASE_URL, MODEL, OpenAi, OpenAiOptions};
 

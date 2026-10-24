@@ -14,6 +14,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::process::Process;
 
 pub(crate) const PRE_TOOL_USE: &str = "nisse_pre_tool_use";
+/// The errors Claude Code reports when its API refuses the credentials it holds.
+const AUTH_ERRORS: &[&str] = &["authentication_failed", "oauth_org_not_allowed"];
 
 const RESTARTED: &str = "Nisse restarted before you finished. Continue where you left off.";
 
@@ -55,6 +57,7 @@ pub(crate) struct Session {
     mid_message: bool,
     held: VecDeque<Held>,
     streaming: String,
+    auth_failed: bool,
 }
 
 /// A user message Nisse sent, which Claude acknowledges by replaying its uuid.
@@ -108,6 +111,7 @@ impl Session {
             mid_message: false,
             held: VecDeque::new(),
             streaming: String::new(),
+            auth_failed: false,
         }
     }
 
@@ -116,6 +120,11 @@ impl Session {
     pub(crate) fn retelling(mut self) -> Self {
         self.retell = true;
         self
+    }
+
+    /// Whether Claude's API refused its credentials during a run.
+    pub(crate) fn auth_failed(&self) -> bool {
+        self.auth_failed
     }
 
     pub(crate) fn has_stopped(&mut self) -> bool {
@@ -249,6 +258,13 @@ impl Session {
     /// messages join the chain in Claude's order. Whatever the frame commits is held until the
     /// calls before it have committed theirs.
     fn on_read(&mut self, turn: &Turn, frame: Value) -> Result<()> {
+        if frame["type"] == "assistant"
+            && frame["error"]
+                .as_str()
+                .is_some_and(|error| AUTH_ERRORS.contains(&error))
+        {
+            self.auth_failed = true;
+        }
         let is_main_chain = frame["parent_tool_use_id"].is_null();
         let (text, message_ended) = match frame["type"].as_str() {
             Some("user") => return self.on_user(turn, &frame, is_main_chain),

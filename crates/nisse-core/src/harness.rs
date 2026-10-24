@@ -165,6 +165,11 @@ impl Harness {
         Ok(self.commit(&new_id(), |tx| tx.create_conversation(start))?)
     }
 
+    /// Every provider a conversation can name, the default first.
+    pub fn providers(&self) -> &[(String, Arc<dyn Provider>)] {
+        &self.inner.providers
+    }
+
     fn provider(&self, name: &str) -> Option<Arc<dyn Provider>> {
         self.inner
             .providers

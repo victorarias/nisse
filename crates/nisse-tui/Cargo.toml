@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+crossterm = { workspace = true, features = ["event-stream"] }
+futures-util.workspace = true
 nisse-client.workspace = true
 nisse-protocol.workspace = true
 ratatui.workspace = true

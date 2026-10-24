@@ -14,9 +14,11 @@ use nisse_core::{
     Harness, HarnessOptions, Hooks, NoHooks, Store, ToolCall, ToolOutcome, same_hooks,
 };
 use nisse_protocol::{
-    Actor, ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
-    ConversationReadResult, ConversationStartParams, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
+    Actor, ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthInteraction, AuthMethod,
+    AuthPhase, AuthRespondParams, AuthResponse, AuthStartParams, AuthState, ClientRequest,
+    Conversation, ConversationReadResult, ConversationStartParams, ConversationStatus,
+    ConversationSubmitParams, ConversationSubmitResult, ConversationSubscribeParams, Entry, Input,
+    ProviderSnapshot, ProviderStatus, ProvidersListParams, ProvidersListResult, ServerNotification,
     WhenBusy, kinds,
 };
 use nisse_server::Server;
@@ -68,12 +70,12 @@ impl Scenario {
 
     fn claude(&self) -> Arc<Claude> {
         let live = live_claude();
-        Arc::new(Claude::new(ClaudeOptions {
-            binary: live
-                .clone()
+        let mut options = ClaudeOptions::new(
+            live.clone()
                 .unwrap_or_else(|| env!("CARGO_BIN_EXE_nisse-claude-replay").into()),
-            record: live.map(|_| self.recordings.path().to_path_buf()),
-        }))
+        );
+        options.record = live.map(|_| self.recordings.path().to_path_buf());
+        Arc::new(Claude::new(options))
     }
 
     fn start(&self, store: Store, hooks: Arc<dyn Hooks>) -> Arc<Server> {
@@ -821,10 +823,7 @@ async fn a_claude_that_crashes_leaves_nothing_it_started_running() {
     )
     .unwrap();
     std::fs::set_permissions(&crashing, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let claude = Arc::new(Claude::new(ClaudeOptions {
-        binary: crashing,
-        record: None,
-    }));
+    let claude = Arc::new(Claude::new(ClaudeOptions::new(crashing)));
     let server = serve(Store::open_in_memory().unwrap(), claude, Arc::new(NoHooks));
     let mut watch = Watch::new_conversation(&server, workspace.path(), None).await;
 
@@ -1207,10 +1206,7 @@ fn resumed_at(store: &Path, conversation: &Conversation) -> Option<String> {
     std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
-        let provider = Arc::new(Claude::new(ClaudeOptions {
-            binary: claude.clone(),
-            record: None,
-        }));
+        let provider = Arc::new(Claude::new(ClaudeOptions::new(claude.clone())));
         let server = serve(Store::open(store).unwrap(), provider, Arc::new(NoHooks));
         let mut watch = Watch::existing(&server, conversation.clone()).await;
         watch.submit("Go on.", WhenBusy::FollowUp).await;
@@ -1293,4 +1289,124 @@ fn a_crash_after_any_commit_resumes_claude_exactly_where_the_transcript_ends() {
             );
         }
     }
+}
+
+/// A server whose only provider is `claude`, on Anthropic's own API whatever this machine's
+/// environment says, so its account fields decide whether it is signed in. Every claude it
+/// starts, in the workspace or not, replays the scenario.
+fn serve_instance(scenario: &Scenario, config_dir: &Path) -> Arc<Server> {
+    let mut options = ClaudeOptions::new(env!("CARGO_BIN_EXE_nisse-claude-replay"));
+    options.config_dir = Some(config_dir.to_owned());
+    options.env.insert(
+        "ANTHROPIC_BASE_URL".into(),
+        "https://api.anthropic.com".into(),
+    );
+    options.env.insert(
+        "NISSE_CLAUDE_REPLAY_DIR".into(),
+        scenario.workspace.path().to_string_lossy().into_owned(),
+    );
+    serve(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Claude::new(options)),
+        Arc::new(NoHooks),
+    )
+}
+
+async fn claude_instance(client: &Client) -> ProviderSnapshot {
+    let listed: ProvidersListResult = client
+        .request(ClientRequest::ProvidersList(ProvidersListParams::default()))
+        .await
+        .unwrap();
+    listed.providers.into_iter().next().unwrap()
+}
+
+async fn sign_in_reaches(
+    notifications: &mut UnboundedReceiver<ServerNotification>,
+    wanted: impl Fn(&AuthState) -> bool,
+) -> AuthState {
+    tokio::time::timeout(patience(), async {
+        loop {
+            match notifications.recv().await {
+                Some(ServerNotification::AuthState(state)) if wanted(&state) => return state,
+                Some(_) => {}
+                None => panic!("the server hung up"),
+            }
+        }
+    })
+    .await
+    .expect("the sign-in got there in time")
+}
+
+#[tokio::test]
+async fn a_signed_out_claude_signs_in_with_claude_codes_own_command_in_a_terminal() {
+    let scenario = Scenario::new("terminal_sign_in");
+    let config_dir = tempfile::tempdir().unwrap();
+    let server = serve_instance(&scenario, config_dir.path());
+    let (client, mut notifications) = Client::new(server.connect_in_process());
+    client.initialize("claude-test").await.unwrap();
+
+    let before = claude_instance(&client).await;
+    let started: AuthState = client
+        .request(ClientRequest::AuthStart(AuthStartParams {
+            provider: "claude".into(),
+            method: None,
+        }))
+        .await
+        .unwrap();
+    let waiting = sign_in_reaches(&mut notifications, |state| {
+        state.phase == AuthPhase::Waiting
+    })
+    .await;
+    let answered: AuthAccepted = client
+        .request(ClientRequest::AuthRespond(AuthRespondParams {
+            provider: "claude".into(),
+            flow_id: started.flow_id.clone(),
+            response: AuthResponse::TerminalExited { success: true },
+        }))
+        .await
+        .unwrap();
+    let settled = sign_in_reaches(&mut notifications, |state| state.phase.is_over()).await;
+    let after = claude_instance(&client).await;
+
+    assert_eq!(before.health.status, ProviderStatus::SignedOut);
+    assert_eq!(before.health.version.as_deref(), Some("2.1.310"));
+    assert_eq!(before.sign_in, [AuthMethod::Terminal]);
+    assert_eq!(
+        waiting.interaction,
+        Some(AuthInteraction::Terminal {
+            command: vec![
+                env!("CARGO_BIN_EXE_nisse-claude-replay").into(),
+                "auth".into(),
+                "login".into(),
+            ],
+            env: [(
+                "CLAUDE_CONFIG_DIR".to_owned(),
+                config_dir.path().to_string_lossy().into_owned(),
+            )]
+            .into(),
+        })
+    );
+    assert!(answered.accepted);
+    assert_eq!(settled.phase, AuthPhase::Succeeded, "{settled:?}");
+    assert_eq!(
+        settled.message.as_deref(),
+        Some("person@example.com · Claude Max")
+    );
+    assert_eq!(after.health.status, ProviderStatus::Ready);
+}
+
+#[tokio::test]
+async fn credentials_claude_s_api_refused_make_claude_read_signed_out() {
+    let scenario = Scenario::new("auth_failed");
+    let config_dir = tempfile::tempdir().unwrap();
+    let server = serve_instance(&scenario, config_dir.path());
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), None).await;
+    let before = claude_instance(&watch.client).await;
+
+    watch.submit("hello", WhenBusy::FollowUp).await;
+    watch.until_idle().await;
+    let after = claude_instance(&watch.client).await;
+
+    assert_eq!(before.health.status, ProviderStatus::Ready);
+    assert_eq!(after.health.status, ProviderStatus::SignedOut);
 }

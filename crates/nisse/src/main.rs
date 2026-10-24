@@ -1,3 +1,5 @@
+mod providers;
+
 use std::{
     fs::File,
     path::{Path, PathBuf},
@@ -8,14 +10,13 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use nisse_claude::{Claude, ClaudeOptions};
 use nisse_client::Client;
-use nisse_core::{Echo, Harness, HarnessOptions, Hooks, Provider};
+use nisse_core::{Harness, HarnessOptions, Hooks};
 use nisse_lua::LuaHost;
-use nisse_openai::{HOST_PROGRAM, LoginMethod, LoginPrompt, NestedTools, OpenAi, OpenAiOptions};
+use nisse_openai::NestedTools;
 use nisse_protocol::{
-    Actor, ClientRequest, ConversationStartParams, ServerNotification, ServerStopParams,
-    ServerStopResult,
+    Actor, AuthMethod, ClientRequest, ConversationStartParams, ServerNotification,
+    ServerStopParams, ServerStopResult,
 };
 use nisse_server::Server;
 use tokio::sync::{broadcast, mpsc};
@@ -41,8 +42,8 @@ struct Cli {
     /// Open this conversation instead of starting a new one.
     #[arg(long)]
     conversation: Option<String>,
-    /// Who answers a new conversation: `claude` (the default), `openai`, or `echo`, which echoes
-    /// and runs `!command` without a model.
+    /// Who answers a new conversation: `claude` (the default), `openai`, `echo` (which echoes and
+    /// runs `!command` without a model), or a provider `NISSE_HOME/config.toml` names.
     #[arg(long, env = "NISSE_PROVIDER", global = true)]
     provider: Option<String>,
     /// The new conversation's model; each provider has its own default.
@@ -92,21 +93,18 @@ enum Command {
     Exec { prompt: String },
     /// Print the protocol's JSON Schema.
     Schema,
-    /// Sign in to a provider.
+    /// Sign in to a provider: ChatGPT for `openai`, Claude Code's own sign-in for `claude`.
     Login {
-        #[command(subcommand)]
-        provider: LoginProvider,
-    },
-}
-
-#[derive(Subcommand)]
-enum LoginProvider {
-    /// Sign in with ChatGPT; usage counts against your plan.
-    Openai {
+        /// The provider, as `nisse providers` lists it.
+        provider: String,
         /// Sign in on another device with a code, for a machine without a browser.
         #[arg(long)]
         device: bool,
     },
+    /// Sign out of a provider.
+    Logout { provider: String },
+    /// List the providers and how each stands.
+    Providers,
 }
 
 struct ServerConfig {
@@ -159,28 +157,18 @@ async fn main() -> Result<()> {
             )
             .await
         }
-        Some(Command::Login {
-            provider: LoginProvider::Openai { device },
-        }) => {
-            std::fs::create_dir_all(&config.home)?;
-            let method = if device {
-                LoginMethod::DeviceCode
-            } else {
-                LoginMethod::Browser
-            };
-            nisse_openai::login(&openai_auth(&config.home), method, |prompt| match prompt {
-                LoginPrompt::OpenUrl { url } => {
-                    eprintln!(
-                        "Open this link in your browser to sign in with ChatGPT:\n\n  {url}\n"
-                    )
-                }
-                LoginPrompt::EnterCode { url, code } => {
-                    eprintln!("On any device, open {url} and enter the code {code}\n")
-                }
-            })
-            .await?;
-            eprintln!("Signed in. Start Nisse with --provider openai.");
-            Ok(())
+        Some(Command::Login { provider, device }) => {
+            let (client, mut notifications, _) = attach(&config, cli.connect).await?;
+            let method = device.then_some(AuthMethod::DeviceCode);
+            nisse::login(&client, &mut notifications, provider, method).await
+        }
+        Some(Command::Logout { provider }) => {
+            let (client, _, _) = attach(&config, cli.connect).await?;
+            nisse::logout(&client, provider, &mut std::io::stdout()).await
+        }
+        Some(Command::Providers) => {
+            let (client, _, _) = attach(&config, cli.connect).await?;
+            nisse::list_providers(&client, &mut std::io::stdout()).await
         }
         Some(Command::Schema) => {
             let schema = serde_json::json!({
@@ -215,47 +203,6 @@ fn owner() -> Actor {
         id: "owner".into(),
         name,
     }
-}
-
-fn openai_auth(home: &Path) -> PathBuf {
-    home.join("auth").join("openai.json")
-}
-
-/// Every provider a conversation can name, the default first.
-fn providers(config: &ServerConfig) -> Result<Vec<(String, Arc<dyn Provider>)>> {
-    let mut openai = OpenAiOptions::new(
-        openai_auth(&config.home),
-        include_str!("instructions.md"),
-        &config.home,
-    );
-    openai.record.clone_from(&config.record);
-    let installed = config.home.join("bin").join(HOST_PROGRAM);
-    openai.code_mode_host = match &config.code_mode_host {
-        Some(host) => host.clone(),
-        None if installed.is_file() => installed,
-        None => HOST_PROGRAM.into(),
-    };
-    openai.nested_tools = config.nested_tools;
-    let think = std::env::var("NISSE_ECHO_THINK_MS")
-        .ok()
-        .and_then(|ms| ms.parse().ok())
-        .unwrap_or(600);
-    Ok(vec![
-        (
-            "claude".into(),
-            Arc::new(Claude::new(ClaudeOptions {
-                binary: config.claude.clone(),
-                record: config.record.clone(),
-            })),
-        ),
-        ("openai".into(), Arc::new(OpenAi::new(openai)?)),
-        (
-            "echo".into(),
-            Arc::new(Echo {
-                think: Duration::from_millis(think),
-            }),
-        ),
-    ])
 }
 
 static HELD_HOME: OnceLock<File> = OnceLock::new();
@@ -297,7 +244,7 @@ fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
     let harness = Harness::open(
         &home.join("nisse.sqlite"),
         HarnessOptions {
-            providers: providers(config)?,
+            providers: providers::named(config)?,
             hooks,
         },
     )?;

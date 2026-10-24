@@ -275,6 +275,10 @@ async fn subscribing_since_a_seq_replays_only_later_commits() {
 struct Hanging;
 
 impl Provider for Hanging {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, _turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(std::future::pending())
     }
@@ -432,6 +436,10 @@ async fn a_hook_keeps_its_time_budget_while_a_slow_command_runs_inside_it() {
 struct Careful;
 
 impl Provider for Careful {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let transcript = turn.transcript()?;
@@ -564,6 +572,10 @@ struct GivesUp {
 }
 
 impl Provider for GivesUp {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let first = turn.call_tool(
@@ -750,6 +762,10 @@ fn a_call_waiting_for_approval_when_nisse_restarts_is_not_run_and_the_model_hear
 struct StuckScript;
 
 impl Provider for StuckScript {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let call = |id: &str, name: &str, parent: Option<&str>| nisse_core::ToolCall {
@@ -856,6 +872,10 @@ async fn streamed_text_shows_live_until_the_message_is_committed() {
 struct Scripted;
 
 impl Provider for Scripted {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let transcript = turn.transcript()?;
@@ -1136,6 +1156,10 @@ async fn ends(pid: i32) {
 struct TwoAtOnce;
 
 impl Provider for TwoAtOnce {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let call = |id: &str| nisse_core::ToolCall {
@@ -1235,6 +1259,10 @@ async fn tools_run_in_the_conversation_s_directory_and_resolve_relative_paths_th
 struct NamesItsModel;
 
 impl Provider for NamesItsModel {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move { turn.answer(&format!("I am {}", turn.model().unwrap_or("unnamed"))) })
     }
@@ -1374,6 +1402,10 @@ struct UntilReleased {
 }
 
 impl Provider for UntilReleased {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             self.done.notified().await;
