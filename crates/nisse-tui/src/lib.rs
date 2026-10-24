@@ -1,6 +1,7 @@
 //! Nisse's terminal UI: a client of the app server that draws only when something changed.
 
 mod gnome;
+mod host;
 mod theme;
 mod view;
 
@@ -9,18 +10,22 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use nisse_client::Client;
 use nisse_protocol::{
-    ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
-    ConversationReadResult, ConversationStartParams, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
-    UiChanged, WhenBusy,
+    ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthCancelParams, AuthInteraction,
+    AuthMethod, AuthPhase, AuthRespondParams, AuthResponse, AuthStartParams, AuthState,
+    ClientRequest, Conversation, ConversationReadResult, ConversationStartParams,
+    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
+    ConversationSubscribeParams, Entry, Input, ProviderSnapshot, ProviderStatus,
+    ProvidersListParams, ProvidersListResult, ServerNotification, UiChanged, WhenBusy,
 };
 use ratatui::{
     Terminal,
     backend::Backend,
-    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    widgets::Clear,
 };
 use tokio::sync::mpsc;
 
+pub use host::Host;
 pub use theme::Theme;
 
 const SPINNER_FRAME: Duration = Duration::from_millis(1000 / 12);
@@ -39,6 +44,12 @@ pub struct App {
     frame: usize,
     error: Option<String>,
     model: String,
+    providers: Vec<ProviderSnapshot>,
+    /// The newest sign-in any client runs, until it ends.
+    sign_in: Option<AuthState>,
+    /// The sign-in this client started, which it alone opens a browser or a terminal for.
+    started: Option<String>,
+    listed: mpsc::UnboundedSender<Vec<ProviderSnapshot>>,
 }
 
 /// Which conversation the TUI shows.
@@ -55,18 +66,10 @@ pub async fn run(
     notice: Option<String>,
     theme: Theme,
 ) -> Result<()> {
-    let (keys, pressed) = mpsc::unbounded_channel();
-    std::thread::spawn(move || {
-        while let Ok(event) = event::read() {
-            if keys.send(event).is_err() {
-                break;
-            }
-        }
-    });
     let mut terminal = ratatui::init();
     let outcome = drive(
         &mut terminal,
-        pressed,
+        host::Tty::new(),
         client,
         notifications,
         open,
@@ -78,10 +81,10 @@ pub async fn run(
     outcome
 }
 
-/// Draws on `terminal` and reads `pressed` until the user quits or `pressed` closes.
+/// Draws on `terminal` and follows `host`'s events until the user quits or the host has no more.
 pub async fn drive<B: Backend>(
     terminal: &mut Terminal<B>,
-    mut pressed: mpsc::UnboundedReceiver<Event>,
+    mut host: impl Host,
     client: Client,
     mut notifications: mpsc::UnboundedReceiver<ServerNotification>,
     open: Open,
@@ -121,6 +124,7 @@ where
         .model
         .clone()
         .unwrap_or_else(|| conversation.provider.clone());
+    let (listed, mut lists) = mpsc::unbounded_channel();
     let mut app = App {
         status: snapshot.conversation.status,
         working_since: (snapshot.conversation.status == ConversationStatus::Working)
@@ -135,21 +139,33 @@ where
         frame: 0,
         error: notice,
         model,
+        providers: Vec::new(),
+        sign_in: None,
+        started: None,
+        listed,
     };
+    app.list_providers(&client);
 
     loop {
         terminal.draw(|frame| view::draw(frame, &app, &theme))?;
         let tick = app.next_tick();
         tokio::select! {
-            event = pressed.recv() => match event {
+            event = host.next_event() => match event {
                 Some(event) => {
-                    if app.on_event(event, &client).await? {
+                    if app.on_event(event, &client, &host).await? {
                         return Ok(());
                     }
                 }
                 None => return Ok(()),
             },
-            Some(notification) = notifications.recv() => app.on_notification(notification),
+            Some(notification) = notifications.recv() => {
+                if let Some((command, env)) = app.on_notification(notification, &client, &mut host) {
+                    let success = host.foreground(&command, &env).await;
+                    terminal.draw(|frame| frame.render_widget(Clear, frame.area()))?;
+                    app.respond(&client, AuthResponse::TerminalExited { success }).await;
+                }
+            }
+            Some(providers) = lists.recv() => app.providers = providers,
             _ = sleep_until(tick) => app.on_tick(),
         }
     }
@@ -184,8 +200,27 @@ impl App {
         }
     }
 
-    fn on_notification(&mut self, notification: ServerNotification) {
+    /// Lists the providers in the background: checking them can take a few seconds.
+    fn list_providers(&self, client: &Client) {
+        let client = client.clone();
+        let listed = self.listed.clone();
+        tokio::spawn(async move {
+            let request = ClientRequest::ProvidersList(ProvidersListParams::default());
+            if let Ok(list) = client.request::<ProvidersListResult>(request).await {
+                let _ = listed.send(list.providers);
+            }
+        });
+    }
+
+    /// The command to hand the terminal to, when this client's sign-in asks for one.
+    fn on_notification(
+        &mut self,
+        notification: ServerNotification,
+        client: &Client,
+        host: &mut impl Host,
+    ) -> Option<(Vec<String>, std::collections::BTreeMap<String, String>)> {
         match notification {
+            ServerNotification::AuthState(state) => return self.on_sign_in(state, client, host),
             ServerNotification::Committed(commit)
                 if commit.conversation_id == self.conversation.id =>
             {
@@ -219,10 +254,131 @@ impl App {
             }
             _ => {}
         }
+        None
+    }
+
+    fn on_sign_in(
+        &mut self,
+        state: AuthState,
+        client: &Client,
+        host: &mut impl Host,
+    ) -> Option<(Vec<String>, std::collections::BTreeMap<String, String>)> {
+        let ours = self.started.as_deref() == Some(state.flow_id.as_str());
+        if state.phase.is_over() {
+            let provider = &state.provider;
+            match state.phase {
+                AuthPhase::Succeeded => {
+                    self.toast = Some((format!("signed in to {provider}"), Instant::now()))
+                }
+                AuthPhase::Cancelled => {
+                    self.toast = Some((format!("{provider} sign-in cancelled"), Instant::now()))
+                }
+                _ => {
+                    let why = state.message.as_deref().unwrap_or("it did not say why");
+                    self.error = Some(format!("signing in to {provider} failed: {why}"));
+                }
+            }
+            if self
+                .sign_in
+                .as_ref()
+                .is_some_and(|shown| shown.flow_id == state.flow_id)
+            {
+                self.sign_in = None;
+            }
+            if ours {
+                self.started = None;
+            }
+            self.list_providers(client);
+            return None;
+        }
+        let interaction = state.interaction.clone();
+        let first_shown = self
+            .sign_in
+            .as_ref()
+            .is_none_or(|shown| shown.flow_id != state.flow_id || shown.interaction != interaction);
+        self.sign_in = Some(state);
+        if !ours || !first_shown {
+            return None;
+        }
+        match interaction? {
+            AuthInteraction::Browser { url } => {
+                host.open(&url);
+                None
+            }
+            AuthInteraction::Terminal { command, env } => Some((command, env)),
+            AuthInteraction::DeviceCode { .. } => None,
+        }
+    }
+
+    /// Signs in to the first provider that needs it.
+    async fn start_sign_in(&mut self, client: &Client, host: &impl Host) {
+        let Some(provider) = self
+            .providers
+            .iter()
+            .find(|provider| provider.health.status == ProviderStatus::SignedOut)
+        else {
+            return;
+        };
+        let method = (host.is_remote() && provider.sign_in.contains(&AuthMethod::DeviceCode))
+            .then_some(AuthMethod::DeviceCode);
+        let started = client
+            .request::<AuthState>(ClientRequest::AuthStart(AuthStartParams {
+                provider: provider.id.clone(),
+                method,
+            }))
+            .await;
+        match started {
+            Ok(state) => {
+                self.started = Some(state.flow_id.clone());
+                if self
+                    .sign_in
+                    .as_ref()
+                    .is_none_or(|shown| shown.flow_id != state.flow_id)
+                {
+                    self.sign_in = Some(state);
+                }
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
+    async fn respond(&mut self, client: &Client, response: AuthResponse) {
+        let Some(state) = &self.sign_in else {
+            return;
+        };
+        let answered = client
+            .request::<AuthAccepted>(ClientRequest::AuthRespond(AuthRespondParams {
+                provider: state.provider.clone(),
+                flow_id: state.flow_id.clone(),
+                response,
+            }))
+            .await;
+        self.error = answered.err().map(|error| error.to_string());
+    }
+
+    async fn cancel_sign_in(&mut self, client: &Client) {
+        let Some(state) = &self.sign_in else {
+            return;
+        };
+        let cancelled = client
+            .request::<AuthAccepted>(ClientRequest::AuthCancel(AuthCancelParams {
+                provider: state.provider.clone(),
+                flow_id: state.flow_id.clone(),
+            }))
+            .await;
+        self.error = cancelled.err().map(|error| error.to_string());
+    }
+
+    /// Whether the sign-in on show waits for the address a browser ended on.
+    fn awaits_callback(&self) -> bool {
+        self.sign_in
+            .as_ref()
+            .is_some_and(|state| matches!(state.interaction, Some(AuthInteraction::Browser { .. })))
     }
 
     /// Returns true when the user quits.
-    async fn on_event(&mut self, event: Event, client: &Client) -> Result<bool> {
+    async fn on_event(&mut self, event: Event, client: &Client, host: &impl Host) -> Result<bool> {
         let Event::Key(KeyEvent {
             code,
             modifiers,
@@ -241,6 +397,16 @@ impl App {
         }
         match (code, modifiers) {
             (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => return Ok(true),
+            (KeyCode::Char('l'), KeyModifiers::CONTROL) if self.sign_in.is_none() => {
+                self.start_sign_in(client, host).await
+            }
+            (KeyCode::Esc, _) if self.sign_in.is_some() => self.cancel_sign_in(client).await,
+            (KeyCode::Enter, _)
+                if self.awaits_callback() && self.input.trim().starts_with("http") =>
+            {
+                let url = std::mem::take(&mut self.input).trim().to_owned();
+                self.respond(client, AuthResponse::Callback { url }).await;
+            }
             (KeyCode::Enter, _) if !self.input.trim().is_empty() => {
                 let text = std::mem::take(&mut self.input);
                 let sent = client

@@ -1,4 +1,6 @@
-//! `nisse exec`: one prompt, run headless against a server.
+//! `nisse exec`: one prompt, run headless against a server; and the setup commands.
+
+mod login;
 
 use std::io::Write;
 
@@ -14,6 +16,8 @@ use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, Lines},
     sync::mpsc,
 };
+
+pub use login::{list_providers, login, logout};
 
 /// Sends `prompt` to a conversation started with `start` and writes the run to `out` as it
 /// commits, until the conversation is idle again. Each approval is asked on stderr and answered by the next line of

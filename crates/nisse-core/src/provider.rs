@@ -1,18 +1,26 @@
 use std::{future::Future, path::Path, pin::Pin, time::Duration};
 
-use anyhow::Result;
-use nisse_protocol::{Skill, kinds};
+use anyhow::{Result, bail};
+use nisse_protocol::{
+    AuthInteraction, AuthMethod, AuthResponse, ProviderHealth, ProviderStatus, Skill, kinds,
+};
+use tokio::sync::mpsc;
 
 use crate::{
     tools::{ToolCall, run_builtin_tool},
     turn::{Approval, Turn},
 };
 
-pub type ProviderFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+pub type ProviderFuture<'a, T = ()> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+pub type HealthFuture<'a> = Pin<Box<dyn Future<Output = ProviderHealth> + Send + 'a>>;
 
 /// Runs one turn: answers the conversation's newest input, committing through `turn` as it goes.
 /// A provider that runs its own agent loop, like Claude Code, still commits every step there.
+/// A provider that needs an account says how it stands and signs in to it.
 pub trait Provider: Send + Sync {
+    /// What runs it, such as `claude` or `openai`, whatever the name a server gives it.
+    fn driver(&self) -> &str;
+
     /// The model a conversation gets when it names none. `None` leaves the choice to the
     /// provider each time it runs, as Claude Code makes it.
     fn default_model(&self) -> Option<&str> {
@@ -27,6 +35,53 @@ pub trait Provider: Send + Sync {
     }
 
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a>;
+
+    /// How it stands, as last found, or found again when `refresh` is set.
+    fn health(&self, _refresh: bool) -> HealthFuture<'_> {
+        Box::pin(async { ProviderHealth::new(ProviderStatus::Ready) })
+    }
+
+    /// The ways to sign in, the first one preferred; none when there is nothing to sign in to.
+    fn sign_in_methods(&self) -> Vec<AuthMethod> {
+        Vec::new()
+    }
+
+    /// Signs in by `method`, showing a person what to do through `flow`. Its health tells
+    /// whether that worked.
+    fn sign_in(&self, _method: AuthMethod, _flow: SignIn) -> ProviderFuture<'_> {
+        Box::pin(async { bail!("there is nothing to sign in to") })
+    }
+
+    fn sign_out(&self) -> ProviderFuture<'_> {
+        Box::pin(async { bail!("there is nothing to sign out of") })
+    }
+}
+
+/// A sign-in in progress: what it shows people, and what they answer.
+pub struct SignIn {
+    show: Box<dyn Fn(AuthInteraction) + Send + Sync>,
+    responses: mpsc::UnboundedReceiver<AuthResponse>,
+}
+
+impl SignIn {
+    pub fn new(
+        show: impl Fn(AuthInteraction) + Send + Sync + 'static,
+        responses: mpsc::UnboundedReceiver<AuthResponse>,
+    ) -> Self {
+        Self {
+            show: Box::new(show),
+            responses,
+        }
+    }
+
+    pub fn show(&self, interaction: AuthInteraction) {
+        (self.show)(interaction);
+    }
+
+    /// The next answer; `None` once nobody can answer anymore.
+    pub async fn response(&mut self) -> Option<AuthResponse> {
+        self.responses.recv().await
+    }
 }
 
 /// A stand-in model: it echoes, and runs `Bash` for input that starts with `!`.
@@ -35,6 +90,10 @@ pub struct Echo {
 }
 
 impl Provider for Echo {
+    fn driver(&self) -> &str {
+        "echo"
+    }
+
     fn default_model(&self) -> Option<&str> {
         Some("echo")
     }

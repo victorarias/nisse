@@ -94,6 +94,16 @@ pub enum ClientRequest {
     /// else is attached.
     #[serde(rename = "server/stop")]
     ServerStop(ServerStopParams),
+    #[serde(rename = "providers/list")]
+    ProvidersList(ProvidersListParams),
+    #[serde(rename = "auth/start")]
+    AuthStart(AuthStartParams),
+    #[serde(rename = "auth/respond")]
+    AuthRespond(AuthRespondParams),
+    #[serde(rename = "auth/cancel")]
+    AuthCancel(AuthCancelParams),
+    #[serde(rename = "auth/logout")]
+    AuthLogout(AuthLogoutParams),
 }
 
 impl ClientRequest {
@@ -133,6 +143,11 @@ const KNOWN_METHODS: &[&str] = &[
     "approval/resolve",
     "skills/list",
     "server/stop",
+    "providers/list",
+    "auth/start",
+    "auth/respond",
+    "auth/cancel",
+    "auth/logout",
 ];
 
 /// Notifications the server sends, keyed by method.
@@ -145,6 +160,8 @@ pub enum ServerNotification {
     Status(StatusChanged),
     #[serde(rename = "ui/changed")]
     UiChanged(UiChanged),
+    #[serde(rename = "auth/state")]
+    AuthState(AuthState),
 }
 
 impl ServerNotification {

@@ -61,11 +61,13 @@ impl Process {
         binary: &Path,
         cwd: &Path,
         args: &[String],
+        env: &[(String, String)],
         recorder: Option<Arc<Recorder>>,
     ) -> Result<Self> {
         let mut command = Command::new(binary);
         command
             .args(args)
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

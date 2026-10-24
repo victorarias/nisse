@@ -3,7 +3,6 @@ source: crates/nisse-tui/tests/screen.rs
 expression: without_conversation_id(&screen)
 ---
 ░▒▓ N I S S E ▓▒░ // conversation [id]
-
                    ▄▀▄
                   ▄█▀
                  ▄████            ███╗   ██╗██╗███████╗███████╗███████╗
@@ -19,8 +18,9 @@ expression: without_conversation_id(&screen)
 
                        ━━━━━━━━━━━━━━━━ ◆ ━━━━━━━━━━━━━━━━
 
-                ⏎  send    !cmd  shell    PgUp  scroll    ^C  quit
+                                  ● echo  ready
 
+                ⏎  send    !cmd  shell    PgUp  scroll    ^C  quit
 
 ╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
 │ ❯ ▍type a message, or !cmd to run a shell command                            │

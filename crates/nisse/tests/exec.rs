@@ -16,6 +16,10 @@ const PATIENCE: Duration = Duration::from_secs(10);
 struct Silent;
 
 impl Provider for Silent {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, _: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async { Ok(()) })
     }
@@ -24,6 +28,10 @@ impl Provider for Silent {
 struct TwoCommands;
 
 impl Provider for TwoCommands {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             for (id, command) in [("first", "make"), ("second", "make install")] {

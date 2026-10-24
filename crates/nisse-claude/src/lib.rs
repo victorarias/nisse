@@ -2,20 +2,21 @@
 //! the CLI's stream-json control protocol, commits every step through the turn, and resumes
 //! Claude's session at the newest message it committed.
 
+mod probe;
 mod process;
 mod record;
 mod session;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::{Arc, Mutex, Weak},
     time::Duration,
 };
 
-use anyhow::Result;
-use nisse_core::{Provider, ProviderFuture, Turn, new_id};
-use nisse_protocol::kinds;
+use anyhow::{Result, bail};
+use nisse_core::{HealthFuture, Provider, ProviderFuture, SignIn, Turn, new_id};
+use nisse_protocol::{AuthInteraction, AuthMethod, AuthResponse, ProviderHealth, kinds};
 use serde_json::json;
 use tokio::task::AbortHandle;
 
@@ -34,11 +35,41 @@ pub struct ClaudeOptions {
     pub binary: PathBuf,
     /// A directory to write each conversation's replay fixture into (`NISSE_RECORD`).
     pub record: Option<PathBuf>,
+    /// Claude Code's own config directory, which holds the account (`CLAUDE_CONFIG_DIR`).
+    pub config_dir: Option<PathBuf>,
+    /// Set for every claude this provider starts.
+    pub env: BTreeMap<String, String>,
+    /// Added to the command line of every conversation's claude.
+    pub args: Vec<String>,
+}
+
+impl ClaudeOptions {
+    pub fn new(binary: impl Into<PathBuf>) -> Self {
+        Self {
+            binary: binary.into(),
+            record: None,
+            config_dir: None,
+            env: BTreeMap::new(),
+            args: Vec::new(),
+        }
+    }
+
+    fn env(&self) -> Vec<(String, String)> {
+        let mut env: Vec<(String, String)> = self.env.clone().into_iter().collect();
+        if let Some(dir) = &self.config_dir {
+            env.push((
+                "CLAUDE_CONFIG_DIR".into(),
+                dir.to_string_lossy().into_owned(),
+            ));
+        }
+        env
+    }
 }
 
 pub struct Claude {
     options: ClaudeOptions,
     idle: Arc<Mutex<HashMap<String, Parked>>>,
+    health: tokio::sync::Mutex<Option<ProviderHealth>>,
 }
 
 struct Parked {
@@ -60,6 +91,7 @@ impl Claude {
         Self {
             options,
             idle: Arc::default(),
+            health: tokio::sync::Mutex::default(),
         }
     }
 
@@ -76,14 +108,19 @@ impl Claude {
             Some(session) => session,
             None => self.start(turn, resumable_state(turn)?)?,
         };
-        if let Err(error) = session.answer(turn).await {
-            if !error.is::<Unresumable>() {
-                return Err(error);
-            }
+        let mut answered = session.answer(turn).await;
+        if answered
+            .as_ref()
+            .is_err_and(|error| error.is::<Unresumable>())
+        {
             drop(session);
             session = self.start(turn, None)?;
-            session.answer(turn).await?;
+            answered = session.answer(turn).await;
         }
+        if session.auth_failed() {
+            self.health.lock().await.take();
+        }
+        answered?;
         self.park(conversation_id, session);
         Ok(())
     }
@@ -121,6 +158,7 @@ impl Claude {
         if let Some(model) = turn.model() {
             args.extend(["--model".to_owned(), model.to_owned()]);
         }
+        args.extend(self.options.args.iter().cloned());
         match &state.head {
             Some(head) => args.extend([
                 "--resume".to_owned(),
@@ -141,7 +179,13 @@ impl Claude {
             }
             None => None,
         };
-        let process = Process::spawn(&self.options.binary, turn.cwd(), &args, recorder)?;
+        let process = Process::spawn(
+            &self.options.binary,
+            turn.cwd(),
+            &args,
+            &self.options.env(),
+            recorder,
+        )?;
         process.send(json!({
             "type": "control_request",
             "request_id": initialize,
@@ -200,7 +244,91 @@ async fn stop_when_idle(
 }
 
 impl Provider for Claude {
+    fn driver(&self) -> &str {
+        "claude"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(self.run_turn(turn))
+    }
+
+    fn health(&self, refresh: bool) -> HealthFuture<'_> {
+        Box::pin(async move {
+            let mut known = self.health.lock().await;
+            if let Some(health) = known.as_ref().filter(|_| !refresh) {
+                return health.clone();
+            }
+            let options = &self.options;
+            let health = probe::probe(&options.binary, &options.env()).await;
+            *known = Some(health.clone());
+            health
+        })
+    }
+
+    fn sign_in_methods(&self) -> Vec<AuthMethod> {
+        vec![AuthMethod::Terminal]
+    }
+
+    /// Claude Code keeps its own credentials, so a person signs in with its own command, in a
+    /// terminal.
+    fn sign_in(&self, _method: AuthMethod, mut flow: SignIn) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            flow.show(AuthInteraction::Terminal {
+                command: self.command(&["auth", "login"]),
+                env: self.config_dir_env(),
+            });
+            loop {
+                match flow.response().await {
+                    Some(AuthResponse::TerminalExited { success: true }) => return Ok(()),
+                    Some(AuthResponse::TerminalExited { success: false }) => {
+                        bail!("`claude auth login` did not finish")
+                    }
+                    Some(AuthResponse::Callback { .. }) => {}
+                    None => bail!("nobody is left to sign in"),
+                }
+            }
+        })
+    }
+
+    /// Signs Claude Code out and stops every claude still running on the old sign-in.
+    fn sign_out(&self) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            let options = &self.options;
+            let status = tokio::process::Command::new(&options.binary)
+                .args(["auth", "logout"])
+                .envs(options.env())
+                .current_dir(std::env::temp_dir())
+                .stdin(std::process::Stdio::null())
+                .output()
+                .await?;
+            if !status.status.success() {
+                bail!("`claude auth logout` failed ({})", status.status);
+            }
+            self.idle.lock().expect("idle lock").clear();
+            self.health.lock().await.take();
+            Ok(())
+        })
+    }
+}
+
+impl Claude {
+    fn command(&self, args: &[&str]) -> Vec<String> {
+        std::iter::once(self.options.binary.to_string_lossy().into_owned())
+            .chain(args.iter().map(|arg| (*arg).to_owned()))
+            .collect()
+    }
+
+    /// What a sign-in command needs to reach this instance's account, and nothing secret.
+    fn config_dir_env(&self) -> BTreeMap<String, String> {
+        self.options
+            .config_dir
+            .iter()
+            .map(|dir| {
+                (
+                    "CLAUDE_CONFIG_DIR".to_owned(),
+                    dir.to_string_lossy().into_owned(),
+                )
+            })
+            .collect()
     }
 }

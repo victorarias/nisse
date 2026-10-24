@@ -1,6 +1,7 @@
 //! Screen tests: the real TUI against a real server, judged by what a terminal would show.
 
 use std::{
+    collections::BTreeMap,
     io::Write,
     sync::{Arc, Mutex},
     time::Duration,
@@ -8,10 +9,13 @@ use std::{
 
 use nisse_client::Client;
 use nisse_core::{
-    Approval, Echo, Harness, HarnessOptions, NoHooks, Provider, ProviderFuture, Store, ToolCall,
-    ToolOutcome, Turn, same_hooks,
+    Approval, Echo, Harness, HarnessOptions, HealthFuture, NoHooks, Provider, ProviderFuture,
+    SignIn, Store, ToolCall, ToolOutcome, Turn, same_hooks,
 };
-use nisse_protocol::{Actor, ConversationStartParams};
+use nisse_protocol::{
+    Actor, AuthInteraction, AuthMethod, AuthResponse, ConversationStartParams, ProviderHealth,
+    ProviderStatus,
+};
 use nisse_server::Server;
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
@@ -66,9 +70,44 @@ impl Screen {
     }
 }
 
+/// Each command the TUI handed the terminal to, with its environment.
+type Ran = Arc<Mutex<Vec<(Vec<String>, BTreeMap<String, String>)>>>;
+
+/// The terminal around the TUI: keys typed into it, and the commands and links it was handed.
+struct FakeHost {
+    events: mpsc::UnboundedReceiver<Event>,
+    remote: bool,
+    ran: Ran,
+    opened: Arc<Mutex<Vec<String>>>,
+}
+
+impl nisse_tui::Host for FakeHost {
+    async fn next_event(&mut self) -> Option<Event> {
+        self.events.recv().await
+    }
+
+    async fn foreground(&mut self, command: &[String], env: &BTreeMap<String, String>) -> bool {
+        self.ran
+            .lock()
+            .unwrap()
+            .push((command.to_vec(), env.clone()));
+        true
+    }
+
+    fn open(&mut self, url: &str) {
+        self.opened.lock().unwrap().push(url.to_owned());
+    }
+
+    fn is_remote(&self) -> bool {
+        self.remote
+    }
+}
+
 struct Tui {
     screen: Screen,
     keys: mpsc::UnboundedSender<Event>,
+    ran: Ran,
+    opened: Arc<Mutex<Vec<String>>>,
 }
 
 impl Tui {
@@ -83,10 +122,14 @@ impl Tui {
     }
 
     async fn with_model(name: &str, provider: Arc<dyn Provider>) -> Self {
+        Self::with(vec![(name.into(), provider)], false).await
+    }
+
+    async fn with(providers: Vec<(String, Arc<dyn Provider>)>, remote: bool) -> Self {
         let harness = Harness::with_store(
             Store::open_in_memory().unwrap(),
             HarnessOptions {
-                providers: vec![(name.into(), provider)],
+                providers,
                 hooks: same_hooks(Arc::new(NoHooks)),
             },
         );
@@ -109,12 +152,19 @@ impl Tui {
             },
         )
         .unwrap();
-        let (keys, pressed) = mpsc::unbounded_channel();
+        let (keys, events) = mpsc::unbounded_channel();
+        let host = FakeHost {
+            events,
+            remote,
+            ran: Arc::default(),
+            opened: Arc::default(),
+        };
+        let (ran, opened) = (host.ran.clone(), host.opened.clone());
         tokio::spawn(async move {
             let _server = server;
             nisse_tui::drive(
                 &mut terminal,
-                pressed,
+                host,
                 client,
                 notifications,
                 nisse_tui::Open::New(ConversationStartParams {
@@ -129,7 +179,12 @@ impl Tui {
             .await
             .unwrap();
         });
-        Self { screen, keys }
+        Self {
+            screen,
+            keys,
+            ran,
+            opened,
+        }
     }
 
     fn type_line(&self, text: &str) {
@@ -190,6 +245,10 @@ struct Thinking {
 }
 
 impl Provider for Thinking {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             turn.stream("Tracing the neon");
@@ -203,6 +262,10 @@ impl Provider for Thinking {
 struct Asking;
 
 impl Provider for Asking {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let call = ToolCall {
@@ -226,6 +289,10 @@ impl Provider for Asking {
 struct Scripting;
 
 impl Provider for Scripting {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let (read, finish) = std::sync::mpsc::channel::<()>();
@@ -365,4 +432,183 @@ async fn a_message_typed_while_a_call_waits_for_approval_does_not_answer_it() {
     tui.chord(KeyCode::Char('n'), KeyModifiers::CONTROL);
     let denied = tui.screen.shows(&["DENIED", "READY"]).await;
     assert!(denied.contains("❯ yes, but keep the logs▍"), "{denied}");
+}
+
+/// A provider account, as a person would find it: signed in or not, and how it signs in.
+struct Account {
+    driver: &'static str,
+    health: Mutex<ProviderHealth>,
+    methods: Vec<AuthMethod>,
+}
+
+impl Account {
+    fn new(
+        driver: &'static str,
+        status: ProviderStatus,
+        account: Option<&str>,
+        methods: &[AuthMethod],
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            driver,
+            health: Mutex::new(ProviderHealth {
+                account: account.map(str::to_owned),
+                ..ProviderHealth::new(status)
+            }),
+            methods: methods.to_vec(),
+        })
+    }
+
+    fn named(self: &Arc<Self>) -> (String, Arc<dyn Provider>) {
+        (self.driver.into(), self.clone())
+    }
+}
+
+impl Provider for Account {
+    fn driver(&self) -> &str {
+        self.driver
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move { turn.answer("ok") })
+    }
+
+    fn health(&self, _refresh: bool) -> HealthFuture<'_> {
+        Box::pin(async { self.health.lock().unwrap().clone() })
+    }
+
+    fn sign_in_methods(&self) -> Vec<AuthMethod> {
+        self.methods.clone()
+    }
+
+    fn sign_in(&self, method: AuthMethod, mut flow: SignIn) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            match method {
+                AuthMethod::Terminal => flow.show(AuthInteraction::Terminal {
+                    command: vec!["claude".into(), "auth".into(), "login".into()],
+                    env: [("CLAUDE_CONFIG_DIR".into(), "/claude-work".into())].into(),
+                }),
+                AuthMethod::DeviceCode => flow.show(AuthInteraction::DeviceCode {
+                    url: "https://auth.example/device".into(),
+                    code: "WXYZ-1234".into(),
+                }),
+                AuthMethod::Browser => flow.show(AuthInteraction::Browser {
+                    url: "https://auth.example/authorize?state=s".into(),
+                }),
+            }
+            if let Some(AuthResponse::TerminalExited { success: true }) = flow.response().await {
+                let mut health = self.health.lock().unwrap();
+                health.status = ProviderStatus::Ready;
+                health.account = Some("person@example.com · Claude Max".into());
+            }
+            Ok(())
+        })
+    }
+}
+
+fn two_accounts() -> Vec<(String, Arc<dyn Provider>)> {
+    let claude = Account::new(
+        "claude",
+        ProviderStatus::SignedOut,
+        None,
+        &[AuthMethod::Terminal],
+    );
+    let openai = Account::new(
+        "openai",
+        ProviderStatus::Ready,
+        Some("person@example.com · ChatGPT Plus"),
+        &[AuthMethod::Browser, AuthMethod::DeviceCode],
+    );
+    vec![claude.named(), openai.named()]
+}
+
+#[tokio::test]
+async fn the_splash_shows_each_provider_and_offers_to_sign_in_to_one_signed_out() {
+    let tui = Tui::with(two_accounts(), false).await;
+
+    let screen = tui
+        .screen
+        .shows(&[
+            "claude",
+            "signed out",
+            "^L",
+            "person@example.com · ChatGPT Plus",
+        ])
+        .await;
+
+    insta::assert_snapshot!(without_conversation_id(&screen));
+}
+
+#[tokio::test]
+async fn ctrl_l_hands_the_terminal_to_claude_codes_sign_in_and_the_splash_shows_the_account() {
+    let tui = Tui::with(two_accounts(), false).await;
+    tui.screen.shows(&["signed out", "^L"]).await;
+
+    tui.chord(KeyCode::Char('l'), KeyModifiers::CONTROL);
+    let screen = tui
+        .screen
+        .shows(&[
+            "signed in to claude",
+            "● claude  person@example.com · Claude Max",
+        ])
+        .await;
+
+    assert_eq!(
+        *tui.ran.lock().unwrap(),
+        [(
+            vec!["claude".to_owned(), "auth".into(), "login".into()],
+            [("CLAUDE_CONFIG_DIR".to_owned(), "/claude-work".to_owned())].into()
+        )]
+    );
+    let shown = tui.screen.shows(&["● claude"]).await;
+    assert!(!shown.contains("signed out"), "{screen}\n{shown}");
+}
+
+#[tokio::test]
+async fn over_ssh_a_sign_in_shows_a_device_code_until_esc_cancels_it() {
+    let openai = Account::new(
+        "openai",
+        ProviderStatus::SignedOut,
+        None,
+        &[AuthMethod::Browser, AuthMethod::DeviceCode],
+    );
+    let tui = Tui::with(vec![openai.named()], true).await;
+    tui.screen.shows(&["signed out", "^L"]).await;
+
+    tui.chord(KeyCode::Char('l'), KeyModifiers::CONTROL);
+    let waiting = tui
+        .screen
+        .shows(&["https://auth.example/device", "WXYZ-1234", "Esc"])
+        .await;
+    tui.press(KeyCode::Esc);
+    tui.screen
+        .shows(&["openai sign-in cancelled", "○ openai"])
+        .await;
+
+    assert!(tui.opened.lock().unwrap().is_empty());
+    insta::assert_snapshot!("device_code", without_conversation_id(&waiting));
+}
+
+#[tokio::test]
+async fn a_browser_sign_in_opens_the_browser_and_takes_the_address_it_ended_on() {
+    let openai = Account::new(
+        "openai",
+        ProviderStatus::SignedOut,
+        None,
+        &[AuthMethod::Browser, AuthMethod::DeviceCode],
+    );
+    let tui = Tui::with(vec![openai.named()], false).await;
+    tui.screen.shows(&["signed out", "^L"]).await;
+
+    tui.chord(KeyCode::Char('l'), KeyModifiers::CONTROL);
+    tui.screen
+        .shows(&[
+            "https://auth.example/authorize?state=s",
+            "paste the address",
+        ])
+        .await;
+
+    assert_eq!(
+        *tui.opened.lock().unwrap(),
+        ["https://auth.example/authorize?state=s"]
+    );
 }

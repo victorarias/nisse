@@ -9,6 +9,8 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{StreamExt, stream::FuturesUnordered};
+use nisse_core::SignIn;
+use nisse_protocol::{AuthInteraction, AuthMethod, AuthResponse};
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,24 +26,11 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CALLBACK_PATH: &str = "/auth/callback";
 const SCOPE: &str = "openid profile email offline_access";
 const ACCOUNT_CLAIM: &str = "https://api.openai.com/auth";
+const PROFILE_CLAIM: &str = "https://api.openai.com/profile";
 const DEVICE_CODE_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const SHORTEST_POLL: Duration = Duration::from_secs(1);
 const LONGEST_CALLBACK_REQUEST: usize = 16 * 1024;
 pub(crate) const ORIGINATOR: &str = "nisse";
-
-pub enum LoginMethod {
-    Browser,
-    DeviceCode,
-}
-
-/// What the person must do to finish signing in.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LoginPrompt {
-    /// Open `url` in a browser on this machine and sign in.
-    OpenUrl { url: String },
-    /// Open `url` on any device and enter `code`.
-    EnterCode { url: String, code: String },
-}
 
 /// Where signing in happens. The default is OpenAI's own; port 0 listens on any free port.
 #[derive(Debug, Clone)]
@@ -59,25 +48,19 @@ impl Default for AuthServer {
     }
 }
 
-/// Signs in to ChatGPT and saves the tokens to `auth_path`, readable only by this user.
-pub async fn login(
-    auth_path: &Path,
-    method: LoginMethod,
-    notify: impl Fn(LoginPrompt),
-) -> Result<()> {
-    login_with(&AuthServer::default(), auth_path, method, notify).await
-}
-
-pub async fn login_with(
+/// Signs in to ChatGPT by `method`, showing a person what to do through `flow`, and saves the
+/// tokens to `auth_path`, readable only by this user.
+pub(crate) async fn sign_in(
+    http: &reqwest::Client,
     server: &AuthServer,
     auth_path: &Path,
-    method: LoginMethod,
-    notify: impl Fn(LoginPrompt),
+    method: AuthMethod,
+    flow: &mut SignIn,
 ) -> Result<()> {
-    let http = crate::http_client()?;
     let tokens = match method {
-        LoginMethod::Browser => browser_login(&http, server, &notify).await?,
-        LoginMethod::DeviceCode => device_code_login(&http, server, &notify).await?,
+        AuthMethod::Browser => browser_sign_in(http, server, flow).await?,
+        AuthMethod::DeviceCode => device_code_sign_in(http, server, flow).await?,
+        AuthMethod::Terminal => bail!("ChatGPT has no sign-in command to run"),
     };
     Credentials::from_tokens(tokens, None)?.save(auth_path)
 }
@@ -127,6 +110,17 @@ impl Credentials {
         Ok(())
     }
 
+    /// The email and plan the sign-in belongs to, as far as its token says.
+    pub fn account(&self) -> Option<String> {
+        let claims = claims(&self.access_token).ok()?;
+        let email = claims[PROFILE_CLAIM]["email"].as_str();
+        let plan = claims[ACCOUNT_CLAIM]["chatgpt_plan_type"]
+            .as_str()
+            .map(|plan| format!("ChatGPT {}", capitalized(plan)));
+        let parts: Vec<String> = email.map(str::to_owned).into_iter().chain(plan).collect();
+        (!parts.is_empty()).then(|| parts.join(" · "))
+    }
+
     pub fn is_expired(&self) -> bool {
         nisse_core::now_ms() >= self.expires_at_ms
     }
@@ -162,14 +156,17 @@ impl Credentials {
     }
 }
 
-fn account_id(access_token: &str) -> Result<String> {
-    let claims = access_token
+fn claims(access_token: &str) -> Result<Value> {
+    access_token
         .split('.')
         .nth(1)
         .and_then(|payload| URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok())
         .and_then(|payload| serde_json::from_slice::<Value>(&payload).ok())
-        .ok_or_else(|| anyhow!("the access token is not a JWT"))?;
-    claims[ACCOUNT_CLAIM]["chatgpt_account_id"]
+        .ok_or_else(|| anyhow!("the access token is not a JWT"))
+}
+
+fn account_id(access_token: &str) -> Result<String> {
+    claims(access_token)?[ACCOUNT_CLAIM]["chatgpt_account_id"]
         .as_str()
         .filter(|id| !id.is_empty())
         .map(str::to_owned)
@@ -180,7 +177,7 @@ async fn read_tokens(response: reqwest::Response, operation: &str) -> Result<Tok
     let status = response.status();
     let text = response.text().await?;
     if !status.is_success() {
-        bail!("token {operation} failed ({status}): {text}");
+        bail!("token {operation} failed ({status}){}", reason(&text));
     }
     serde_json::from_str(&text)
         .map_err(|_| anyhow!("token {operation} answered without the expected fields"))
@@ -207,10 +204,10 @@ async fn exchange(
     read_tokens(response, "exchange").await
 }
 
-async fn browser_login(
+async fn browser_sign_in(
     http: &reqwest::Client,
     server: &AuthServer,
-    notify: &impl Fn(LoginPrompt),
+    flow: &mut SignIn,
 ) -> Result<Tokens> {
     let listener = TcpListener::bind(("127.0.0.1", server.callback_port))
         .await
@@ -240,7 +237,7 @@ async fn browser_login(
             ("originator", ORIGINATOR),
         ],
     )?;
-    notify(LoginPrompt::OpenUrl { url: url.into() });
+    flow.show(AuthInteraction::Browser { url: url.into() });
 
     let mut reading = FuturesUnordered::new();
     loop {
@@ -254,6 +251,15 @@ async fn browser_login(
                 continue;
             }
             Some(read) = reading.next(), if !reading.is_empty() => read,
+            Some(AuthResponse::Callback { url }) = flow.response() => {
+                match callback(&pasted_target(&url), &state) {
+                    Callback::Ignored(..) => continue,
+                    Callback::Refused(reason) => bail!("ChatGPT refused the sign-in: {reason}"),
+                    Callback::Code(code) => {
+                        return exchange(http, server, &code, &verifier, &redirect_uri).await;
+                    }
+                }
+            }
         };
         let Ok(target) = target else {
             continue;
@@ -284,6 +290,17 @@ async fn browser_login(
                 Err(error)
             }
         };
+    }
+}
+
+/// The path and query of an address pasted from a browser on another machine.
+fn pasted_target(url: &str) -> String {
+    let Ok(url) = Url::parse(url.trim()) else {
+        return String::new();
+    };
+    match url.query() {
+        Some(query) => format!("{}?{query}", url.path()),
+        None => url.path().to_owned(),
     }
 }
 
@@ -350,10 +367,10 @@ async fn reply(stream: &mut TcpStream, status: StatusCode, message: &str) {
     let _ = stream.shutdown().await;
 }
 
-async fn device_code_login(
+async fn device_code_sign_in(
     http: &reqwest::Client,
     server: &AuthServer,
-    notify: &impl Fn(LoginPrompt),
+    flow: &mut SignIn,
 ) -> Result<Tokens> {
     let response = http
         .post(format!("{}/api/accounts/deviceauth/usercode", server.base))
@@ -366,21 +383,24 @@ async fn device_code_login(
     }
     let text = response.text().await?;
     if !status.is_success() {
-        bail!("asking for a device code failed ({status}): {text}");
+        bail!(
+            "asking for a device code failed ({status}){}",
+            reason(&text)
+        );
     }
     let device: Value = serde_json::from_str(&text)?;
     let (Some(device_auth_id), Some(user_code)) = (
         device["device_auth_id"].as_str(),
         device["user_code"].as_str(),
     ) else {
-        bail!("the device code answer is missing fields: {text}");
+        bail!("the device code answer is missing fields");
     };
     let interval = device["interval"]
         .as_u64()
         .or_else(|| device["interval"].as_str()?.trim().parse().ok())
         .map_or(SHORTEST_POLL, Duration::from_secs)
         .max(SHORTEST_POLL);
-    notify(LoginPrompt::EnterCode {
+    flow.show(AuthInteraction::DeviceCode {
         url: format!("{}/codex/device", server.base),
         code: user_code.into(),
     });
@@ -399,7 +419,7 @@ async fn device_code_login(
         }
         let text = response.text().await?;
         if !status.is_success() {
-            bail!("the device code sign-in failed ({status}): {text}");
+            bail!("the device code sign-in failed ({status}){}", reason(&text));
         }
         let granted: Value = serde_json::from_str(&text)?;
         let (Some(code), Some(verifier)) = (
@@ -412,6 +432,24 @@ async fn device_code_login(
         return exchange(http, server, code, verifier, &redirect_uri).await;
     }
     bail!("the device code expired before anyone entered it")
+}
+
+fn capitalized(word: &str) -> String {
+    let mut chars = word.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// What an error answer says went wrong, without anything else it carries.
+fn reason(body: &str) -> String {
+    let error: Value = serde_json::from_str(body).unwrap_or_default();
+    let said = error["error_description"]
+        .as_str()
+        .or(error["error"]["message"].as_str())
+        .or(error["error"].as_str());
+    said.map(|said| format!(": {said}")).unwrap_or_default()
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N]> {

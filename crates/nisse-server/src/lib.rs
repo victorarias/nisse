@@ -1,19 +1,22 @@
 //! The Nisse app server. Every transport becomes a pair of channels; one connection loop
 //! serves them all.
 
-use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
+mod setup;
+
+use std::{collections::HashMap, future::Future, path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use nisse_core::{Harness, StartError, SubmitError};
 
 use nisse_protocol::{
-    Actor, ApprovalResolveResult, ClientInfo, ClientRequest, Commit, ConversationListResult,
-    ConversationSubscribeParams, ErrorResponse, InitializeResult, Message, PROTOCOL_VERSION,
-    Request, RequestId, Response, RpcError, Seq, ServerNotification, ServerStopResult,
-    SkillsListResult, StatusChanged, UiChanged,
+    Actor, ApprovalResolveResult, AuthAccepted, ClientInfo, ClientRequest, Commit,
+    ConversationListResult, ConversationSubscribeParams, ErrorResponse, InitializeResult, Message,
+    PROTOCOL_VERSION, ProvidersListResult, Request, RequestId, Response, RpcError, Seq,
+    ServerNotification, ServerStopResult, SkillsListResult, StatusChanged, UiChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
+use setup::Setup;
 use tokio::{
     net::UnixListener,
     sync::{
@@ -25,6 +28,7 @@ use tokio::{
 
 pub struct Server {
     harness: Harness,
+    setup: Arc<Setup>,
     ui: broadcast::Sender<UiChanged>,
     owner: Actor,
     connections: watch::Sender<usize>,
@@ -34,8 +38,10 @@ pub struct Server {
 
 impl Server {
     pub fn new(harness: Harness, ui: broadcast::Sender<UiChanged>, owner: Actor) -> Arc<Self> {
+        let setup = Setup::new(harness.providers().to_vec());
         Arc::new(Self {
             harness,
+            setup,
             ui,
             owner,
             connections: watch::Sender::new(0),
@@ -144,6 +150,7 @@ impl Server {
             initialized: false,
             asked_to_stop: false,
             subscribe,
+            outgoing: outgoing.clone(),
         };
         loop {
             let message = tokio::select! {
@@ -199,10 +206,12 @@ struct Connection {
     subscribe: mpsc::UnboundedSender<(RequestId, ConversationSubscribeParams)>,
     /// The server stops once this connection, which asked it to, has closed.
     asked_to_stop: bool,
+    outgoing: mpsc::Sender<Message>,
 }
 
 impl Connection {
-    /// `None` when the answer is sent elsewhere: a subscription is answered by the forwarder.
+    /// `None` when the answer is sent elsewhere: a subscription is answered by the forwarder,
+    /// and a slow answer by a task of its own, so the connection's other requests don't wait.
     async fn handle(&mut self, request: &Request) -> Option<Result<serde_json::Value, RpcError>> {
         let call = match ClientRequest::from_request(request) {
             Ok(call) => call,
@@ -267,6 +276,28 @@ impl Connection {
                     .and_then(|skills| skills.map_err(not_found))
                     .and_then(|skills| to_result(SkillsListResult { skills }))
             }
+            ClientRequest::ProvidersList(params) => {
+                let setup = self.server.setup.clone();
+                self.answer_later(request.id.clone(), async move {
+                    let providers = setup.list(params.refresh).await;
+                    to_result(ProvidersListResult { providers })
+                });
+                return None;
+            }
+            ClientRequest::AuthLogout(params) => {
+                let setup = self.server.setup.clone();
+                self.answer_later(request.id.clone(), async move {
+                    setup.logout(&params.provider).await.and_then(to_result)
+                });
+                return None;
+            }
+            ClientRequest::AuthStart(params) => self.server.setup.start(params).and_then(to_result),
+            ClientRequest::AuthRespond(params) => to_result(AuthAccepted {
+                accepted: self.server.setup.respond(params),
+            }),
+            ClientRequest::AuthCancel(params) => to_result(AuthAccepted {
+                accepted: self.server.setup.cancel(params),
+            }),
             ClientRequest::ConversationSubscribe(params) => {
                 let _ = self.subscribe.send((request.id.clone(), params));
                 return None;
@@ -295,6 +326,23 @@ impl Connection {
     }
 }
 
+impl Connection {
+    fn answer_later(
+        &self,
+        id: RequestId,
+        answer: impl Future<Output = Result<serde_json::Value, RpcError>> + Send + 'static,
+    ) {
+        let outgoing = self.outgoing.clone();
+        tokio::spawn(async move {
+            let message = match answer.await {
+                Ok(result) => Message::Response(Response { id, result }),
+                Err(error) => Message::Error(ErrorResponse { id, error }),
+            };
+            let _ = outgoing.send(message).await;
+        });
+    }
+}
+
 /// Everything a connection hears, from one task, so it arrives in commit order. A subscription
 /// is answered here too: every commit this task has already passed is in the snapshot, and every
 /// later one is still ahead of it in its queue.
@@ -306,6 +354,7 @@ async fn forward(
     let mut commits = server.harness.subscribe();
     let mut ui = server.ui.subscribe();
     let mut closing = server.closing.subscribe();
+    let mut sign_ins = server.setup.subscribe();
     let mut subscribed: HashMap<String, Seq> = HashMap::new();
     loop {
         let commit = tokio::select! {
@@ -327,6 +376,12 @@ async fn forward(
             },
             changed = ui.recv() => {
                 if let Ok(changed) = changed && !offer(&outgoing, ServerNotification::UiChanged(changed)) {
+                    return;
+                }
+                continue;
+            }
+            state = sign_ins.recv() => {
+                if let Ok(state) = state && !offer(&outgoing, ServerNotification::AuthState(state)) {
                     return;
                 }
                 continue;

@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use nisse_protocol::{Actor, ConversationStatus, Entry, kinds};
+use nisse_protocol::{
+    Actor, AuthInteraction, AuthPhase, ConversationStatus, Entry, ProviderStatus, kinds,
+};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -9,6 +11,8 @@ use ratatui::{
     widgets::{Block, BorderType, Padding, Paragraph},
 };
 use serde_json::Value;
+
+use nisse_protocol::AuthState;
 
 use crate::{
     App, gnome,
@@ -30,7 +34,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         header,
     );
     if app.entries.is_empty() && app.live.is_empty() {
-        draw_splash(frame, transcript, theme);
+        draw_splash(frame, transcript, app, theme);
     } else {
         draw_transcript(frame, transcript, app, theme);
     }
@@ -78,26 +82,40 @@ fn short_id(id: &str) -> String {
     id.chars().skip(skip).collect()
 }
 
-fn draw_splash(frame: &mut Frame, area: Rect, theme: &Theme) {
+/// The gnome and the wordmark, then each provider's setup, or the sign-in on show. The art
+/// gives way when the rest needs the room.
+fn draw_splash(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let logo_width = LOGO[0].chars().count();
-    let mut lines: Vec<Line> = if area.width as usize > gnome::WIDTH + GNOME_GAP + logo_width {
+    let art: Vec<Line> = if area.width as usize > gnome::WIDTH + GNOME_GAP + logo_width {
         gnome_beside_logo(theme)
     } else {
         gnome::rows(theme).into_iter().map(Line::from).collect()
     };
-    lines.push(Line::raw(""));
-    lines.push(Line::styled(
-        "D U R A B L E  ·  M U L T I P L A Y E R  ·  C O D I N G   A G E N T",
-        theme.fg(theme.dim),
-    ));
-    lines.push(Line::raw(""));
-    lines.push(Line::from(vec![
-        Span::styled("━━━━━━━━━━━━━━━━ ", theme.fg(theme.faint)),
-        Span::styled("◆", theme.glow(theme.magenta)),
-        Span::styled(" ━━━━━━━━━━━━━━━━", theme.fg(theme.faint)),
-    ]));
-    lines.push(Line::raw(""));
+    let mut lines = vec![
+        Line::styled(
+            "D U R A B L E  ·  M U L T I P L A Y E R  ·  C O D I N G   A G E N T",
+            theme.fg(theme.dim),
+        ),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("━━━━━━━━━━━━━━━━ ", theme.fg(theme.faint)),
+            Span::styled("◆", theme.glow(theme.magenta)),
+            Span::styled(" ━━━━━━━━━━━━━━━━", theme.fg(theme.faint)),
+        ]),
+        Line::raw(""),
+    ];
+    let setup = match &app.sign_in {
+        Some(state) => sign_in_lines(state, area.width as usize, theme),
+        None => provider_lines(app, theme),
+    };
+    if !setup.is_empty() {
+        lines.extend(setup);
+        lines.push(Line::raw(""));
+    }
     lines.push(key_hints(theme));
+    if art.len() + 1 + lines.len() <= area.height as usize {
+        lines.splice(0..0, art.into_iter().chain([Line::raw("")]));
+    }
     let height = lines.len() as u16;
     let top = area.y + area.height.saturating_sub(height) / 2;
     let centred = Rect {
@@ -143,6 +161,125 @@ fn logo_row(row: &str, color: Color, theme: &Theme) -> Line<'static> {
         })
         .collect();
     Line::from(spans)
+}
+
+const SETUP_WIDTH: usize = 60;
+
+/// One line per provider instance, padded alike so they line up when centred. The first one
+/// signed out offers the key to sign in.
+fn provider_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
+    let hinted = app
+        .providers
+        .iter()
+        .position(|provider| provider.health.status == ProviderStatus::SignedOut);
+    let hint_width = if hinted.is_some() {
+        HINT.chars().count() + 4
+    } else {
+        0
+    };
+    let id_width = app
+        .providers
+        .iter()
+        .map(|provider| provider.id.chars().count())
+        .max()
+        .unwrap_or_default();
+    let details: Vec<(&str, Color, String)> = app
+        .providers
+        .iter()
+        .map(|provider| {
+            let health = &provider.health;
+            match health.status {
+                ProviderStatus::Ready => (
+                    "●",
+                    theme.cyan,
+                    health.account.clone().unwrap_or_else(|| "ready".into()),
+                ),
+                ProviderStatus::SignedOut => ("○", theme.yellow, "signed out".into()),
+                ProviderStatus::Unavailable => (
+                    "✗",
+                    theme.faint,
+                    health
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "unavailable".into()),
+                ),
+            }
+        })
+        .collect();
+    let detail_width = details
+        .iter()
+        .map(|(_, _, detail)| detail.chars().count())
+        .max()
+        .unwrap_or_default()
+        .min(SETUP_WIDTH.saturating_sub(id_width + 4 + hint_width));
+    app.providers
+        .iter()
+        .zip(details)
+        .enumerate()
+        .map(|(index, (provider, (mark, color, detail)))| {
+            let mut spans = vec![
+                Span::styled(format!("{mark} "), theme.glow(color)),
+                Span::styled(format!("{:<id_width$}  ", provider.id), theme.fg(theme.ink)),
+                Span::styled(
+                    format!("{:<detail_width$}", truncate(&detail, detail_width)),
+                    theme.fg(theme.dim),
+                ),
+            ];
+            if hinted == Some(index) {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(" ^L ", theme.key()));
+                spans.push(Span::styled(format!(" {HINT}"), theme.fg(theme.dim)));
+            } else if hint_width > 0 {
+                spans.push(Span::raw(" ".repeat(hint_width + 3)));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+const HINT: &str = "sign in";
+
+fn sign_in_lines(state: &AuthState, width: usize, theme: &Theme) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(vec![
+        Span::styled("◆ ", theme.glow(theme.magenta)),
+        Span::styled(
+            format!("signing in to {}", state.provider),
+            theme.fg(theme.ink),
+        ),
+    ])];
+    let say = |text: String| Line::styled(text, theme.fg(theme.dim));
+    match (&state.phase, &state.interaction) {
+        (AuthPhase::Waiting, Some(AuthInteraction::Browser { url })) => {
+            lines.push(say(
+                "finish in the browser that just opened, or open:".into()
+            ));
+            let room = width.saturating_sub(4).clamp(1, url.chars().count().max(1));
+            lines.extend(url.chars().collect::<Vec<_>>().chunks(room).map(|row| {
+                let row: String = row.iter().collect();
+                Line::styled(format!("{row:<room$}"), theme.fg(theme.violet))
+            }));
+            lines.push(say(
+                "browser on another machine? paste the address it ends on below".into(),
+            ));
+        }
+        (AuthPhase::Waiting, Some(AuthInteraction::DeviceCode { url, code })) => {
+            lines.push(say(format!("on any device, open {url}")));
+            lines.push(Line::from(vec![
+                Span::styled("and enter ", theme.fg(theme.dim)),
+                Span::styled(format!(" {code} "), theme.chip(theme.cyan)),
+            ]));
+        }
+        (AuthPhase::Waiting, Some(AuthInteraction::Terminal { command, .. })) => {
+            lines.push(say(format!("`{}` runs in a terminal", command.join(" "))));
+        }
+        (AuthPhase::Verifying, _) => lines.push(say("checking the sign-in…".into())),
+        _ => lines.push(say("starting…".into())),
+    }
+    lines.push(Line::from(vec![
+        Span::styled(" Esc ", theme.key()),
+        Span::styled(" cancel", theme.fg(theme.dim)),
+    ]));
+    lines
 }
 
 fn key_hints(theme: &Theme) -> Line<'static> {
@@ -528,6 +665,8 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         spans.push(Span::styled(
             if pending_approval(&app.entries).is_some() {
                 "^Y to allow, ^N to deny, or type a message"
+            } else if app.awaits_callback() {
+                "paste the address your browser ended on"
             } else if working {
                 "type to queue a follow-up"
             } else {

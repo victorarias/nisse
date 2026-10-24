@@ -13,12 +13,14 @@ use std::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use nisse_client::Client;
 use nisse_core::{Harness, HarnessOptions, Hooks, NoHooks, Store, Workspace, same_hooks};
-use nisse_openai::{AuthServer, LoginMethod, LoginPrompt, OpenAi, OpenAiOptions, login_with};
+use nisse_openai::{AuthServer, OpenAi, OpenAiOptions};
 use nisse_protocol::{
-    Actor, ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
-    ConversationReadResult, ConversationStartParams, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
-    WhenBusy, kinds,
+    Actor, ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthInteraction, AuthMethod,
+    AuthPhase, AuthRespondParams, AuthResponse, AuthStartParams, AuthState, ClientRequest,
+    Conversation, ConversationReadResult, ConversationStartParams, ConversationStatus,
+    ConversationSubmitParams, ConversationSubmitResult, ConversationSubscribeParams, Entry, Input,
+    ProviderSnapshot, ProvidersListParams, ProvidersListResult, ServerNotification, WhenBusy,
+    kinds,
 };
 use nisse_server::Server;
 use reqwest::Url;
@@ -31,6 +33,8 @@ use tokio::{
 
 pub const PATIENCE: Duration = Duration::from_secs(10);
 pub const ACCOUNT: &str = "acct-test";
+pub const EMAIL: &str = "person@example.com";
+pub const PROVIDER: &str = "openai";
 pub const INSTRUCTIONS: &str = "You are a test.";
 pub const DIRECT_MODEL: &str = "gpt-5.5";
 pub const CODE_MODE_MODEL: &str = "gpt-6.1-sol";
@@ -165,7 +169,8 @@ impl Fake {
 pub fn access_token(label: &str) -> String {
     let claims = json!({
         "label": label,
-        "https://api.openai.com/auth": { "chatgpt_account_id": ACCOUNT },
+        "https://api.openai.com/auth": { "chatgpt_account_id": ACCOUNT, "chatgpt_plan_type": "plus" },
+        "https://api.openai.com/profile": { "email": EMAIL },
     });
     format!(
         "e30.{}.signature",
@@ -314,42 +319,39 @@ pub fn assert_requests(fake: &Fake, expected: &[Value]) {
     }
 }
 
-/// Signs in through the browser flow against `fake`, answering as the browser would.
+/// Signs in through the browser flow against `fake`, answering as the browser would, and
+/// returns what the browser was told.
 pub async fn sign_in(fake: &Fake, auth_path: &Path) -> reqwest::StatusCode {
-    let (prompts, mut prompted) = mpsc::unbounded_channel();
-    let server = fake.auth_server();
-    let path = auth_path.to_owned();
-    let login = tokio::spawn(async move {
-        login_with(&server, &path, LoginMethod::Browser, move |prompt| {
-            let _ = prompts.send(prompt);
-        })
-        .await
-    });
-    let Some(LoginPrompt::OpenUrl { url }) = tokio::time::timeout(PATIENCE, prompted.recv())
+    let mut nisse = Nisse::start(fake, auth_path).await;
+    let waiting = nisse.start_sign_in(None).await;
+    let status = reqwest::get(answer(&waiting, "the-code"))
         .await
         .unwrap()
-    else {
-        panic!("the browser flow asks to open a URL");
+        .status();
+    let settled = nisse.sign_in_settles().await;
+    assert_eq!(settled.phase, AuthPhase::Succeeded, "{settled:?}");
+    status
+}
+
+/// Where the browser returns to after signing in, with `code`.
+pub fn answer(waiting: &AuthState, code: &str) -> Url {
+    let Some(AuthInteraction::Browser { url }) = &waiting.interaction else {
+        panic!("the sign-in waits for a browser: {waiting:?}");
     };
-    let url = Url::parse(&url).unwrap();
-    let param = |name: &str| {
-        url.query_pairs()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.into_owned())
-            .unwrap()
-    };
-    let mut callback = Url::parse(&param("redirect_uri")).unwrap();
+    let url = Url::parse(url).unwrap();
+    let mut callback = Url::parse(&param(&url, "redirect_uri")).unwrap();
     callback
         .query_pairs_mut()
-        .append_pair("code", "the-code")
-        .append_pair("state", &param("state"));
-    let status = reqwest::get(callback).await.unwrap().status();
-    tokio::time::timeout(PATIENCE, login)
-        .await
+        .append_pair("code", code)
+        .append_pair("state", &param(&url, "state"));
+    callback
+}
+
+pub fn param(url: &Url, name: &str) -> String {
+    url.query_pairs()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.into_owned())
         .unwrap()
-        .unwrap()
-        .unwrap();
-    status
 }
 
 pub fn owner() -> Actor {
@@ -365,7 +367,7 @@ pub struct Nisse {
     notifications: mpsc::UnboundedReceiver<ServerNotification>,
     pub conversation: Conversation,
     committed: Vec<Entry>,
-    _server: Arc<Server>,
+    pub server: Arc<Server>,
     _workspace: Option<tempfile::TempDir>,
 }
 
@@ -431,13 +433,13 @@ impl Nisse {
     ) -> Self {
         let mut options = OpenAiOptions::new(auth_path, INSTRUCTIONS, workspace.home);
         options.base_url = fake.base.clone();
-        options.auth_base = fake.base.clone();
+        options.auth = fake.auth_server();
         change(&mut options);
         let provider = Arc::new(OpenAi::new(options).unwrap());
         let harness = Harness::with_store(
             Store::open_in_memory().unwrap(),
             HarnessOptions {
-                providers: vec![("openai".into(), provider)],
+                providers: vec![(PROVIDER.into(), provider)],
                 hooks: same_hooks(hooks),
             },
         );
@@ -467,9 +469,68 @@ impl Nisse {
             notifications,
             conversation,
             committed: Vec::new(),
-            _server: server,
+            server,
             _workspace: None,
         }
+    }
+
+    /// Starts signing in by `method`, or the preferred one, and returns the state once it waits
+    /// for a person.
+    pub async fn start_sign_in(&mut self, method: Option<AuthMethod>) -> AuthState {
+        let started: AuthState = self
+            .client
+            .request(ClientRequest::AuthStart(AuthStartParams {
+                provider: PROVIDER.into(),
+                method,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(started.phase, AuthPhase::Starting);
+        self.sign_in_reaches(|state| state.phase != AuthPhase::Starting)
+            .await
+    }
+
+    /// The state the sign-in ends in.
+    pub async fn sign_in_settles(&mut self) -> AuthState {
+        self.sign_in_reaches(|state| state.phase.is_over()).await
+    }
+
+    pub async fn sign_in_reaches(&mut self, wanted: impl Fn(&AuthState) -> bool) -> AuthState {
+        tokio::time::timeout(PATIENCE, async {
+            loop {
+                match self.notifications.recv().await {
+                    Some(ServerNotification::AuthState(state)) if wanted(&state) => return state,
+                    Some(_) => {}
+                    None => panic!("the server hung up"),
+                }
+            }
+        })
+        .await
+        .expect("the sign-in got there in time")
+    }
+
+    pub async fn respond(&self, state: &AuthState, response: AuthResponse) -> bool {
+        let answered: AuthAccepted = self
+            .client
+            .request(ClientRequest::AuthRespond(AuthRespondParams {
+                provider: state.provider.clone(),
+                flow_id: state.flow_id.clone(),
+                response,
+            }))
+            .await
+            .unwrap();
+        answered.accepted
+    }
+
+    pub async fn provider(&self) -> ProviderSnapshot {
+        let listed: ProvidersListResult = self
+            .client
+            .request(ClientRequest::ProvidersList(ProvidersListParams {
+                refresh: true,
+            }))
+            .await
+            .unwrap();
+        listed.providers.into_iter().next().unwrap()
     }
 
     /// Submits `text` and returns what the run committed until the conversation went idle,
