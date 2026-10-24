@@ -9,12 +9,12 @@ use nisse_core::{
 };
 use nisse_lua::LuaHost;
 use nisse_protocol::{
-    Actor, ClientRequest, Conversation, ConversationInterruptParams, ConversationInterruptResult,
-    ConversationListResult, ConversationReadParams, ConversationReadResult,
-    ConversationSelectModelParams, ConversationStartParams, ConversationStatus,
-    ConversationSubmitParams, ConversationSubmitResult, ConversationSubscribeParams, Entry, Input,
-    ModelSelection, ModelsListParams, ModelsListResult, ServerNotification, UiChanged, WhenBusy,
-    kinds,
+    Actor, ClientRequest, Commit, Conversation, ConversationInterruptParams,
+    ConversationInterruptResult, ConversationListResult, ConversationReadParams,
+    ConversationReadResult, ConversationSelectModelParams, ConversationStartParams,
+    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
+    ConversationSubscribeParams, Entry, Input, ModelSelection, ModelsListParams, ModelsListResult,
+    Queued, ServerNotification, UiChanged, WhenBusy, kinds,
 };
 use nisse_server::Server;
 use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
@@ -544,6 +544,63 @@ async fn a_declined_call_never_runs_and_the_model_hears_why() {
 
     assert!(!marker.exists());
     assert_eq!(answered.last().unwrap().data["text"], "owner declined");
+}
+
+/// The queue as the next commit that changed it left it.
+async fn next_queue(notifications: &mut UnboundedReceiver<ServerNotification>) -> Vec<Queued> {
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            if let Some(ServerNotification::Committed(Commit {
+                queued: Some(queued),
+                ..
+            })) = notifications.recv().await
+            {
+                return queued;
+            }
+        }
+    })
+    .await
+    .expect("the queue changed in time")
+}
+
+#[tokio::test]
+async fn a_follow_up_sent_during_a_run_is_queued_for_everyone_until_its_run_places_it() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Careful),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, _) = connect(&server).await;
+    let (watcher, mut watched) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&watcher, &conversation, 0).await;
+    submit(&client, &conversation, "echo first").await;
+    until_entry(&mut watched, kinds::APPROVAL_REQUEST).await;
+
+    let follow_up = submit(&client, &conversation, "echo second").await;
+    let queued = next_queue(&mut watched).await;
+    let (late, _) = connect(&server).await;
+    let read_late = read(&late, &conversation.id).await;
+    resolve(&client, &conversation, "call-echo first", true).await;
+    let placed = until_entry(&mut watched, kinds::USER).await;
+
+    let expected = vec![Queued {
+        submission_id: follow_up.submission_id,
+        author: owner(),
+        input: Input::Text {
+            text: "echo second".into(),
+        },
+        when_busy: WhenBusy::FollowUp,
+    }];
+    assert_eq!(queued, expected);
+    assert_eq!(read_late.queued, expected);
+    let Some(ServerNotification::Committed(placing)) = placed.last() else {
+        unreachable!("until_entry ends on a commit");
+    };
+    assert_eq!(placing.entries[0].data["text"], "echo second");
+    assert_eq!(placing.queued, Some(Vec::new()));
+    assert!(read(&late, &conversation.id).await.queued.is_empty());
 }
 
 async fn until_idle(notifications: &mut UnboundedReceiver<ServerNotification>) {

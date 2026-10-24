@@ -26,9 +26,10 @@ Milestone 1, a real agent. What runs today:
 - Approvals as entries: anyone in the conversation answers, once, from any
   client.
 - A SQLite commit log of conversations, entries and submissions. Inputs are
-  idempotent by `request_id`, queue as follow-ups or steers, and a run cut off
-  by a crash is picked up after reopening; Claude resumes its own session at
-  the last message Nisse committed.
+  idempotent by `request_id`, queue as follow-ups or steers that every client
+  sees waiting until a run takes them in, and a run cut off by a crash is
+  picked up after reopening; Claude resumes its own session at the last
+  message Nisse committed.
 - Luau extensions with `tool.call` and `prompt.submit` hooks, `nisse.ui.status`
   and `nisse.ui.toast`.
 - One server per home, shared by every client. A TUI or `exec` starts it when

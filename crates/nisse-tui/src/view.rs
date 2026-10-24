@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use nisse_protocol::{
-    Actor, AuthInteraction, AuthPhase, ConversationStatus, Entry, ModelSelection, ProviderStatus,
-    kinds,
+    Actor, AuthInteraction, AuthPhase, ConversationStatus, Entry, Input, ModelSelection,
+    ProviderStatus, kinds,
 };
 use ratatui::{
     Frame,
@@ -460,11 +460,36 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             last.push_span(Span::styled("▍", theme.glow(theme.cyan)));
         }
     }
+    let queued = queued_lines(app, width, theme);
+    if !queued.is_empty() && lines.last().is_some_and(|last| last.width() > 0) {
+        lines.push(Line::raw(""));
+    }
+    lines.extend(queued);
     let visible = inner.height as usize;
     let bottom = lines.len().saturating_sub(app.scroll_back as usize);
     let top = bottom.saturating_sub(visible);
     let shown: Vec<Line> = lines.into_iter().skip(top).take(bottom - top).collect();
     frame.render_widget(Paragraph::new(shown), inner);
+}
+
+fn queued_lines(app: &App, width: usize, theme: &Theme) -> Vec<Line<'static>> {
+    const MARK: &str = "  queued · ";
+    app.queued
+        .iter()
+        .filter_map(|queued| match &queued.input {
+            Input::Text { text } => Some(text),
+            Input::Write { .. } => None,
+        })
+        .map(|text| {
+            Line::styled(
+                format!(
+                    "{MARK}{}",
+                    truncate(text, width.saturating_sub(MARK.chars().count()))
+                ),
+                theme.fg(theme.dim),
+            )
+        })
+        .collect()
 }
 
 fn speaker(label: String, color: Color, width: usize, theme: &Theme) -> Line<'static> {

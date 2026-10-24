@@ -1012,6 +1012,16 @@
               "null"
             ]
           },
+          "queued": {
+            "description": "The whole queue, whenever this commit changed it.",
+            "items": {
+              "$ref": "#/$defs/Queued"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "seq": {
             "format": "int64",
             "type": "integer"
@@ -1076,6 +1086,68 @@
           "author",
           "data",
           "created_at_ms"
+        ],
+        "type": "object"
+      },
+      "Input": {
+        "oneOf": [
+          {
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "const": "text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "data": true,
+              "kind": {
+                "type": "string"
+              },
+              "type": {
+                "const": "write",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "kind",
+              "data"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Queued": {
+        "description": "A submission no run has placed yet. It leaves the queue as its entry lands.",
+        "properties": {
+          "author": {
+            "$ref": "#/$defs/Actor"
+          },
+          "input": {
+            "$ref": "#/$defs/Input"
+          },
+          "submission_id": {
+            "type": "string"
+          },
+          "when_busy": {
+            "$ref": "#/$defs/WhenBusy"
+          }
+        },
+        "required": [
+          "submission_id",
+          "author",
+          "input",
+          "when_busy"
         ],
         "type": "object"
       },
@@ -1144,6 +1216,14 @@
             "type": "object"
           }
         ]
+      },
+      "WhenBusy": {
+        "enum": [
+          "steer",
+          "follow_up",
+          "reject"
+        ],
+        "type": "string"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -21,7 +21,7 @@ use nisse_protocol::{
     ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
     ConversationSubscribeParams, Entry, Input, ModelSelection, ModelsListParams, ModelsListResult,
     ProviderModels, ProviderSnapshot, ProviderStatus, ProvidersListParams, ProvidersListResult,
-    Seq, ServerNotification, StatusChanged, UiChanged, WhenBusy, kinds,
+    Queued, Seq, ServerNotification, StatusChanged, UiChanged, WhenBusy, kinds,
 };
 use ratatui::{
     Terminal,
@@ -43,6 +43,7 @@ pub struct App {
     conversation: Conversation,
     entries: Vec<Entry>,
     live: String,
+    queued: Vec<Queued>,
     status: ConversationStatus,
     working_since: Option<Instant>,
     extension_status: Vec<(String, String)>,
@@ -181,6 +182,7 @@ where
         conversation,
         entries: snapshot.entries,
         live: snapshot.live,
+        queued: snapshot.queued,
         extension_status: Vec::new(),
         toast: None,
         input: String::new(),
@@ -388,6 +390,9 @@ impl App {
             {
                 if let Some(live) = commit.live {
                     self.live = live;
+                }
+                if let Some(queued) = commit.queued {
+                    self.queued = queued;
                 }
                 if !commit.entries.is_empty() {
                     for entry in &commit.entries {

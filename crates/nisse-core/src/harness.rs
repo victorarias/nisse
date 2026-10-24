@@ -358,7 +358,7 @@ impl Harness {
         self.store().conversations()
     }
 
-    /// The conversation's entries after `since_seq`, and the newest commit they reflect.
+    /// The conversation's entries after `since_seq`, its queue, and the newest commit they reflect.
     pub fn read(&self, conversation_id: &str, since_seq: Seq) -> Result<ConversationReadResult> {
         let store = self.store();
         let conversation = store
@@ -369,6 +369,7 @@ impl Harness {
             conversation,
             entries,
             live: store.live(conversation_id)?,
+            queued: store.queued(conversation_id)?,
             seq: store.head()?,
         })
     }

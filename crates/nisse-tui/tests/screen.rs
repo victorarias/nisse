@@ -389,6 +389,32 @@ async fn the_model_s_unfinished_message_shows_live_until_it_is_committed() {
 }
 
 #[tokio::test]
+async fn a_follow_up_typed_during_a_run_shows_as_queued_until_its_run_places_it() {
+    let finish = Arc::new(Notify::new());
+    let tui = Tui::with_model(
+        "thinking",
+        Arc::new(Thinking {
+            finish: finish.clone(),
+        }),
+    )
+    .await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("light the grid");
+    tui.screen.shows(&["one wire at a time▍"]).await;
+    tui.type_line("then dim it");
+    let queued = tui.screen.shows(&["queued · then dim it"]).await;
+    finish.notify_one();
+    let placed = tui
+        .screen
+        .shows(&["The grid is lit.", "one wire at a time▍"])
+        .await;
+
+    insta::assert_snapshot!("queued", steady(&without_conversation_id(&queued)));
+    assert!(placed.contains("   then dim it"), "{placed}");
+    assert!(!placed.contains("queued ·"), "{placed}");
+}
+
+#[tokio::test]
 async fn the_status_bar_names_the_conversation_s_model_before_it_answers() {
     let tui = Tui::with_model(
         "thinking",
