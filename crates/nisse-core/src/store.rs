@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use nisse_protocol::{
     Actor, Commit, Conversation, ConversationStatus, ConversationSubmitResult, Entry, Input,
-    Lineage, Mail, ModelSelection, Seq, SubmissionStatus, WhenBusy, kinds,
+    Lineage, Mail, ModelSelection, Queued, Seq, SubmissionStatus, WhenBusy, kinds,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
@@ -53,6 +53,7 @@ pub struct Tx<'a> {
     entries: Vec<Entry>,
     status: Option<ConversationStatus>,
     live: Option<String>,
+    queue_changed: bool,
 }
 
 impl Store {
@@ -165,6 +166,7 @@ impl Store {
             entries: Vec::new(),
             status: None,
             live: None,
+            queue_changed: false,
         };
         let value = write(&mut writer)?;
         let Tx {
@@ -172,8 +174,12 @@ impl Store {
             entries,
             status,
             live,
+            queue_changed,
             ..
         } = writer;
+        let queued = queue_changed
+            .then(|| queued(&tx, conversation_id))
+            .transpose()?;
         tx.commit()?;
         Ok((
             value,
@@ -183,6 +189,7 @@ impl Store {
                 entries,
                 status,
                 live,
+                queued,
             },
         ))
     }
@@ -242,6 +249,10 @@ impl Store {
             [conversation_id],
             |row| row.get(0),
         )?)
+    }
+
+    pub fn queued(&self, conversation_id: &str) -> Result<Vec<Queued>> {
+        queued(&self.db, conversation_id)
     }
 
     pub fn provider_state(&self, conversation_id: &str) -> Result<Value> {
@@ -475,6 +486,7 @@ impl Tx<'_> {
                 self.seq
             ],
         )?;
+        self.queue_changed = true;
         Ok(id)
     }
 
@@ -492,6 +504,7 @@ impl Tx<'_> {
             "UPDATE submissions SET status = ?1 WHERE id = ?2",
             params![to_text(&status)?, id],
         )?;
+        self.queue_changed = true;
         Ok(())
     }
 }
@@ -524,6 +537,20 @@ const BY_REQUEST: &str = "conversation_id = ?1 AND request_id = ?2";
 
 const OPEN_SUBMISSIONS: &str = "conversation_id = ?1 AND status IN ('placed', 'queued')
      ORDER BY status = 'queued', seq";
+
+const QUEUED: &str = "conversation_id = ?1 AND status = 'queued' ORDER BY seq, rowid";
+
+fn queued(db: &Connection, conversation_id: &str) -> Result<Vec<Queued>> {
+    Ok(submissions_where(db, QUEUED, params![conversation_id])?
+        .into_iter()
+        .map(|submission| Queued {
+            submission_id: submission.id,
+            author: submission.author,
+            input: submission.input,
+            when_busy: submission.when_busy,
+        })
+        .collect())
+}
 
 fn submissions_where(
     db: &Connection,
