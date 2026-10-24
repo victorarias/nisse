@@ -319,7 +319,7 @@
         "type": "object"
       },
       {
-        "description": "Asks the server to exit once no run is left, whoever is attached.",
+        "description": "Asks the server to exit once this connection has closed and no run is left, whoever\nelse is attached.",
         "properties": {
           "method": {
             "const": "server/stop",
