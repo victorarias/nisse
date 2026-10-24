@@ -32,9 +32,6 @@ pub const IDLE: Duration = Duration::from_secs(10 * 60);
 pub struct ClaudeOptions {
     /// The `claude` executable.
     pub binary: PathBuf,
-    /// Where Claude Code works: its tools run here.
-    pub cwd: PathBuf,
-    pub model: Option<String>,
     /// A directory to write each conversation's replay fixture into (`NISSE_RECORD`).
     pub record: Option<PathBuf>,
 }
@@ -121,8 +118,8 @@ impl Claude {
         ]
         .map(str::to_owned)
         .into();
-        if let Some(model) = &self.options.model {
-            args.extend(["--model".to_owned(), model.clone()]);
+        if let Some(model) = turn.model() {
+            args.extend(["--model".to_owned(), model.to_owned()]);
         }
         match &state.head {
             Some(head) => args.extend([
@@ -137,18 +134,14 @@ impl Claude {
         let initialize = new_id();
         let recorder = match &self.options.record {
             Some(dir) => {
-                let recorder = Recorder::open(
-                    dir,
-                    turn.conversation_id(),
-                    &state.session,
-                    &self.options.cwd,
-                )?;
+                let recorder =
+                    Recorder::open(dir, turn.conversation_id(), &state.session, turn.cwd())?;
                 recorder.outbound(&json!({ "argv": args }));
                 Some(Arc::new(recorder))
             }
             None => None,
         };
-        let process = Process::spawn(&self.options.binary, &self.options.cwd, &args, recorder)?;
+        let process = Process::spawn(&self.options.binary, turn.cwd(), &args, recorder)?;
         process.send(json!({
             "type": "control_request",
             "request_id": initialize,
@@ -207,10 +200,6 @@ async fn stop_when_idle(
 }
 
 impl Provider for Claude {
-    fn model(&self) -> &str {
-        self.options.model.as_deref().unwrap_or("claude")
-    }
-
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(self.run_turn(turn))
     }

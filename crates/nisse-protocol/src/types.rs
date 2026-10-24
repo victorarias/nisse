@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,14 +38,21 @@ pub struct InitializeResult {
     pub server: ClientInfo,
     pub protocol_version: u32,
     pub actor: Actor,
-    /// The model that answers this server's conversations.
-    pub model: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ConversationCreateParams {
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The client's working directory, absolute: tools run here and resolve relative paths
+    /// against it, and the project's extensions are found from it.
+    pub cwd: PathBuf,
+    /// Who answers, by provider name; the server's default when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// The provider's model; the provider's default when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -53,6 +62,11 @@ pub struct Conversation {
     pub creator: Actor,
     pub status: ConversationStatus,
     pub created_at_ms: i64,
+    pub cwd: PathBuf,
+    pub provider: String,
+    /// Absent when the provider picks its own model at run time, as Claude Code does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -206,3 +220,9 @@ pub enum UiChanged {
         text: String,
     },
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ServerStopParams {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ServerStopResult {}

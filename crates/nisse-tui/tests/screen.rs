@@ -9,9 +9,9 @@ use std::{
 use nisse_client::Client;
 use nisse_core::{
     Approval, Echo, Harness, HarnessOptions, NoHooks, Provider, ProviderFuture, Store, ToolCall,
-    ToolOutcome, Turn,
+    ToolOutcome, Turn, same_hooks,
 };
-use nisse_protocol::Actor;
+use nisse_protocol::{Actor, ConversationStartParams};
 use nisse_server::Server;
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
@@ -73,18 +73,21 @@ struct Tui {
 
 impl Tui {
     async fn start() -> Self {
-        Self::with_model(Arc::new(Echo {
-            think: Duration::ZERO,
-        }))
+        Self::with_model(
+            "echo",
+            Arc::new(Echo {
+                think: Duration::ZERO,
+            }),
+        )
         .await
     }
 
-    async fn with_model(provider: Arc<dyn Provider>) -> Self {
+    async fn with_model(name: &str, provider: Arc<dyn Provider>) -> Self {
         let harness = Harness::with_store(
             Store::open_in_memory().unwrap(),
             HarnessOptions {
-                provider,
-                hooks: Arc::new(NoHooks),
+                providers: vec![(name.into(), provider)],
+                hooks: same_hooks(Arc::new(NoHooks)),
             },
         );
         let owner = Actor::Person {
@@ -93,7 +96,7 @@ impl Tui {
         };
         let server = Server::new(harness, broadcast::channel(16).0, owner);
         let (client, notifications) = Client::new(server.connect_in_process());
-        let hello = client.initialize("screen-test").await.unwrap();
+        client.initialize("screen-test").await.unwrap();
 
         let screen = Screen {
             parser: Arc::new(Mutex::new(vt100::Parser::new(HEIGHT, WIDTH, 0))),
@@ -114,7 +117,12 @@ impl Tui {
                 pressed,
                 client,
                 notifications,
-                hello.model,
+                nisse_tui::Open::New(ConversationStartParams {
+                    title: None,
+                    cwd: std::env::current_dir().unwrap(),
+                    provider: None,
+                    model: None,
+                }),
                 None,
                 nisse_tui::Theme::NEON,
             )
@@ -182,10 +190,6 @@ struct Thinking {
 }
 
 impl Provider for Thinking {
-    fn model(&self) -> &str {
-        "thinking"
-    }
-
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             turn.stream("Tracing the neon");
@@ -199,10 +203,6 @@ impl Provider for Thinking {
 struct Asking;
 
 impl Provider for Asking {
-    fn model(&self) -> &str {
-        "asking"
-    }
-
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let call = ToolCall {
@@ -240,9 +240,12 @@ async fn a_command_and_its_output_appear_in_the_transcript() {
 #[tokio::test]
 async fn the_model_s_unfinished_message_shows_live_until_it_is_committed() {
     let finish = Arc::new(Notify::new());
-    let tui = Tui::with_model(Arc::new(Thinking {
-        finish: finish.clone(),
-    }))
+    let tui = Tui::with_model(
+        "thinking",
+        Arc::new(Thinking {
+            finish: finish.clone(),
+        }),
+    )
     .await;
     tui.screen.shows(&["READY"]).await;
     tui.type_line("light the grid");
@@ -258,10 +261,13 @@ async fn the_model_s_unfinished_message_shows_live_until_it_is_committed() {
 }
 
 #[tokio::test]
-async fn the_status_bar_names_the_server_s_model_before_it_answers() {
-    let tui = Tui::with_model(Arc::new(Thinking {
-        finish: Arc::new(Notify::new()),
-    }))
+async fn the_status_bar_names_the_conversation_s_model_before_it_answers() {
+    let tui = Tui::with_model(
+        "thinking",
+        Arc::new(Thinking {
+            finish: Arc::new(Notify::new()),
+        }),
+    )
     .await;
     let screen = tui.screen.shows(&["READY"]).await;
     let status_bar = screen.lines().last().unwrap();
@@ -270,7 +276,7 @@ async fn the_status_bar_names_the_server_s_model_before_it_answers() {
 
 #[tokio::test]
 async fn ctrl_y_allows_the_call_waiting_for_approval() {
-    let tui = Tui::with_model(Arc::new(Asking)).await;
+    let tui = Tui::with_model("asking", Arc::new(Asking)).await;
     tui.screen.shows(&["READY"]).await;
     tui.type_line("clean up");
     let asking = tui
@@ -289,7 +295,7 @@ async fn ctrl_y_allows_the_call_waiting_for_approval() {
 
 #[tokio::test]
 async fn a_message_typed_while_a_call_waits_for_approval_does_not_answer_it() {
-    let tui = Tui::with_model(Arc::new(Asking)).await;
+    let tui = Tui::with_model("asking", Arc::new(Asking)).await;
     tui.screen.shows(&["READY"]).await;
     tui.type_line("clean up");
     tui.screen.shows(&["APPROVE BASH", "APPROVAL"]).await;

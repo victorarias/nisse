@@ -1,16 +1,16 @@
 //! The Nisse app server. Every transport becomes a pair of channels; one connection loop
 //! serves them all.
 
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use nisse_core::{Harness, SubmitError};
-use std::collections::HashMap;
+use nisse_core::{Harness, StartError, SubmitError};
 
 use nisse_protocol::{
-    Actor, ApprovalResolveResult, ClientInfo, ClientRequest, ConversationListResult,
+    Actor, ApprovalResolveResult, ClientInfo, ClientRequest, Commit, ConversationListResult,
     ConversationSubscribeParams, ErrorResponse, InitializeResult, Message, PROTOCOL_VERSION,
-    Request, RequestId, Response, RpcError, Seq, ServerNotification, StatusChanged, UiChanged,
+    Request, RequestId, Response, RpcError, Seq, ServerNotification, ServerStopResult,
+    StatusChanged, UiChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
@@ -19,6 +19,7 @@ use tokio::{
     sync::{
         broadcast,
         mpsc::{self, error::TrySendError},
+        watch,
     },
 };
 
@@ -26,15 +27,54 @@ pub struct Server {
     harness: Harness,
     ui: broadcast::Sender<UiChanged>,
     owner: Actor,
+    connections: watch::Sender<usize>,
+    stopping: watch::Sender<bool>,
+    closing: watch::Sender<bool>,
 }
 
 impl Server {
     pub fn new(harness: Harness, ui: broadcast::Sender<UiChanged>, owner: Actor) -> Arc<Self> {
-        Arc::new(Self { harness, ui, owner })
+        Arc::new(Self {
+            harness,
+            ui,
+            owner,
+            connections: watch::Sender::new(0),
+            stopping: watch::Sender::new(false),
+            closing: watch::Sender::new(false),
+        })
     }
 
     pub fn harness(&self) -> &Harness {
         &self.harness
+    }
+
+    /// Returns once nothing needs the server: no run is going and no connection has been
+    /// attached for `grace`, or a client asked it to stop and no run is going. Waiting costs
+    /// nothing; it wakes only when a connection or a run comes or goes.
+    pub async fn until_idle(&self, grace: Duration) {
+        let mut connections = self.connections.subscribe();
+        let mut runs = self.harness.runs();
+        let mut stopping = self.stopping.subscribe();
+        loop {
+            let running = *runs.borrow_and_update() > 0;
+            let attached = *connections.borrow_and_update() > 0;
+            let stop = *stopping.borrow_and_update();
+            if stop && !running {
+                return;
+            }
+            let unneeded = async {
+                if running || attached {
+                    std::future::pending::<()>().await;
+                }
+                tokio::time::sleep(grace).await;
+            };
+            tokio::select! {
+                () = unneeded => return,
+                _ = connections.changed() => {}
+                _ = runs.changed() => {}
+                _ = stopping.changed() => {}
+            }
+        }
     }
 
     /// A client in this process: the TUI when no server is running.
@@ -52,6 +92,16 @@ impl Server {
 
     /// WebSocket over a unix socket. Whoever can open the socket is the owner. Whatever socket is
     /// at `path` is replaced, so only the process that serves the socket's home binds it.
+    /// Closes every connection once it has sent its client everything already committed, so a
+    /// client watching a run that just settled sees it settle. Waits at most `patience` for
+    /// clients to acknowledge.
+    pub async fn close(&self, patience: Duration) {
+        self.closing.send_replace(true);
+        let mut connections = self.connections.subscribe();
+        let _ =
+            tokio::time::timeout(patience, connections.wait_for(|attached| *attached == 0)).await;
+    }
+
     pub fn bind_unix(path: &Path) -> Result<UnixListener> {
         if path.exists() {
             std::fs::remove_file(path)
@@ -83,18 +133,28 @@ impl Server {
             outgoing,
             mut incoming,
         } = channels;
+        self.connections.send_modify(|attached| *attached += 1);
+        let _attached = Attached(self.clone());
         let (subscribe, subscriptions) = mpsc::unbounded_channel();
         let mut forwarder = tokio::spawn(forward(self.clone(), outgoing.clone(), subscriptions));
+        let mut closing = self.closing.subscribe();
         let mut connection = Connection {
             server: self,
             actor,
             initialized: false,
+            asked_to_stop: false,
             subscribe,
         };
         loop {
             let message = tokio::select! {
                 message = incoming.recv() => message,
                 _ = &mut forwarder => None,
+                () = until_closing(&mut closing) => {
+                    let _ = (&mut forwarder).await;
+                    drop(outgoing);
+                    while incoming.recv().await.is_some() {}
+                    return;
+                }
             };
             let Some(message) = message else { break };
             let Message::Request(request) = message else {
@@ -118,6 +178,17 @@ impl Server {
             }
         }
         forwarder.abort();
+        if connection.asked_to_stop {
+            connection.server.stopping.send_replace(true);
+        }
+    }
+}
+
+struct Attached(Arc<Server>);
+
+impl Drop for Attached {
+    fn drop(&mut self) {
+        self.0.connections.send_modify(|attached| *attached -= 1);
     }
 }
 
@@ -126,6 +197,8 @@ struct Connection {
     actor: Actor,
     initialized: bool,
     subscribe: mpsc::UnboundedSender<(RequestId, ConversationSubscribeParams)>,
+    /// The server stops once this connection, which asked it to, has closed.
+    asked_to_stop: bool,
 }
 
 impl Connection {
@@ -161,13 +234,19 @@ impl Connection {
                     },
                     protocol_version: PROTOCOL_VERSION,
                     actor: self.actor.clone(),
-                    model: harness.model().to_owned(),
                 })
             }
-            ClientRequest::ConversationCreate(params) => harness
-                .create_conversation(params.title, &self.actor)
-                .map_err(internal)
-                .and_then(to_result),
+            ClientRequest::ConversationStart(params) => {
+                match harness.start_conversation(params, &self.actor).await {
+                    Ok(conversation) => to_result(conversation),
+                    Err(StartError::Failed(error)) => Err(internal(error)),
+                    Err(error) => Err(RpcError::new(RpcError::INVALID_PARAMS, error.to_string())),
+                }
+            }
+            ClientRequest::ServerStop(_) => {
+                self.asked_to_stop = true;
+                to_result(ServerStopResult {})
+            }
             ClientRequest::ConversationList(_) => harness
                 .conversations()
                 .map_err(internal)
@@ -218,9 +297,18 @@ async fn forward(
 ) {
     let mut commits = server.harness.subscribe();
     let mut ui = server.ui.subscribe();
+    let mut closing = server.closing.subscribe();
     let mut subscribed: HashMap<String, Seq> = HashMap::new();
     loop {
         let commit = tokio::select! {
+            () = until_closing(&mut closing) => {
+                while let Ok(commit) = commits.try_recv() {
+                    if !deliver(&outgoing, &subscribed, commit) {
+                        return;
+                    }
+                }
+                return;
+            }
             commit = commits.recv() => match commit {
                 Ok(commit) => commit,
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
@@ -254,23 +342,37 @@ async fn forward(
                 continue;
             }
         };
-        if let Some(status) = commit.status {
-            let changed = StatusChanged {
-                conversation_id: commit.conversation_id.clone(),
-                status,
-                seq: commit.seq,
-            };
-            if !offer(&outgoing, ServerNotification::Status(changed)) {
-                return;
-            }
-        }
-        let wanted = subscribed
-            .get(&commit.conversation_id)
-            .is_some_and(|&from| commit.seq > from);
-        if wanted && !offer(&outgoing, ServerNotification::Committed(commit)) {
+        if !deliver(&outgoing, &subscribed, commit) {
             return;
         }
     }
+}
+
+/// Offers a commit's status to the client, and the commit itself when it is subscribed to its
+/// conversation. False once the client can no longer keep up.
+fn deliver(
+    outgoing: &mpsc::Sender<Message>,
+    subscribed: &HashMap<String, Seq>,
+    commit: Commit,
+) -> bool {
+    if let Some(status) = commit.status {
+        let changed = StatusChanged {
+            conversation_id: commit.conversation_id.clone(),
+            status,
+            seq: commit.seq,
+        };
+        if !offer(outgoing, ServerNotification::Status(changed)) {
+            return false;
+        }
+    }
+    let wanted = subscribed
+        .get(&commit.conversation_id)
+        .is_some_and(|&from| commit.seq > from);
+    !wanted || offer(outgoing, ServerNotification::Committed(commit))
+}
+
+async fn until_closing(closing: &mut watch::Receiver<bool>) {
+    let _ = closing.wait_for(|closing| *closing).await;
 }
 
 /// Never waits on a slow client: a full queue drops this client's notifications for good.

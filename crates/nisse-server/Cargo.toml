@@ -19,6 +19,7 @@ tokio-tungstenite.workspace = true
 nisse-client.workspace = true
 rustix = { workspace = true, features = ["event"] }
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

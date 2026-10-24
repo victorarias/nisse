@@ -10,7 +10,7 @@ use anyhow::Result;
 use nisse_client::Client;
 use nisse_protocol::{
     ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
-    ConversationCreateParams, ConversationReadResult, ConversationStatus, ConversationSubmitParams,
+    ConversationReadResult, ConversationStartParams, ConversationStatus, ConversationSubmitParams,
     ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
     UiChanged, WhenBusy,
 };
@@ -41,12 +41,18 @@ pub struct App {
     model: String,
 }
 
-/// Takes over the process's terminal until the user quits.
+/// Which conversation the TUI shows.
+pub enum Open {
+    Existing(String),
+    New(ConversationStartParams),
+}
+
+/// Takes over the process's terminal until the user quits. A `notice` shows where errors do.
 pub async fn run(
     client: Client,
     notifications: mpsc::UnboundedReceiver<ServerNotification>,
-    model: String,
-    conversation_id: Option<String>,
+    open: Open,
+    notice: Option<String>,
     theme: Theme,
 ) -> Result<()> {
     let (keys, pressed) = mpsc::unbounded_channel();
@@ -63,8 +69,8 @@ pub async fn run(
         pressed,
         client,
         notifications,
-        model,
-        conversation_id,
+        open,
+        notice,
         theme,
     )
     .await;
@@ -72,22 +78,21 @@ pub async fn run(
     outcome
 }
 
-/// Draws on `terminal` and reads `pressed` until the user quits or `pressed` closes. `model` is
-/// the one the server named when `client` initialized.
+/// Draws on `terminal` and reads `pressed` until the user quits or `pressed` closes.
 pub async fn drive<B: Backend>(
     terminal: &mut Terminal<B>,
     mut pressed: mpsc::UnboundedReceiver<Event>,
     client: Client,
     mut notifications: mpsc::UnboundedReceiver<ServerNotification>,
-    model: String,
-    conversation_id: Option<String>,
+    open: Open,
+    notice: Option<String>,
     theme: Theme,
 ) -> Result<()>
 where
     B::Error: Send + Sync + 'static,
 {
-    let conversation = match conversation_id {
-        Some(id) => {
+    let conversation = match open {
+        Open::Existing(id) => {
             client
                 .request::<ConversationReadResult>(ClientRequest::ConversationRead(
                     nisse_protocol::ConversationReadParams {
@@ -98,11 +103,9 @@ where
                 .await?
                 .conversation
         }
-        None => {
+        Open::New(start) => {
             client
-                .request(ClientRequest::ConversationCreate(
-                    ConversationCreateParams::default(),
-                ))
+                .request(ClientRequest::ConversationStart(start))
                 .await?
         }
     };
@@ -114,6 +117,10 @@ where
             },
         ))
         .await?;
+    let model = conversation
+        .model
+        .clone()
+        .unwrap_or_else(|| conversation.provider.clone());
     let mut app = App {
         status: snapshot.conversation.status,
         working_since: (snapshot.conversation.status == ConversationStatus::Working)
@@ -126,7 +133,7 @@ where
         input: String::new(),
         scroll_back: 0,
         frame: 0,
-        error: None,
+        error: notice,
         model,
     };
 

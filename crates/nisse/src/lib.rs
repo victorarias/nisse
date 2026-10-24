@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use nisse_client::Client;
 use nisse_protocol::{
     ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
-    ConversationCreateParams, ConversationReadResult, ConversationStatus, ConversationSubmitParams,
+    ConversationReadResult, ConversationStartParams, ConversationStatus, ConversationSubmitParams,
     ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
     WhenBusy, kinds,
 };
@@ -15,20 +15,19 @@ use tokio::{
     sync::mpsc,
 };
 
-/// Sends `prompt` to a new conversation and writes the run to `out` as it commits, until the
-/// conversation is idle again. Each approval is asked on stderr and answered by the next line of
+/// Sends `prompt` to a conversation started with `start` and writes the run to `out` as it
+/// commits, until the conversation is idle again. Each approval is asked on stderr and answered by the next line of
 /// `answers`: `y` or `yes` allows, anything else or no line at all denies.
 pub async fn exec(
     client: &Client,
     notifications: &mut mpsc::UnboundedReceiver<ServerNotification>,
+    start: ConversationStartParams,
     prompt: String,
     answers: impl AsyncBufRead + Unpin,
     out: &mut impl Write,
 ) -> Result<()> {
     let conversation: Conversation = client
-        .request(ClientRequest::ConversationCreate(
-            ConversationCreateParams::default(),
-        ))
+        .request(ClientRequest::ConversationStart(start))
         .await?;
     let subscribed: ConversationReadResult = client
         .request(ClientRequest::ConversationSubscribe(

@@ -1,10 +1,13 @@
 use std::{
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use anyhow::{Result, anyhow};
-use nisse_protocol::{Actor, ConversationStatus, Entry, Seq, SubmissionStatus, kinds};
+use nisse_protocol::{
+    Actor, Conversation, ConversationStatus, Entry, Seq, SubmissionStatus, kinds,
+};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
@@ -33,6 +36,8 @@ pub enum Decision {
 pub struct Turn {
     harness: Harness,
     conversation_id: String,
+    cwd: PathBuf,
+    model: Option<String>,
     actor: Actor,
     live: Arc<Mutex<Live>>,
 }
@@ -44,10 +49,12 @@ struct Live {
 }
 
 impl Turn {
-    pub(crate) fn new(harness: Harness, conversation_id: String, actor: Actor) -> Self {
+    pub(crate) fn new(harness: Harness, conversation: &Conversation, actor: Actor) -> Self {
         Self {
             harness,
-            conversation_id,
+            conversation_id: conversation.id.clone(),
+            cwd: conversation.cwd.clone(),
+            model: conversation.model.clone(),
             actor,
             live: Arc::default(),
         }
@@ -55,6 +62,16 @@ impl Turn {
 
     pub fn conversation_id(&self) -> &str {
         &self.conversation_id
+    }
+
+    /// The conversation's directory: tools run here.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
+    /// The model the conversation chose; absent when the provider picks.
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
     }
 
     pub fn transcript(&self) -> Result<Vec<Entry>> {
@@ -170,10 +187,17 @@ impl Turn {
             tx.append(kinds::TOOL_CALL, actor, serde_json::to_value(&call)?)?;
             keep_provider_state(tx)
         })?;
-        let hooks = self.harness.hooks();
+        let harness = self.harness.clone();
+        let cwd = self.cwd.clone();
         let committed_call = call.clone();
         let (asks, mut asked) = mpsc::unbounded_channel::<(ToolCall, oneshot::Sender<Decision>)>();
         let mut ran = tokio::task::spawn_blocking(move || {
+            let hooks = match harness.hooks(&cwd) {
+                Ok(hooks) => hooks,
+                Err(error) => {
+                    return ToolOutcome::error(format!("could not load extensions: {error:#}"));
+                }
+            };
             let run = Mutex::new(Some(run));
             hooks.tool_call(call, &|call| {
                 if let Approval::Ask = approval {

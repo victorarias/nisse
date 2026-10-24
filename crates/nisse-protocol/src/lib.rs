@@ -9,4 +9,4 @@ mod types;
 pub use rpc::*;
 pub use types::*;
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;

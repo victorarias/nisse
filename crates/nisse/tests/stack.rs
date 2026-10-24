@@ -9,9 +9,10 @@ use std::{
 
 use nisse_client::Client;
 use nisse_protocol::{
-    ClientRequest, Conversation, ConversationCreateParams, ConversationReadResult,
-    ConversationSubmitParams, ConversationSubmitResult, ConversationSubscribeParams, Entry, Input,
-    ServerNotification, WhenBusy, kinds,
+    ClientRequest, Conversation, ConversationListResult, ConversationReadResult,
+    ConversationStartParams, ConversationSubmitParams, ConversationSubmitResult,
+    ConversationSubscribeParams, Entry, Input, ServerNotification, ServerStopParams,
+    ServerStopResult, WhenBusy, kinds,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -68,6 +69,18 @@ async fn attach(home: &Path) -> (Client, UnboundedReceiver<ServerNotification>) 
     (client, notifications)
 }
 
+async fn start(client: &Client, home: &Path) -> Conversation {
+    client
+        .request(ClientRequest::ConversationStart(ConversationStartParams {
+            title: None,
+            cwd: home.to_owned(),
+            provider: Some("echo".into()),
+            model: None,
+        }))
+        .await
+        .unwrap()
+}
+
 async fn subscribe(client: &Client, conversation_id: &str) -> ConversationReadResult {
     client
         .request(ClientRequest::ConversationSubscribe(
@@ -107,12 +120,7 @@ async fn a_command_cut_off_by_sigkill_is_reported_interrupted_after_restart() {
     let home = tempfile::tempdir().unwrap();
     let mut first = serve(home.path()).await;
     let (client, mut notifications) = attach(home.path()).await;
-    let conversation: Conversation = client
-        .request(ClientRequest::ConversationCreate(
-            ConversationCreateParams::default(),
-        ))
-        .await
-        .unwrap();
+    let conversation = start(&client, home.path()).await;
     subscribe(&client, &conversation.id).await;
     let _: ConversationSubmitResult = client
         .request(ClientRequest::ConversationSubmit(
@@ -171,50 +179,109 @@ async fn a_second_server_on_one_home_refuses_to_start_and_the_first_keeps_servin
     let said = String::from_utf8_lossy(&second.stderr);
     assert!(said.contains("another nisse already serves"), "{said}");
     let (client, _notifications) = attach(home.path()).await;
-    let _: Conversation = client
-        .request(ClientRequest::ConversationCreate(
-            ConversationCreateParams::default(),
-        ))
-        .await
-        .unwrap();
+    start(&client, home.path()).await;
 }
 
-const SLOW_TO_LOAD: &str = r#"
-nisse.log("loading")
-local sum = 0
-for i = 1, 5000000 do
-  sum += i
-end
-return function(on)
-  on("prompt.submit", function(nisse, e, next)
-    return next(e)
-  end)
-end
-"#;
+async fn next_line(lines: &mut tokio::io::Lines<impl tokio::io::AsyncBufRead + Unpin>) -> String {
+    tokio::time::timeout(PATIENCE, lines.next_line())
+        .await
+        .expect("the line came in time")
+        .unwrap()
+        .unwrap_or_default()
+}
+
+/// Waits until no process holds the home, which is when its server has exited.
+async fn until_released(home: &Path) {
+    let lock = std::fs::File::open(home.join("nisse.lock")).unwrap();
+    tokio::time::timeout(
+        PATIENCE,
+        tokio::task::spawn_blocking(move || lock.lock().unwrap()),
+    )
+    .await
+    .expect("the server exited in time")
+    .unwrap();
+}
+
+/// Asks the home's server to exit, and waits until it has.
+async fn stop(home: &Path) {
+    let (client, _notifications) = attach(home).await;
+    let _: ServerStopResult = client
+        .request(ClientRequest::ServerStop(ServerStopParams {}))
+        .await
+        .unwrap();
+    drop(client);
+    until_released(home).await;
+}
 
 #[tokio::test]
-async fn a_client_started_while_the_server_loads_its_extensions_waits_for_it() {
+async fn a_client_with_no_server_starts_one_that_works_in_its_directory_and_exits_once_unneeded() {
     let home = tempfile::tempdir().unwrap();
-    let extension = home.path().join("extensions").join("slow");
-    std::fs::create_dir_all(&extension).unwrap();
-    std::fs::write(extension.join("init.luau"), SLOW_TO_LOAD).unwrap();
-    let _server = serve_until(home.path(), "nisse: extension slow: loading").await;
+    let project = tempfile::tempdir().unwrap();
 
-    let exec = tokio::time::timeout(PATIENCE, nisse(home.path()).args(["exec", "hi"]).output())
-        .await
-        .expect("nisse exec finished in time")
-        .unwrap();
-
+    let exec = tokio::time::timeout(
+        PATIENCE,
+        nisse(home.path())
+            .args(["exec", "!pwd"])
+            .current_dir(project.path())
+            .env("NISSE_IDLE_GRACE_MS", "200")
+            .output(),
+    )
+    .await
+    .expect("nisse exec finished in time")
+    .unwrap();
     assert!(
         exec.status.success(),
         "{}",
         String::from_utf8_lossy(&exec.stderr)
     );
-    assert!(String::from_utf8_lossy(&exec.stdout).contains("You said: hi"));
+    until_released(home.path()).await;
+
+    let printed = String::from_utf8_lossy(&exec.stdout);
+    let project = project.path().canonicalize().unwrap();
+    assert!(
+        printed.contains(&format!("The command ran:\n{}", project.display())),
+        "{printed}"
+    );
+    let log = std::fs::read_to_string(home.path().join("nisse.log")).unwrap();
+    assert!(log.contains("nisse: nothing to do; exiting"), "{log}");
 }
 
 #[tokio::test]
-async fn a_second_client_on_the_home_an_exec_runs_stops_and_points_to_nisse_serve() {
+async fn clients_started_at_once_share_the_one_server_they_start() {
+    let home = tempfile::tempdir().unwrap();
+
+    let execs = (0..4).map(|n| {
+        nisse(home.path())
+            .args(["exec", &format!("hi {n}")])
+            .env("NISSE_IDLE_GRACE_MS", "5000")
+            .output()
+    });
+    let finished = tokio::time::timeout(PATIENCE, futures_util::future::join_all(execs))
+        .await
+        .expect("every exec finished in time");
+
+    for (n, exec) in finished.into_iter().enumerate() {
+        let exec = exec.unwrap();
+        assert!(
+            exec.status.success(),
+            "{}",
+            String::from_utf8_lossy(&exec.stderr)
+        );
+        assert!(String::from_utf8_lossy(&exec.stdout).contains(&format!("You said: hi {n}")));
+    }
+    let (client, _notifications) = attach(home.path()).await;
+    let listed: ConversationListResult = client
+        .request(ClientRequest::ConversationList(Default::default()))
+        .await
+        .unwrap();
+    assert_eq!(listed.conversations.len(), 4);
+    let log = std::fs::read_to_string(home.path().join("nisse.log")).unwrap();
+    assert_eq!(log.matches("nisse: serving on").count(), 1, "{log}");
+    stop(home.path()).await;
+}
+
+#[tokio::test]
+async fn serve_restart_takes_over_once_the_running_server_s_work_settles() {
     let home = tempfile::tempdir().unwrap();
     let fifo = home.path().join("release.fifo");
     assert!(
@@ -247,18 +314,37 @@ async fn a_second_client_on_the_home_an_exec_runs_stops_and_points_to_nisse_serv
     .await
     .expect("nisse exec ran the command in time");
 
-    let second = tokio::time::timeout(PATIENCE, nisse(home.path()).args(["exec", "hi"]).output())
-        .await
-        .expect("the second client gave up in time")
+    let mut restart = nisse(home.path())
+        .args(["serve", "--restart"])
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    let mut said = BufReader::new(restart.stderr.take().unwrap()).lines();
+    let waiting = next_line(&mut said).await;
     release.write_all(b"done\n").unwrap();
-    let ended = tokio::time::timeout(PATIENCE, exec.wait())
-        .await
-        .expect("nisse exec finished in time")
-        .unwrap();
+    let rest: Vec<String> = tokio::time::timeout(PATIENCE, async {
+        let mut rest = Vec::new();
+        while let Some(line) = printed.next_line().await.unwrap() {
+            rest.push(line);
+        }
+        rest
+    })
+    .await
+    .expect("nisse exec finished in time");
+    let serving = next_line(&mut said).await;
 
-    assert!(!second.status.success());
-    let said = String::from_utf8_lossy(&second.stderr);
-    assert!(said.contains("use `nisse serve` to share it"), "{said}");
-    assert!(ended.success());
+    assert_eq!(
+        waiting,
+        "nisse: waiting for the running server's work to settle"
+    );
+    assert!(rest.contains(&"done".to_owned()), "{rest:?}");
+    assert!(exec.wait().await.unwrap().success());
+    assert!(serving.starts_with("nisse: serving on"), "{serving}");
+    let (client, _notifications) = attach(home.path()).await;
+    let listed: ConversationListResult = client
+        .request(ClientRequest::ConversationList(Default::default()))
+        .await
+        .unwrap();
+    assert_eq!(listed.conversations.len(), 1);
+    restart.kill().await.unwrap();
 }

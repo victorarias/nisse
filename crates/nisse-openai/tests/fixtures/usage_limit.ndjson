@@ -1,3 +1,3 @@
 {"type":"transcript_start","provider":"openai","scenario":"the plan's usage limit is reached","metadata":{}}
-{"type":"expect_outbound","frame":{"model":"gpt-6.1-sol","instructions":"You are a test.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":"<any>","tool_choice":"auto","parallel_tool_calls":true,"store":false,"stream":true,"prompt_cache_key":"<any>"}}
+{"type":"expect_outbound","frame":{"model":"gpt-6.1-sol","instructions":"<any>","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":"<any>","tool_choice":"auto","parallel_tool_calls":true,"store":false,"stream":true,"prompt_cache_key":"<any>"}}
 {"type":"emit_inbound","frame":{"http":{"status":429,"body":{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"PLUS"}}}}}

@@ -1,22 +1,22 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use anyhow::{Result, anyhow};
 use nisse_protocol::{
-    Actor, ApprovalResolveParams, Commit, Conversation, ConversationReadResult, ConversationStatus,
-    ConversationSubmitParams, ConversationSubmitResult, Input, Seq, SubmissionStatus, WhenBusy,
-    kinds,
+    Actor, ApprovalResolveParams, Commit, Conversation, ConversationReadResult,
+    ConversationStartParams, ConversationStatus, ConversationSubmitParams,
+    ConversationSubmitResult, Input, Seq, SubmissionStatus, WhenBusy, kinds,
 };
 use serde_json::json;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::{
     new_id,
     provider::Provider,
-    store::{Store, Submission, Tx},
+    store::{NewConversation, Store, Submission, Tx},
     tools::{Hooks, ToolCall, ToolOutcome},
     turn::{Decision, Turn},
 };
@@ -26,9 +26,18 @@ const RESERVED_KINDS: &str = "nisse.";
 
 type Approvals = HashMap<(String, String), oneshot::Sender<Decision>>;
 
+/// Loads the extensions that apply in a directory.
+pub type LoadHooks = Arc<dyn Fn(&Path) -> Result<Arc<dyn Hooks>> + Send + Sync>;
+
 pub struct HarnessOptions {
-    pub provider: Arc<dyn Provider>,
-    pub hooks: Arc<dyn Hooks>,
+    /// Every provider a conversation can name; the first answers when it names none.
+    pub providers: Vec<(String, Arc<dyn Provider>)>,
+    pub hooks: LoadHooks,
+}
+
+/// The same extensions in every directory.
+pub fn same_hooks(hooks: Arc<dyn Hooks>) -> LoadHooks {
+    Arc::new(move |_| Ok(hooks.clone()))
 }
 
 /// Runs conversations on a store. Every change is one store commit, published after it is stored.
@@ -41,9 +50,23 @@ struct Inner {
     store: Mutex<Store>,
     commits: broadcast::Sender<Commit>,
     running: Mutex<HashSet<String>>,
+    runs: watch::Sender<usize>,
     approvals: Mutex<Approvals>,
-    provider: Arc<dyn Provider>,
-    hooks: Arc<dyn Hooks>,
+    providers: Vec<(String, Arc<dyn Provider>)>,
+    load_hooks: LoadHooks,
+    hooks: Mutex<HashMap<PathBuf, Arc<dyn Hooks>>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StartError {
+    #[error("{0} is not an absolute path to a directory")]
+    NotADirectory(String),
+    #[error("no provider named {name}; this server has {known}")]
+    UnknownProvider { name: String, known: String },
+    #[error("loading extensions: {0:#}")]
+    Extensions(anyhow::Error),
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -72,16 +95,18 @@ impl Harness {
                 store: Mutex::new(store),
                 commits,
                 running: Mutex::default(),
+                runs: watch::Sender::new(0),
                 approvals: Mutex::default(),
-                provider: options.provider,
-                hooks: options.hooks,
+                providers: options.providers,
+                load_hooks: options.hooks,
+                hooks: Mutex::default(),
             }),
         }
     }
 
-    /// The model that answers every run on this harness.
-    pub fn model(&self) -> &str {
-        self.inner.provider.model()
+    /// How many conversations have a run going; it changes as runs start and settle.
+    pub fn runs(&self) -> watch::Receiver<usize> {
+        self.inner.runs.subscribe()
     }
 
     /// Continues every run a previous process left unfinished.
@@ -93,12 +118,70 @@ impl Harness {
         Ok(())
     }
 
-    pub fn create_conversation(
+    /// Starts a conversation in the client's directory, with the model it chose. The directory's
+    /// extensions load first, so a broken one fails the start instead of the first run.
+    pub async fn start_conversation(
         &self,
-        title: Option<String>,
+        params: ConversationStartParams,
         creator: &Actor,
-    ) -> Result<Conversation> {
-        self.commit(&new_id(), |tx| tx.create_conversation(title, creator))
+    ) -> Result<Conversation, StartError> {
+        if !params.cwd.is_absolute() || !params.cwd.is_dir() {
+            return Err(StartError::NotADirectory(params.cwd.display().to_string()));
+        }
+        let (name, provider) = match &params.provider {
+            Some(name) => self.provider(name).map(|provider| (name.clone(), provider)),
+            None => self
+                .inner
+                .providers
+                .first()
+                .map(|(name, provider)| (name.clone(), provider.clone())),
+        }
+        .ok_or_else(|| StartError::UnknownProvider {
+            name: params.provider.clone().unwrap_or_default(),
+            known: self
+                .inner
+                .providers
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        })?;
+        let harness = self.clone();
+        let cwd = params.cwd.clone();
+        tokio::task::spawn_blocking(move || harness.hooks(&cwd))
+            .await
+            .map_err(|error| anyhow!(error))?
+            .map_err(StartError::Extensions)?;
+        let start = NewConversation {
+            title: params.title,
+            creator: creator.clone(),
+            cwd: params.cwd,
+            model: params
+                .model
+                .or_else(|| provider.default_model().map(str::to_owned)),
+            provider: name,
+        };
+        Ok(self.commit(&new_id(), |tx| tx.create_conversation(start))?)
+    }
+
+    fn provider(&self, name: &str) -> Option<Arc<dyn Provider>> {
+        self.inner
+            .providers
+            .iter()
+            .find(|(known, _)| known == name)
+            .map(|(_, provider)| provider.clone())
+    }
+
+    /// The extensions for `cwd`, loaded the first time a conversation there needs them. Loading
+    /// runs extension code, so call this off the async runtime.
+    pub(crate) fn hooks(&self, cwd: &Path) -> Result<Arc<dyn Hooks>> {
+        let mut loaded = self.inner.hooks.lock().expect("hooks lock");
+        if let Some(hooks) = loaded.get(cwd) {
+            return Ok(hooks.clone());
+        }
+        let hooks = (self.inner.load_hooks)(cwd)?;
+        loaded.insert(cwd.to_owned(), hooks.clone());
+        Ok(hooks)
     }
 
     pub fn conversations(&self) -> Result<Vec<Conversation>> {
@@ -135,11 +218,11 @@ impl Harness {
         {
             return Err(SubmitError::ReservedKind(kind.clone()));
         }
-        {
+        let cwd = {
             let store = self.store();
-            if store.conversation(&conversation_id)?.is_none() {
+            let Some(conversation) = store.conversation(&conversation_id)? else {
                 return Err(SubmitError::NotFound(conversation_id));
-            }
+            };
             if let Some(existing) =
                 store.submission_by_request(&conversation_id, &params.request_id)?
             {
@@ -148,15 +231,18 @@ impl Harness {
                     status: existing.status,
                 });
             }
-        }
+            conversation.cwd
+        };
 
         let input = match params.input {
             Input::Text { text } => {
-                let hooks = self.inner.hooks.clone();
-                let text = tokio::task::spawn_blocking(move || hooks.prompt_submit(text))
-                    .await
-                    .map_err(|error| anyhow!(error))?
-                    .map_err(SubmitError::Denied)?;
+                let harness = self.clone();
+                let text = tokio::task::spawn_blocking(move || {
+                    harness.hooks(&cwd).map(|hooks| hooks.prompt_submit(text))
+                })
+                .await
+                .map_err(|error| anyhow!(error))??
+                .map_err(SubmitError::Denied)?;
                 Input::Text { text }
             }
             write @ Input::Write { .. } => write,
@@ -207,12 +293,12 @@ impl Harness {
     }
 
     fn wake(&self, conversation_id: &str) {
-        let is_new_run = self
-            .inner
-            .running
-            .lock()
-            .expect("running lock")
-            .insert(conversation_id.to_owned());
+        let is_new_run = {
+            let mut running = self.inner.running.lock().expect("running lock");
+            let is_new_run = running.insert(conversation_id.to_owned());
+            self.inner.runs.send_replace(running.len());
+            is_new_run
+        };
         if is_new_run {
             let harness = self.clone();
             let conversation_id = conversation_id.to_owned();
@@ -227,6 +313,7 @@ impl Harness {
                         eprintln!("nisse: could not mark {conversation_id} idle: {error:#}");
                     }
                     running.remove(&conversation_id);
+                    harness.inner.runs.send_replace(running.len());
                 }
             });
         }
@@ -246,6 +333,7 @@ impl Harness {
                     self.commit(conversation_id, |tx| {
                         tx.set_status(ConversationStatus::Idle)
                     })?;
+                    self.inner.runs.send_replace(running.len());
                     return Ok(());
                 }
                 continue;
@@ -267,12 +355,25 @@ impl Harness {
             Ok(tx.seq())
         })?;
 
-        let provider = self.inner.provider.clone();
+        let conversation = self
+            .store()
+            .conversation(&conversation_id)?
+            .ok_or_else(|| anyhow!("no conversation {conversation_id}"))?;
         let actor = Actor::Model {
-            model: provider.model().to_owned(),
+            model: conversation
+                .model
+                .clone()
+                .unwrap_or_else(|| conversation.provider.clone()),
         };
-        let turn = Turn::new(self.clone(), conversation_id.clone(), actor.clone());
-        let ran = provider.run(&turn).await;
+        let provider = self.provider(&conversation.provider);
+        let turn = Turn::new(self.clone(), &conversation, actor);
+        let ran = match provider {
+            Some(provider) => provider.run(&turn).await,
+            None => Err(anyhow!(
+                "this server has no provider named {}",
+                conversation.provider
+            )),
+        };
         let mut approvals = self.approvals();
         approvals.retain(|(asked_in, _), _| *asked_in != conversation_id);
         turn.settled_live(|tx, actor| {
@@ -343,10 +444,6 @@ impl Harness {
 
     fn approvals(&self) -> std::sync::MutexGuard<'_, Approvals> {
         self.inner.approvals.lock().expect("approvals lock")
-    }
-
-    pub(crate) fn hooks(&self) -> Arc<dyn Hooks> {
-        self.inner.hooks.clone()
     }
 
     pub(crate) fn commit<T>(

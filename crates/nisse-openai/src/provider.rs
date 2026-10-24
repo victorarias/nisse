@@ -25,7 +25,7 @@ pub struct OpenAiOptions {
     /// Where expired tokens are refreshed.
     pub auth_base: String,
     pub base_url: String,
-    pub model: String,
+    /// Nisse's own instructions; the conversation's directory is added to them.
     pub instructions: String,
     /// A folder to write one fixture per turn into.
     pub record: Option<PathBuf>,
@@ -37,7 +37,6 @@ impl OpenAiOptions {
             auth_path: auth_path.into(),
             auth_base: AUTH_BASE.into(),
             base_url: BASE_URL.into(),
-            model: MODEL.into(),
             instructions: instructions.into(),
             record: None,
         }
@@ -66,9 +65,10 @@ impl OpenAi {
     }
 
     async fn answer(&self, turn: &Turn) -> Result<()> {
-        let mut recorder = Recorder::start(self.options.record.as_deref(), &self.options.model)?;
+        let model = turn.model().unwrap_or(MODEL);
+        let mut recorder = Recorder::start(self.options.record.as_deref(), model)?;
         loop {
-            let body = self.request_body(turn.conversation_id(), &turn.transcript()?);
+            let body = self.request_body(turn, model, &turn.transcript()?);
             let Response {
                 mut messages,
                 calls,
@@ -88,13 +88,14 @@ impl OpenAi {
             }
             for call in calls {
                 let approval = approval_for(&call.name);
-                turn.call_tool(call, approval, run_builtin_tool).await?;
+                turn.call_tool(call, approval, run_builtin_tool(turn.cwd()))
+                    .await?;
             }
             turn.place_steers()?;
         }
     }
 
-    fn request_body(&self, conversation_id: &str, transcript: &[Entry]) -> Value {
+    fn request_body(&self, turn: &Turn, model: &str, transcript: &[Entry]) -> Value {
         let tools: Vec<Value> = builtin_tools()
             .into_iter()
             .map(|tool| {
@@ -108,15 +109,19 @@ impl OpenAi {
             })
             .collect();
         json!({
-            "model": self.options.model,
-            "instructions": self.options.instructions,
+            "model": model,
+            "instructions": format!(
+                "{}\nThe working directory is {}.\n",
+                self.options.instructions,
+                turn.cwd().display()
+            ),
             "input": transcript.iter().filter_map(input_item).collect::<Vec<_>>(),
             "tools": tools,
             "tool_choice": "auto",
             "parallel_tool_calls": true,
             "store": false,
             "stream": true,
-            "prompt_cache_key": conversation_id,
+            "prompt_cache_key": turn.conversation_id(),
         })
     }
 
@@ -189,8 +194,8 @@ impl OpenAi {
 }
 
 impl Provider for OpenAi {
-    fn model(&self) -> &str {
-        &self.options.model
+    fn default_model(&self) -> Option<&str> {
+        Some(MODEL)
     }
 
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
