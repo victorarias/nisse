@@ -172,7 +172,7 @@ impl OpenAi {
         types: &[AgentType],
         agent_tools: &[ToolSpec],
     ) -> Result<()> {
-        let mut recorder = Recorder::start(self.options.record.as_deref(), model)?;
+        let mut recorder = Recorder::start(self.options.record.as_deref(), model, turn.cwd())?;
         let instructions = self.instructions(turn, types);
         loop {
             let body = self.request_body(

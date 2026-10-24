@@ -19,7 +19,7 @@ pub(crate) struct Recorder {
 }
 
 impl Recorder {
-    pub fn start(dir: Option<&Path>, model: &str) -> Result<Self> {
+    pub fn start(dir: Option<&Path>, model: &str, cwd: &Path) -> Result<Self> {
         let Some(dir) = dir else {
             return Ok(Self {
                 file: None,
@@ -31,10 +31,13 @@ impl Recorder {
         let path = dir.join(format!("openai-{}.ndjson", nisse_core::new_id()));
         let file = File::create(&path)
             .with_context(|| format!("could not record to {}", path.display()))?;
-        let workspace = std::env::current_dir().ok().map(|dir| dir.into_os_string());
-        let home = std::env::var_os("HOME");
-        let places = [(workspace, "<workspace>"), (home, "<home>")]
+        let mut workspaces = vec![cwd.to_path_buf()];
+        workspaces.extend(cwd.canonicalize());
+        workspaces.sort_by_key(|path| std::cmp::Reverse(path.as_os_str().len()));
+        let places = workspaces
             .into_iter()
+            .map(|path| (Some(path.into_os_string()), "<workspace>"))
+            .chain([(std::env::var_os("HOME"), "<home>")])
             .filter_map(|(place, placeholder)| {
                 let place = place?.to_string_lossy().into_owned();
                 (place.len() > 1).then_some((place, placeholder))

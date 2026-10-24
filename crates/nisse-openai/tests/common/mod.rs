@@ -392,11 +392,27 @@ impl Nisse {
         Self::with(fake, auth_path, DIRECT_MODEL, |_| {}).await
     }
 
+    /// Recording to `record`, with the conversation in a directory of its own, as a shared server
+    /// runs one away from where it was started.
     pub async fn recording(fake: &Fake, auth_path: &Path, record: Option<&Path>) -> Self {
-        Self::with(fake, auth_path, DIRECT_MODEL, |options| {
-            options.record = record.map(Path::to_owned)
-        })
-        .await
+        let root = tempfile::tempdir().unwrap();
+        let workspace = Workspace {
+            cwd: root.path().join("work"),
+            home: root.path().join("home"),
+        };
+        std::fs::create_dir(&workspace.cwd).unwrap();
+        std::fs::create_dir(&workspace.home).unwrap();
+        let mut nisse = Self::build(
+            fake,
+            auth_path,
+            DIRECT_MODEL,
+            |options| options.record = record.map(Path::to_owned),
+            Arc::new(NoHooks),
+            workspace,
+        )
+        .await;
+        nisse._workspace = Some(root);
+        nisse
     }
 
     pub async fn with(
