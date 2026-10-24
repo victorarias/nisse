@@ -9,7 +9,6 @@ use nisse_core::{
 };
 use nisse_protocol::{Actor, ConversationStartParams};
 use nisse_server::Server;
-use tokio::sync::broadcast;
 
 const PATIENCE: Duration = Duration::from_secs(10);
 
@@ -66,7 +65,7 @@ async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
         id: "owner".into(),
         name: "owner".into(),
     };
-    let server = Server::new(harness, broadcast::channel(16).0, owner);
+    let server = Server::new(harness, owner);
     let (client, mut notifications) = Client::new(server.connect_in_process());
     client.initialize("exec-test").await.unwrap();
     let mut out = Vec::new();

@@ -167,8 +167,6 @@ pub enum ServerNotification {
     Committed(Commit),
     #[serde(rename = "conversation/status")]
     Status(StatusChanged),
-    #[serde(rename = "ui/changed")]
-    UiChanged(UiChanged),
     #[serde(rename = "auth/state")]
     AuthState(AuthState),
 }

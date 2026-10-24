@@ -368,10 +368,11 @@ impl Turn {
         })?;
         let harness = self.harness.clone();
         let cwd = self.cwd.clone();
-        let context = CallContext {
-            conversation_id: self.conversation_id.clone(),
-            parent: self.lineage.as_ref().map(|lineage| lineage.parent.clone()),
-        };
+        let context = CallContext::new(
+            self.harness.clone(),
+            &self.conversation_id,
+            self.lineage.as_ref(),
+        );
         let committed_call = call.clone();
         let (asks, mut asked) = mpsc::unbounded_channel::<(ToolCall, oneshot::Sender<Decision>)>();
         let mut ran = tokio::task::spawn_blocking(move || {

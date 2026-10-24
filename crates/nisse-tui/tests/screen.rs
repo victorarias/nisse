@@ -9,21 +9,23 @@ use std::{
 
 use nisse_client::Client;
 use nisse_core::{
-    Approval, Echo, Harness, HarnessOptions, HealthFuture, ModelsFuture, NoHooks, Provider,
+    Approval, Echo, Harness, HarnessOptions, HealthFuture, Hooks, ModelsFuture, NoHooks, Provider,
     ProviderFuture, SignIn, Store, ToolCall, ToolOutcome, Turn, no_default_model, same_hooks,
 };
+use nisse_lua::LuaHost;
 use nisse_protocol::{
     Actor, AuthInteraction, AuthMethod, AuthResponse, ConversationStartParams, ModelInfo,
     ProviderHealth, ProviderStatus,
 };
 use nisse_server::Server;
+use nisse_tui::Open;
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
     crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers},
     layout::Rect,
 };
-use tokio::sync::{Notify, broadcast, mpsc};
+use tokio::sync::{Notify, mpsc};
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
@@ -110,6 +112,33 @@ struct Tui {
     opened: Arc<Mutex<Vec<String>>>,
 }
 
+fn serve(providers: Vec<(String, Arc<dyn Provider>)>, hooks: Arc<dyn Hooks>) -> Arc<Server> {
+    let harness = Harness::with_store(
+        Store::open_in_memory().unwrap(),
+        HarnessOptions {
+            providers,
+            hooks: same_hooks(hooks),
+            default_model: no_default_model(),
+            agents: Default::default(),
+        },
+    );
+    let owner = Actor::Person {
+        id: "owner".into(),
+        name: "owner".into(),
+    };
+    Server::new(harness, owner)
+}
+
+fn here() -> ConversationStartParams {
+    ConversationStartParams {
+        title: None,
+        cwd: std::env::current_dir().unwrap(),
+        provider: None,
+        model: None,
+        effort: None,
+    }
+}
+
 impl Tui {
     async fn start() -> Self {
         Self::with_model(
@@ -126,20 +155,11 @@ impl Tui {
     }
 
     async fn with(providers: Vec<(String, Arc<dyn Provider>)>, remote: bool) -> Self {
-        let harness = Harness::with_store(
-            Store::open_in_memory().unwrap(),
-            HarnessOptions {
-                providers,
-                hooks: same_hooks(Arc::new(NoHooks)),
-                default_model: no_default_model(),
-                agents: Default::default(),
-            },
-        );
-        let owner = Actor::Person {
-            id: "owner".into(),
-            name: "owner".into(),
-        };
-        let server = Server::new(harness, broadcast::channel(16).0, owner);
+        let server = serve(providers, Arc::new(NoHooks));
+        Self::on(server, Open::New(here()), remote).await
+    }
+
+    async fn on(server: Arc<Server>, open: Open, remote: bool) -> Self {
         let (client, notifications) = Client::new(server.connect_in_process());
         client.initialize("screen-test").await.unwrap();
 
@@ -169,13 +189,7 @@ impl Tui {
                 host,
                 client,
                 notifications,
-                nisse_tui::Open::New(ConversationStartParams {
-                    title: None,
-                    cwd: std::env::current_dir().unwrap(),
-                    provider: None,
-                    model: None,
-                    effort: None,
-                }),
+                open,
                 None,
                 nisse_tui::Theme::NEON,
             )
@@ -347,6 +361,42 @@ async fn a_script_s_calls_show_inside_its_card() {
         .shows(&["The notes say to wire the grid.", "READY"])
         .await;
     insta::assert_snapshot!(without_conversation_id(&screen));
+}
+
+const NOTICING: &str = r#"
+return function(on)
+  on("prompt.submit", function(nisse, e, next)
+    nisse.ui.status("heard " .. e.text)
+    nisse.ui.toast("got " .. e.text)
+    return next(e)
+  end)
+end
+"#;
+
+#[tokio::test]
+async fn an_extension_s_status_and_toast_show_and_a_client_opening_later_draws_the_status() {
+    let extensions = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(extensions.path().join("noticing")).unwrap();
+    std::fs::write(extensions.path().join("noticing/init.luau"), NOTICING).unwrap();
+    let hooks = LuaHost::load(&[extensions.path().to_owned()]).unwrap();
+    let echo = Arc::new(Echo {
+        think: Duration::ZERO,
+    });
+    let server = serve(vec![("echo".into(), echo)], Arc::new(hooks));
+    let first = Tui::on(server.clone(), Open::New(here()), false).await;
+    first.screen.shows(&["READY"]).await;
+    first.type_line("hello");
+    let noticed = first
+        .screen
+        .shows(&["You said: hello", "READY", "✦ noticing: got hello"])
+        .await;
+
+    let conversation = server.harness().conversations().unwrap().remove(0);
+    let later = Tui::on(server, Open::Existing(conversation.id), false).await;
+    let reopened = later.screen.shows(&["You said: hello", "READY"]).await;
+
+    insta::assert_snapshot!("noticed", without_conversation_id(&noticed));
+    insta::assert_snapshot!("reopened", without_conversation_id(&reopened));
 }
 
 #[tokio::test]

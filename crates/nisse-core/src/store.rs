@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use nisse_protocol::{
@@ -10,7 +13,7 @@ use serde_json::Value;
 
 use crate::{new_id, now_ms, workspace::AttachedSkill};
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// One SQLite file. Every change goes through `commit`, which is atomic and gets the next `seq`.
 pub struct Store {
@@ -53,6 +56,7 @@ pub struct Tx<'a> {
     entries: Vec<Entry>,
     status: Option<ConversationStatus>,
     live: Option<String>,
+    ui_status: Option<BTreeMap<String, String>>,
 }
 
 impl Store {
@@ -147,6 +151,14 @@ impl Store {
                 COMMIT;",
             )?;
         }
+        if version < 7 {
+            db.execute_batch(
+                "BEGIN;
+                ALTER TABLE conversations ADD COLUMN ui_status TEXT NOT NULL DEFAULT '{}';
+                PRAGMA user_version = 7;
+                COMMIT;",
+            )?;
+        }
         Ok(Self { db })
     }
 
@@ -165,6 +177,7 @@ impl Store {
             entries: Vec::new(),
             status: None,
             live: None,
+            ui_status: None,
         };
         let value = write(&mut writer)?;
         let Tx {
@@ -172,6 +185,7 @@ impl Store {
             entries,
             status,
             live,
+            ui_status,
             ..
         } = writer;
         tx.commit()?;
@@ -183,6 +197,7 @@ impl Store {
                 entries,
                 status,
                 live,
+                ui_status,
             },
         ))
     }
@@ -242,6 +257,10 @@ impl Store {
             [conversation_id],
             |row| row.get(0),
         )?)
+    }
+
+    pub fn ui_status(&self, conversation_id: &str) -> Result<BTreeMap<String, String>> {
+        ui_status(&self.db, conversation_id)
     }
 
     pub fn provider_state(&self, conversation_id: &str) -> Result<Value> {
@@ -412,6 +431,21 @@ impl Tx<'_> {
         Ok(())
     }
 
+    /// Shows `text` for `extension`, or nothing once `text` is absent.
+    pub fn set_ui_status(&mut self, extension: &str, text: Option<&str>) -> Result<()> {
+        let mut status = ui_status(&self.tx, &self.conversation_id)?;
+        match text {
+            Some(text) => status.insert(extension.to_owned(), text.to_owned()),
+            None => status.remove(extension),
+        };
+        self.tx.execute(
+            "UPDATE conversations SET ui_status = ?1 WHERE id = ?2",
+            params![serde_json::to_string(&status)?, self.conversation_id],
+        )?;
+        self.ui_status = Some(status);
+        Ok(())
+    }
+
     /// What a provider keeps to pick a conversation up again, such as Claude's session.
     pub fn set_provider_state(&mut self, state: &Value) -> Result<()> {
         self.tx.execute(
@@ -494,6 +528,15 @@ impl Tx<'_> {
         )?;
         Ok(())
     }
+}
+
+fn ui_status(db: &Connection, conversation_id: &str) -> Result<BTreeMap<String, String>> {
+    let status: String = db.query_row(
+        "SELECT ui_status FROM conversations WHERE id = ?1",
+        [conversation_id],
+        |row| row.get(0),
+    )?;
+    Ok(serde_json::from_str(&status)?)
 }
 
 fn entries_since(db: &Connection, conversation_id: &str, since_seq: Seq) -> Result<Vec<Entry>> {

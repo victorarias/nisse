@@ -224,6 +224,13 @@ conversation the call is made in, and `e.conversation.parent` the one that
 started it, when it is a subagent. A hook on `Agent` or `spawn_agent` can deny
 or rewrite a spawn.
 
+`nisse.ui` shows things in the conversation the hook runs for, and only there,
+so it works inside a hook and nowhere else. `nisse.ui.status(text)` sets the
+extension's status, or clears it with `nil`; the conversation keeps it, so a
+client that opens it later sees it too. `nisse.ui.toast(text)` pops up a
+message for everyone in the conversation, kept in its transcript as a
+`nisse.toast` entry.
+
 Extensions are written in [Luau](https://luau.org). Each one gets its own
 sandboxed VM without `io`, `os` or `require`, with read-only globals and a time
 budget per hook.

@@ -1025,6 +1025,16 @@
                 "type": "null"
               }
             ]
+          },
+          "ui_status": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "What each extension shows for the conversation, whole, when it changed.",
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1098,52 +1108,6 @@
           "seq"
         ],
         "type": "object"
-      },
-      "UiChanged": {
-        "oneOf": [
-          {
-            "properties": {
-              "extension": {
-                "type": "string"
-              },
-              "surface": {
-                "const": "status",
-                "type": "string"
-              },
-              "text": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "surface",
-              "extension"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "extension": {
-                "type": "string"
-              },
-              "surface": {
-                "const": "toast",
-                "type": "string"
-              },
-              "text": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "surface",
-              "extension",
-              "text"
-            ],
-            "type": "object"
-          }
-        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1173,22 +1137,6 @@
           },
           "params": {
             "$ref": "#/$defs/StatusChanged"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "ui/changed",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/UiChanged"
           }
         },
         "required": [

@@ -1,6 +1,6 @@
 //! Wire tests: a real server driven as a protocol client.
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use nisse_client::Client;
 use nisse_core::{
@@ -13,11 +13,10 @@ use nisse_protocol::{
     ConversationListResult, ConversationReadParams, ConversationReadResult,
     ConversationSelectModelParams, ConversationStartParams, ConversationStatus,
     ConversationSubmitParams, ConversationSubmitResult, ConversationSubscribeParams, Entry, Input,
-    ModelSelection, ModelsListParams, ModelsListResult, ServerNotification, UiChanged, WhenBusy,
-    kinds,
+    ModelSelection, ModelsListParams, ModelsListResult, ServerNotification, WhenBusy, kinds,
 };
 use nisse_server::Server;
-use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 const PATIENCE: Duration = Duration::from_secs(10);
 
@@ -28,12 +27,7 @@ fn owner() -> Actor {
     }
 }
 
-fn start(
-    store: Store,
-    provider: Arc<dyn Provider>,
-    hooks: Arc<dyn Hooks>,
-    ui: broadcast::Sender<UiChanged>,
-) -> Arc<Server> {
+fn start(store: Store, provider: Arc<dyn Provider>, hooks: Arc<dyn Hooks>) -> Arc<Server> {
     let harness = Harness::with_store(
         store,
         HarnessOptions {
@@ -44,7 +38,7 @@ fn start(
         },
     );
     harness.resume().unwrap();
-    Server::new(harness, ui, owner())
+    Server::new(harness, owner())
 }
 
 fn echo() -> Arc<dyn Provider> {
@@ -155,12 +149,7 @@ async fn entries_until(
 
 #[tokio::test]
 async fn an_input_is_answered_and_the_conversation_goes_idle() {
-    let server = start(
-        Store::open_in_memory().unwrap(),
-        echo(),
-        Arc::new(NoHooks),
-        broadcast::channel(16).0,
-    );
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(NoHooks));
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
     subscribe(&client, &conversation, 0).await;
@@ -186,12 +175,7 @@ async fn an_input_is_answered_and_the_conversation_goes_idle() {
 
 #[tokio::test]
 async fn a_retried_request_id_returns_the_first_submission() {
-    let server = start(
-        Store::open_in_memory().unwrap(),
-        echo(),
-        Arc::new(NoHooks),
-        broadcast::channel(16).0,
-    );
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(NoHooks));
     let (client, _notifications) = connect(&server).await;
     let (other, _other_notifications) = connect(&server).await;
     let conversation = create(&client).await;
@@ -209,12 +193,7 @@ async fn a_retried_request_id_returns_the_first_submission() {
 
 #[tokio::test]
 async fn clients_write_entries_of_their_own_kinds_but_not_nisses() {
-    let server = start(
-        Store::open_in_memory().unwrap(),
-        echo(),
-        Arc::new(NoHooks),
-        broadcast::channel(16).0,
-    );
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(NoHooks));
     let (client, _notifications) = connect(&server).await;
     let conversation = create(&client).await;
     let write = |kind: &str| {
@@ -252,12 +231,7 @@ async fn clients_write_entries_of_their_own_kinds_but_not_nisses() {
 
 #[tokio::test]
 async fn subscribing_since_a_seq_replays_only_later_commits() {
-    let server = start(
-        Store::open_in_memory().unwrap(),
-        echo(),
-        Arc::new(NoHooks),
-        broadcast::channel(16).0,
-    );
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(NoHooks));
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
     subscribe(&client, &conversation, 0).await;
@@ -300,7 +274,6 @@ fn a_run_cut_off_by_a_crash_is_answered_after_reopening() {
             Store::open(&path).unwrap(),
             Arc::new(Hanging),
             Arc::new(NoHooks),
-            broadcast::channel(16).0,
         );
         let (client, mut notifications) = connect(&server).await;
         let conversation = create(&client).await;
@@ -313,12 +286,7 @@ fn a_run_cut_off_by_a_crash_is_answered_after_reopening() {
 
     let reopened = tokio::runtime::Runtime::new().unwrap();
     reopened.block_on(async {
-        let server = start(
-            Store::open(&path).unwrap(),
-            echo(),
-            Arc::new(NoHooks),
-            broadcast::channel(16).0,
-        );
+        let server = start(Store::open(&path).unwrap(), echo(), Arc::new(NoHooks));
         let (client, mut notifications) = connect(&server).await;
         let snapshot = subscribe(&client, &conversation, 0).await;
         let mut entries = snapshot.entries;
@@ -358,51 +326,27 @@ end
 async fn a_luau_extension_denies_a_tool_call_and_rewrites_a_prompt() {
     let root = tempfile::tempdir().unwrap();
     extension(root.path(), "guard", GUARD);
-    let ui = broadcast::channel(16).0;
-    let sink = ui.clone();
-    let host = LuaHost::load(
-        &[root.path().to_path_buf()],
-        Arc::new(move |changed| {
-            let _ = sink.send(changed);
-        }),
-    )
-    .unwrap();
-    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(host), ui);
+    let host = LuaHost::load(&[root.path().to_path_buf()]).unwrap();
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(host));
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
     subscribe(&client, &conversation, 0).await;
 
     submit(&client, &conversation, "!rm -rf /tmp/nothing").await;
-    let denied = entries_until(&mut notifications, kinds::ASSISTANT).await;
+    let denied = until_entry(&mut notifications, kinds::ASSISTANT).await;
     submit(&client, &conversation, "please !false").await;
     let failed = until_entry(&mut notifications, kinds::ASSISTANT).await;
 
-    let result = denied
-        .iter()
+    let result = entries(&denied)
+        .into_iter()
         .find(|entry| entry.kind == kinds::TOOL_RESULT)
         .unwrap();
     assert_eq!(result.data["denied"], "guard: no rm here");
     assert_eq!(entries(&failed)[0].data["text"], "!false");
-    let mut heard = failed.into_iter();
-    let status = tokio::time::timeout(PATIENCE, async {
-        loop {
-            let notification = match heard.next() {
-                Some(notification) => notification,
-                None => notifications
-                    .recv()
-                    .await
-                    .expect("the server stays connected"),
-            };
-            if let ServerNotification::UiChanged(UiChanged::Status { extension, text }) =
-                notification
-            {
-                return (extension, text);
-            }
-        }
-    });
+    assert_eq!(ui_statuses(&denied), Vec::<UiStatus>::new());
     assert_eq!(
-        status.await.unwrap(),
-        ("guard".to_owned(), Some("last command failed".to_owned()))
+        ui_statuses(&failed),
+        [shown(&[("guard", "last command failed")])]
     );
 }
 
@@ -410,17 +354,8 @@ async fn a_luau_extension_denies_a_tool_call_and_rewrites_a_prompt() {
 async fn a_hook_keeps_its_time_budget_while_a_slow_command_runs_inside_it() {
     let root = tempfile::tempdir().unwrap();
     extension(root.path(), "guard", GUARD);
-    let ui = broadcast::channel(16).0;
-    let sink = ui.clone();
-    let host = LuaHost::load(
-        &[root.path().to_path_buf()],
-        Arc::new(move |changed| {
-            let _ = sink.send(changed);
-        }),
-    )
-    .unwrap();
-    let mut statuses = ui.subscribe();
-    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(host), ui);
+    let host = LuaHost::load(&[root.path().to_path_buf()]).unwrap();
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(host));
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
     subscribe(&client, &conversation, 0).await;
@@ -428,12 +363,162 @@ async fn a_hook_keeps_its_time_budget_while_a_slow_command_runs_inside_it() {
     submit(&client, &conversation, "!sleep 0.5; false").await;
     entries_until(&mut notifications, kinds::ASSISTANT).await;
 
-    let UiChanged::Status { extension, text } = statuses.try_recv().unwrap() else {
-        panic!("expected a status from the guard");
-    };
     assert_eq!(
-        (extension.as_str(), text.as_deref()),
-        ("guard", Some("last command failed"))
+        read(&client, &conversation.id).await.ui_status,
+        shown(&[("guard", "last command failed")])
+    );
+}
+
+type UiStatus = BTreeMap<String, String>;
+
+fn shown(statuses: &[(&str, &str)]) -> UiStatus {
+    statuses
+        .iter()
+        .map(|(extension, text)| (extension.to_string(), text.to_string()))
+        .collect()
+}
+
+fn ui_statuses(notifications: &[ServerNotification]) -> Vec<UiStatus> {
+    notifications
+        .iter()
+        .filter_map(|notification| match notification {
+            ServerNotification::Committed(commit) => commit.ui_status.clone(),
+            _ => None,
+        })
+        .collect()
+}
+
+const ECHOES: &str = r#"
+return function(on)
+  on("prompt.submit", function(nisse, e, next)
+    nisse.ui.status("heard " .. e.text)
+    nisse.ui.toast("got " .. e.text)
+    return next(e)
+  end)
+end
+"#;
+
+fn echoing_extension() -> (tempfile::TempDir, Arc<Server>) {
+    let root = tempfile::tempdir().unwrap();
+    extension(root.path(), "echoes", ECHOES);
+    let host = LuaHost::load(&[root.path().to_path_buf()]).unwrap();
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(host));
+    (root, server)
+}
+
+#[tokio::test]
+async fn each_conversation_shows_only_the_extension_status_its_own_hooks_set() {
+    let (_root, server) = echoing_extension();
+    let mut heard = Vec::new();
+    let mut read_back = Vec::new();
+    for text in ["one", "two"] {
+        let directory = tempfile::tempdir().unwrap();
+        let (client, mut notifications) = connect(&server).await;
+        let conversation = start_in(&client, directory.path()).await;
+        subscribe(&client, &conversation, 0).await;
+        submit(&client, &conversation, text).await;
+        heard.push(ui_statuses(
+            &until_entry(&mut notifications, kinds::ASSISTANT).await,
+        ));
+        read_back.push(read(&client, &conversation.id).await.ui_status);
+    }
+
+    assert_eq!(
+        heard,
+        [
+            [shown(&[("echoes", "heard one")])],
+            [shown(&[("echoes", "heard two")])]
+        ]
+    );
+    assert_eq!(
+        read_back,
+        [
+            shown(&[("echoes", "heard one")]),
+            shown(&[("echoes", "heard two")])
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_client_that_subscribes_late_sees_the_extension_status_set_before() {
+    let (_root, server) = echoing_extension();
+    let (early, mut notifications) = connect(&server).await;
+    let conversation = create(&early).await;
+    subscribe(&early, &conversation, 0).await;
+    submit(&early, &conversation, "hello").await;
+    until_done(&mut notifications, &conversation.id).await;
+
+    let (late, _) = connect(&server).await;
+    let snapshot = subscribe(&late, &conversation, 0).await;
+
+    assert_eq!(snapshot.ui_status, shown(&[("echoes", "heard hello")]));
+}
+
+#[tokio::test]
+async fn an_extension_s_toast_arrives_as_an_entry_in_its_conversation() {
+    let (_root, server) = echoing_extension();
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "hello").await;
+    let live = entries_until(&mut notifications, kinds::TOAST).await;
+    let kept = read(&client, &conversation.id).await.entries;
+
+    let toast = live.last().unwrap();
+    assert_eq!(
+        toast.data,
+        serde_json::json!({ "extension": "echoes", "text": "got hello" })
+    );
+    assert_eq!(
+        toast.author,
+        Actor::Extension {
+            name: "echoes".into()
+        }
+    );
+    assert_eq!(
+        kept.iter()
+            .filter(|entry| entry.kind == kinds::TOAST)
+            .collect::<Vec<_>>(),
+        [toast]
+    );
+}
+
+#[tokio::test]
+async fn an_extension_that_uses_nisse_ui_outside_a_hook_fails_to_load() {
+    let project = tempfile::tempdir().unwrap();
+    extension(
+        &project.path().join(".nisse/extensions"),
+        "eager",
+        r#"
+nisse.ui.status("loading")
+return function(on)
+  on("prompt.submit", function(nisse, e, next) return next(e) end)
+end
+"#,
+    );
+    let harness = Harness::with_store(
+        Store::open_in_memory().unwrap(),
+        HarnessOptions {
+            providers: vec![("echo".into(), echo())],
+            hooks: Arc::new(|cwd: &Path| -> anyhow::Result<Arc<dyn Hooks>> {
+                Ok(Arc::new(LuaHost::load(&[cwd.join(".nisse/extensions")])?))
+            }),
+            default_model: no_default_model(),
+            agents: Default::default(),
+        },
+    );
+    let server = Server::new(harness, owner());
+    let (client, _) = connect(&server).await;
+
+    let refused = client
+        .request::<Conversation>(ClientRequest::ConversationStart(started_in(project.path())))
+        .await
+        .unwrap_err();
+
+    assert!(
+        format!("{refused:#}").contains("nisse.ui works inside a hook"),
+        "{refused:#}"
     );
 }
 
@@ -495,7 +580,6 @@ async fn a_call_waits_for_approval_and_only_the_first_answer_counts() {
         Store::open_in_memory().unwrap(),
         Arc::new(Careful),
         Arc::new(NoHooks),
-        broadcast::channel(16).0,
     );
     let (client, mut notifications) = connect(&server).await;
     let (other, _) = connect(&server).await;
@@ -530,7 +614,6 @@ async fn a_declined_call_never_runs_and_the_model_hears_why() {
         Store::open_in_memory().unwrap(),
         Arc::new(Careful),
         Arc::new(NoHooks),
-        broadcast::channel(16).0,
     );
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
@@ -618,7 +701,6 @@ async fn an_approval_left_open_by_a_failed_run_is_closed_and_answering_it_keeps_
         Store::open_in_memory().unwrap(),
         provider.clone(),
         Arc::new(NoHooks),
-        broadcast::channel(16).0,
     );
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
@@ -668,7 +750,6 @@ async fn approving_the_live_call_resumes_work_while_the_call_its_run_abandoned_c
         Store::open_in_memory().unwrap(),
         provider.clone(),
         Arc::new(NoHooks),
-        broadcast::channel(16).0,
     );
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
@@ -714,7 +795,6 @@ fn a_call_waiting_for_approval_when_nisse_restarts_is_not_run_and_the_model_hear
             Store::open(&path).unwrap(),
             Arc::new(Careful),
             Arc::new(NoHooks),
-            broadcast::channel(16).0,
         );
         let (client, mut notifications) = connect(&server).await;
         let conversation = create(&client).await;
@@ -727,12 +807,7 @@ fn a_call_waiting_for_approval_when_nisse_restarts_is_not_run_and_the_model_hear
 
     let reopened = tokio::runtime::Runtime::new().unwrap();
     reopened.block_on(async {
-        let server = start(
-            Store::open(&path).unwrap(),
-            echo(),
-            Arc::new(NoHooks),
-            broadcast::channel(16).0,
-        );
+        let server = start(Store::open(&path).unwrap(), echo(), Arc::new(NoHooks));
         let (client, mut notifications) = connect(&server).await;
         let mut entries = subscribe(&client, &conversation, 0).await.entries;
         let rerun_answered = |entries: &[Entry]| {
@@ -810,7 +885,6 @@ fn a_script_cut_off_by_a_restart_is_closed_with_the_results_of_the_calls_it_made
             Store::open(&path).unwrap(),
             Arc::new(StuckScript),
             Arc::new(NoHooks),
-            broadcast::channel(16).0,
         );
         let (client, mut notifications) = connect(&server).await;
         let conversation = create(&client).await;
@@ -823,12 +897,7 @@ fn a_script_cut_off_by_a_restart_is_closed_with_the_results_of_the_calls_it_made
 
     let reopened = tokio::runtime::Runtime::new().unwrap();
     reopened.block_on(async {
-        let server = start(
-            Store::open(&path).unwrap(),
-            echo(),
-            Arc::new(NoHooks),
-            broadcast::channel(16).0,
-        );
+        let server = start(Store::open(&path).unwrap(), echo(), Arc::new(NoHooks));
         let (client, mut notifications) = connect(&server).await;
         let mut entries = subscribe(&client, &conversation, 0).await.entries;
         while !entries.iter().any(|entry| entry.kind == kinds::ASSISTANT) {
@@ -854,7 +923,6 @@ async fn streamed_text_shows_live_until_the_message_is_committed() {
         Store::open_in_memory().unwrap(),
         Arc::new(Careful),
         Arc::new(NoHooks),
-        broadcast::channel(16).0,
     );
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
@@ -917,12 +985,7 @@ async fn run_allowing_in(
     hooks: Arc<dyn Hooks>,
     script: serde_json::Value,
 ) -> Vec<Entry> {
-    let server = start(
-        Store::open_in_memory().unwrap(),
-        Arc::new(Scripted),
-        hooks,
-        broadcast::channel(16).0,
-    );
+    let server = start(Store::open_in_memory().unwrap(), Arc::new(Scripted), hooks);
     let (client, mut notifications) = connect(&server).await;
     let conversation = start_in(&client, cwd).await;
     subscribe(&client, &conversation, 0).await;
@@ -1020,7 +1083,7 @@ end
             swapped.display()
         ),
     );
-    let hooks = LuaHost::load(&[root.path().to_path_buf()], Arc::new(|_| {})).unwrap();
+    let hooks = LuaHost::load(&[root.path().to_path_buf()]).unwrap();
 
     let committed = run_allowing_through(
         Arc::new(hooks),
@@ -1198,12 +1261,11 @@ impl Provider for TwoAtOnce {
 async fn a_luau_hook_waiting_on_one_approval_does_not_hold_up_a_parallel_call() {
     let root = tempfile::tempdir().unwrap();
     extension(root.path(), "guard", GUARD);
-    let host = LuaHost::load(&[root.path().to_path_buf()], Arc::new(|_| {})).unwrap();
+    let host = LuaHost::load(&[root.path().to_path_buf()]).unwrap();
     let server = start(
         Store::open_in_memory().unwrap(),
         Arc::new(TwoAtOnce),
         Arc::new(host),
-        broadcast::channel(16).0,
     );
     let (client, mut notifications) = connect(&server).await;
     let conversation = create(&client).await;
@@ -1293,7 +1355,7 @@ async fn each_conversation_keeps_the_provider_and_model_it_started_with() {
             agents: Default::default(),
         },
     );
-    let server = Server::new(harness, broadcast::channel(16).0, owner());
+    let server = Server::new(harness, owner());
     let (client, mut notifications) = connect(&server).await;
     let cwd = std::env::current_dir().unwrap();
     let start = |provider: Option<&str>, model: Option<&str>| {
@@ -1352,12 +1414,7 @@ async fn each_conversation_keeps_the_provider_and_model_it_started_with() {
 
 #[tokio::test]
 async fn a_conversation_needs_an_absolute_directory_that_exists() {
-    let server = start(
-        Store::open_in_memory().unwrap(),
-        echo(),
-        Arc::new(NoHooks),
-        broadcast::channel(16).0,
-    );
+    let server = start(Store::open_in_memory().unwrap(), echo(), Arc::new(NoHooks));
     let (client, _notifications) = connect(&server).await;
 
     for cwd in ["relative/dir", "/no/such/directory"] {
@@ -1392,16 +1449,13 @@ async fn a_project_s_extensions_apply_only_to_conversations_in_that_project() {
         HarnessOptions {
             providers: vec![("echo".into(), echo())],
             hooks: Arc::new(|cwd: &Path| -> anyhow::Result<Arc<dyn Hooks>> {
-                Ok(Arc::new(LuaHost::load(
-                    &[cwd.join(".nisse/extensions")],
-                    Arc::new(|_| {}),
-                )?))
+                Ok(Arc::new(LuaHost::load(&[cwd.join(".nisse/extensions")])?))
             }),
             default_model: no_default_model(),
             agents: Default::default(),
         },
     );
-    let server = Server::new(harness, broadcast::channel(16).0, owner());
+    let server = Server::new(harness, owner());
     let (client, mut notifications) = connect(&server).await;
 
     let mut heard = Vec::new();
@@ -1443,7 +1497,6 @@ async fn the_server_is_needed_while_a_client_is_attached_or_a_run_goes_on_and_no
         Store::open_in_memory().unwrap(),
         Arc::new(UntilReleased { done: done.clone() }),
         Arc::new(NoHooks),
-        broadcast::channel(16).0,
     );
     let unneeded = {
         let server = server.clone();
@@ -1488,7 +1541,7 @@ fn echo_and_named(default_model: DefaultModel) -> Arc<Server> {
             agents: Default::default(),
         },
     );
-    Server::new(harness, broadcast::channel(16).0, owner())
+    Server::new(harness, owner())
 }
 
 fn selection(provider: &str, model: Option<&str>, effort: Option<&str>) -> ModelSelection {
@@ -1704,7 +1757,7 @@ fn delegating_through(agents: Limits, hooks: Arc<dyn Hooks>) -> Arc<Server> {
             agents,
         },
     );
-    Server::new(harness, broadcast::channel(16).0, owner())
+    Server::new(harness, owner())
 }
 
 fn spawn(task_name: &str, message: &str) -> serde_json::Value {
@@ -1938,7 +1991,7 @@ end
 async fn a_hook_knows_a_subagent_s_call_by_its_parent_and_can_deny_it() {
     let extensions = tempfile::tempdir().unwrap();
     extension(extensions.path(), "root-lists", ROOT_LISTS);
-    let hooks = LuaHost::load(&[extensions.path().to_owned()], Arc::new(|_| {})).unwrap();
+    let hooks = LuaHost::load(&[extensions.path().to_owned()]).unwrap();
     let server = delegating_through(Limits::default(), Arc::new(hooks));
     let (client, mut notifications) = connect(&server).await;
     let parent = create(&client).await;

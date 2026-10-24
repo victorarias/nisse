@@ -5,10 +5,12 @@ mod grep;
 
 use std::path::Path;
 
+use anyhow::Result;
+use nisse_protocol::{Actor, Lineage, kinds};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::turn::Approval;
+use crate::{harness::Harness, turn::Approval};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
@@ -55,19 +57,59 @@ impl ToolOutcome {
     }
 }
 
-/// The conversation a tool call is made in, as extensions see it.
-#[derive(Debug, Clone, Serialize)]
+/// The conversation a hook runs for, as extensions see it, and what they show in it.
+#[derive(Clone, Serialize)]
 pub struct CallContext {
     #[serde(rename = "id")]
     pub conversation_id: String,
     /// The conversation that started this one, when it is a subagent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    #[serde(skip)]
+    harness: Harness,
+}
+
+impl CallContext {
+    pub(crate) fn new(harness: Harness, conversation_id: &str, lineage: Option<&Lineage>) -> Self {
+        Self {
+            conversation_id: conversation_id.to_owned(),
+            parent: lineage.map(|lineage| lineage.parent.clone()),
+            harness,
+        }
+    }
+
+    /// Shows `text` for `extension` to everyone in the conversation, or nothing once it is
+    /// absent. Showing what it already shows commits nothing.
+    pub fn set_ui_status(&self, extension: &str, text: Option<&str>) -> Result<()> {
+        let shown = self.harness.store().ui_status(&self.conversation_id)?;
+        if shown.get(extension).map(String::as_str) == text {
+            return Ok(());
+        }
+        self.harness.commit(&self.conversation_id, |tx| {
+            tx.set_ui_status(extension, text)
+        })
+    }
+
+    /// Pops `text` up for everyone in the conversation, as a `nisse.toast` entry.
+    pub fn toast(&self, extension: &str, text: &str) -> Result<()> {
+        let author = Actor::Extension {
+            name: extension.to_owned(),
+        };
+        self.harness.commit(&self.conversation_id, |tx| {
+            tx.append(
+                kinds::TOAST,
+                &author,
+                json!({ "extension": extension, "text": text }),
+            )
+            .map(drop)
+        })
+    }
 }
 
 /// What extensions can change. `engine` is Nisse's own behaviour: the end of every chain.
 pub trait Hooks: Send + Sync {
-    fn prompt_submit(&self, text: String) -> Result<String, String> {
+    fn prompt_submit(&self, context: &CallContext, text: String) -> Result<String, String> {
+        let _ = context;
         Ok(text)
     }
 

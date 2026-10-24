@@ -7,7 +7,7 @@ mod theme;
 mod view;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     time::{Duration, Instant},
 };
 
@@ -21,7 +21,7 @@ use nisse_protocol::{
     ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
     ConversationSubscribeParams, Entry, Input, ModelSelection, ModelsListParams, ModelsListResult,
     ProviderModels, ProviderSnapshot, ProviderStatus, ProvidersListParams, ProvidersListResult,
-    Seq, ServerNotification, StatusChanged, UiChanged, WhenBusy, kinds,
+    Seq, ServerNotification, StatusChanged, WhenBusy, kinds,
 };
 use ratatui::{
     Terminal,
@@ -45,7 +45,7 @@ pub struct App {
     live: String,
     status: ConversationStatus,
     working_since: Option<Instant>,
-    extension_status: Vec<(String, String)>,
+    extension_status: BTreeMap<String, String>,
     toast: Option<(String, Instant)>,
     input: String,
     scroll_back: u16,
@@ -181,7 +181,7 @@ where
         conversation,
         entries: snapshot.entries,
         live: snapshot.live,
-        extension_status: Vec::new(),
+        extension_status: snapshot.ui_status,
         toast: None,
         input: String::new(),
         scroll_back: 0,
@@ -389,12 +389,23 @@ impl App {
                 if let Some(live) = commit.live {
                     self.live = live;
                 }
+                if let Some(status) = commit.ui_status {
+                    self.extension_status = status;
+                }
                 if !commit.entries.is_empty() {
                     for entry in &commit.entries {
                         if entry.kind == kinds::MODEL
                             && let Ok(selection) = serde_json::from_value(entry.data.clone())
                         {
                             self.conversation.selection = selection;
+                        }
+                        if entry.kind == kinds::TOAST {
+                            let toast = format!(
+                                "{}: {}",
+                                entry.data["extension"].as_str().unwrap_or_default(),
+                                entry.data["text"].as_str().unwrap_or_default()
+                            );
+                            self.toast = Some((toast, Instant::now()));
                         }
                     }
                     self.entries.extend(commit.entries);
@@ -423,15 +434,6 @@ impl App {
                     }
                     _ => None,
                 };
-            }
-            ServerNotification::UiChanged(UiChanged::Status { extension, text }) => {
-                self.extension_status.retain(|(name, _)| *name != extension);
-                if let Some(text) = text {
-                    self.extension_status.push((extension, text));
-                }
-            }
-            ServerNotification::UiChanged(UiChanged::Toast { extension, text }) => {
-                self.toast = Some((format!("{extension}: {text}"), Instant::now()));
             }
         }
         None
