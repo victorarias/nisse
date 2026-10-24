@@ -337,6 +337,43 @@ impl Provider for Scripting {
     }
 }
 
+/// Reads a file of tab-indented code with wide characters in it.
+struct Reading;
+
+impl Provider for Reading {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let call = ToolCall {
+                id: "read".into(),
+                name: "Read".into(),
+                args: serde_json::json!({ "file_path": "grid.rs" }),
+                parent: None,
+            };
+            turn.call_tool(call, Approval::NotNeeded, |_| {
+                ToolOutcome::ok(format!(
+                    "     1\tfn light() {{\n     2\t\tsay(\"{}\");\n     3\t}}",
+                    "霓虹灯".repeat(14)
+                ))
+            })
+            .await?;
+            turn.answer("The grid says 霓虹灯.")
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_file_s_tabs_and_wide_characters_keep_their_columns() {
+    let tui = Tui::with_model("reading", Arc::new(Reading)).await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("read the grid");
+    let screen = tui.screen.shows(&["The grid says 霓虹灯.", "READY"]).await;
+    insta::assert_snapshot!(without_conversation_id(&screen));
+}
+
 #[tokio::test]
 async fn a_script_s_calls_show_inside_its_card() {
     let tui = Tui::with_model("scripting", Arc::new(Scripting)).await;

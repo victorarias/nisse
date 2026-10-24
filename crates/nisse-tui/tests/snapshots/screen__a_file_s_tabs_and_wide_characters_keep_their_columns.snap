@@ -1,0 +1,28 @@
+---
+source: crates/nisse-tui/tests/screen.rs
+expression: without_conversation_id(&screen)
+---
+░▒▓ N I S S E ▓▒░ // conversation [id]
+
+  OWNER ▓▒░ ───────────────────────────────────────────────────────────────────
+   read the grid
+
+ ┏━ ⚙ READ  grid.rs
+ ┃      1  fn light() {
+ ┃      2          say("霓虹灯霓虹灯霓虹灯霓虹灯霓虹灯霓虹灯霓虹灯霓虹灯霓虹灯
+ ┃ 霓虹灯霓虹灯霓虹灯霓虹灯霓虹灯");
+ ┃      3  }
+ ┗━ ✓ DONE
+
+  NISSE ▓▒░ ───────────────────────────────────────────────────────────────────
+   The grid says 霓虹灯.
+
+
+
+
+
+
+╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
+│ ❯ ▍type a message, or !cmd to run a shell command                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ■ READY ▓▒░                                            reading  │  nisse 0.1.0
