@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use nisse_client::Client;
 use nisse_core::{
     Approval, Harness, HarnessOptions, NoHooks, Provider, ProviderFuture, Store, ToolCall,
-    ToolOutcome, Turn, same_hooks,
+    ToolOutcome, Turn, no_default_model, same_hooks,
 };
 use nisse_protocol::{Actor, ConversationStartParams};
 use nisse_server::Server;
@@ -58,6 +58,7 @@ async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
         HarnessOptions {
             providers: vec![("test".into(), provider)],
             hooks: same_hooks(Arc::new(NoHooks)),
+            default_model: no_default_model(),
         },
     );
     let owner = Actor::Person {
@@ -78,6 +79,7 @@ async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
                 cwd: std::env::current_dir().unwrap(),
                 provider: None,
                 model: None,
+                effort: None,
             },
             "go".into(),
             stdin,

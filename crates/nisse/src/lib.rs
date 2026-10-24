@@ -17,7 +17,7 @@ use tokio::{
     sync::mpsc,
 };
 
-pub use login::{list_providers, login, logout};
+pub use login::{list_models, list_providers, login, logout};
 
 /// Sends `prompt` to a conversation started with `start` and writes the run to `out` as it
 /// commits, until the conversation is idle again. Each approval is asked on stderr and answered by the next line of

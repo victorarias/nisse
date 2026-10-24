@@ -183,21 +183,58 @@
         ],
         "type": "object"
       },
-      "ConversationStartParams": {
+      "ConversationSelectModelParams": {
+        "description": "Switches the conversation's model from its next run on, with a `nisse.model` entry.",
         "properties": {
-          "cwd": {
-            "description": "The client's working directory, absolute: tools run here and resolve relative paths\nagainst it, and the project's extensions are found from it.",
+          "conversation_id": {
             "type": "string"
           },
+          "effort": {
+            "description": "Absent for the model's own default.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "model": {
-            "description": "The provider's model; the provider's default when absent.",
+            "description": "Absent when the provider picks its own model at run time, as Claude Code does.",
             "type": [
               "string",
               "null"
             ]
           },
           "provider": {
-            "description": "Who answers, by provider name; the server's default when absent.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "provider"
+        ],
+        "type": "object"
+      },
+      "ConversationStartParams": {
+        "properties": {
+          "cwd": {
+            "description": "The client's working directory, absolute: tools run here and resolve relative paths\nagainst it, and the project's extensions are found from it.",
+            "type": "string"
+          },
+          "effort": {
+            "description": "The model's reasoning effort; the default selection's when it names the same model.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "The provider's model; the default selection's, or the provider's default, when absent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "description": "Who answers, by provider name; the default selection's provider when absent.",
             "type": [
               "string",
               "null"
@@ -313,6 +350,16 @@
             "type": "object"
           }
         ]
+      },
+      "ModelsListParams": {
+        "properties": {
+          "refresh": {
+            "default": false,
+            "description": "Ask every provider again instead of answering with what was last found.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
       },
       "ProvidersListParams": {
         "properties": {
@@ -449,6 +496,22 @@
       {
         "properties": {
           "method": {
+            "const": "conversation/select_model",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ConversationSelectModelParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
             "const": "approval/resolve",
             "type": "string"
           },
@@ -567,6 +630,22 @@
           },
           "params": {
             "$ref": "#/$defs/AuthLogoutParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "models/list",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ModelsListParams"
           }
         },
         "required": [

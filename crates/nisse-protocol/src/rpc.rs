@@ -86,6 +86,8 @@ pub enum ClientRequest {
     ConversationSubscribe(ConversationSubscribeParams),
     #[serde(rename = "conversation/submit")]
     ConversationSubmit(ConversationSubmitParams),
+    #[serde(rename = "conversation/select_model")]
+    ConversationSelectModel(ConversationSelectModelParams),
     #[serde(rename = "approval/resolve")]
     ApprovalResolve(ApprovalResolveParams),
     #[serde(rename = "skills/list")]
@@ -104,6 +106,8 @@ pub enum ClientRequest {
     AuthCancel(AuthCancelParams),
     #[serde(rename = "auth/logout")]
     AuthLogout(AuthLogoutParams),
+    #[serde(rename = "models/list")]
+    ModelsList(ModelsListParams),
 }
 
 impl ClientRequest {
@@ -140,6 +144,7 @@ const KNOWN_METHODS: &[&str] = &[
     "conversation/read",
     "conversation/subscribe",
     "conversation/submit",
+    "conversation/select_model",
     "approval/resolve",
     "skills/list",
     "server/stop",
@@ -148,6 +153,7 @@ const KNOWN_METHODS: &[&str] = &[
     "auth/respond",
     "auth/cancel",
     "auth/logout",
+    "models/list",
 ];
 
 /// Notifications the server sends, keyed by method.

@@ -1,0 +1,28 @@
+---
+source: crates/nisse-tui/tests/screen.rs
+expression: without_conversation_id(&answered)
+---
+░▒▓ N I S S E ▓▒░ // conversation [id]
+
+ ◆ owner switched to large · high (pair)
+
+  OWNER ▓▒░ ───────────────────────────────────────────────────────────────────
+   who are you?
+
+  NISSE ▓▒░ ───────────────────────────────────────────────────────────────────
+   I am large, thinking high
+
+
+
+
+
+
+
+
+
+
+
+╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
+│ ❯ ▍type a message, or !cmd to run a shell command                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ■ READY ▓▒░                                       large · high  │  nisse 0.1.0

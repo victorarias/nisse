@@ -1,7 +1,7 @@
 use std::{path::Path, time::Duration};
 
 use nisse_core::new_id;
-use nisse_protocol::{ProviderHealth, ProviderStatus};
+use nisse_protocol::{ModelInfo, ProviderHealth, ProviderStatus};
 use serde_json::{Value, json};
 
 use crate::process::Process;
@@ -9,9 +9,26 @@ use crate::process::Process;
 /// Bedrock and other backends take a while to report the account.
 const PATIENCE: Duration = Duration::from_secs(25);
 
+/// What Claude Code says of itself before it is asked anything.
+#[derive(Clone)]
+pub(crate) struct Probed {
+    pub(crate) health: ProviderHealth,
+    pub(crate) models: Vec<ModelInfo>,
+}
+
+impl From<ProviderHealth> for Probed {
+    fn from(health: ProviderHealth) -> Self {
+        Self {
+            health,
+            models: Vec::new(),
+        }
+    }
+}
+
 /// Starts claude without a prompt, outside any project and with hooks and MCP servers off, and
-/// reads how it is signed in from its answer to `initialize`. Nothing reaches Claude's API.
-pub(crate) async fn probe(binary: &Path, env: &[(String, String)]) -> ProviderHealth {
+/// reads how it is signed in, and which models it offers, from its answer to `initialize`.
+/// Nothing reaches Claude's API.
+pub(crate) async fn probe(binary: &Path, env: &[(String, String)]) -> Probed {
     let args = [
         "--output-format",
         "stream-json",
@@ -35,7 +52,8 @@ pub(crate) async fn probe(binary: &Path, env: &[(String, String)]) -> ProviderHe
         Ok(process) => process,
         Err(error) => {
             return unavailable
-                .with_message(format!("{error:#}; install Claude Code or set its binary"));
+                .with_message(format!("{error:#}; install Claude Code or set its binary"))
+                .into();
         }
     };
     let request_id = new_id();
@@ -55,9 +73,13 @@ pub(crate) async fn probe(binary: &Path, env: &[(String, String)]) -> ProviderHe
         None
     })
     .await;
-    match answer {
+    let health = match answer {
         Ok(Some(response)) if response["subtype"] == "success" => {
-            health(&response["response"], custom_endpoint(&env))
+            let initialized = &response["response"];
+            return Probed {
+                health: health(initialized, custom_endpoint(&env)),
+                models: models(initialized),
+            };
         }
         Ok(Some(response)) => unavailable.with_message(format!(
             "claude could not start: {}",
@@ -68,7 +90,39 @@ pub(crate) async fn probe(binary: &Path, env: &[(String, String)]) -> ProviderHe
             "claude did not answer within {} seconds",
             PATIENCE.as_secs()
         )),
-    }
+    };
+    health.into()
+}
+
+/// The models Claude Code offers, by the aliases its `--model` takes. Its `default` entry is
+/// what a selection without a model gets, so it is not listed as a model of its own.
+fn models(initialized: &Value) -> Vec<ModelInfo> {
+    initialized["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|model| {
+            let id = model["value"].as_str().filter(|id| *id != "default")?;
+            let efforts = match model["supportsEffort"].as_bool() {
+                Some(true) => model["supportedEffortLevels"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|effort| effort.as_str().map(str::to_owned))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            Some(ModelInfo {
+                id: id.to_owned(),
+                name: model["displayName"].as_str().unwrap_or(id).to_owned(),
+                description: model["description"].as_str().map(str::to_owned),
+                efforts,
+                default_effort: None,
+                context_window: None,
+                code_mode: false,
+            })
+        })
+        .collect()
 }
 
 /// Claude Code reports `tokenSource: "none"` when it found no credentials at all; any other

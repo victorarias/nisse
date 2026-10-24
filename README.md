@@ -33,7 +33,7 @@ Milestone 1, a real agent. What runs today:
   and `nisse.ui.toast`.
 - One server per home, shared by every client. A TUI or `exec` starts it when
   none runs, and it exits once nothing needs it. Each conversation keeps its
-  own directory, provider and model.
+  own directory, and its own model, which anyone in it can switch.
 - The neon TUI.
 
 Next: many clients on one conversation (M2). See the design doc for the plan.
@@ -44,6 +44,7 @@ Next: many clients on one conversation (M2). See the design doc for the plan.
 cargo build
 target/debug/nisse                         # the TUI, with Claude, in this directory
 target/debug/nisse providers               # each provider and how it stands
+target/debug/nisse models                  # each provider's models and efforts
 target/debug/nisse login openai            # sign in with ChatGPT (--device on a headless box)
 target/debug/nisse --provider openai       # the TUI, with OpenAI
 target/debug/nisse exec 'what is in here?' # one prompt, headless; asks on stdin to approve
@@ -64,7 +65,8 @@ there, Claude Code starts there, and its `.nisse/extensions/` load for it.
 | Setting | What it does |
 | --- | --- |
 | `--provider` / `NISSE_PROVIDER` | Who answers a new conversation: `claude` (default), `openai`, one `config.toml` names, or `echo`, which echoes and runs `!command` without a model |
-| `--model` / `NISSE_MODEL` | The new conversation's model; Claude Code's default, or `gpt-6.1-sol` |
+| `--model` / `NISSE_MODEL` | The new conversation's model, instead of the default one |
+| `--effort` / `NISSE_EFFORT` | The new conversation's reasoning effort, such as `low` or `high` |
 | `--claude` / `NISSE_CLAUDE` | The `claude` binary a server this starts drives |
 | `--code-mode-host` / `NISSE_CODE_MODE_HOST` | Codex's `codex-code-mode-host`, which runs code-mode scripts in a server this starts; otherwise `NISSE_HOME/bin/`, then `PATH` |
 | `--record` / `NISSE_RECORD` | Save every provider exchange in this folder as a replayable test fixture, in a server this starts |
@@ -106,6 +108,32 @@ browser opens, or over SSH a code appears to enter on any device. A browser
 on another machine can't reach this one, so paste the address it ends on into
 the prompt. `nisse login <provider>` and `nisse logout <provider>` do the same
 from a shell.
+
+### Models
+
+A conversation's model is its own: a provider, a model and a reasoning effort.
+`/model` in the TUI lists every provider's models; `↑↓` picks one, `←→` its
+effort, and `⏎` switches from the next run on. The switch is an entry in the
+transcript, so everyone in the conversation sees who switched and when.
+
+Switching providers keeps the conversation: OpenAI is sent the whole
+transcript, and a new Claude Code session is retold its first turn and as many
+of its newest as fit in about 16,000 tokens. Neither hears the other's
+reasoning.
+
+A new conversation takes `--provider`, `--model` and `--effort` when they are
+given, and otherwise `default_model` from the project's `.nisse/config.toml`,
+else from `NISSE_HOME/config.toml`, else the model chosen last, else the first
+provider's default:
+
+```toml
+default_model = { provider = "openai", model = "gpt-6.1-sol", effort = "high" }
+```
+
+A project's `.nisse/config.toml` sets only `default_model`. Claude's models are
+the ones Claude Code offers; OpenAI's come from ChatGPT, saved in
+`NISSE_HOME/cache/` for starts that can't ask it, and from the list Codex
+bundles before that.
 
 ### Recording fixtures
 

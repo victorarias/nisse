@@ -16,7 +16,7 @@ expression: without_conversation_id(&waiting)
                               and enter  WXYZ-1234
                                    Esc  cancel
 
-                ⏎  send    !cmd  shell    PgUp  scroll    ^C  quit
+       ⏎  send    !cmd  shell    /model  model    PgUp  scroll    ^C  quit
 
 
 

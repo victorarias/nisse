@@ -5,8 +5,8 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use nisse_core::{
-    Approval, HealthFuture, Provider, ProviderFuture, SignIn, ToolCall, ToolOutcome, Turn,
-    Workspace, approval_for, builtin_tools, run_builtin_tool,
+    Approval, HealthFuture, ModelsFuture, Provider, ProviderFuture, SignIn, ToolCall, ToolOutcome,
+    Turn, Workspace, approval_for, builtin_tools, run_builtin_tool,
 };
 use nisse_protocol::{AuthMethod, Entry, ProviderHealth, ProviderStatus, Skill, kinds};
 use reqwest::StatusCode;
@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth::{AuthServer, Credentials, ORIGINATOR},
-    catalog::wants_code_mode,
+    catalog::{CLIENT_VERSION, Catalog},
     code_mode::{CodeMode, EXEC, HOST_PROGRAM, NestedTools, Run, WAIT},
     record::Recorder,
     sse::Events,
@@ -44,6 +44,8 @@ pub struct OpenAiOptions {
     pub instructions: String,
     /// The Nisse home, for its own AGENTS.md and skills.
     pub home: PathBuf,
+    /// Where the model list ChatGPT sent last is saved, for starts that can't ask it.
+    pub model_list: PathBuf,
     /// A folder to write one fixture per turn into.
     pub record: Option<PathBuf>,
     /// Codex's code-mode host, for the models that work in code mode.
@@ -57,12 +59,14 @@ impl OpenAiOptions {
         instructions: impl Into<String>,
         home: impl Into<PathBuf>,
     ) -> Self {
+        let home = home.into();
         Self {
             auth_path: auth_path.into(),
             auth: AuthServer::default(),
             base_url: BASE_URL.into(),
             instructions: instructions.into(),
-            home: home.into(),
+            model_list: home.join("cache").join("openai-models.json"),
+            home,
             record: None,
             code_mode_host: HOST_PROGRAM.into(),
             nested_tools: NestedTools::default(),
@@ -75,6 +79,9 @@ pub struct OpenAi {
     http: reqwest::Client,
     signing_in: Mutex<()>,
     code_mode: CodeMode,
+    catalog: Catalog,
+    /// Whether ChatGPT was asked for its models since the server started or signed in.
+    asked_for_models: AtomicBool,
     /// ChatGPT refused to refresh the saved sign-in: only signing in again helps.
     rejected: AtomicBool,
 }
@@ -88,18 +95,46 @@ struct Response {
 impl OpenAi {
     pub fn new(options: OpenAiOptions) -> Result<Self> {
         let code_mode = CodeMode::new(options.code_mode_host.clone(), options.nested_tools);
+        let catalog = Catalog::new(options.model_list.clone());
         Ok(Self {
             options,
             http: crate::http_client()?,
             signing_in: Mutex::new(()),
             code_mode,
+            catalog,
+            asked_for_models: AtomicBool::new(false),
             rejected: AtomicBool::new(false),
         })
     }
 
+    /// Asks ChatGPT for the models this sign-in can use, as the Codex release Nisse pins.
+    async fn fetch_models(&self) -> Result<()> {
+        let (credentials, _) = self.signed_in().await?;
+        let response = self
+            .http
+            .get(format!(
+                "{}/codex/models?client_version={CLIENT_VERSION}",
+                self.options.base_url
+            ))
+            .bearer_auth(&credentials.access_token)
+            .header("chatgpt-account-id", &credentials.account_id)
+            .header("originator", ORIGINATOR)
+            .send()
+            .await
+            .context("could not reach ChatGPT")?;
+        let status = response.status();
+        if !status.is_success() {
+            bail!("ChatGPT answered {status} when asked for its models");
+        }
+        let body = response.bytes().await?;
+        self.catalog.fetched(&body)
+    }
+
     async fn answer(&self, turn: &Turn) -> Result<()> {
         let model = turn.model().unwrap_or(MODEL);
-        let run = wants_code_mode(model)
+        let run = self
+            .catalog
+            .wants_code_mode(model)
             .then(|| self.code_mode.begin(turn))
             .transpose()?;
         let answered = self.answer_in(turn, model, run.as_ref()).await;
@@ -219,7 +254,7 @@ impl OpenAi {
                 })
                 .collect(),
         };
-        json!({
+        let mut body = json!({
             "model": model,
             "instructions": instructions,
             "input": transcript.iter().filter_map(input_item).collect::<Vec<_>>(),
@@ -229,7 +264,11 @@ impl OpenAi {
             "store": false,
             "stream": true,
             "prompt_cache_key": turn.conversation_id(),
-        })
+        });
+        if let Some(effort) = turn.effort() {
+            body["reasoning"] = json!({ "effort": effort });
+        }
+        body
     }
 
     async fn respond(
@@ -335,6 +374,19 @@ impl Provider for OpenAi {
         Box::pin(self.answer(turn))
     }
 
+    /// Asks ChatGPT the first time, and whenever a client wants them found again; otherwise,
+    /// and when ChatGPT can't be asked, the list Nisse has.
+    fn models(&self, refresh: bool) -> ModelsFuture<'_> {
+        Box::pin(async move {
+            if (refresh || !self.asked_for_models.swap(true, Ordering::Relaxed))
+                && let Err(error) = self.fetch_models().await
+            {
+                eprintln!("nisse: could not list OpenAI's models: {error:#}");
+            }
+            self.catalog.listed()
+        })
+    }
+
     fn health(&self, _refresh: bool) -> HealthFuture<'_> {
         Box::pin(async { self.current_health() })
     }
@@ -354,6 +406,7 @@ impl Provider for OpenAi {
             )
             .await?;
             self.rejected.store(false, Ordering::Relaxed);
+            self.asked_for_models.store(false, Ordering::Relaxed);
             Ok(())
         })
     }

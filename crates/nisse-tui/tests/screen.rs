@@ -9,12 +9,12 @@ use std::{
 
 use nisse_client::Client;
 use nisse_core::{
-    Approval, Echo, Harness, HarnessOptions, HealthFuture, NoHooks, Provider, ProviderFuture,
-    SignIn, Store, ToolCall, ToolOutcome, Turn, same_hooks,
+    Approval, Echo, Harness, HarnessOptions, HealthFuture, ModelsFuture, NoHooks, Provider,
+    ProviderFuture, SignIn, Store, ToolCall, ToolOutcome, Turn, no_default_model, same_hooks,
 };
 use nisse_protocol::{
-    Actor, AuthInteraction, AuthMethod, AuthResponse, ConversationStartParams, ProviderHealth,
-    ProviderStatus,
+    Actor, AuthInteraction, AuthMethod, AuthResponse, ConversationStartParams, ModelInfo,
+    ProviderHealth, ProviderStatus,
 };
 use nisse_server::Server;
 use ratatui::{
@@ -131,6 +131,7 @@ impl Tui {
             HarnessOptions {
                 providers,
                 hooks: same_hooks(Arc::new(NoHooks)),
+                default_model: no_default_model(),
             },
         );
         let owner = Actor::Person {
@@ -172,6 +173,7 @@ impl Tui {
                     cwd: std::env::current_dir().unwrap(),
                     provider: None,
                     model: None,
+                    effort: None,
                 }),
                 None,
                 nisse_tui::Theme::NEON,
@@ -611,4 +613,74 @@ async fn a_browser_sign_in_opens_the_browser_and_takes_the_address_it_ended_on()
         *tui.opened.lock().unwrap(),
         ["https://auth.example/authorize?state=s"]
     );
+}
+
+/// Two models to choose from, the larger one with efforts, and it says which one answers.
+struct Pair;
+
+impl Provider for Pair {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
+    fn models(&self, _refresh: bool) -> ModelsFuture<'_> {
+        let model = |id: &str, name: &str, efforts: &[&str], description: &str| ModelInfo {
+            id: id.into(),
+            name: name.into(),
+            description: Some(description.into()),
+            efforts: efforts.iter().map(|effort| (*effort).to_owned()).collect(),
+            default_effort: None,
+            context_window: None,
+            code_mode: false,
+        };
+        Box::pin(async move {
+            vec![
+                model("small", "Small", &[], "Quick and light"),
+                model("large", "Large", &["low", "high"], "Slow and deep"),
+            ]
+        })
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            turn.answer(&format!(
+                "I am {}, thinking {}",
+                turn.model().unwrap_or("whatever"),
+                turn.effort().unwrap_or("as usual")
+            ))
+        })
+    }
+}
+
+#[tokio::test]
+async fn the_model_picker_switches_the_conversation_to_the_model_and_effort_chosen() {
+    let echo = Arc::new(Echo {
+        think: Duration::ZERO,
+    });
+    let tui = Tui::with(
+        vec![("echo".into(), echo), ("pair".into(), Arc::new(Pair))],
+        false,
+    )
+    .await;
+    tui.screen.shows(&["READY"]).await;
+
+    tui.type_line("/model");
+    let picker = tui.screen.shows(&["MODEL", "Large"]).await;
+    for _ in 0..3 {
+        tui.press(KeyCode::Down);
+    }
+    tui.press(KeyCode::Right);
+    tui.press(KeyCode::Right);
+    let chosen = tui.screen.shows(&["‹ high"]).await;
+    tui.press(KeyCode::Enter);
+    tui.screen.shows(&["large · high", "READY"]).await;
+    tui.type_line("who are you?");
+    let answered = tui
+        .screen
+        .shows(&["I am large, thinking high", "READY"])
+        .await;
+
+    insta::assert_snapshot!("picker", without_conversation_id(&picker));
+    insta::assert_snapshot!("chosen", without_conversation_id(&chosen));
+    insta::assert_snapshot!("switched", without_conversation_id(&answered));
 }

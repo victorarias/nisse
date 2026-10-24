@@ -11,13 +11,15 @@ use std::{
 use nisse_claude::{Claude, ClaudeOptions};
 use nisse_client::Client;
 use nisse_core::{
-    Harness, HarnessOptions, Hooks, NoHooks, Store, ToolCall, ToolOutcome, same_hooks,
+    Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, Store, ToolCall, ToolOutcome,
+    no_default_model, same_hooks,
 };
 use nisse_protocol::{
     Actor, ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthInteraction, AuthMethod,
     AuthPhase, AuthRespondParams, AuthResponse, AuthStartParams, AuthState, ClientRequest,
-    Conversation, ConversationReadResult, ConversationStartParams, ConversationStatus,
-    ConversationSubmitParams, ConversationSubmitResult, ConversationSubscribeParams, Entry, Input,
+    Conversation, ConversationReadResult, ConversationSelectModelParams, ConversationStartParams,
+    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
+    ConversationSubscribeParams, Entry, Input, ModelSelection, ModelsListParams, ModelsListResult,
     ProviderSnapshot, ProviderStatus, ProvidersListParams, ProvidersListResult, ServerNotification,
     WhenBusy, kinds,
 };
@@ -26,6 +28,7 @@ use serde_json::Value;
 use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
 
 const MODEL: &str = "claude-haiku-5-5";
+const LARGER_MODEL: &str = "claude-sonnet-5-5";
 const REPLAY_FIXTURE: &str = ".nisse-claude-replay.ndjson";
 
 fn live_claude() -> Option<PathBuf> {
@@ -133,11 +136,20 @@ impl Scenario {
 }
 
 fn serve(store: Store, claude: Arc<Claude>, hooks: Arc<dyn Hooks>) -> Arc<Server> {
+    serve_providers(store, vec![("claude".into(), claude)], hooks)
+}
+
+fn serve_providers(
+    store: Store,
+    providers: Vec<(String, Arc<dyn Provider>)>,
+    hooks: Arc<dyn Hooks>,
+) -> Arc<Server> {
     let harness = Harness::with_store(
         store,
         HarnessOptions {
-            providers: vec![("claude".into(), claude)],
+            providers,
             hooks: same_hooks(hooks),
+            default_model: no_default_model(),
         },
     );
     harness.resume().unwrap();
@@ -170,6 +182,7 @@ impl Watch {
                 cwd: cwd.to_owned(),
                 provider: None,
                 model: model.map(str::to_owned),
+                effort: None,
             }))
             .await
             .unwrap();
@@ -272,6 +285,38 @@ impl Watch {
             watch.status == ConversationStatus::Idle && watch.has(kinds::ASSISTANT)
         })
         .await;
+    }
+
+    /// Until the conversation is idle after its `answers`th answer.
+    async fn until_answers(&mut self, answers: usize) {
+        self.until("the answer and the conversation to go idle", |watch| {
+            watch.status == ConversationStatus::Idle && watch.count(kinds::ASSISTANT) >= answers
+        })
+        .await;
+    }
+
+    fn count(&self, kind: &str) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.kind == kind)
+            .count()
+    }
+
+    async fn select(&self, provider: &str, model: Option<&str>, effort: Option<&str>) {
+        let _: Conversation = self
+            .client
+            .request(ClientRequest::ConversationSelectModel(
+                ConversationSelectModelParams {
+                    conversation_id: self.conversation.id.clone(),
+                    selection: ModelSelection {
+                        provider: provider.into(),
+                        model: model.map(str::to_owned),
+                        effort: effort.map(str::to_owned),
+                    },
+                },
+            ))
+            .await
+            .unwrap();
     }
 
     fn has(&self, kind: &str) -> bool {
@@ -1089,15 +1134,6 @@ async fn two_steers_in_one_claude_turn_both_reach_claude_and_the_next_message_st
     scenario.keep_recording(&watch.conversation);
 }
 
-impl Watch {
-    fn count(&self, kind: &str) -> usize {
-        self.entries
-            .iter()
-            .filter(|entry| entry.kind == kind)
-            .count()
-    }
-}
-
 /// The store as a crash right after each of its commits would leave it on disk: a copy of the
 /// database with its write-ahead log cut after that commit.
 fn crash_points(database: &Path) -> Vec<tempfile::TempDir> {
@@ -1409,4 +1445,134 @@ async fn credentials_claude_s_api_refused_make_claude_read_signed_out() {
 
     assert_eq!(before.health.status, ProviderStatus::Ready);
     assert_eq!(after.health.status, ProviderStatus::SignedOut);
+}
+
+#[tokio::test]
+async fn claude_offers_the_models_claude_code_lists_with_the_efforts_each_takes() {
+    let scenario = Scenario::new("models");
+    let config_dir = tempfile::tempdir().unwrap();
+    let server = serve_instance(&scenario, config_dir.path());
+    let (client, _notifications) = Client::new(server.connect_in_process());
+    client.initialize("claude-test").await.unwrap();
+
+    let listed: ModelsListResult = client
+        .request(ClientRequest::ModelsList(ModelsListParams::default()))
+        .await
+        .unwrap();
+
+    let claude = &listed.providers[0];
+    assert_eq!(claude.default_model, None);
+    let models: Vec<(&str, &str)> = claude
+        .models
+        .iter()
+        .map(|model| (model.id.as_str(), model.name.as_str()))
+        .collect();
+    assert_eq!(
+        models,
+        [
+            ("sonnet", "Sonnet"),
+            ("fable", "Fable"),
+            ("opus", "Opus"),
+            ("haiku", "Haiku")
+        ]
+    );
+    assert_eq!(
+        claude.models[2].efforts,
+        ["low", "medium", "high", "xhigh", "max"]
+    );
+    assert_eq!(
+        claude.models[2].description.as_deref(),
+        Some("Opus 5.5 · Best for everyday, complex tasks")
+    );
+}
+
+#[tokio::test]
+async fn a_new_model_reaches_the_live_claude_and_a_new_effort_resumes_its_session() {
+    let scenario = Scenario::new("switch_model");
+    let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
+
+    watch
+        .submit("Reply with exactly: one", WhenBusy::FollowUp)
+        .await;
+    watch.until_answers(1).await;
+    watch.select("claude", Some(LARGER_MODEL), None).await;
+    watch
+        .submit("Reply with exactly: two", WhenBusy::FollowUp)
+        .await;
+    watch.until_answers(2).await;
+    let second = watch.last(kinds::ASSISTANT).clone();
+    watch
+        .select("claude", Some(LARGER_MODEL), Some("low"))
+        .await;
+    watch
+        .submit(
+            "What were your two previous replies? Reply with just them, separated by a comma.",
+            WhenBusy::FollowUp,
+        )
+        .await;
+    watch.until_answers(3).await;
+
+    assert_eq!(second.data["text"], "two");
+    assert_eq!(
+        second.author,
+        Actor::Model {
+            model: LARGER_MODEL.into()
+        }
+    );
+    assert_eq!(
+        watch.final_text().to_lowercase().replace(' ', ""),
+        "one,two"
+    );
+    scenario.keep_recording(&watch.conversation);
+}
+
+#[tokio::test]
+async fn a_conversation_handed_to_claude_is_retold_its_first_turn_and_as_many_newest_as_fit() {
+    let scenario = Scenario::new("handoff");
+    let echo: Arc<dyn Provider> = Arc::new(Echo {
+        think: Duration::ZERO,
+    });
+    let server = serve_providers(
+        Store::open_in_memory().unwrap(),
+        vec![("echo".into(), echo), ("claude".into(), scenario.claude())],
+        Arc::new(NoHooks),
+    );
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), None).await;
+
+    let long = format!("Filler to forget: {}", "lorem ipsum ".repeat(6_000));
+    for (said, text) in ["Remember the word lantern.", &long, "Nothing else for now."]
+        .into_iter()
+        .enumerate()
+    {
+        watch.submit(text, WhenBusy::FollowUp).await;
+        watch.until_answers(said + 1).await;
+    }
+    watch.select("claude", Some(MODEL), None).await;
+    watch
+        .submit(
+            "Which word did I ask you to remember? Reply with just the word.",
+            WhenBusy::FollowUp,
+        )
+        .await;
+    watch.until_answers(4).await;
+    let remembered = watch.final_text().to_owned();
+    watch.select("echo", None, None).await;
+    watch.submit("plum", WhenBusy::FollowUp).await;
+    watch.until_answers(5).await;
+    watch.select("claude", Some(MODEL), None).await;
+    watch
+        .submit(
+            "What was the last thing I said before this message? Reply with just that word.",
+            WhenBusy::FollowUp,
+        )
+        .await;
+    watch.until_answers(6).await;
+
+    assert_eq!(remembered.to_lowercase().trim_end_matches('.'), "lantern");
+    assert_eq!(
+        watch.final_text().to_lowercase().trim_end_matches('.'),
+        "plum"
+    );
+    scenario.keep_recording(&watch.conversation);
 }

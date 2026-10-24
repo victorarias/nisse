@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use nisse_protocol::{
-    Actor, AuthInteraction, AuthPhase, ConversationStatus, Entry, ProviderStatus, kinds,
+    Actor, AuthInteraction, AuthPhase, ConversationStatus, Entry, ModelSelection, ProviderStatus,
+    kinds,
 };
 use ratatui::{
     Frame,
@@ -16,6 +17,7 @@ use nisse_protocol::AuthState;
 
 use crate::{
     App, gnome,
+    picker::Picker,
     theme::{LOGO, Theme},
 };
 
@@ -33,7 +35,10 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         Paragraph::new(header_line(app, theme)).style(theme.bar()),
         header,
     );
-    if app.entries.is_empty() && app.live.is_empty() {
+    let said_nothing = app.entries.iter().all(|entry| entry.kind == kinds::MODEL);
+    if let Some(picker) = &app.picker {
+        draw_picker(frame, transcript, picker, theme);
+    } else if said_nothing && app.live.is_empty() {
         draw_splash(frame, transcript, app, theme);
     } else {
         draw_transcript(frame, transcript, app, theme);
@@ -287,6 +292,7 @@ fn key_hints(theme: &Theme) -> Line<'static> {
     for (index, (key, action)) in [
         ("⏎", "send"),
         ("!cmd", "shell"),
+        ("/model", "model"),
         ("PgUp", "scroll"),
         ("^C", "quit"),
     ]
@@ -300,6 +306,119 @@ fn key_hints(theme: &Theme) -> Line<'static> {
         spans.push(Span::styled(format!(" {action}"), theme.fg(theme.dim)));
     }
     Line::from(spans)
+}
+
+/// Every provider's models in one list, the highlighted one with the effort it would get.
+fn draw_picker(frame: &mut Frame, area: Rect, picker: &Picker, theme: &Theme) {
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(theme.fg(theme.violet))
+        .padding(Padding::horizontal(1))
+        .title(Line::from(Span::styled(
+            " MODEL ",
+            theme.glow(theme.magenta),
+        )))
+        .title_bottom(Line::from(vec![
+            Span::styled(" ↑↓ ", theme.key()),
+            Span::styled(" model  ", theme.fg(theme.dim)),
+            Span::styled(" ←→ ", theme.key()),
+            Span::styled(" effort  ", theme.fg(theme.dim)),
+            Span::styled(" ⏎ ", theme.key()),
+            Span::styled(" switch  ", theme.fg(theme.dim)),
+            Span::styled(" Esc ", theme.key()),
+            Span::styled(" close ", theme.fg(theme.dim)),
+        ]));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if !picker.listed {
+        frame.render_widget(
+            Paragraph::new(Line::styled("asking the providers…", theme.fg(theme.dim))),
+            inner,
+        );
+        return;
+    }
+    let width = inner.width as usize;
+    let provider_width = column_width(picker.rows.iter().map(|row| row.provider.as_str()));
+    let name_width = column_width(picker.rows.iter().map(|row| row.name.as_str()));
+    let effort_width = picker
+        .rows
+        .iter()
+        .flat_map(|row| row.efforts.iter().map(|effort| effort.chars().count()))
+        .chain(["default".len()])
+        .max()
+        .unwrap_or_default();
+    let visible = inner.height as usize;
+    let top = (picker.cursor + 1).saturating_sub(visible);
+    let lines: Vec<Line> = picker
+        .rows
+        .iter()
+        .enumerate()
+        .skip(top)
+        .take(visible)
+        .map(|(index, row)| {
+            let highlighted = index == picker.cursor;
+            let ink = if highlighted { theme.ink } else { theme.dim };
+            let effort = match row.effort {
+                Some(effort) => row.efforts[effort].clone(),
+                None => "default".into(),
+            };
+            let mut spans = vec![
+                Span::styled(
+                    if highlighted { "▸ " } else { "  " },
+                    theme.glow(theme.magenta),
+                ),
+                Span::styled(
+                    if row.current { "● " } else { "  " },
+                    theme.glow(theme.cyan),
+                ),
+                Span::styled(
+                    format!("{:<provider_width$}  ", row.provider),
+                    theme.fg(theme.violet),
+                ),
+                Span::styled(format!("{:<name_width$}  ", row.name), theme.fg(ink)),
+            ];
+            let effort = if row.efforts.is_empty() {
+                " ".repeat(effort_width + 4)
+            } else if highlighted {
+                format!("‹ {effort:<effort_width$} ›")
+            } else {
+                format!("  {effort:<effort_width$}  ")
+            };
+            spans.push(Span::styled(effort, theme.fg(theme.yellow)));
+            let used: usize = spans.iter().map(|span| span.width()).sum();
+            if let Some(description) = &row.description {
+                spans.push(Span::styled(
+                    format!(
+                        "  {}",
+                        truncate(description, width.saturating_sub(used + 2))
+                    ),
+                    theme.fg(theme.faint),
+                ));
+            }
+            Line::from(spans)
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn column_width<'a>(cells: impl Iterator<Item = &'a str>) -> usize {
+    cells
+        .map(|cell| cell.chars().count())
+        .max()
+        .unwrap_or_default()
+}
+
+/// How the status bar and the transcript name a selection: its model, or the provider when it
+/// picks, then the effort when one was chosen.
+fn selection_label(selection: &ModelSelection) -> String {
+    let model = selection
+        .model
+        .clone()
+        .unwrap_or_else(|| selection.provider.clone());
+    match &selection.effort {
+        Some(effort) => format!("{model} · {effort}"),
+        None => model,
+    }
 }
 
 fn draw_transcript(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
@@ -568,6 +687,21 @@ fn own_lines(entry: &Entry, calls: &Calls, width: usize, theme: &Theme) -> Vec<L
         kinds::TOOL_CALL => return vec![card_head("⚙", theme.violet, entry, width, theme)],
         kinds::APPROVAL_REQUEST => return approval_lines(entry, calls, width, theme),
         kinds::APPROVAL => return Vec::new(),
+        kinds::MODEL => {
+            let switched = serde_json::from_value::<ModelSelection>(entry.data.clone())
+                .map(|selection| {
+                    format!("{} ({})", selection_label(&selection), selection.provider)
+                })
+                .unwrap_or_else(|_| "another model".into());
+            vec![Line::from(vec![
+                Span::styled("◆ ", theme.glow(theme.violet)),
+                Span::styled(
+                    format!("{} switched to ", actor_name(&entry.author)),
+                    theme.fg(theme.dim),
+                ),
+                Span::styled(switched, theme.fg(theme.ink)),
+            ])]
+        }
         kinds::TOOL_RESULT => tool_result_lines(entry, width, theme),
         other => vec![Line::styled(format!("· {other}"), theme.fg(theme.dim))],
     };
@@ -722,7 +856,10 @@ fn status_left(app: &App, theme: &Theme) -> Line<'static> {
 
 fn status_right(app: &App, theme: &Theme) -> Line<'static> {
     Line::from(vec![
-        Span::styled(app.model.clone(), theme.fg(theme.violet)),
+        Span::styled(
+            selection_label(&app.conversation.selection),
+            theme.fg(theme.violet),
+        ),
         Span::styled("  │  ", theme.fg(theme.faint)),
         Span::styled(
             format!("nisse {} ", env!("CARGO_PKG_VERSION")),

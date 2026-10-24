@@ -84,3 +84,48 @@ fn a_setting_that_only_claude_takes_is_refused_on_openai() {
     let said = String::from_utf8(output.stderr).unwrap();
     assert!(said.contains("only claude providers take"), "{said}");
 }
+
+#[test]
+fn a_project_s_default_model_wins_over_the_config_file_s() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        "default_model = { provider = \"echo\" }\n",
+    )
+    .unwrap();
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".nisse")).unwrap();
+    std::fs::write(
+        project.path().join(".nisse/config.toml"),
+        "[default_model]\nprovider = \"claude\"\nmodel = \"opus\"\n",
+    )
+    .unwrap();
+    let secretive = tempfile::tempdir().unwrap();
+    std::fs::create_dir(secretive.path().join(".nisse")).unwrap();
+    std::fs::write(
+        secretive.path().join(".nisse/config.toml"),
+        "[providers.claude]\ndriver = \"claude\"\nbinary = \"/somewhere/else\"\n",
+    )
+    .unwrap();
+    let exec = |cwd: &Path| {
+        let output = nisse(home.path())
+            .args(["exec", "hello"])
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            String::from_utf8(output.stdout).unwrap(),
+            String::from_utf8(output.stderr).unwrap(),
+        )
+    };
+
+    let (_, outside, _) = exec(home.path());
+    let (_, inside, _) = exec(project.path());
+    let (refused, _, why) = exec(secretive.path());
+
+    assert!(outside.contains("You said: hello"), "{outside}");
+    assert!(inside.contains("Model error"), "{inside}");
+    assert!(!refused);
+    assert!(why.contains("unknown field `providers`"), "{why}");
+}

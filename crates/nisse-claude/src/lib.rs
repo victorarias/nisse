@@ -15,12 +15,13 @@ use std::{
 };
 
 use anyhow::{Result, bail};
-use nisse_core::{HealthFuture, Provider, ProviderFuture, SignIn, Turn, new_id};
-use nisse_protocol::{AuthInteraction, AuthMethod, AuthResponse, ProviderHealth, kinds};
+use nisse_core::{HealthFuture, ModelsFuture, Provider, ProviderFuture, SignIn, Turn, new_id};
+use nisse_protocol::{AuthInteraction, AuthMethod, AuthResponse, kinds};
 use serde_json::json;
 use tokio::task::AbortHandle;
 
 use crate::{
+    probe::Probed,
     process::Process,
     record::Recorder,
     session::{PRE_TOOL_USE, ProviderState, Session, Unresumable},
@@ -69,7 +70,7 @@ impl ClaudeOptions {
 pub struct Claude {
     options: ClaudeOptions,
     idle: Arc<Mutex<HashMap<String, Parked>>>,
-    health: tokio::sync::Mutex<Option<ProviderHealth>>,
+    probed: tokio::sync::Mutex<Option<Probed>>,
 }
 
 struct Parked {
@@ -91,8 +92,20 @@ impl Claude {
         Self {
             options,
             idle: Arc::default(),
-            health: tokio::sync::Mutex::default(),
+            probed: tokio::sync::Mutex::default(),
         }
+    }
+
+    /// What the probe found last, or finds now when nothing was found yet or `refresh` is set.
+    async fn probed(&self, refresh: bool) -> Probed {
+        let mut known = self.probed.lock().await;
+        if let Some(probed) = known.as_ref().filter(|_| !refresh) {
+            return probed.clone();
+        }
+        let options = &self.options;
+        let probed = probe::probe(&options.binary, &options.env()).await;
+        *known = Some(probed.clone());
+        probed
     }
 
     async fn run_turn(&self, turn: &Turn) -> Result<()> {
@@ -103,9 +116,14 @@ impl Claude {
             .expect("idle lock")
             .remove(&conversation_id)
             .map(|parked| parked.session);
-        parked.take_if(|session| session.has_stopped());
+        parked.take_if(|session| {
+            session.has_stopped() || turn.provider_changed() || session.effort() != turn.effort()
+        });
         let mut session = match parked {
-            Some(session) => session,
+            Some(mut session) => {
+                session.use_model(turn.model());
+                session
+            }
             None => self.start(turn, resumable_state(turn)?)?,
         };
         let mut answered = session.answer(turn).await;
@@ -118,7 +136,7 @@ impl Claude {
             answered = session.answer(turn).await;
         }
         if session.auth_failed() {
-            self.health.lock().await.take();
+            self.probed.lock().await.take();
         }
         answered?;
         self.park(conversation_id, session);
@@ -133,7 +151,7 @@ impl Claude {
             && turn
                 .transcript()?
                 .iter()
-                .any(|entry| entry.kind != kinds::USER);
+                .any(|entry| ![kinds::USER, kinds::MODEL].contains(&entry.kind.as_str()));
         let state = resumable.unwrap_or_else(|| ProviderState {
             session: new_id(),
             head: None,
@@ -157,6 +175,9 @@ impl Claude {
         .into();
         if let Some(model) = turn.model() {
             args.extend(["--model".to_owned(), model.to_owned()]);
+        }
+        if let Some(effort) = turn.effort() {
+            args.extend(["--effort".to_owned(), effort.to_owned()]);
         }
         args.extend(self.options.args.iter().cloned());
         match &state.head {
@@ -194,7 +215,7 @@ impl Claude {
                 "hooks": { "PreToolUse": [{ "hookCallbackIds": [PRE_TOOL_USE] }] },
             },
         }));
-        let session = Session::new(process, state);
+        let session = Session::new(process, state, turn.model(), turn.effort());
         Ok(if retell { session.retelling() } else { session })
     }
 
@@ -252,17 +273,12 @@ impl Provider for Claude {
         Box::pin(self.run_turn(turn))
     }
 
+    fn models(&self, refresh: bool) -> ModelsFuture<'_> {
+        Box::pin(async move { self.probed(refresh).await.models })
+    }
+
     fn health(&self, refresh: bool) -> HealthFuture<'_> {
-        Box::pin(async move {
-            let mut known = self.health.lock().await;
-            if let Some(health) = known.as_ref().filter(|_| !refresh) {
-                return health.clone();
-            }
-            let options = &self.options;
-            let health = probe::probe(&options.binary, &options.env()).await;
-            *known = Some(health.clone());
-            health
-        })
+        Box::pin(async move { self.probed(refresh).await.health })
     }
 
     fn sign_in_methods(&self) -> Vec<AuthMethod> {
@@ -305,7 +321,7 @@ impl Provider for Claude {
                 bail!("`claude auth logout` failed ({})", status.status);
             }
             self.idle.lock().expect("idle lock").clear();
-            self.health.lock().await.take();
+            self.probed.lock().await.take();
             Ok(())
         })
     }

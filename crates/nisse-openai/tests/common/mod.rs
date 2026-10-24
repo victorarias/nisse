@@ -12,7 +12,9 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use nisse_client::Client;
-use nisse_core::{Harness, HarnessOptions, Hooks, NoHooks, Store, Workspace, same_hooks};
+use nisse_core::{
+    Harness, HarnessOptions, Hooks, NoHooks, Store, Workspace, no_default_model, same_hooks,
+};
 use nisse_openai::{AuthServer, OpenAi, OpenAiOptions};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthInteraction, AuthMethod,
@@ -43,6 +45,8 @@ const ANY: &str = "<any>";
 #[derive(Debug, Clone)]
 pub struct Received {
     pub path: String,
+    /// The path with its query.
+    pub target: String,
     pub headers: HashMap<String, String>,
     pub body: String,
 }
@@ -71,6 +75,7 @@ struct Script {
     responses: VecDeque<Reply>,
     hold: Option<(usize, Arc<Notify>)>,
     tokens: VecDeque<Value>,
+    models: Option<Value>,
     received: Vec<Received>,
 }
 
@@ -140,6 +145,11 @@ impl Fake {
         }));
     }
 
+    /// What `/codex/models` answers from now on; until then it answers 404.
+    pub fn list_models(&self, models: Value) {
+        self.script.lock().unwrap().models = Some(models);
+    }
+
     /// Makes the next streamed reply stop after `events` events until the returned bell rings.
     pub fn hold_after(&self, events: usize) -> Arc<Notify> {
         let release = Arc::new(Notify::new());
@@ -193,6 +203,10 @@ async fn serve(mut stream: TcpStream, script: Arc<Mutex<Script>>) {
                     Reply::Http(500, json!({ "detail": "nothing scripted" })),
                     None,
                 ),
+            },
+            "/codex/models" => match &script.models {
+                Some(models) => (Reply::Http(200, models.clone()), None),
+                None => (Reply::Http(404, json!({ "detail": "not found" })), None),
             },
             "/oauth/token" => match script.tokens.pop_front() {
                 Some(tokens) => (Reply::Http(200, tokens), None),
@@ -278,6 +292,7 @@ async fn read_request(stream: &mut TcpStream) -> Option<Received> {
     }
     Some(Received {
         path: target.split('?').next()?.to_owned(),
+        target: target.clone(),
         headers,
         body: String::from_utf8_lossy(&bytes[head_end..head_end + length]).into_owned(),
     })
@@ -441,6 +456,7 @@ impl Nisse {
             HarnessOptions {
                 providers: vec![(PROVIDER.into(), provider)],
                 hooks: same_hooks(hooks),
+                default_model: no_default_model(),
             },
         );
         let server = Server::new(harness, broadcast::channel(16).0, owner());
@@ -452,6 +468,7 @@ impl Nisse {
                 cwd: workspace.cwd,
                 provider: None,
                 model: Some(model.into()),
+                effort: None,
             }))
             .await
             .unwrap();

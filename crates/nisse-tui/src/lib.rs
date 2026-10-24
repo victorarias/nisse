@@ -2,6 +2,7 @@
 
 mod gnome;
 mod host;
+mod picker;
 mod theme;
 mod view;
 
@@ -12,10 +13,11 @@ use nisse_client::Client;
 use nisse_protocol::{
     ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthCancelParams, AuthInteraction,
     AuthMethod, AuthPhase, AuthRespondParams, AuthResponse, AuthStartParams, AuthState,
-    ClientRequest, Conversation, ConversationReadResult, ConversationStartParams,
-    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
-    ConversationSubscribeParams, Entry, Input, ProviderSnapshot, ProviderStatus,
-    ProvidersListParams, ProvidersListResult, ServerNotification, UiChanged, WhenBusy,
+    ClientRequest, Conversation, ConversationReadResult, ConversationSelectModelParams,
+    ConversationStartParams, ConversationStatus, ConversationSubmitParams,
+    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ModelSelection,
+    ModelsListParams, ModelsListResult, ProviderModels, ProviderSnapshot, ProviderStatus,
+    ProvidersListParams, ProvidersListResult, ServerNotification, UiChanged, WhenBusy, kinds,
 };
 use ratatui::{
     Terminal,
@@ -24,6 +26,8 @@ use ratatui::{
     widgets::Clear,
 };
 use tokio::sync::mpsc;
+
+use crate::picker::Picker;
 
 pub use host::Host;
 pub use theme::Theme;
@@ -43,13 +47,15 @@ pub struct App {
     scroll_back: u16,
     frame: usize,
     error: Option<String>,
-    model: String,
     providers: Vec<ProviderSnapshot>,
     /// The newest sign-in any client runs, until it ends.
     sign_in: Option<AuthState>,
     /// The sign-in this client started, which it alone opens a browser or a terminal for.
     started: Option<String>,
     listed: mpsc::UnboundedSender<Vec<ProviderSnapshot>>,
+    /// The `/model` picker, while it is open.
+    picker: Option<Picker>,
+    models: mpsc::UnboundedSender<Vec<ProviderModels>>,
 }
 
 /// Which conversation the TUI shows.
@@ -120,11 +126,8 @@ where
             },
         ))
         .await?;
-    let model = conversation
-        .model
-        .clone()
-        .unwrap_or_else(|| conversation.provider.clone());
     let (listed, mut lists) = mpsc::unbounded_channel();
+    let (models, mut model_lists) = mpsc::unbounded_channel();
     let mut app = App {
         status: snapshot.conversation.status,
         working_since: (snapshot.conversation.status == ConversationStatus::Working)
@@ -138,11 +141,12 @@ where
         scroll_back: 0,
         frame: 0,
         error: notice,
-        model,
         providers: Vec::new(),
         sign_in: None,
         started: None,
         listed,
+        picker: None,
+        models,
     };
     app.list_providers(&client);
 
@@ -166,6 +170,11 @@ where
                 }
             }
             Some(providers) = lists.recv() => app.providers = providers,
+            Some(models) = model_lists.recv() => {
+                if let Some(picker) = &mut app.picker {
+                    picker.list(models, &app.conversation.selection);
+                }
+            }
             _ = sleep_until(tick) => app.on_tick(),
         }
     }
@@ -212,6 +221,58 @@ impl App {
         });
     }
 
+    /// Lists every provider's models in the background, for the picker.
+    fn list_models(&self, client: &Client) {
+        let client = client.clone();
+        let models = self.models.clone();
+        tokio::spawn(async move {
+            let request = ClientRequest::ModelsList(ModelsListParams::default());
+            if let Ok(list) = client.request::<ModelsListResult>(request).await {
+                let _ = models.send(list.providers);
+            }
+        });
+    }
+
+    async fn select_model(&mut self, client: &Client, selection: ModelSelection) {
+        let selected = client
+            .request::<Conversation>(ClientRequest::ConversationSelectModel(
+                ConversationSelectModelParams {
+                    conversation_id: self.conversation.id.clone(),
+                    selection,
+                },
+            ))
+            .await;
+        match selected {
+            Ok(conversation) => {
+                self.conversation.selection = conversation.selection;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+    }
+
+    /// Returns true when the key went to the open picker.
+    async fn on_picker_key(&mut self, code: KeyCode, client: &Client) -> bool {
+        let Some(picker) = &mut self.picker else {
+            return false;
+        };
+        match code {
+            KeyCode::Up => picker.up(),
+            KeyCode::Down => picker.down(),
+            KeyCode::Left => picker.step_effort(false),
+            KeyCode::Right | KeyCode::Tab => picker.step_effort(true),
+            KeyCode::Esc => self.picker = None,
+            KeyCode::Enter => {
+                if let Some(selection) = picker.chosen() {
+                    self.picker = None;
+                    self.select_model(client, selection).await;
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// The command to hand the terminal to, when this client's sign-in asks for one.
     fn on_notification(
         &mut self,
@@ -228,6 +289,13 @@ impl App {
                     self.live = live;
                 }
                 if !commit.entries.is_empty() {
+                    for entry in &commit.entries {
+                        if entry.kind == kinds::MODEL
+                            && let Ok(selection) = serde_json::from_value(entry.data.clone())
+                        {
+                            self.conversation.selection = selection;
+                        }
+                    }
                     self.entries.extend(commit.entries);
                     self.scroll_back = 0;
                 }
@@ -395,8 +463,13 @@ impl App {
             self.resolve(client, call_id, answer == 'y').await;
             return Ok(false);
         }
+        if let (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) = (code, modifiers) {
+            return Ok(true);
+        }
+        if self.on_picker_key(code, client).await {
+            return Ok(false);
+        }
         match (code, modifiers) {
-            (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => return Ok(true),
             (KeyCode::Char('l'), KeyModifiers::CONTROL) if self.sign_in.is_none() => {
                 self.start_sign_in(client, host).await
             }
@@ -406,6 +479,11 @@ impl App {
             {
                 let url = std::mem::take(&mut self.input).trim().to_owned();
                 self.respond(client, AuthResponse::Callback { url }).await;
+            }
+            (KeyCode::Enter, _) if self.input.trim() == "/model" => {
+                self.input.clear();
+                self.picker = Some(Picker::loading());
+                self.list_models(client);
             }
             (KeyCode::Enter, _) if !self.input.trim().is_empty() => {
                 let text = std::mem::take(&mut self.input);

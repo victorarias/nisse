@@ -2,7 +2,8 @@ use std::{future::Future, path::Path, pin::Pin, time::Duration};
 
 use anyhow::{Result, bail};
 use nisse_protocol::{
-    AuthInteraction, AuthMethod, AuthResponse, ProviderHealth, ProviderStatus, Skill, kinds,
+    AuthInteraction, AuthMethod, AuthResponse, ModelInfo, ProviderHealth, ProviderStatus, Skill,
+    kinds,
 };
 use tokio::sync::mpsc;
 
@@ -13,6 +14,7 @@ use crate::{
 
 pub type ProviderFuture<'a, T = ()> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 pub type HealthFuture<'a> = Pin<Box<dyn Future<Output = ProviderHealth> + Send + 'a>>;
+pub type ModelsFuture<'a> = Pin<Box<dyn Future<Output = Vec<ModelInfo>> + Send + 'a>>;
 
 /// Runs one turn: answers the conversation's newest input, committing through `turn` as it goes.
 /// A provider that runs its own agent loop, like Claude Code, still commits every step there.
@@ -35,6 +37,12 @@ pub trait Provider: Send + Sync {
     }
 
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a>;
+
+    /// The models a selection can name, best first, as last found, or found again when
+    /// `refresh` is set.
+    fn models(&self, _refresh: bool) -> ModelsFuture<'_> {
+        Box::pin(async { Vec::new() })
+    }
 
     /// How it stands, as last found, or found again when `refresh` is set.
     fn health(&self, _refresh: bool) -> HealthFuture<'_> {
@@ -96,6 +104,20 @@ impl Provider for Echo {
 
     fn default_model(&self) -> Option<&str> {
         Some("echo")
+    }
+
+    fn models(&self, _refresh: bool) -> ModelsFuture<'_> {
+        Box::pin(async {
+            vec![ModelInfo {
+                id: "echo".into(),
+                name: "Echo".into(),
+                description: Some("Says what it was told and runs !commands".into()),
+                efforts: Vec::new(),
+                default_effort: None,
+                context_window: None,
+                code_mode: false,
+            }]
+        })
     }
 
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
