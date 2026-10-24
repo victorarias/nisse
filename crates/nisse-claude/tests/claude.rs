@@ -573,7 +573,7 @@ fn a_run_killed_mid_tool_resumes_claudes_session_where_nisse_last_committed() {
     assert!(made.success());
 
     let crashed = tokio::runtime::Runtime::new().unwrap();
-    let conversation = crashed.block_on(async {
+    let (conversation, command_started) = crashed.block_on(async {
         let server = scenario.start(Store::open(&path).unwrap(), Arc::new(NoHooks));
         let mut watch = Watch::new_conversation(&server).await;
         watch
@@ -589,16 +589,17 @@ fn a_run_killed_mid_tool_resumes_claudes_session_where_nisse_last_committed() {
             .resolve(request.data["call_id"].as_str().unwrap(), true)
             .await;
         watch.until_kind(kinds::APPROVAL).await;
-        if live_claude().is_some() {
+        let command_started = live_claude().is_none() || {
             let ran = tokio::task::spawn_blocking(move || std::fs::read_to_string(started));
-            let said = tokio::time::timeout(patience(), ran)
-                .await
-                .expect("the command started in time");
-            assert_eq!(said.unwrap().unwrap(), "started\n");
-        }
-        watch.conversation.clone()
+            matches!(
+                tokio::time::timeout(patience(), ran).await,
+                Ok(Ok(Ok(said))) if said == "started\n"
+            )
+        };
+        (watch.conversation.clone(), command_started)
     });
     crashed.shutdown_background();
+    assert!(command_started, "the command started in time");
 
     let reopened = tokio::runtime::Runtime::new().unwrap();
     reopened.block_on(async {
