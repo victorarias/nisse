@@ -48,7 +48,7 @@ pub struct App {
     extension_status: Vec<(String, String)>,
     toast: Option<(String, Instant)>,
     input: String,
-    scroll_back: u16,
+    scroll: view::Scroll,
     frame: usize,
     error: Option<String>,
     providers: Vec<ProviderSnapshot>,
@@ -184,7 +184,7 @@ where
         extension_status: Vec::new(),
         toast: None,
         input: String::new(),
-        scroll_back: 0,
+        scroll: view::Scroll::default(),
         frame: 0,
         error: notice,
         providers: Vec::new(),
@@ -200,7 +200,9 @@ where
     app.follow_subagents(&client);
 
     loop {
-        terminal.draw(|frame| view::draw(frame, &app, &theme))?;
+        let mut scroll = app.scroll;
+        terminal.draw(|frame| scroll = view::draw(frame, &app, &theme))?;
+        app.scroll = scroll;
         let tick = app.next_tick();
         tokio::select! {
             event = host.next_event() => match event {
@@ -398,7 +400,6 @@ impl App {
                         }
                     }
                     self.entries.extend(commit.entries);
-                    self.scroll_back = 0;
                     self.follow_subagents(client);
                 }
             }
@@ -610,6 +611,7 @@ impl App {
             }
             (KeyCode::Enter, _) if !self.input.trim().is_empty() => {
                 let text = std::mem::take(&mut self.input);
+                self.scroll.follow();
                 let sent = client
                     .request::<ConversationSubmitResult>(ClientRequest::ConversationSubmit(
                         ConversationSubmitParams {
@@ -626,8 +628,8 @@ impl App {
                 self.input.pop();
             }
             (KeyCode::Char('u'), KeyModifiers::CONTROL) => self.input.clear(),
-            (KeyCode::PageUp, _) => self.scroll_back = self.scroll_back.saturating_add(10),
-            (KeyCode::PageDown, _) => self.scroll_back = self.scroll_back.saturating_sub(10),
+            (KeyCode::PageUp, _) => self.scroll.page_up(),
+            (KeyCode::PageDown, _) => self.scroll.page_down(),
             (KeyCode::Char(typed), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 self.input.push(typed)
             }
