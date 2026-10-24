@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -52,7 +52,7 @@ pub(crate) struct Session {
     sent: Seq,
     unacked: VecDeque<Delivery>,
     calls: HashMap<String, Call>,
-    unanswered_uses: HashSet<String>,
+    mid_message: bool,
     held: VecDeque<Held>,
     streaming: String,
 }
@@ -105,7 +105,7 @@ impl Session {
             heads: Arc::new(Mutex::new(Heads::new(state))),
             unacked: VecDeque::new(),
             calls: HashMap::new(),
-            unanswered_uses: HashSet::new(),
+            mid_message: false,
             held: VecDeque::new(),
             streaming: String::new(),
         }
@@ -140,7 +140,6 @@ impl Session {
                     }
                     if self.unacked.is_empty() {
                         self.calls.clear();
-                        self.unanswered_uses.clear();
                         return finish(turn, &frame, said);
                     }
                     continue;
@@ -233,10 +232,14 @@ impl Session {
         }
     }
 
-    /// Steers wait for Claude's round of calls to end: once every call Claude made has its
-    /// result committed, they join the run and Claude hears them.
+    /// Steers wait for Claude's round of calls to end: once Claude has finished the message
+    /// that made them and every call has its result committed, they join the run and Claude
+    /// hears them.
     fn deliver_steers(&mut self, turn: &Turn) -> Result<()> {
-        if self.unanswered_uses.is_empty() && self.calls.values().all(|call| call.done) {
+        let round_ended = !self.mid_message
+            && self.heads.lock().expect("heads lock").uses.is_empty()
+            && self.calls.values().all(|call| call.done);
+        if round_ended {
             turn.place_steers()?;
         }
         self.deliver(turn, false)
@@ -247,13 +250,27 @@ impl Session {
     /// calls before it have committed theirs.
     fn on_read(&mut self, turn: &Turn, frame: Value) -> Result<()> {
         let is_main_chain = frame["parent_tool_use_id"].is_null();
-        let text = match frame["type"].as_str() {
+        let (text, message_ended) = match frame["type"].as_str() {
             Some("user") => return self.on_user(turn, &frame, is_main_chain),
-            Some("assistant") if is_main_chain => self.chain_assistant(&frame),
-            _ => None,
+            Some("assistant") if is_main_chain => (self.chain_assistant(&frame), false),
+            Some("stream_event") if is_main_chain => (None, self.follow_message(&frame["event"])),
+            _ => (None, false),
         };
         self.held.push_back(Held { frame, text });
+        if message_ended {
+            self.deliver_steers(turn)?;
+        }
         Ok(())
+    }
+
+    /// Follows Claude's main-chain message as it streams, and says when it has ended.
+    fn follow_message(&mut self, event: &Value) -> bool {
+        match event["type"].as_str() {
+            Some("message_start") => self.mid_message = true,
+            Some("message_stop") => self.mid_message = false,
+            _ => return false,
+        }
+        !self.mid_message
     }
 
     fn on_frame<'a>(
@@ -297,7 +314,6 @@ impl Session {
             .filter(|block| block["type"] == "tool_use")
             .filter_map(|block| block["id"].as_str().map(str::to_owned))
             .collect();
-        self.unanswered_uses.extend(calls.iter().cloned());
         let mut heads = self.heads.lock().expect("heads lock");
         let link = heads
             .chain
@@ -377,7 +393,6 @@ impl Session {
         let mut reported = Vec::new();
         for block in content(frame).filter(|block| block["type"] == "tool_result") {
             let id = block["tool_use_id"].as_str().unwrap_or_default().to_owned();
-            self.unanswered_uses.remove(&id);
             match self.calls.get_mut(&id) {
                 Some(call) if !call.done => {
                     if let Some(waiter) = call.waiter.take() {

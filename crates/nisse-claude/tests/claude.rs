@@ -936,6 +936,77 @@ async fn parallel_reads_through_a_one_at_a_time_tool_hook_both_finish_and_claude
 const BANANA: &str = "Also end your reply with the word BANANA.";
 const CHERRY: &str = "And start your reply with the word CHERRY.";
 
+/// A guard that keeps a.txt off limits, and answers only once the test has steered, so the
+/// steer is waiting while Claude hears its denial and goes on to stream its next call.
+struct OffLimitsOnceSteered(std::sync::Mutex<std::sync::mpsc::Receiver<()>>);
+
+impl Hooks for OffLimitsOnceSteered {
+    fn tool_call(
+        &self,
+        call: ToolCall,
+        engine: &(dyn Fn(ToolCall) -> ToolOutcome + Sync),
+    ) -> ToolOutcome {
+        let path = call.args["file_path"].as_str().unwrap_or_default();
+        if path.ends_with("/a.txt") {
+            let _ = self.0.lock().unwrap().recv();
+            return ToolOutcome::denied("guard: a.txt is off limits");
+        }
+        engine(call)
+    }
+}
+
+#[tokio::test]
+async fn a_steer_waits_for_the_calls_claude_has_still_to_stream_in_the_same_message() {
+    let scenario = Scenario::new("steer_mid_message");
+    std::fs::write(scenario.workspace.path().join("a.txt"), "apple\n").unwrap();
+    std::fs::write(scenario.workspace.path().join("b.txt"), "banana\n").unwrap();
+    let (steered, guard_waits) = std::sync::mpsc::channel();
+    let hooks = Arc::new(OffLimitsOnceSteered(std::sync::Mutex::new(guard_waits)));
+    let server = scenario.start(Store::open_in_memory().unwrap(), hooks);
+    let mut watch = Watch::new_conversation(&server).await;
+
+    watch
+        .submit(
+            "In a single message, call the Read tool twice in parallel: once on a.txt and once \
+             on b.txt. Then reply with both contents, separated by a comma.",
+            WhenBusy::FollowUp,
+        )
+        .await;
+    watch.until_kind(kinds::TOOL_CALL).await;
+    watch.submit(BANANA, WhenBusy::Steer).await;
+    steered.send(()).unwrap();
+    watch.until_idle().await;
+
+    assert!(
+        watch.no_model_errors(),
+        "the run failed: {}",
+        watch.final_text()
+    );
+    let results: Vec<usize> = watch
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.kind == kinds::TOOL_RESULT)
+        .map(|(at, _)| at)
+        .collect();
+    let steer_at = watch
+        .entries
+        .iter()
+        .position(|entry| entry.kind == kinds::USER && entry.data["text"] == BANANA)
+        .expect("the steer joined the run");
+    assert_eq!(results.len(), 2, "both reads have their result");
+    assert!(
+        results.iter().all(|&result_at| steer_at > result_at),
+        "the steer joined after both reads: {:?}",
+        watch.kinds()
+    );
+    assert!(
+        watch.final_text().contains("BANANA"),
+        "claude answered: {}",
+        watch.final_text()
+    );
+}
+
 #[tokio::test]
 async fn two_steers_in_one_claude_turn_both_reach_claude_and_the_next_message_still_runs() {
     let scenario = Scenario::new("two_steers");
