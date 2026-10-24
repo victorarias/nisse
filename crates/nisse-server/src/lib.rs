@@ -11,8 +11,9 @@ use nisse_core::{Harness, StartError, SubmitError};
 use nisse_protocol::{
     Actor, ApprovalResolveResult, AuthAccepted, ClientInfo, ClientRequest, Commit,
     ConversationListResult, ConversationSubscribeParams, ErrorResponse, InitializeResult, Message,
-    PROTOCOL_VERSION, ProvidersListResult, Request, RequestId, Response, RpcError, Seq,
-    ServerNotification, ServerStopResult, SkillsListResult, StatusChanged, UiChanged,
+    ModelsListResult, PROTOCOL_VERSION, ProvidersListResult, Request, RequestId, Response,
+    RpcError, Seq, ServerNotification, ServerStopResult, SkillsListResult, StatusChanged,
+    UiChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
@@ -248,9 +249,22 @@ impl Connection {
             ClientRequest::ConversationStart(params) => {
                 match harness.start_conversation(params, &self.actor).await {
                     Ok(conversation) => to_result(conversation),
-                    Err(StartError::Failed(error)) => Err(internal(error)),
-                    Err(error) => Err(RpcError::new(RpcError::INVALID_PARAMS, error.to_string())),
+                    Err(error) => Err(start_error(error)),
                 }
+            }
+            ClientRequest::ConversationSelectModel(params) => {
+                match harness.select_model(params, &self.actor) {
+                    Ok(conversation) => to_result(conversation),
+                    Err(error) => Err(start_error(error)),
+                }
+            }
+            ClientRequest::ModelsList(params) => {
+                let setup = self.server.setup.clone();
+                self.answer_later(request.id.clone(), async move {
+                    let providers = setup.models(params.refresh).await;
+                    to_result(ModelsListResult { providers })
+                });
+                return None;
             }
             ClientRequest::ServerStop(_) => {
                 self.asked_to_stop = true;
@@ -460,6 +474,13 @@ fn to_result(value: impl Serialize) -> Result<serde_json::Value, RpcError> {
 
 fn internal(error: anyhow::Error) -> RpcError {
     RpcError::new(RpcError::INTERNAL, format!("{error:#}"))
+}
+
+fn start_error(error: StartError) -> RpcError {
+    match error {
+        StartError::Failed(error) => internal(error),
+        error => RpcError::new(RpcError::INVALID_PARAMS, error.to_string()),
+    }
 }
 
 fn not_found(error: anyhow::Error) -> RpcError {

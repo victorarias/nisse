@@ -7,7 +7,8 @@ use futures_util::future::join_all;
 use nisse_core::{Provider, SignIn};
 use nisse_protocol::{
     AuthCancelParams, AuthInteraction, AuthMethod, AuthPhase, AuthRespondParams, AuthResponse,
-    AuthStartParams, AuthState, ProviderId, ProviderSnapshot, ProviderStatus, RpcError,
+    AuthStartParams, AuthState, ProviderId, ProviderModels, ProviderSnapshot, ProviderStatus,
+    RpcError,
 };
 use tokio::{
     sync::{broadcast, mpsc},
@@ -52,6 +53,17 @@ impl Setup {
                 .iter()
                 .map(|(id, provider)| snapshot(id, provider, refresh)),
         )
+        .await
+    }
+
+    pub(crate) async fn models(&self, refresh: bool) -> Vec<ProviderModels> {
+        join_all(self.instances.iter().map(|(id, provider)| async move {
+            ProviderModels {
+                provider: id.clone(),
+                default_model: provider.default_model().map(str::to_owned),
+                models: provider.models(refresh).await,
+            }
+        }))
         .await
     }
 

@@ -9,9 +9,10 @@ mod turn;
 mod workspace;
 
 pub use harness::{
-    Harness, HarnessOptions, LoadHooks, StartError, SubmitError, same_hooks, with_nested_results,
+    DefaultModel, Harness, HarnessOptions, LoadHooks, StartError, SubmitError, no_default_model,
+    same_hooks, with_nested_results,
 };
-pub use provider::{Echo, HealthFuture, Provider, ProviderFuture, SignIn};
+pub use provider::{Echo, HealthFuture, ModelsFuture, Provider, ProviderFuture, SignIn};
 pub use store::Store;
 pub use tools::{
     Hooks, NoHooks, ToolCall, ToolOutcome, ToolSpec, approval_for, builtin_tools, run_builtin_tool,

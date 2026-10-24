@@ -1,4 +1,5 @@
-//! `nisse login`, `nisse logout` and `nisse providers`: clients of the server's setup methods.
+//! `nisse login`, `nisse logout`, `nisse providers` and `nisse models`: clients of the server's
+//! setup methods.
 
 use std::{collections::BTreeMap, io::Write};
 
@@ -6,8 +7,9 @@ use anyhow::{Result, bail};
 use nisse_client::Client;
 use nisse_protocol::{
     AuthAccepted, AuthCancelParams, AuthInteraction, AuthLogoutParams, AuthMethod, AuthPhase,
-    AuthRespondParams, AuthResponse, AuthStartParams, AuthState, ClientRequest, ProviderSnapshot,
-    ProviderStatus, ProvidersListParams, ProvidersListResult, ServerNotification,
+    AuthRespondParams, AuthResponse, AuthStartParams, AuthState, ClientRequest, ModelsListParams,
+    ModelsListResult, ProviderSnapshot, ProviderStatus, ProvidersListParams, ProvidersListResult,
+    ServerNotification,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -146,6 +148,32 @@ pub async fn list_providers(client: &Client, out: &mut impl Write) -> Result<()>
             "{:<16} {:<7} {status:<12} {detail}",
             provider.id, provider.driver
         )?;
+    }
+    Ok(())
+}
+
+/// Each provider's models, as asked just now, its default marked, with the efforts each takes.
+pub async fn list_models(client: &Client, out: &mut impl Write) -> Result<()> {
+    let listed: ModelsListResult = client
+        .request(ClientRequest::ModelsList(ModelsListParams {
+            refresh: true,
+        }))
+        .await?;
+    for provider in listed.providers {
+        for model in &provider.models {
+            let mark = if provider.default_model.as_ref() == Some(&model.id) {
+                "*"
+            } else {
+                " "
+            };
+            writeln!(
+                out,
+                "{:<16} {mark} {:<28} {}",
+                provider.provider,
+                model.id,
+                model.efforts.join(" ")
+            )?;
+        }
     }
     Ok(())
 }

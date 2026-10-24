@@ -7,8 +7,9 @@ use std::{
 use anyhow::{Result, anyhow};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, Commit, Conversation, ConversationReadResult,
-    ConversationStartParams, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, Entry, Input, Seq, Skill, SubmissionStatus, WhenBusy, kinds,
+    ConversationSelectModelParams, ConversationStartParams, ConversationStatus,
+    ConversationSubmitParams, ConversationSubmitResult, Entry, Input, ModelSelection, Seq, Skill,
+    SubmissionStatus, WhenBusy, kinds,
 };
 use serde_json::json;
 use tokio::sync::{broadcast, oneshot, watch};
@@ -30,15 +31,26 @@ type Approvals = HashMap<(String, String), oneshot::Sender<Decision>>;
 /// Loads the extensions that apply in a directory.
 pub type LoadHooks = Arc<dyn Fn(&Path) -> Result<Arc<dyn Hooks>> + Send + Sync>;
 
+/// The model configured for new conversations in a directory, such as a project's
+/// `.nisse/config.toml` sets.
+pub type DefaultModel = Arc<dyn Fn(&Path) -> Result<Option<ModelSelection>> + Send + Sync>;
+
 pub struct HarnessOptions {
-    /// Every provider a conversation can name; the first answers when it names none.
+    /// Every provider a conversation can name; the first answers when nothing else chooses.
     pub providers: Vec<(String, Arc<dyn Provider>)>,
     pub hooks: LoadHooks,
+    pub default_model: DefaultModel,
 }
 
 /// The same extensions in every directory.
 pub fn same_hooks(hooks: Arc<dyn Hooks>) -> LoadHooks {
     Arc::new(move |_| Ok(hooks.clone()))
+}
+
+/// No configured model anywhere: new conversations take the last selection, else the first
+/// provider's default.
+pub fn no_default_model() -> DefaultModel {
+    Arc::new(|_| Ok(None))
 }
 
 /// Runs conversations on a store. Every change is one store commit, published after it is stored.
@@ -56,6 +68,7 @@ struct Inner {
     providers: Vec<(String, Arc<dyn Provider>)>,
     load_hooks: LoadHooks,
     hooks: Mutex<HashMap<PathBuf, Arc<dyn Hooks>>>,
+    default_model: DefaultModel,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -66,6 +79,10 @@ pub enum StartError {
     UnknownProvider { name: String, known: String },
     #[error("loading extensions: {0:#}")]
     Extensions(anyhow::Error),
+    #[error("reading the default model: {0:#}")]
+    DefaultModel(anyhow::Error),
+    #[error("no conversation {0}")]
+    NotFound(String),
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
@@ -101,6 +118,7 @@ impl Harness {
                 providers: options.providers,
                 load_hooks: options.hooks,
                 hooks: Mutex::default(),
+                default_model: options.default_model,
             }),
         }
     }
@@ -119,8 +137,9 @@ impl Harness {
         Ok(())
     }
 
-    /// Starts a conversation in the client's directory, with the model it chose. The directory's
-    /// extensions load first, so a broken one fails the start instead of the first run.
+    /// Starts a conversation in the client's directory, with the model it chose, or else the
+    /// default one. The directory's extensions load first, so a broken one fails the start
+    /// instead of the first run.
     pub async fn start_conversation(
         &self,
         params: ConversationStartParams,
@@ -129,40 +148,81 @@ impl Harness {
         if !params.cwd.is_absolute() || !params.cwd.is_dir() {
             return Err(StartError::NotADirectory(params.cwd.display().to_string()));
         }
-        let (name, provider) = match &params.provider {
-            Some(name) => self.provider(name).map(|provider| (name.clone(), provider)),
-            None => self
-                .inner
-                .providers
-                .first()
-                .map(|(name, provider)| (name.clone(), provider.clone())),
-        }
-        .ok_or_else(|| StartError::UnknownProvider {
-            name: params.provider.clone().unwrap_or_default(),
-            known: self
-                .inner
-                .providers
-                .iter()
-                .map(|(name, _)| name.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-        })?;
         let harness = self.clone();
         let cwd = params.cwd.clone();
-        tokio::task::spawn_blocking(move || harness.hooks(&cwd))
-            .await
-            .map_err(|error| anyhow!(error))?
-            .map_err(StartError::Extensions)?;
+        let configured = tokio::task::spawn_blocking(move || {
+            harness.hooks(&cwd).map_err(StartError::Extensions)?;
+            (harness.inner.default_model)(&cwd).map_err(StartError::DefaultModel)
+        })
+        .await
+        .map_err(|error| anyhow!(error))??;
+        let default = match configured {
+            Some(configured) => configured,
+            None => match self.store().last_selection()? {
+                Some(last) if self.provider(&last.provider).is_some() => last,
+                _ => ModelSelection {
+                    provider: self
+                        .inner
+                        .providers
+                        .first()
+                        .map_or_else(String::new, |(name, _)| name.clone()),
+                    model: None,
+                    effort: None,
+                },
+            },
+        };
+        let mut selection = chosen(default, params.provider, params.model, params.effort);
+        let provider = self.known_provider(&selection.provider)?;
+        if selection.model.is_none() {
+            selection.model = provider.default_model().map(str::to_owned);
+        }
         let start = NewConversation {
             title: params.title,
             creator: creator.clone(),
             cwd: params.cwd,
-            model: params
-                .model
-                .or_else(|| provider.default_model().map(str::to_owned)),
-            provider: name,
+            selection,
         };
         Ok(self.commit(&new_id(), |tx| tx.create_conversation(start))?)
+    }
+
+    /// Switches the conversation's model from its next run on. Anyone in it sees who switched,
+    /// and when, in its `nisse.model` entry; choosing the model it already has commits nothing.
+    pub fn select_model(
+        &self,
+        params: ConversationSelectModelParams,
+        author: &Actor,
+    ) -> Result<Conversation, StartError> {
+        let mut selection = params.selection;
+        let provider = self.known_provider(&selection.provider)?;
+        if selection.model.is_none() {
+            selection.model = provider.default_model().map(str::to_owned);
+        }
+        let Some(mut conversation) = self.store().conversation(&params.conversation_id)? else {
+            return Err(StartError::NotFound(params.conversation_id));
+        };
+        if conversation.selection == selection {
+            return Ok(conversation);
+        }
+        self.commit(&conversation.id, |tx| {
+            tx.append(kinds::MODEL, author, serde_json::to_value(&selection)?)?;
+            tx.set_selection(&selection)
+        })?;
+        conversation.selection = selection;
+        Ok(conversation)
+    }
+
+    fn known_provider(&self, name: &str) -> Result<Arc<dyn Provider>, StartError> {
+        self.provider(name)
+            .ok_or_else(|| StartError::UnknownProvider {
+                name: name.to_owned(),
+                known: self
+                    .inner
+                    .providers
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            })
     }
 
     /// Every provider a conversation can name, the default first.
@@ -200,7 +260,7 @@ impl Harness {
     }
 
     fn skills_in(&self, conversation: &Conversation) -> Vec<Skill> {
-        self.provider(&conversation.provider)
+        self.provider(&conversation.selection.provider)
             .map(|provider| provider.skills(&conversation.cwd))
             .unwrap_or_default()
     }
@@ -382,7 +442,7 @@ impl Harness {
 
     async fn answer(&self, submission: Submission) -> Result<()> {
         let conversation_id = submission.conversation_id.clone();
-        let began = self.commit(&conversation_id, |tx| {
+        let (began, conversation, provider_changed) = self.commit(&conversation_id, |tx| {
             if submission.status == SubmissionStatus::Queued {
                 place(tx, &submission)?;
             } else {
@@ -390,26 +450,24 @@ impl Harness {
                 tx.set_live("")?;
                 close_dangling_calls(tx, Cutoff::Restart, 0)?;
             }
-            Ok(tx.seq())
+            let provider_changed = tx.claim_provider_state()?;
+            Ok((tx.seq(), tx.conversation()?, provider_changed))
         })?;
 
-        let conversation = self
-            .store()
-            .conversation(&conversation_id)?
-            .ok_or_else(|| anyhow!("no conversation {conversation_id}"))?;
+        let selection = &conversation.selection;
         let actor = Actor::Model {
-            model: conversation
+            model: selection
                 .model
                 .clone()
-                .unwrap_or_else(|| conversation.provider.clone()),
+                .unwrap_or_else(|| selection.provider.clone()),
         };
-        let provider = self.provider(&conversation.provider);
-        let turn = Turn::new(self.clone(), &conversation, actor);
+        let provider = self.provider(&selection.provider);
+        let turn = Turn::new(self.clone(), &conversation, actor, provider_changed);
         let ran = match provider {
             Some(provider) => provider.run(&turn).await,
             None => Err(anyhow!(
                 "this server has no provider named {}",
-                conversation.provider
+                selection.provider
             )),
         };
         let mut approvals = self.approvals();
@@ -497,6 +555,32 @@ impl Harness {
 
     pub(crate) fn store(&self) -> std::sync::MutexGuard<'_, Store> {
         self.inner.store.lock().expect("store lock")
+    }
+}
+
+/// The default selection with what a client chose laid over it. A provider other than the
+/// default's starts from that provider's defaults, and a model of its own from that model's.
+fn chosen(
+    default: ModelSelection,
+    provider: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+) -> ModelSelection {
+    match (provider, model) {
+        (Some(provider), model) if provider != default.provider => ModelSelection {
+            provider,
+            model,
+            effort,
+        },
+        (_, Some(model)) => ModelSelection {
+            provider: default.provider,
+            model: Some(model),
+            effort,
+        },
+        (_, None) => ModelSelection {
+            effort: effort.or(default.effort),
+            ..default
+        },
     }
 }
 

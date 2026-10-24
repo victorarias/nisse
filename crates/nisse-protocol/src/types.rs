@@ -47,12 +47,27 @@ pub struct ConversationStartParams {
     /// The client's working directory, absolute: tools run here and resolve relative paths
     /// against it, and the project's extensions are found from it.
     pub cwd: PathBuf,
-    /// Who answers, by provider name; the server's default when absent.
+    /// Who answers, by provider name; the default selection's provider when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
-    /// The provider's model; the provider's default when absent.
+    /// The provider's model; the default selection's, or the provider's default, when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// The model's reasoning effort; the default selection's when it names the same model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
+
+/// Who answers a conversation, and how hard it thinks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelSelection {
+    pub provider: ProviderId,
+    /// Absent when the provider picks its own model at run time, as Claude Code does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Absent for the model's own default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -63,10 +78,17 @@ pub struct Conversation {
     pub status: ConversationStatus,
     pub created_at_ms: i64,
     pub cwd: PathBuf,
-    pub provider: String,
-    /// Absent when the provider picks its own model at run time, as Claude Code does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    /// Read by each run as it starts.
+    #[serde(flatten)]
+    pub selection: ModelSelection,
+}
+
+/// Switches the conversation's model from its next run on, with a `nisse.model` entry.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ConversationSelectModelParams {
+    pub conversation_id: ConversationId,
+    #[serde(flatten)]
+    pub selection: ModelSelection,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -171,6 +193,8 @@ pub mod kinds {
     pub const TOOL_RESULT: &str = "nisse.tool_result";
     pub const APPROVAL_REQUEST: &str = "nisse.approval_request";
     pub const APPROVAL: &str = "nisse.approval";
+    /// Someone switched the conversation's model; its data is the new `ModelSelection`.
+    pub const MODEL: &str = "nisse.model";
 }
 
 /// One atomic write, as seen by subscribers of its conversation.
@@ -316,6 +340,49 @@ pub enum ProviderStatus {
     SignedOut,
     /// It can't run: not installed, or it failed to start.
     Unavailable,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ModelsListParams {
+    /// Ask every provider again instead of answering with what was last found.
+    #[serde(default)]
+    pub refresh: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ModelsListResult {
+    pub providers: Vec<ProviderModels>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ProviderModels {
+    pub provider: ProviderId,
+    /// The model a selection that names none gets; absent when the provider picks at run time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    /// Best first.
+    pub models: Vec<ModelInfo>,
+}
+
+/// A model a selection can name, and what it supports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelInfo {
+    /// What a selection names.
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The reasoning efforts it takes, least first; empty when it takes none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub efforts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// In tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    /// It calls tools by writing scripts, as OpenAI's code-mode models do.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub code_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

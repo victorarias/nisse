@@ -22,6 +22,10 @@ const RESTARTED: &str = "Nisse restarted before you finished. Continue where you
 const RETOLD: &str = "This Claude Code session joins a conversation it does not hold. \
                       This is the conversation so far; continue it.";
 
+/// How much of the conversation a new session is retold: 16,000 tokens, at about four bytes a
+/// token, as t3code budgets its handoffs.
+const RETELL_BUDGET: usize = 16_000 * 4;
+
 /// What Nisse keeps per conversation: Claude's session, the newest Claude message whose
 /// content Nisse committed, and the newest seq Claude's session holds up to that message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +62,8 @@ pub(crate) struct Session {
     held: VecDeque<Held>,
     streaming: String,
     auth_failed: bool,
+    model: Option<String>,
+    effort: Option<String>,
 }
 
 /// A user message Nisse sent, which Claude acknowledges by replaying its uuid.
@@ -98,7 +104,12 @@ enum Event {
 type Started = mpsc::UnboundedSender<(String, ToolCall)>;
 
 impl Session {
-    pub(crate) fn new(process: Process, state: ProviderState) -> Self {
+    pub(crate) fn new(
+        process: Process,
+        state: ProviderState,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> Self {
         Self {
             process,
             resumed: state.head.is_some(),
@@ -112,7 +123,27 @@ impl Session {
             held: VecDeque::new(),
             streaming: String::new(),
             auth_failed: false,
+            model: model.map(str::to_owned),
+            effort: effort.map(str::to_owned),
         }
+    }
+
+    /// The effort claude was started with; a live claude can't change it.
+    pub(crate) fn effort(&self) -> Option<&str> {
+        self.effort.as_deref()
+    }
+
+    /// Switches the live claude to `model` before its next turn, or to its own default.
+    pub(crate) fn use_model(&mut self, model: Option<&str>) {
+        if self.model.as_deref() == model {
+            return;
+        }
+        self.model = model.map(str::to_owned);
+        self.process.send(json!({
+            "type": "control_request",
+            "request_id": new_id(),
+            "request": { "subtype": "set_model", "model": model.unwrap_or("default") },
+        }));
     }
 
     /// For a session that does not hold the conversation so far: its first message retells the
@@ -193,9 +224,7 @@ impl Session {
         let newest = entries.last().map_or(self.sent, |entry| entry.seq);
         let unheard = entries.iter();
         let texts: Vec<String> = if std::mem::take(&mut self.retell) {
-            std::iter::once(RETOLD.to_owned())
-                .chain(unheard.filter_map(retold))
-                .collect()
+            retelling(&entries)
         } else {
             unheard.filter_map(|entry| self.told(entry)).collect()
         };
@@ -618,6 +647,47 @@ fn result_text(result: &Value) -> String {
         "claude: {subtype}: {}",
         [text, errors.as_str()].join(" ").trim()
     )
+}
+
+/// The conversation as a session that never held it hears it: its first turn, and as many of
+/// its newest turns as fit in the budget besides, each one whole. The newest turn is always
+/// told.
+fn retelling(entries: &[Entry]) -> Vec<String> {
+    let mut turns: Vec<Vec<String>> = Vec::new();
+    for entry in entries {
+        if turns.is_empty() || entry.kind == kinds::USER {
+            turns.push(Vec::new());
+        }
+        if let Some(text) = retold(entry)
+            && let Some(turn) = turns.last_mut()
+        {
+            turn.push(text);
+        }
+    }
+    let size = |turn: &Vec<String>| turn.iter().map(String::len).sum::<usize>();
+    let mut room = RETELL_BUDGET.saturating_sub(turns.first().map_or(0, size));
+    let mut kept_from = turns.len();
+    while kept_from > 1 {
+        let turn = size(&turns[kept_from - 1]);
+        if turn > room && kept_from < turns.len() {
+            break;
+        }
+        room = room.saturating_sub(turn);
+        kept_from -= 1;
+    }
+    let left_out = kept_from.saturating_sub(1);
+    let mut told = vec![RETOLD.to_owned()];
+    let mut turns = turns.into_iter();
+    told.extend(turns.next().into_iter().flatten());
+    match left_out {
+        0 => {}
+        1 => told.push("(One turn of the conversation is left out here.)".into()),
+        _ => told.push(format!(
+            "({left_out} turns of the conversation are left out here.)"
+        )),
+    }
+    told.extend(turns.skip(left_out).flatten());
+    told
 }
 
 /// An entry as a session that never held it hears it: what people said, as they said it, and

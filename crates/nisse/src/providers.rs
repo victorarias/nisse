@@ -1,13 +1,20 @@
 //! The providers a conversation can name: `claude`, `openai` and `echo`, and the ones
-//! `NISSE_HOME/config.toml` names, which can also replace those.
+//! `NISSE_HOME/config.toml` names, which can also replace those; and the model new
+//! conversations get, from a project's `.nisse/config.toml` or else that file.
 
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use nisse_claude::{Claude, ClaudeOptions};
-use nisse_core::{Echo, Provider};
+use nisse_core::{DefaultModel, Echo, Provider};
 use nisse_openai::{HOST_PROGRAM, OpenAi, OpenAiOptions};
-use serde::Deserialize;
+use nisse_protocol::ModelSelection;
+use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::ServerConfig;
 
@@ -16,6 +23,32 @@ use crate::ServerConfig;
 struct Config {
     #[serde(default)]
     providers: BTreeMap<String, InstanceConfig>,
+    default_model: Option<SelectionConfig>,
+}
+
+/// What a project's `.nisse/config.toml` may set: nothing secret.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectConfig {
+    default_model: Option<SelectionConfig>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectionConfig {
+    provider: String,
+    model: Option<String>,
+    effort: Option<String>,
+}
+
+impl From<SelectionConfig> for ModelSelection {
+    fn from(config: SelectionConfig) -> Self {
+        Self {
+            provider: config.provider,
+            model: config.model,
+            effort: config.effort,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -52,15 +85,43 @@ impl Driver {
     }
 }
 
-/// Every provider, the default first.
-pub(crate) fn named(server: &ServerConfig) -> Result<Vec<(String, Arc<dyn Provider>)>> {
+pub(crate) struct Configured {
+    /// Every provider, the default first.
+    pub(crate) providers: Vec<(String, Arc<dyn Provider>)>,
+    pub(crate) default_model: DefaultModel,
+}
+
+pub(crate) fn configured(server: &ServerConfig) -> Result<Configured> {
     let path = server.home.join("config.toml");
-    let config: Config = match std::fs::read_to_string(&path) {
-        Ok(text) => toml::from_str(&text).with_context(|| format!("reading {}", path.display()))?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Config::default(),
-        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
-    };
-    let mut configured = config.providers;
+    let config: Config = read(&path)?;
+    let user_default = config.default_model.map(ModelSelection::from);
+    let default_model: DefaultModel = Arc::new(move |cwd: &Path| {
+        let project: ProjectConfig = read(&cwd.join(".nisse/config.toml"))?;
+        Ok(project
+            .default_model
+            .map(ModelSelection::from)
+            .or_else(|| user_default.clone()))
+    });
+    Ok(Configured {
+        providers: named(config.providers, server, &path)?,
+        default_model,
+    })
+}
+
+/// The file's settings, or none when there is no file.
+fn read<T: DeserializeOwned + Default>(path: &Path) -> Result<T> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => toml::from_str(&text).with_context(|| format!("reading {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+fn named(
+    mut configured: BTreeMap<String, InstanceConfig>,
+    server: &ServerConfig,
+    path: &Path,
+) -> Result<Vec<(String, Arc<dyn Provider>)>> {
     let built_in = [Driver::Claude, Driver::Openai, Driver::Echo].map(|driver| {
         let id = driver.name().to_owned();
         let config = configured
@@ -119,6 +180,7 @@ impl InstanceConfig {
                 let auth_path = server.home.join("auth").join(format!("{id}.json"));
                 let mut options =
                     OpenAiOptions::new(auth_path, include_str!("instructions.md"), &server.home);
+                options.model_list = server.home.join("cache").join(format!("{id}-models.json"));
                 options.record.clone_from(&server.record);
                 let installed = server.home.join("bin").join(HOST_PROGRAM);
                 options.code_mode_host = match &server.code_mode_host {

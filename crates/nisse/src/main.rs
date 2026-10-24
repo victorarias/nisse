@@ -46,9 +46,14 @@ struct Cli {
     /// runs `!command` without a model), or a provider `NISSE_HOME/config.toml` names.
     #[arg(long, env = "NISSE_PROVIDER", global = true)]
     provider: Option<String>,
-    /// The new conversation's model; each provider has its own default.
+    /// The new conversation's model; otherwise the configured default, the last one chosen, or
+    /// the provider's own.
     #[arg(long, env = "NISSE_MODEL", global = true)]
     model: Option<String>,
+    /// The new conversation's reasoning effort, such as `low` or `high`; `nisse models` lists
+    /// each model's.
+    #[arg(long, env = "NISSE_EFFORT", global = true)]
+    effort: Option<String>,
     /// Save every provider exchange in this folder as a replayable fixture, when this starts the
     /// server.
     #[arg(long, env = "NISSE_RECORD", global = true)]
@@ -105,6 +110,8 @@ enum Command {
     Logout { provider: String },
     /// List the providers and how each stands.
     Providers,
+    /// List each provider's models and the efforts they take; `*` marks the default.
+    Models,
 }
 
 struct ServerConfig {
@@ -135,6 +142,7 @@ async fn main() -> Result<()> {
         cwd: std::env::current_dir()?,
         provider: cli.provider,
         model: cli.model,
+        effort: cli.effort,
     };
     match cli.command {
         Some(Command::Serve {
@@ -169,6 +177,10 @@ async fn main() -> Result<()> {
         Some(Command::Providers) => {
             let (client, _, _) = attach(&config, cli.connect).await?;
             nisse::list_providers(&client, &mut std::io::stdout()).await
+        }
+        Some(Command::Models) => {
+            let (client, _, _) = attach(&config, cli.connect).await?;
+            nisse::list_models(&client, &mut std::io::stdout()).await
         }
         Some(Command::Schema) => {
             let schema = serde_json::json!({
@@ -241,11 +253,13 @@ fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
             Arc::new(move |changed| drop(sink.send(changed))),
         )?))
     });
+    let configured = providers::configured(config)?;
     let harness = Harness::open(
         &home.join("nisse.sqlite"),
         HarnessOptions {
-            providers: providers::named(config)?,
+            providers: configured.providers,
             hooks,
+            default_model: configured.default_model,
         },
     )?;
     harness.resume()?;

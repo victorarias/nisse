@@ -4,15 +4,16 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use nisse_client::Client;
 use nisse_core::{
-    Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, ProviderFuture, Store, Turn,
-    same_hooks,
+    DefaultModel, Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, ProviderFuture, Store,
+    Turn, no_default_model, same_hooks,
 };
 use nisse_lua::LuaHost;
 use nisse_protocol::{
-    Actor, ClientRequest, Conversation, ConversationListResult, ConversationReadResult,
-    ConversationStartParams, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
-    UiChanged, WhenBusy, kinds,
+    Actor, ClientRequest, Conversation, ConversationListResult, ConversationReadParams,
+    ConversationReadResult, ConversationSelectModelParams, ConversationStartParams,
+    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
+    ConversationSubscribeParams, Entry, Input, ModelSelection, ModelsListParams, ModelsListResult,
+    ServerNotification, UiChanged, WhenBusy, kinds,
 };
 use nisse_server::Server;
 use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
@@ -37,6 +38,7 @@ fn start(
         HarnessOptions {
             providers: vec![("test".into(), provider)],
             hooks: same_hooks(hooks),
+            default_model: no_default_model(),
         },
     );
     harness.resume().unwrap();
@@ -72,6 +74,7 @@ fn started_in(cwd: &Path) -> ConversationStartParams {
         cwd: cwd.to_owned(),
         provider: None,
         model: None,
+        effort: None,
     }
 }
 
@@ -1264,7 +1267,13 @@ impl Provider for NamesItsModel {
     }
 
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
-        Box::pin(async move { turn.answer(&format!("I am {}", turn.model().unwrap_or("unnamed"))) })
+        Box::pin(async move {
+            let model = turn.model().unwrap_or("unnamed");
+            turn.answer(&match turn.effort() {
+                Some(effort) => format!("I am {model}, thinking {effort}"),
+                None => format!("I am {model}"),
+            })
+        })
     }
 }
 
@@ -1278,6 +1287,7 @@ async fn each_conversation_keeps_the_provider_and_model_it_started_with() {
                 ("named".into(), Arc::new(NamesItsModel)),
             ],
             hooks: same_hooks(Arc::new(NoHooks)),
+            default_model: no_default_model(),
         },
     );
     let server = Server::new(harness, broadcast::channel(16).0, owner());
@@ -1303,11 +1313,17 @@ async fn each_conversation_keeps_the_provider_and_model_it_started_with() {
     let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
 
     assert_eq!(
-        (by_default.provider.as_str(), by_default.model.as_deref()),
+        (
+            by_default.selection.provider.as_str(),
+            by_default.selection.model.as_deref()
+        ),
         ("echo", Some("echo"))
     );
     assert_eq!(
-        (chosen.provider.as_str(), chosen.model.as_deref()),
+        (
+            chosen.selection.provider.as_str(),
+            chosen.selection.model.as_deref()
+        ),
         ("named", Some("tiny"))
     );
     let answer = answered.last().unwrap();
@@ -1378,6 +1394,7 @@ async fn a_project_s_extensions_apply_only_to_conversations_in_that_project() {
                     Arc::new(|_| {}),
                 )?))
             }),
+            default_model: no_default_model(),
         },
     );
     let server = Server::new(harness, broadcast::channel(16).0, owner());
@@ -1451,5 +1468,176 @@ async fn the_server_is_needed_while_a_client_is_attached_or_a_run_goes_on_and_no
     assert!(
         gone_at >= released + grace,
         "it waited out the grace period first"
+    );
+}
+
+fn echo_and_named(default_model: DefaultModel) -> Arc<Server> {
+    let harness = Harness::with_store(
+        Store::open_in_memory().unwrap(),
+        HarnessOptions {
+            providers: vec![
+                ("echo".into(), echo()),
+                ("named".into(), Arc::new(NamesItsModel)),
+            ],
+            hooks: same_hooks(Arc::new(NoHooks)),
+            default_model,
+        },
+    );
+    Server::new(harness, broadcast::channel(16).0, owner())
+}
+
+fn selection(provider: &str, model: Option<&str>, effort: Option<&str>) -> ModelSelection {
+    ModelSelection {
+        provider: provider.into(),
+        model: model.map(str::to_owned),
+        effort: effort.map(str::to_owned),
+    }
+}
+
+async fn select(
+    client: &Client,
+    conversation: &Conversation,
+    selection: ModelSelection,
+) -> anyhow::Result<Conversation> {
+    client
+        .request(ClientRequest::ConversationSelectModel(
+            ConversationSelectModelParams {
+                conversation_id: conversation.id.clone(),
+                selection,
+            },
+        ))
+        .await
+}
+
+#[tokio::test]
+async fn a_switched_model_answers_from_the_next_run_and_everyone_sees_who_switched() {
+    let server = echo_and_named(no_default_model());
+    let (client, _notifications) = connect(&server).await;
+    let (watcher, mut watched) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&watcher, &conversation, 0).await;
+
+    let tiny = selection("named", Some("tiny"), Some("high"));
+    let switched = select(&client, &conversation, tiny.clone()).await.unwrap();
+    let again = select(&client, &conversation, tiny.clone()).await.unwrap();
+    let unknown = select(&client, &conversation, selection("nobody", None, None))
+        .await
+        .unwrap_err();
+    submit(&client, &conversation, "who are you?").await;
+    let seen = entries_until(&mut watched, kinds::ASSISTANT).await;
+
+    assert_eq!(
+        conversation.selection,
+        selection("echo", Some("echo"), None)
+    );
+    assert_eq!(switched.selection, tiny);
+    assert_eq!(again.selection, tiny);
+    assert!(
+        unknown
+            .to_string()
+            .contains("no provider named nobody; this server has echo, named"),
+        "{unknown}"
+    );
+    let kinds: Vec<&str> = seen.iter().map(|entry| entry.kind.as_str()).collect();
+    assert_eq!(kinds, [kinds::MODEL, kinds::USER, kinds::ASSISTANT]);
+    assert_eq!(seen[0].author, owner());
+    assert_eq!(
+        serde_json::from_value::<ModelSelection>(seen[0].data.clone()).unwrap(),
+        tiny
+    );
+    assert_eq!(seen[2].data["text"], "I am tiny, thinking high");
+    let read: ConversationReadResult = client
+        .request(ClientRequest::ConversationRead(ConversationReadParams {
+            conversation_id: conversation.id.clone(),
+            since_seq: 0,
+        }))
+        .await
+        .unwrap();
+    assert_eq!(read.conversation.selection, tiny);
+}
+
+#[tokio::test]
+async fn a_new_conversation_takes_the_configured_model_else_the_last_one_chosen() {
+    let configured = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let project = configured.path().to_owned();
+    let server = echo_and_named(Arc::new(move |cwd: &Path| {
+        Ok((cwd == project).then(|| selection("named", Some("tiny"), Some("low"))))
+    }));
+    let (client, _notifications) = connect(&server).await;
+    let start = |cwd: &Path, provider: Option<&str>, model: Option<&str>| {
+        let client = client.clone();
+        let mut params = started_in(cwd);
+        params.provider = provider.map(str::to_owned);
+        params.model = model.map(str::to_owned);
+        async move {
+            client
+                .request::<Conversation>(ClientRequest::ConversationStart(params))
+                .await
+                .unwrap()
+                .selection
+        }
+    };
+
+    let before_any_choice = start(elsewhere.path(), None, None).await;
+    let in_the_project = start(configured.path(), None, None).await;
+    let first = start_in(&client, elsewhere.path()).await;
+    select(
+        &client,
+        &first,
+        selection("named", Some("big"), Some("max")),
+    )
+    .await
+    .unwrap();
+    let after_a_choice = start(elsewhere.path(), None, None).await;
+    let still_in_the_project = start(configured.path(), None, None).await;
+    let another_provider = start(elsewhere.path(), Some("echo"), None).await;
+    let another_model = start(elsewhere.path(), None, Some("small")).await;
+
+    assert_eq!(before_any_choice, selection("echo", Some("echo"), None));
+    assert_eq!(
+        in_the_project,
+        selection("named", Some("tiny"), Some("low"))
+    );
+    assert_eq!(after_a_choice, selection("named", Some("big"), Some("max")));
+    assert_eq!(
+        still_in_the_project,
+        selection("named", Some("tiny"), Some("low"))
+    );
+    assert_eq!(another_provider, selection("echo", Some("echo"), None));
+    assert_eq!(another_model, selection("named", Some("small"), None));
+}
+
+#[tokio::test]
+async fn models_list_names_each_provider_s_models_and_its_default() {
+    let server = echo_and_named(no_default_model());
+    let (client, _notifications) = connect(&server).await;
+
+    let listed: ModelsListResult = client
+        .request(ClientRequest::ModelsList(ModelsListParams::default()))
+        .await
+        .unwrap();
+
+    let summary: Vec<(&str, Option<&str>, Vec<&str>)> = listed
+        .providers
+        .iter()
+        .map(|provider| {
+            (
+                provider.provider.as_str(),
+                provider.default_model.as_deref(),
+                provider
+                    .models
+                    .iter()
+                    .map(|model| model.id.as_str())
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("echo", Some("echo"), vec!["echo"]),
+            ("named", None, vec![])
+        ]
     );
 }

@@ -76,6 +76,7 @@ async fn start(client: &Client, home: &Path) -> Conversation {
             cwd: home.to_owned(),
             provider: Some("echo".into()),
             model: None,
+            effort: None,
         }))
         .await
         .unwrap()

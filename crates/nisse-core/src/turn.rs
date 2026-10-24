@@ -38,6 +38,8 @@ pub struct Turn {
     conversation_id: String,
     cwd: PathBuf,
     model: Option<String>,
+    effort: Option<String>,
+    provider_changed: bool,
     actor: Actor,
     live: Arc<Mutex<Live>>,
 }
@@ -49,12 +51,19 @@ struct Live {
 }
 
 impl Turn {
-    pub(crate) fn new(harness: Harness, conversation: &Conversation, actor: Actor) -> Self {
+    pub(crate) fn new(
+        harness: Harness,
+        conversation: &Conversation,
+        actor: Actor,
+        provider_changed: bool,
+    ) -> Self {
         Self {
             harness,
             conversation_id: conversation.id.clone(),
             cwd: conversation.cwd.clone(),
-            model: conversation.model.clone(),
+            model: conversation.selection.model.clone(),
+            effort: conversation.selection.effort.clone(),
+            provider_changed,
             actor,
             live: Arc::default(),
         }
@@ -72,6 +81,17 @@ impl Turn {
     /// The model the conversation chose; absent when the provider picks.
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
+    }
+
+    /// The reasoning effort the conversation chose; absent for the model's own default.
+    pub fn effort(&self) -> Option<&str> {
+        self.effort.as_deref()
+    }
+
+    /// Another provider answered the conversation since this one last did: whatever this one
+    /// kept of it, beyond its provider state, misses that part.
+    pub fn provider_changed(&self) -> bool {
+        self.provider_changed
     }
 
     pub fn transcript(&self) -> Result<Vec<Entry>> {

@@ -2,15 +2,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use nisse_protocol::{
-    Actor, Commit, Conversation, ConversationStatus, ConversationSubmitResult, Entry, Input, Seq,
-    SubmissionStatus, WhenBusy,
+    Actor, Commit, Conversation, ConversationStatus, ConversationSubmitResult, Entry, Input,
+    ModelSelection, Seq, SubmissionStatus, WhenBusy, kinds,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
 
 use crate::{new_id, now_ms, workspace::AttachedSkill};
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// One SQLite file. Every change goes through `commit`, which is atomic and gets the next `seq`.
 pub struct Store {
@@ -31,8 +31,7 @@ pub struct NewConversation {
     pub title: Option<String>,
     pub creator: Actor,
     pub cwd: PathBuf,
-    pub provider: String,
-    pub model: Option<String>,
+    pub selection: ModelSelection,
 }
 
 pub struct Tx<'a> {
@@ -109,6 +108,17 @@ impl Store {
                 COMMIT;",
             )?;
         }
+        if version < 5 {
+            db.execute_batch(
+                "BEGIN;
+                ALTER TABLE conversations ADD COLUMN effort TEXT;
+                ALTER TABLE conversations ADD COLUMN state_provider TEXT;
+                UPDATE conversations SET state_provider = provider;
+                CREATE INDEX entries_by_kind ON entries (kind, seq);
+                PRAGMA user_version = 5;
+                COMMIT;",
+            )?;
+        }
         Ok(Self { db })
     }
 
@@ -176,6 +186,19 @@ impl Store {
         rows.map(|row| row?).collect()
     }
 
+    /// The newest model anyone switched a conversation to.
+    pub fn last_selection(&self) -> Result<Option<ModelSelection>> {
+        let data: Option<String> = self
+            .db
+            .query_row(
+                "SELECT data FROM entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
+                [kinds::MODEL],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(data.map(|data| serde_json::from_str(&data)).transpose()?)
+    }
+
     pub fn live(&self, conversation_id: &str) -> Result<String> {
         Ok(self.db.query_row(
             "SELECT live FROM conversations WHERE id = ?1",
@@ -237,13 +260,12 @@ impl Tx<'_> {
             status: ConversationStatus::Idle,
             created_at_ms: now_ms(),
             cwd: start.cwd,
-            provider: start.provider,
-            model: start.model,
+            selection: start.selection,
         };
         self.tx.execute(
             &format!(
-                "INSERT INTO conversations ({CONVERSATION_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+                "INSERT INTO conversations ({CONVERSATION_COLUMNS}, state_provider)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?7)"
             ),
             params![
                 conversation.id,
@@ -255,12 +277,48 @@ impl Tx<'_> {
                     .cwd
                     .to_str()
                     .context("the directory is not UTF-8")?,
-                conversation.provider,
-                conversation.model,
+                conversation.selection.provider,
+                conversation.selection.model,
+                conversation.selection.effort,
             ],
         )?;
         self.status = Some(ConversationStatus::Idle);
         Ok(conversation)
+    }
+
+    pub fn conversation(&self) -> Result<Conversation> {
+        self.tx
+            .query_row(
+                &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
+                [&self.conversation_id],
+                conversation_from_row,
+            )
+            .with_context(|| format!("no conversation {}", self.conversation_id))?
+    }
+
+    pub fn set_selection(&mut self, selection: &ModelSelection) -> Result<()> {
+        self.tx.execute(
+            "UPDATE conversations SET provider = ?1, model = ?2, effort = ?3 WHERE id = ?4",
+            params![
+                selection.provider,
+                selection.model,
+                selection.effort,
+                self.conversation_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Hands the provider state to the conversation's provider, as a run starts, and says
+    /// whether another provider held it. A provider keeps its state only while it alone has
+    /// answered since it saved it.
+    pub fn claim_provider_state(&mut self) -> Result<bool> {
+        let changed = self.tx.execute(
+            "UPDATE conversations SET provider_state = 'null', state_provider = provider
+             WHERE id = ?1 AND state_provider IS NOT provider",
+            [&self.conversation_id],
+        )?;
+        Ok(changed > 0)
     }
 
     pub fn append(&mut self, kind: &str, author: &Actor, data: Value) -> Result<Entry> {
@@ -412,7 +470,7 @@ fn entries_since(db: &Connection, conversation_id: &str, since_seq: Seq) -> Resu
 }
 
 const CONVERSATION_COLUMNS: &str =
-    "id, title, creator, status, created_at_ms, cwd, provider, model";
+    "id, title, creator, status, created_at_ms, cwd, provider, model, effort";
 
 const BY_REQUEST: &str = "conversation_id = ?1 AND request_id = ?2";
 
@@ -452,8 +510,11 @@ fn conversation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<Con
             status: from_text(&row.get::<_, String>(3)?)?,
             created_at_ms: row.get(4)?,
             cwd: PathBuf::from(row.get::<_, String>(5)?),
-            provider: row.get(6)?,
-            model: row.get(7)?,
+            selection: ModelSelection {
+                provider: row.get(6)?,
+                model: row.get(7)?,
+                effort: row.get(8)?,
+            },
         })
     })())
 }
