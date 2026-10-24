@@ -17,12 +17,9 @@ use mlua::{
     Function, IntoLuaMulti, Lua, LuaOptions, LuaSerdeExt, MultiValue, StdLib, Table, VmState,
 };
 use nisse_core::{CallContext, Hooks, ToolCall, ToolOutcome};
-use nisse_protocol::UiChanged;
 use serde_json::{Value, json};
 
 const HOOK_BUDGET: Duration = Duration::from_millis(250);
-
-pub type UiSink = Arc<dyn Fn(UiChanged) + Send + Sync>;
 
 pub struct LuaHost {
     extensions: Vec<Extension>,
@@ -36,6 +33,7 @@ struct Extension {
     next_marker: Table,
     resuming: Mutex<()>,
     deadline: Arc<Mutex<Option<Instant>>>,
+    serving: Arc<Mutex<Option<CallContext>>>,
 }
 
 enum Step {
@@ -57,7 +55,7 @@ impl LuaHost {
     }
 
     /// Loads every extension folder found directly under `roots`, in name order.
-    pub fn load(roots: &[PathBuf], ui: UiSink) -> Result<Self> {
+    pub fn load(roots: &[PathBuf]) -> Result<Self> {
         let mut folders: Vec<PathBuf> = roots
             .iter()
             .filter_map(|root| std::fs::read_dir(root).ok())
@@ -68,7 +66,7 @@ impl LuaHost {
         folders.sort();
         let extensions = folders
             .iter()
-            .map(|folder| Extension::load(folder, ui.clone()))
+            .map(|folder| Extension::load(folder))
             .collect::<Result<_>>()?;
         Ok(Self { extensions })
     }
@@ -82,6 +80,7 @@ impl LuaHost {
 
     fn dispatch(
         &self,
+        context: &CallContext,
         event: &str,
         tool: Option<&str>,
         input: Value,
@@ -95,12 +94,13 @@ impl LuaHost {
                 hook.event == event && (hook.tool.is_none() || hook.tool.as_deref() == tool)
             })
             .collect();
-        run_chain(&chain, input, engine)
+        run_chain(&chain, context, input, engine)
     }
 }
 
 fn run_chain(
     chain: &[(&Extension, &Hook)],
+    context: &CallContext,
     input: Value,
     engine: &dyn Fn(Value) -> Value,
 ) -> Value {
@@ -116,11 +116,11 @@ fn run_chain(
         let mut args =
             (nisse, lua.to_value(&input)?, extension.next.clone()).into_lua_multi(lua)?;
         loop {
-            match extension.resume(&coroutine, args, &mut budget)? {
+            match extension.resume(&coroutine, context, args, &mut budget)? {
                 Step::Returned(Value::Null) => return Ok(continued.clone().unwrap_or(Value::Null)),
                 Step::Returned(result) => return Ok(result),
                 Step::Next(e) => {
-                    let result = run_chain(rest, e, engine);
+                    let result = run_chain(rest, context, e, engine);
                     args = lua.to_value(&result)?.into_lua_multi(lua)?;
                     continued = Some(result);
                 }
@@ -139,25 +139,28 @@ fn run_chain(
                 None if hook.event == "tool.call" => {
                     json!({ "deny": format!("{}: its guard failed", extension.name) })
                 }
-                None => run_chain(rest, input, engine),
+                None => run_chain(rest, context, input, engine),
             }
         }
     }
 }
 
 impl Extension {
-    /// Runs the hook until it calls `next` or returns, spending its time budget.
+    /// Runs the hook for `context` until it calls `next` or returns, spending its time budget.
     fn resume(
         &self,
         coroutine: &mlua::Thread,
+        context: &CallContext,
         args: MultiValue,
         budget: &mut Duration,
     ) -> mlua::Result<Step> {
         let _one_at_a_time = self.resuming.lock().expect("resuming lock");
         let started = Instant::now();
+        *self.serving.lock().expect("serving lock") = Some(context.clone());
         *self.deadline.lock().expect("deadline lock") = Some(started + *budget);
         let out = coroutine.resume::<MultiValue>(args);
         *self.deadline.lock().expect("deadline lock") = None;
+        *self.serving.lock().expect("serving lock") = None;
         *budget = budget.saturating_sub(started.elapsed());
         let mut out = out?.into_iter();
         if coroutine.status() != mlua::thread::ThreadStatus::Resumable {
@@ -176,7 +179,7 @@ impl Extension {
         }
     }
 
-    fn load(folder: &Path, ui: UiSink) -> Result<Self> {
+    fn load(folder: &Path) -> Result<Self> {
         let name = folder
             .file_name()
             .and_then(|name| name.to_str())
@@ -194,7 +197,9 @@ impl Extension {
             }
             _ => Ok(VmState::Continue),
         });
-        lua.globals().set("nisse", nisse_table(&lua, &name, ui)?)?;
+        let serving: Arc<Mutex<Option<CallContext>>> = Arc::default();
+        lua.globals()
+            .set("nisse", nisse_table(&lua, &name, serving.clone())?)?;
         let next_marker = lua.create_table()?;
         let next: Function = lua
             .load("local marker = ...; local yield = coroutine.yield; return function(e) return yield(marker, e) end")
@@ -243,33 +248,39 @@ impl Extension {
             next_marker,
             resuming: Mutex::new(()),
             deadline,
+            serving,
         })
     }
 }
 
-fn nisse_table(lua: &Lua, name: &str, ui: UiSink) -> Result<Table> {
+/// The conversation the running hook serves; `nisse.ui` shows things there and nowhere else.
+fn served(serving: &Mutex<Option<CallContext>>) -> mlua::Result<CallContext> {
+    serving
+        .lock()
+        .expect("serving lock")
+        .clone()
+        .ok_or_else(|| mlua::Error::runtime("nisse.ui works inside a hook"))
+}
+
+fn nisse_table(lua: &Lua, name: &str, serving: Arc<Mutex<Option<CallContext>>>) -> Result<Table> {
     let nisse = lua.create_table()?;
     let surfaces = lua.create_table()?;
-    let (extension, sink) = (name.to_owned(), ui.clone());
+    let (extension, context) = (name.to_owned(), serving.clone());
     surfaces.set(
         "status",
         lua.create_function(move |_, text: Option<String>| {
-            sink(UiChanged::Status {
-                extension: extension.clone(),
-                text,
-            });
-            Ok(())
+            served(&context)?
+                .set_ui_status(&extension, text.as_deref())
+                .map_err(|error| mlua::Error::runtime(format!("{error:#}")))
         })?,
     )?;
-    let (extension, sink) = (name.to_owned(), ui);
+    let (extension, context) = (name.to_owned(), serving);
     surfaces.set(
         "toast",
         lua.create_function(move |_, text: String| {
-            sink(UiChanged::Toast {
-                extension: extension.clone(),
-                text,
-            });
-            Ok(())
+            served(&context)?
+                .toast(&extension, &text)
+                .map_err(|error| mlua::Error::runtime(format!("{error:#}")))
         })?,
     )?;
     nisse.set("ui", surfaces)?;
@@ -285,8 +296,14 @@ fn nisse_table(lua: &Lua, name: &str, ui: UiSink) -> Result<Table> {
 }
 
 impl Hooks for LuaHost {
-    fn prompt_submit(&self, text: String) -> Result<String, String> {
-        let result = self.dispatch("prompt.submit", None, json!({ "text": text }), &|e| e);
+    fn prompt_submit(&self, context: &CallContext, text: String) -> Result<String, String> {
+        let result = self.dispatch(
+            context,
+            "prompt.submit",
+            None,
+            json!({ "text": text }),
+            &|e| e,
+        );
         if let Some(reason) = result["deny"].as_str() {
             return Err(reason.to_owned());
         }
@@ -305,7 +322,7 @@ impl Hooks for LuaHost {
             "args": call.args,
             "conversation": context,
         });
-        let result = self.dispatch("tool.call", Some(&call.name), input, &|e| {
+        let result = self.dispatch(context, "tool.call", Some(&call.name), input, &|e| {
             let rewritten = ToolCall {
                 args: e["args"].clone(),
                 ..call.clone()

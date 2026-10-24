@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{Notify, broadcast, mpsc},
+    sync::{Notify, mpsc},
 };
 
 pub const PATIENCE: Duration = Duration::from_secs(10);
@@ -461,7 +461,7 @@ impl Nisse {
                 agents: Default::default(),
             },
         );
-        let server = Server::new(harness, broadcast::channel(16).0, owner());
+        let server = Server::new(harness, owner());
         let (client, notifications) = Client::new(server.connect_in_process());
         client.initialize("openai-test").await.unwrap();
         let conversation: Conversation = client

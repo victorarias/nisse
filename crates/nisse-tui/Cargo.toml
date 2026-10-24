@@ -19,7 +19,9 @@ uuid.workspace = true
 [dev-dependencies]
 insta.workspace = true
 nisse-core.workspace = true
+nisse-lua.workspace = true
 nisse-server.workspace = true
+tempfile.workspace = true
 vt100.workspace = true
 
 [lints]

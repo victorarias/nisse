@@ -731,6 +731,7 @@ fn own_lines(
         }
         kinds::TOOL_RESULT => tool_result_lines(entry, width, theme),
         kinds::SUBAGENT => subagent_lines(entry, app, width, theme),
+        kinds::TOAST => return Vec::new(),
         other => vec![Line::styled(format!("· {other}"), theme.fg(theme.dim))],
     };
     lines.push(Line::raw(""));

@@ -19,7 +19,7 @@ use nisse_protocol::{
     ServerStopParams, ServerStopResult,
 };
 use nisse_server::Server;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 
 /// How long a server with nothing to do waits for a client before it exits.
 const IDLE_GRACE: Duration = Duration::from_secs(30);
@@ -242,16 +242,10 @@ async fn hold_home(home: &Path, wait: bool) -> Result<bool> {
 
 fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
     let home = &config.home;
-    let (ui, _) = broadcast::channel(256);
-    let sink = ui.clone();
     let extensions = home.join("extensions");
     let hooks = Arc::new(move |cwd: &Path| -> Result<Arc<dyn Hooks>> {
-        let sink = sink.clone();
         let roots = [extensions.clone(), cwd.join(".nisse/extensions")];
-        Ok(Arc::new(LuaHost::load(
-            &roots,
-            Arc::new(move |changed| drop(sink.send(changed))),
-        )?))
+        Ok(Arc::new(LuaHost::load(&roots)?))
     });
     let configured = providers::configured(config)?;
     let harness = Harness::open(
@@ -264,7 +258,7 @@ fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
         },
     )?;
     harness.resume()?;
-    Ok(Server::new(harness, ui, owner()))
+    Ok(Server::new(harness, owner()))
 }
 
 /// Serves the home on its socket until no client needs it, or one client on stdio. The socket

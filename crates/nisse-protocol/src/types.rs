@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -139,6 +139,9 @@ pub struct ConversationReadResult {
     /// Text the model is still writing, not yet an entry.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub live: String,
+    /// What each extension shows for the conversation, by extension name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub ui_status: BTreeMap<String, String>,
     /// The newest commit the result reflects; subscribe from here.
     pub seq: Seq,
 }
@@ -236,6 +239,8 @@ pub mod kinds {
     /// A tool call started a subagent: `call_id`, the child's `conversation_id`, its `title`
     /// and its `agent_type`.
     pub const SUBAGENT: &str = "nisse.subagent";
+    /// A message an extension popped up: its `extension` and `text`.
+    pub const TOAST: &str = "nisse.toast";
 }
 
 /// What one agent sent another, carried by the `nisse.user` entry it became, as `mail`.
@@ -277,6 +282,9 @@ pub struct Commit {
     /// The text the model is still writing; empty once it became an entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live: Option<String>,
+    /// What each extension shows for the conversation, whole, when it changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_status: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -318,19 +326,6 @@ pub struct StatusChanged {
     pub conversation_id: ConversationId,
     pub status: ConversationStatus,
     pub seq: Seq,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "surface", rename_all = "snake_case")]
-pub enum UiChanged {
-    Status {
-        extension: String,
-        text: Option<String>,
-    },
-    Toast {
-        extension: String,
-        text: String,
-    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

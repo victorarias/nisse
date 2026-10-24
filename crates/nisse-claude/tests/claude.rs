@@ -25,7 +25,7 @@ use nisse_protocol::{
 };
 use nisse_server::Server;
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 const MODEL: &str = "claude-haiku-5-5";
 const LARGER_MODEL: &str = "claude-sonnet-5-5";
@@ -154,7 +154,7 @@ fn serve_providers(
         },
     );
     harness.resume().unwrap();
-    Server::new(harness, broadcast::channel(16).0, owner())
+    Server::new(harness, owner())
 }
 
 fn owner() -> Actor {

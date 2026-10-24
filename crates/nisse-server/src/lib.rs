@@ -13,7 +13,7 @@ use nisse_protocol::{
     ConversationInterruptResult, ConversationListResult, ConversationSubscribeParams,
     ErrorResponse, InitializeResult, Message, ModelsListResult, PROTOCOL_VERSION,
     ProvidersListResult, Request, RequestId, Response, RpcError, Seq, ServerNotification,
-    ServerStopResult, SkillsListResult, StatusChanged, UiChanged,
+    ServerStopResult, SkillsListResult, StatusChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
@@ -30,7 +30,6 @@ use tokio::{
 pub struct Server {
     harness: Harness,
     setup: Arc<Setup>,
-    ui: broadcast::Sender<UiChanged>,
     owner: Actor,
     connections: watch::Sender<usize>,
     stopping: watch::Sender<bool>,
@@ -38,12 +37,11 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(harness: Harness, ui: broadcast::Sender<UiChanged>, owner: Actor) -> Arc<Self> {
+    pub fn new(harness: Harness, owner: Actor) -> Arc<Self> {
         let setup = Setup::new(harness.providers().to_vec());
         Arc::new(Self {
             harness,
             setup,
-            ui,
             owner,
             connections: watch::Sender::new(0),
             stopping: watch::Sender::new(false),
@@ -372,7 +370,6 @@ async fn forward(
     mut subscriptions: mpsc::UnboundedReceiver<(RequestId, ConversationSubscribeParams)>,
 ) {
     let mut commits = server.harness.subscribe();
-    let mut ui = server.ui.subscribe();
     let mut closing = server.closing.subscribe();
     let mut sign_ins = server.setup.subscribe();
     let mut subscribed: HashMap<String, Seq> = HashMap::new();
@@ -394,12 +391,6 @@ async fn forward(
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
             },
-            changed = ui.recv() => {
-                if let Ok(changed) = changed && !offer(&outgoing, ServerNotification::UiChanged(changed)) {
-                    return;
-                }
-                continue;
-            }
             state = sign_ins.recv() => {
                 if let Ok(state) = state && !offer(&outgoing, ServerNotification::AuthState(state)) {
                     return;

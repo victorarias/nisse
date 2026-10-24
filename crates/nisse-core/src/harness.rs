@@ -19,7 +19,7 @@ use crate::{
     new_id,
     provider::Provider,
     store::{NewConversation, Store, Submission, Tx},
-    tools::{Hooks, ToolCall, ToolOutcome},
+    tools::{CallContext, Hooks, ToolCall, ToolOutcome},
     turn::{Decision, Turn},
     workspace::{attach, named_skills},
 };
@@ -369,6 +369,7 @@ impl Harness {
             conversation,
             entries,
             live: store.live(conversation_id)?,
+            ui_status: store.ui_status(conversation_id)?,
             seq: store.head()?,
         })
     }
@@ -415,8 +416,15 @@ impl Harness {
             Input::Text { text } => {
                 let harness = self.clone();
                 let cwd = conversation.cwd.clone();
+                let context = CallContext::new(
+                    self.clone(),
+                    &conversation.id,
+                    conversation.lineage.as_ref(),
+                );
                 let text = tokio::task::spawn_blocking(move || {
-                    harness.hooks(&cwd).map(|hooks| hooks.prompt_submit(text))
+                    harness
+                        .hooks(&cwd)
+                        .map(|hooks| hooks.prompt_submit(&context, text))
                 })
                 .await
                 .map_err(|error| anyhow!(error))??
