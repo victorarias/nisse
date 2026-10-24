@@ -1864,7 +1864,7 @@ async fn interrupting_a_conversation_stops_its_subagents_too() {
             .rev()
             .find(|entry| entry.kind == kinds::ASSISTANT)
             .unwrap();
-        assert_eq!(last.data["interrupted"], true);
+        assert_eq!(last.data["interrupted"], true, "{entries:#?}");
     }
 }
 

@@ -637,8 +637,9 @@ impl Harness {
         );
         let ran = match provider {
             Some(provider) => tokio::select! {
-                ran = provider.run(&turn) => ran.map(|()| Ended::Answered),
+                biased;
                 _ = stopped.wait_for(|stopped| *stopped) => Ok(Ended::Interrupted),
+                ran = provider.run(&turn) => ran.map(|()| Ended::Answered),
             },
             None => Err(anyhow!(
                 "this server has no provider named {}",
