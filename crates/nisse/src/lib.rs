@@ -21,7 +21,8 @@ pub use login::{list_models, list_providers, login, logout};
 
 /// Sends `prompt` to a conversation started with `start` and writes the run to `out` as it
 /// commits, until the conversation is idle again. Each approval is asked on stderr and answered by the next line of
-/// `answers`: `y` or `yes` allows, anything else or no line at all denies.
+/// `answers`: `y` or `yes` allows, anything else or no line at all denies. When the run
+/// failed, it returns an error after the conversation's closing line.
 pub async fn exec(
     client: &Client,
     notifications: &mut mpsc::UnboundedReceiver<ServerNotification>,
@@ -52,11 +53,13 @@ pub async fn exec(
         ))
         .await?;
     let mut answers = answers.lines();
+    let mut failed = false;
     while let Some(notification) = notifications.recv().await {
         match notification {
             ServerNotification::Committed(commit) if commit.conversation_id == conversation.id => {
                 for entry in &commit.entries {
                     print_entry(entry, out)?;
+                    failed |= entry.kind == kinds::ASSISTANT && entry.data["is_error"] == true;
                     if entry.kind == kinds::APPROVAL_REQUEST {
                         let allow = ask(entry, &mut answers).await?;
                         let _: ApprovalResolveResult = client
@@ -76,6 +79,9 @@ pub async fn exec(
                     && changed.status == ConversationStatus::Idle =>
             {
                 writeln!(out, "conversation {}", conversation.id)?;
+                if failed {
+                    bail!("the run failed");
+                }
                 return Ok(());
             }
             _ => {}

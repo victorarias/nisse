@@ -25,6 +25,18 @@ impl Provider for Silent {
     }
 }
 
+struct Broken;
+
+impl Provider for Broken {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
+    fn run<'a>(&'a self, _: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async { anyhow::bail!("the model is unreachable") })
+    }
+}
+
 struct TwoCommands;
 
 impl Provider for TwoCommands {
@@ -53,6 +65,15 @@ impl Provider for TwoCommands {
 }
 
 async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
+    let (printed, ran) = exec_ending(provider, stdin).await;
+    ran.unwrap();
+    printed
+}
+
+async fn exec_ending(
+    provider: Arc<dyn Provider>,
+    stdin: &'static [u8],
+) -> (String, anyhow::Result<()>) {
     let harness = Harness::with_store(
         Store::open_in_memory().unwrap(),
         HarnessOptions {
@@ -70,7 +91,7 @@ async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
     let (client, mut notifications) = Client::new(server.connect_in_process());
     client.initialize("exec-test").await.unwrap();
     let mut out = Vec::new();
-    tokio::time::timeout(
+    let ran = tokio::time::timeout(
         PATIENCE,
         nisse::exec(
             &client,
@@ -93,9 +114,8 @@ async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
             "exec never returned; it printed:\n{}",
             String::from_utf8_lossy(&out)
         )
-    })
-    .unwrap();
-    String::from_utf8(out).unwrap()
+    });
+    (String::from_utf8(out).unwrap(), ran)
 }
 
 #[tokio::test]
@@ -103,6 +123,23 @@ async fn exec_returns_when_the_run_ends_without_an_answer() {
     let printed = exec(Arc::new(Silent), b"").await;
     assert!(printed.starts_with("> go\n"), "{printed}");
     assert!(printed.contains("conversation "), "{printed}");
+}
+
+#[tokio::test]
+async fn exec_fails_when_the_run_fails() {
+    let (printed, ran) = exec_ending(Arc::new(Broken), b"").await;
+    assert!(
+        printed.contains("Model error: the model is unreachable"),
+        "{printed}"
+    );
+    assert!(printed.contains("conversation "), "{printed}");
+    assert!(ran.is_err(), "{printed}");
+}
+
+#[tokio::test]
+async fn piped_denials_are_not_a_failed_run() {
+    let printed = exec(Arc::new(TwoCommands), b"n\nn\n").await;
+    assert!(printed.contains("Built and installed."), "{printed}");
 }
 
 #[tokio::test]
