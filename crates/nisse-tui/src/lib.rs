@@ -9,9 +9,10 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use nisse_client::Client;
 use nisse_protocol::{
-    ClientRequest, Conversation, ConversationCreateParams, ConversationReadResult,
-    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
-    ConversationSubscribeParams, Entry, Input, ServerNotification, UiChanged, WhenBusy,
+    ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
+    ConversationCreateParams, ConversationReadResult, ConversationStatus, ConversationSubmitParams,
+    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
+    UiChanged, WhenBusy,
 };
 use ratatui::{
     Terminal,
@@ -28,6 +29,7 @@ const TOAST_LIFETIME: Duration = Duration::from_secs(4);
 pub struct App {
     conversation: Conversation,
     entries: Vec<Entry>,
+    live: String,
     status: ConversationStatus,
     working_since: Option<Instant>,
     extension_status: Vec<(String, String)>,
@@ -43,6 +45,7 @@ pub struct App {
 pub async fn run(
     client: Client,
     notifications: mpsc::UnboundedReceiver<ServerNotification>,
+    model: String,
     conversation_id: Option<String>,
     theme: Theme,
 ) -> Result<()> {
@@ -60,6 +63,7 @@ pub async fn run(
         pressed,
         client,
         notifications,
+        model,
         conversation_id,
         theme,
     )
@@ -68,12 +72,14 @@ pub async fn run(
     outcome
 }
 
-/// Draws on `terminal` and reads `pressed` until the user quits or `pressed` closes.
+/// Draws on `terminal` and reads `pressed` until the user quits or `pressed` closes. `model` is
+/// the one the server named when `client` initialized.
 pub async fn drive<B: Backend>(
     terminal: &mut Terminal<B>,
     mut pressed: mpsc::UnboundedReceiver<Event>,
     client: Client,
     mut notifications: mpsc::UnboundedReceiver<ServerNotification>,
+    model: String,
     conversation_id: Option<String>,
     theme: Theme,
 ) -> Result<()>
@@ -114,13 +120,14 @@ where
             .then(Instant::now),
         conversation,
         entries: snapshot.entries,
+        live: snapshot.live,
         extension_status: Vec::new(),
         toast: None,
         input: String::new(),
         scroll_back: 0,
         frame: 0,
         error: None,
-        model: "echo".into(),
+        model,
     };
 
     loop {
@@ -175,13 +182,13 @@ impl App {
             ServerNotification::Committed(commit)
                 if commit.conversation_id == self.conversation.id =>
             {
-                for entry in &commit.entries {
-                    if let nisse_protocol::Actor::Model { model } = &entry.author {
-                        self.model.clone_from(model);
-                    }
+                if let Some(live) = commit.live {
+                    self.live = live;
                 }
-                self.entries.extend(commit.entries);
-                self.scroll_back = 0;
+                if !commit.entries.is_empty() {
+                    self.entries.extend(commit.entries);
+                    self.scroll_back = 0;
+                }
             }
             ServerNotification::Status(changed)
                 if changed.conversation_id == self.conversation.id =>
@@ -218,6 +225,13 @@ impl App {
         else {
             return Ok(false);
         };
+        if let (KeyCode::Char(answer @ ('y' | 'n')), KeyModifiers::CONTROL) = (code, modifiers)
+            && let Some(call_id) = view::pending_approval(&self.entries)
+        {
+            let call_id = call_id.to_owned();
+            self.resolve(client, call_id, answer == 'y').await;
+            return Ok(false);
+        }
         match (code, modifiers) {
             (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => return Ok(true),
             (KeyCode::Enter, _) if !self.input.trim().is_empty() => {
@@ -246,5 +260,19 @@ impl App {
             _ => {}
         }
         Ok(false)
+    }
+
+    async fn resolve(&mut self, client: &Client, call_id: String, allow: bool) {
+        let resolved = client
+            .request::<ApprovalResolveResult>(ClientRequest::ApprovalResolve(
+                ApprovalResolveParams {
+                    conversation_id: self.conversation.id.clone(),
+                    call_id,
+                    allow,
+                    reason: None,
+                },
+            ))
+            .await;
+        self.error = resolved.err().map(|error| error.to_string());
     }
 }

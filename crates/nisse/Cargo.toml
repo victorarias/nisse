@@ -8,9 +8,11 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+nisse-claude.workspace = true
 nisse-client.workspace = true
 nisse-core.workspace = true
 nisse-lua.workspace = true
+nisse-openai.workspace = true
 nisse-protocol.workspace = true
 nisse-server.workspace = true
 nisse-tui.workspace = true

@@ -8,9 +8,9 @@ use nisse_core::{Harness, SubmitError};
 use std::collections::HashMap;
 
 use nisse_protocol::{
-    Actor, ClientInfo, ClientRequest, ConversationListResult, ConversationSubscribeParams,
-    ErrorResponse, InitializeResult, Message, PROTOCOL_VERSION, Request, RequestId, Response,
-    RpcError, Seq, ServerNotification, StatusChanged, UiChanged,
+    Actor, ApprovalResolveResult, ClientInfo, ClientRequest, ConversationListResult,
+    ConversationSubscribeParams, ErrorResponse, InitializeResult, Message, PROTOCOL_VERSION,
+    Request, RequestId, Response, RpcError, Seq, ServerNotification, StatusChanged, UiChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
@@ -50,7 +50,8 @@ impl Server {
         self.serve(channels, owner).await;
     }
 
-    /// WebSocket over a unix socket. Whoever can open the socket is the owner.
+    /// WebSocket over a unix socket. Whoever can open the socket is the owner. Whatever socket is
+    /// at `path` is replaced, so only the process that serves the socket's home binds it.
     pub fn bind_unix(path: &Path) -> Result<UnixListener> {
         if path.exists() {
             std::fs::remove_file(path)
@@ -160,6 +161,7 @@ impl Connection {
                     },
                     protocol_version: PROTOCOL_VERSION,
                     actor: self.actor.clone(),
+                    model: harness.model().to_owned(),
                 })
             }
             ClientRequest::ConversationCreate(params) => harness
@@ -174,6 +176,10 @@ impl Connection {
                 .read(&params.conversation_id, params.since_seq)
                 .map_err(not_found)
                 .and_then(to_result),
+            ClientRequest::ApprovalResolve(params) => harness
+                .resolve(params, self.actor.clone())
+                .map_err(internal)
+                .and_then(|accepted| to_result(ApprovalResolveResult { accepted })),
             ClientRequest::ConversationSubscribe(params) => {
                 let _ = self.subscribe.send((request.id.clone(), params));
                 return None;
@@ -185,6 +191,9 @@ impl Connection {
                         RpcError::INVALID_PARAMS,
                         format!("no conversation {id}"),
                     )),
+                    Err(error @ SubmitError::ReservedKind(_)) => {
+                        Err(RpcError::new(RpcError::INVALID_PARAMS, error.to_string()))
+                    }
                     Err(error @ (SubmitError::Busy | SubmitError::Denied(_))) => Err(RpcError {
                         code: RpcError::INVALID_REQUEST,
                         message: error.to_string(),

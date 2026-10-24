@@ -7,8 +7,11 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+ignore.workspace = true
 nisse-protocol.workspace = true
+regex.workspace = true
 rusqlite.workspace = true
+rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

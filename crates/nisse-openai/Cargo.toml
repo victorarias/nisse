@@ -1,0 +1,27 @@
+[package]
+name = "nisse-openai"
+description = "OpenAI's Responses API through a ChatGPT sign-in, as a Nisse provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+nisse-core.workspace = true
+nisse-protocol.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+nisse-client.workspace = true
+nisse-server.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

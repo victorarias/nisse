@@ -36,6 +36,8 @@ pub struct InitializeResult {
     pub server: ClientInfo,
     pub protocol_version: u32,
     pub actor: Actor,
+    /// The model that answers this server's conversations.
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -72,6 +74,9 @@ pub struct ConversationReadParams {
 pub struct ConversationReadResult {
     pub conversation: Conversation,
     pub entries: Vec<Entry>,
+    /// Text the model is still writing, not yet an entry.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub live: String,
     /// The newest commit the result reflects; subscribe from here.
     pub seq: Seq,
 }
@@ -150,6 +155,8 @@ pub mod kinds {
     pub const ASSISTANT: &str = "nisse.assistant";
     pub const TOOL_CALL: &str = "nisse.tool_call";
     pub const TOOL_RESULT: &str = "nisse.tool_result";
+    pub const APPROVAL_REQUEST: &str = "nisse.approval_request";
+    pub const APPROVAL: &str = "nisse.approval";
 }
 
 /// One atomic write, as seen by subscribers of its conversation.
@@ -160,6 +167,24 @@ pub struct Commit {
     pub entries: Vec<Entry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<ConversationStatus>,
+    /// The text the model is still writing; empty once it became an entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ApprovalResolveParams {
+    pub conversation_id: ConversationId,
+    pub call_id: String,
+    pub allow: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ApprovalResolveResult {
+    /// False when someone answered first, or nothing waits on this call.
+    pub accepted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

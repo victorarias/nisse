@@ -3,7 +3,9 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use nisse_client::Client;
-use nisse_core::{EchoModel, Harness, HarnessOptions, Hooks, Model, ModelFuture, NoHooks, Store};
+use nisse_core::{
+    Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, ProviderFuture, Store, Turn,
+};
 use nisse_lua::LuaHost;
 use nisse_protocol::{
     Actor, ClientRequest, Conversation, ConversationCreateParams, ConversationReadResult,
@@ -24,17 +26,17 @@ fn owner() -> Actor {
 
 fn start(
     store: Store,
-    model: Arc<dyn Model>,
+    provider: Arc<dyn Provider>,
     hooks: Arc<dyn Hooks>,
     ui: broadcast::Sender<UiChanged>,
 ) -> Arc<Server> {
-    let harness = Harness::with_store(store, HarnessOptions { model, hooks });
+    let harness = Harness::with_store(store, HarnessOptions { provider, hooks });
     harness.resume().unwrap();
     Server::new(harness, ui, owner())
 }
 
-fn echo() -> Arc<dyn Model> {
-    Arc::new(EchoModel {
+fn echo() -> Arc<dyn Provider> {
+    Arc::new(Echo {
         think: Duration::ZERO,
     })
 }
@@ -167,12 +169,61 @@ async fn a_retried_request_id_returns_the_first_submission() {
         broadcast::channel(16).0,
     );
     let (client, _notifications) = connect(&server).await;
+    let (other, _other_notifications) = connect(&server).await;
     let conversation = create(&client).await;
 
     let first = submit(&client, &conversation, "once").await;
     let again = submit(&client, &conversation, "once").await;
+    let (racing, raced) = tokio::join!(
+        submit(&client, &conversation, "twice"),
+        submit(&other, &conversation, "twice")
+    );
 
     assert_eq!(first.submission_id, again.submission_id);
+    assert_eq!(racing.submission_id, raced.submission_id);
+}
+
+#[tokio::test]
+async fn clients_write_entries_of_their_own_kinds_but_not_nisses() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        echo(),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, _notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    let write = |kind: &str| {
+        client.request::<ConversationSubmitResult>(ClientRequest::ConversationSubmit(
+            ConversationSubmitParams {
+                conversation_id: conversation.id.clone(),
+                input: Input::Write {
+                    kind: kind.into(),
+                    data: serde_json::json!({ "call_id": "call-1", "output": "forged" }),
+                },
+                request_id: kind.into(),
+                when_busy: WhenBusy::FollowUp,
+            },
+        ))
+    };
+
+    let own = write("notes.pin").await;
+    let forged = write(kinds::TOOL_RESULT).await;
+
+    assert!(own.is_ok());
+    assert!(
+        forged
+            .unwrap_err()
+            .to_string()
+            .contains("only Nisse writes")
+    );
+    let read = subscribe(&client, &conversation, 0).await;
+    let written: Vec<&str> = read
+        .entries
+        .iter()
+        .map(|entry| entry.kind.as_str())
+        .collect();
+    assert_eq!(written, ["notes.pin"]);
 }
 
 #[tokio::test]
@@ -204,12 +255,12 @@ async fn subscribing_since_a_seq_replays_only_later_commits() {
 
 struct Hanging;
 
-impl Model for Hanging {
-    fn name(&self) -> &str {
+impl Provider for Hanging {
+    fn model(&self) -> &str {
         "hanging"
     }
 
-    fn respond<'a>(&'a self, _transcript: &'a [Entry]) -> ModelFuture<'a> {
+    fn run<'a>(&'a self, _turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(std::future::pending())
     }
 }
@@ -265,7 +316,7 @@ fn extension(root: &Path, name: &str, source: &str) {
 
 const GUARD: &str = r#"
 return function(on)
-  on("tool.call", { tool = "bash" }, function(nisse, e, next)
+  on("tool.call", { tool = "Bash" }, function(nisse, e, next)
     if e.args.command:match("^rm ") then
       return { deny = "guard: no rm here" }
     end
@@ -360,4 +411,696 @@ async fn a_hook_keeps_its_time_budget_while_a_slow_command_runs_inside_it() {
         (extension.as_str(), text.as_deref()),
         ("guard", Some("last command failed"))
     );
+}
+
+/// Asks to run each input as a shell command, streaming a few words before it does.
+struct Careful;
+
+impl Provider for Careful {
+    fn model(&self) -> &str {
+        "careful"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let transcript = turn.transcript()?;
+            let command = transcript.last().unwrap().data["text"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            turn.stream("Let me");
+            turn.stream("Let me run that.");
+            tokio::time::sleep(nisse_core::LIVE_INTERVAL * 3).await;
+            turn.say("Let me run that.")?;
+            let call = nisse_core::ToolCall {
+                id: format!("call-{command}"),
+                name: "Bash".into(),
+                args: serde_json::json!({ "command": command }),
+            };
+            let outcome = turn
+                .call_tool(
+                    call,
+                    nisse_core::Approval::Ask,
+                    nisse_core::run_builtin_tool,
+                )
+                .await?;
+            turn.answer(outcome.denied.as_deref().unwrap_or(outcome.output.trim()))
+        })
+    }
+}
+
+async fn resolve(client: &Client, conversation: &Conversation, call_id: &str, allow: bool) -> bool {
+    let result: nisse_protocol::ApprovalResolveResult = client
+        .request(ClientRequest::ApprovalResolve(
+            nisse_protocol::ApprovalResolveParams {
+                conversation_id: conversation.id.clone(),
+                call_id: call_id.into(),
+                allow,
+                reason: None,
+            },
+        ))
+        .await
+        .unwrap();
+    result.accepted
+}
+
+#[tokio::test]
+async fn a_call_waits_for_approval_and_only_the_first_answer_counts() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Careful),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let (other, _) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "echo approved").await;
+    let asked = until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    let first = resolve(&client, &conversation, "call-echo approved", true).await;
+    let second = resolve(&other, &conversation, "call-echo approved", false).await;
+    let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
+
+    assert!(asked.iter().any(|notification| matches!(notification,
+        ServerNotification::Status(changed) if changed.status == ConversationStatus::NeedsApproval)));
+    assert!(first && !second);
+    let approval = answered
+        .iter()
+        .find(|entry| entry.kind == kinds::APPROVAL)
+        .unwrap();
+    assert_eq!(
+        (approval.data["allow"].as_bool(), &approval.author),
+        (Some(true), &owner())
+    );
+    assert_eq!(answered.last().unwrap().data["text"], "approved");
+}
+
+#[tokio::test]
+async fn a_declined_call_never_runs_and_the_model_hears_why() {
+    let workspace = tempfile::tempdir().unwrap();
+    let marker = workspace.path().join("made");
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Careful),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+    let command = format!("touch {}", marker.display());
+
+    submit(&client, &conversation, &command).await;
+    until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    resolve(&client, &conversation, &format!("call-{command}"), false).await;
+    let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
+
+    assert!(!marker.exists());
+    assert_eq!(answered.last().unwrap().data["text"], "owner declined");
+}
+
+async fn until_idle(notifications: &mut UnboundedReceiver<ServerNotification>) {
+    tokio::time::timeout(PATIENCE, async {
+        loop {
+            if let Some(ServerNotification::Status(changed)) = notifications.recv().await
+                && changed.status == ConversationStatus::Idle
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("the conversation went idle");
+}
+
+fn ask_to_run(command: &str) -> nisse_core::ToolCall {
+    nisse_core::ToolCall {
+        id: format!("call-{command}"),
+        name: "Bash".into(),
+        args: serde_json::json!({ "command": command }),
+    }
+}
+
+/// Asks to run `first`, and gives up on it when told the model went away, as Claude does when
+/// it exits mid-ask. Then it fails, or asks to run `second` and answers with its output.
+struct GivesUp {
+    gone: tokio::sync::Notify,
+    second: Option<&'static str>,
+}
+
+impl Provider for GivesUp {
+    fn model(&self) -> &str {
+        "gives-up"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let first = turn.call_tool(
+                ask_to_run("first"),
+                nisse_core::Approval::Ask,
+                nisse_core::run_builtin_tool,
+            );
+            tokio::select! {
+                ran = first => { ran?; }
+                () = self.gone.notified() => {}
+            }
+            let Some(second) = self.second else {
+                anyhow::bail!("the model went away");
+            };
+            let outcome = turn
+                .call_tool(
+                    ask_to_run(second),
+                    nisse_core::Approval::Ask,
+                    nisse_core::run_builtin_tool,
+                )
+                .await?;
+            turn.answer(outcome.output.trim())
+        })
+    }
+}
+
+#[tokio::test]
+async fn an_approval_left_open_by_a_failed_run_is_closed_and_answering_it_keeps_the_conversation_idle()
+ {
+    let provider = Arc::new(GivesUp {
+        gone: tokio::sync::Notify::new(),
+        second: None,
+    });
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        provider.clone(),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "go").await;
+    until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    provider.gone.notify_one();
+    let settled = until_entry(&mut notifications, kinds::ASSISTANT).await;
+    until_idle(&mut notifications).await;
+    let accepted = resolve(&client, &conversation, "call-first", true).await;
+    let after = subscribe(&client, &conversation, 0).await;
+
+    let ServerNotification::Committed(settle) = settled.last().unwrap() else {
+        panic!("the run settled in a commit");
+    };
+    let result = settle
+        .entries
+        .iter()
+        .find(|entry| entry.kind == kinds::TOOL_RESULT)
+        .expect("the open call got its result as the run settled");
+    assert_eq!(result.data["call_id"], "call-first");
+    assert!(
+        result.data["output"]
+            .as_str()
+            .unwrap()
+            .starts_with("not run:")
+    );
+    assert!(!accepted);
+    assert_eq!(after.conversation.status, ConversationStatus::Idle);
+    assert!(
+        !after
+            .entries
+            .iter()
+            .any(|entry| entry.kind == kinds::APPROVAL)
+    );
+}
+
+#[tokio::test]
+async fn approving_the_live_call_resumes_work_while_the_call_its_run_abandoned_cannot_be_answered()
+{
+    let provider = Arc::new(GivesUp {
+        gone: tokio::sync::Notify::new(),
+        second: Some("echo second"),
+    });
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        provider.clone(),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "go").await;
+    until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    provider.gone.notify_one();
+    until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+    let live = resolve(&client, &conversation, "call-echo second", true).await;
+    let abandoned = resolve(&client, &conversation, "call-first", true).await;
+    let answered = until_entry(&mut notifications, kinds::ASSISTANT).await;
+
+    let approved = answered
+        .iter()
+        .find_map(|notification| match notification {
+            ServerNotification::Committed(commit)
+                if commit
+                    .entries
+                    .iter()
+                    .any(|entry| entry.kind == kinds::APPROVAL) =>
+            {
+                Some(commit)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(live && !abandoned);
+    assert_eq!(approved.status, Some(ConversationStatus::Working));
+    assert_eq!(entries(&answered).last().unwrap().data["text"], "second");
+}
+
+#[test]
+fn a_call_waiting_for_approval_when_nisse_restarts_is_not_run_and_the_model_hears_it() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("nisse.sqlite");
+    let marker = home.path().join("made");
+    let command = format!("touch {}", marker.display());
+
+    let crashed = tokio::runtime::Runtime::new().unwrap();
+    let conversation = crashed.block_on(async {
+        let server = start(
+            Store::open(&path).unwrap(),
+            Arc::new(Careful),
+            Arc::new(NoHooks),
+            broadcast::channel(16).0,
+        );
+        let (client, mut notifications) = connect(&server).await;
+        let conversation = create(&client).await;
+        subscribe(&client, &conversation, 0).await;
+        submit(&client, &conversation, &command).await;
+        until_entry(&mut notifications, kinds::APPROVAL_REQUEST).await;
+        conversation
+    });
+    crashed.shutdown_background();
+
+    let reopened = tokio::runtime::Runtime::new().unwrap();
+    reopened.block_on(async {
+        let server = start(
+            Store::open(&path).unwrap(),
+            echo(),
+            Arc::new(NoHooks),
+            broadcast::channel(16).0,
+        );
+        let (client, mut notifications) = connect(&server).await;
+        let mut entries = subscribe(&client, &conversation, 0).await.entries;
+        let rerun_answered = |entries: &[Entry]| {
+            entries
+                .iter()
+                .skip_while(|entry| entry.kind != kinds::TOOL_RESULT)
+                .any(|entry| entry.kind == kinds::ASSISTANT)
+        };
+        while !rerun_answered(&entries) {
+            entries.extend(entries_until(&mut notifications, kinds::ASSISTANT).await);
+        }
+        let accepted = resolve(&client, &conversation, &format!("call-{command}"), true).await;
+
+        let result = entries
+            .iter()
+            .find(|entry| entry.kind == kinds::TOOL_RESULT)
+            .unwrap();
+        let output = result.data["output"].as_str().unwrap();
+        assert!(output.starts_with("not run:"), "{output}");
+        assert!(
+            entries.last().unwrap().data["text"]
+                .as_str()
+                .unwrap()
+                .contains(output)
+        );
+        assert!(!accepted);
+        assert!(!marker.exists());
+    });
+}
+
+#[tokio::test]
+async fn streamed_text_shows_live_until_the_message_is_committed() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Careful),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "true").await;
+    let seen = until_entry(&mut notifications, kinds::ASSISTANT).await;
+
+    let live: Vec<&str> = seen
+        .iter()
+        .filter_map(|notification| match notification {
+            ServerNotification::Committed(commit) => commit.live.as_deref(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(live, ["Let me run that.", ""]);
+}
+
+/// Runs the calls its input lists, as JSON `[{"name", "args"}]`, with the built-in tools.
+struct Scripted;
+
+impl Provider for Scripted {
+    fn model(&self) -> &str {
+        "scripted"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let transcript = turn.transcript()?;
+            let script = transcript.last().unwrap().data["text"].as_str().unwrap();
+            let calls: Vec<serde_json::Value> = serde_json::from_str(script)?;
+            for (index, call) in calls.into_iter().enumerate() {
+                let call = nisse_core::ToolCall {
+                    id: format!("call-{index}"),
+                    name: call["name"].as_str().unwrap().into(),
+                    args: call["args"].clone(),
+                };
+                let approval = nisse_core::approval_for(&call.name);
+                turn.call_tool(call, approval, nisse_core::run_builtin_tool)
+                    .await?;
+            }
+            turn.answer("done")
+        })
+    }
+}
+
+/// Runs `script` on the scripted model, allowing every call that asks, and returns what the
+/// conversation committed until the answer.
+async fn run_allowing(script: serde_json::Value) -> Vec<Entry> {
+    run_allowing_through(Arc::new(NoHooks), script).await
+}
+
+async fn run_allowing_through(hooks: Arc<dyn Hooks>, script: serde_json::Value) -> Vec<Entry> {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(Scripted),
+        hooks,
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+    submit(&client, &conversation, &script.to_string()).await;
+    let mut seen = Vec::new();
+    tokio::time::timeout(PATIENCE, async {
+        while let Some(notification) = notifications.recv().await {
+            for entry in entries(&[notification]) {
+                if entry.kind == kinds::APPROVAL_REQUEST {
+                    let call_id = entry.data["call_id"].as_str().unwrap();
+                    resolve(&client, &conversation, call_id, true).await;
+                }
+                let answered = entry.kind == kinds::ASSISTANT;
+                seen.push(entry);
+                if answered {
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("the script was answered in time");
+    seen
+}
+
+fn tool_results(entries: &[Entry]) -> Vec<(String, bool)> {
+    entries
+        .iter()
+        .filter(|entry| entry.kind == kinds::TOOL_RESULT)
+        .map(|entry| {
+            (
+                entry.data["output"].as_str().unwrap().to_owned(),
+                entry.data["is_error"].as_bool().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_model_writes_edits_reads_and_greps_files_and_only_changes_ask_first() {
+    let workspace = tempfile::tempdir().unwrap();
+    let file = workspace.path().join("notes/todo.txt");
+    let path = file.to_str().unwrap();
+    let root = workspace.path().to_str().unwrap();
+
+    let committed = run_allowing(serde_json::json!([
+        { "name": "Write", "args": { "file_path": path, "content": "milk\neggs\nmilk\n" } },
+        { "name": "Edit", "args": { "file_path": path, "old_string": "milk", "new_string": "tea" } },
+        { "name": "Edit", "args": { "file_path": path, "old_string": "eggs\n", "new_string": "eggs\nbread\n" } },
+        { "name": "Read", "args": { "file_path": path, "offset": 2 } },
+        { "name": "Grep", "args": { "pattern": "^b", "path": root, "glob": "*.txt" } },
+    ]))
+    .await;
+
+    let asked: Vec<&str> = committed
+        .iter()
+        .filter(|entry| entry.kind == kinds::APPROVAL_REQUEST)
+        .map(|entry| entry.data["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(asked, ["Write", "Edit", "Edit"]);
+    let results = tool_results(&committed);
+    assert!(results[1].1 && results[1].0.contains("appears 2 times"));
+    assert_eq!(
+        results[3],
+        ("     2\teggs\n     3\tbread\n     4\tmilk\n".into(), false)
+    );
+    assert_eq!(results[4], (format!("{path}:3:bread"), false));
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "milk\neggs\nbread\nmilk\n"
+    );
+}
+
+#[tokio::test]
+async fn a_hook_rewrites_a_calls_arguments_but_cannot_swap_in_a_tool_that_needs_approval() {
+    let workspace = tempfile::tempdir().unwrap();
+    let notes = workspace.path().join("notes.txt");
+    std::fs::write(&notes, "asked for\n").unwrap();
+    let instead = workspace.path().join("instead.txt");
+    std::fs::write(&instead, "rewritten\n").unwrap();
+    let swapped = workspace.path().join("swapped");
+    let root = tempfile::tempdir().unwrap();
+    extension(
+        root.path(),
+        "swap",
+        &format!(
+            r#"
+return function(on)
+  on("tool.call", {{ tool = "Read" }}, function(nisse, e, next)
+    return next({{ tool = "Bash", id = "elsewhere", args = {{ file_path = "{}", command = "touch {}" }} }})
+  end)
+end
+"#,
+            instead.display(),
+            swapped.display()
+        ),
+    );
+    let hooks = LuaHost::load(&[root.path().to_path_buf()], Arc::new(|_| {})).unwrap();
+
+    let committed = run_allowing_through(
+        Arc::new(hooks),
+        serde_json::json!([{ "name": "Read", "args": { "file_path": notes } }]),
+    )
+    .await;
+
+    assert!(
+        !committed
+            .iter()
+            .any(|entry| entry.kind == kinds::APPROVAL_REQUEST)
+    );
+    assert!(!swapped.exists(), "the hook ran Bash");
+    let result = committed
+        .iter()
+        .find(|entry| entry.kind == kinds::TOOL_RESULT)
+        .unwrap();
+    assert_eq!(result.data["call_id"], "call-0");
+    assert_eq!(result.data["output"], "     1\trewritten\n");
+}
+
+#[tokio::test]
+async fn grep_matches_end_of_line_anchors_in_unix_and_windows_files() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("unix.rs"),
+        "fn main()\nfn main() {}\n",
+    )
+    .unwrap();
+    std::fs::write(workspace.path().join("windows.rs"), "fn main()\r\n").unwrap();
+    let root = workspace.path().to_str().unwrap();
+
+    let committed = run_allowing(serde_json::json!([
+        { "name": "Grep", "args": { "pattern": "main\\(\\)$", "path": root } },
+    ]))
+    .await;
+
+    assert_eq!(
+        tool_results(&committed)[0],
+        (
+            format!("{root}/unix.rs:1:fn main()\n{root}/windows.rs:1:fn main()"),
+            false
+        )
+    );
+}
+
+#[tokio::test]
+async fn grep_skips_gitignored_hidden_and_binary_files() {
+    let workspace = tempfile::tempdir().unwrap();
+    let write = |name: &str, content: &[u8]| {
+        let file = workspace.path().join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, content).unwrap();
+    };
+    write(".gitignore", b"target/\n*.log\n");
+    write("src/main.rs", b"// gnome\n");
+    write("src/lib.rs", b"// gnome\n");
+    write("target/debug/out.rs", b"// gnome\n");
+    write("build.log", b"gnome\n");
+    write(".hidden/notes.rs", b"// gnome\n");
+    write("logo.bin", b"gnome\0\x01");
+    let root = workspace.path().to_str().unwrap();
+
+    let committed = run_allowing(serde_json::json!([
+        { "name": "Grep", "args": { "pattern": "gnome", "path": root } },
+        { "name": "Grep", "args": { "pattern": "gnome", "path": root, "glob": "src/**/m*.rs" } },
+    ]))
+    .await;
+
+    let results = tool_results(&committed);
+    assert_eq!(
+        results[0],
+        (
+            format!("{root}/src/lib.rs:1:// gnome\n{root}/src/main.rs:1:// gnome"),
+            false
+        )
+    );
+    assert_eq!(
+        results[1],
+        (format!("{root}/src/main.rs:1:// gnome"), false)
+    );
+}
+
+#[tokio::test]
+async fn a_command_that_leaves_a_server_running_returns_when_it_exits_not_as_a_timeout() {
+    let committed = run_allowing(serde_json::json!([
+        { "name": "Bash", "args": { "command": "sleep 60 & echo $!" } },
+    ]))
+    .await;
+
+    let (output, is_error) = tool_results(&committed).remove(0);
+    let started = output.trim();
+    std::process::Command::new("kill")
+        .arg(started)
+        .status()
+        .unwrap();
+    assert!(!is_error && started.parse::<u32>().is_ok(), "{output}");
+}
+
+#[tokio::test]
+async fn a_command_past_its_timeout_is_killed_with_what_it_started() {
+    let committed = run_allowing(serde_json::json!([
+        { "name": "Bash", "args": { "command": "sleep 60 & echo $!; sleep 60", "timeout": 200 } },
+    ]))
+    .await;
+
+    let (output, is_error) = tool_results(&committed).remove(0);
+    assert!(is_error && output.contains("timed out after 200 ms"));
+    let started: i32 = output.lines().next().unwrap().parse().unwrap();
+    #[cfg(target_os = "linux")]
+    ends(started).await;
+}
+
+/// Waits, with a deadline, for a process this test did not start to end.
+#[cfg(target_os = "linux")]
+async fn ends(pid: i32) {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        process::{Pid, PidfdFlags, pidfd_open},
+    };
+    let Ok(pidfd) = pidfd_open(Pid::from_raw(pid).unwrap(), PidfdFlags::empty()) else {
+        return;
+    };
+    let deadline = Timespec {
+        tv_sec: PATIENCE.as_secs() as i64,
+        tv_nsec: 0,
+    };
+    let ready = tokio::task::spawn_blocking(move || {
+        poll(&mut [PollFd::new(&pidfd, PollFlags::IN)], Some(&deadline))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(ready, 1, "process {pid} kept running");
+}
+
+/// Asks to run two commands at once, the way models issue parallel tool calls.
+struct TwoAtOnce;
+
+impl Provider for TwoAtOnce {
+    fn model(&self) -> &str {
+        "two-at-once"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let call = |id: &str| nisse_core::ToolCall {
+                id: id.into(),
+                name: "Bash".into(),
+                args: serde_json::json!({ "command": format!("echo {id}") }),
+            };
+            let (first, second) = tokio::join!(
+                turn.call_tool(
+                    call("first"),
+                    nisse_core::Approval::Ask,
+                    nisse_core::run_builtin_tool
+                ),
+                turn.call_tool(
+                    call("second"),
+                    nisse_core::Approval::Ask,
+                    nisse_core::run_builtin_tool
+                ),
+            );
+            turn.answer(&format!(
+                "{} {}",
+                first?.output.trim(),
+                second?.output.trim()
+            ))
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_luau_hook_waiting_on_one_approval_does_not_hold_up_a_parallel_call() {
+    let root = tempfile::tempdir().unwrap();
+    extension(root.path(), "guard", GUARD);
+    let host = LuaHost::load(&[root.path().to_path_buf()], Arc::new(|_| {})).unwrap();
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(TwoAtOnce),
+        Arc::new(host),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    subscribe(&client, &conversation, 0).await;
+
+    submit(&client, &conversation, "go").await;
+    let mut asked = Vec::new();
+    while asked.len() < 2 {
+        asked.extend(
+            entries_until(&mut notifications, kinds::APPROVAL_REQUEST)
+                .await
+                .into_iter()
+                .filter(|entry| entry.kind == kinds::APPROVAL_REQUEST),
+        );
+    }
+    resolve(&client, &conversation, "second", true).await;
+    resolve(&client, &conversation, "first", true).await;
+    let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
+
+    assert_eq!(answered.last().unwrap().data["text"], "first second");
 }

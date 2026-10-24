@@ -35,8 +35,14 @@ enter where those consumers enter:
 | Wire | a real server driven as a protocol client, in process | `crates/nisse-server/tests` |
 | Screen | the real TUI on a vt100 screen, typed into, against a real server | `crates/nisse-tui/tests` |
 | Stack | the `nisse` binary over its socket: kill, restart, reconnect | `crates/nisse/tests` |
+| Provider | a real provider against recorded exchanges: a local HTTP server for OpenAI, `nisse-claude-replay` for Claude | `crates/nisse-openai/tests`, `crates/nisse-claude/tests` |
 
-- The model is the seam. Tests script it; nothing else is faked.
+Provider fixtures are real recordings wherever we can make them (`NISSE_RECORD`),
+normalized so they hold no tokens, account ids or home paths. Hand-built ones
+cover failures nobody can record on demand, like a stream cut mid-response.
+
+- The model is the seam. Tests script it, or replay a provider's recorded
+  exchange; nothing else is faked.
 - Judge the TUI by its screen. Screen snapshots use `insta`; review changes with
   `cargo insta review` and commit the `.snap` files.
 - The committed `schema/nisse.schema.json` is what clients build from. After a

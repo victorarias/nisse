@@ -7,7 +7,10 @@ use std::{
 };
 
 use nisse_client::Client;
-use nisse_core::{EchoModel, Harness, HarnessOptions, NoHooks, Store};
+use nisse_core::{
+    Approval, Echo, Harness, HarnessOptions, NoHooks, Provider, ProviderFuture, Store, ToolCall,
+    ToolOutcome, Turn,
+};
 use nisse_protocol::Actor;
 use nisse_server::Server;
 use ratatui::{
@@ -70,12 +73,17 @@ struct Tui {
 
 impl Tui {
     async fn start() -> Self {
+        Self::with_model(Arc::new(Echo {
+            think: Duration::ZERO,
+        }))
+        .await
+    }
+
+    async fn with_model(provider: Arc<dyn Provider>) -> Self {
         let harness = Harness::with_store(
             Store::open_in_memory().unwrap(),
             HarnessOptions {
-                model: Arc::new(EchoModel {
-                    think: Duration::ZERO,
-                }),
+                provider,
                 hooks: Arc::new(NoHooks),
             },
         );
@@ -85,7 +93,7 @@ impl Tui {
         };
         let server = Server::new(harness, broadcast::channel(16).0, owner);
         let (client, notifications) = Client::new(server.connect_in_process());
-        client.initialize("screen-test").await.unwrap();
+        let hello = client.initialize("screen-test").await.unwrap();
 
         let screen = Screen {
             parser: Arc::new(Mutex::new(vt100::Parser::new(HEIGHT, WIDTH, 0))),
@@ -106,6 +114,7 @@ impl Tui {
                 pressed,
                 client,
                 notifications,
+                hello.model,
                 None,
                 nisse_tui::Theme::NEON,
             )
@@ -116,15 +125,23 @@ impl Tui {
     }
 
     fn type_line(&self, text: &str) {
-        for typed in text.chars() {
-            self.press(KeyCode::Char(typed));
-        }
+        self.type_text(text);
         self.press(KeyCode::Enter);
     }
 
+    fn type_text(&self, text: &str) {
+        for typed in text.chars() {
+            self.press(KeyCode::Char(typed));
+        }
+    }
+
     fn press(&self, code: KeyCode) {
+        self.chord(code, KeyModifiers::NONE);
+    }
+
+    fn chord(&self, code: KeyCode, modifiers: KeyModifiers) {
         self.keys
-            .send(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+            .send(Event::Key(KeyEvent::new(code, modifiers)))
             .unwrap();
     }
 }
@@ -142,6 +159,68 @@ fn without_conversation_id(screen: &str) -> String {
     lines.join("\n")
 }
 
+const SPINNER: [char; 8] = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
+
+fn steady(screen: &str) -> String {
+    let still: String = screen
+        .chars()
+        .map(|cell| if SPINNER.contains(&cell) { '⣿' } else { cell })
+        .collect();
+    let clock = still.find("WORKING").and_then(|at| {
+        still[at..]
+            .find(|cell: char| cell.is_ascii_digit())
+            .map(|offset| at + offset)
+    });
+    match clock {
+        Some(clock) => format!("{}00:00:00{}", &still[..clock], &still[clock + 8..]),
+        None => still,
+    }
+}
+
+struct Thinking {
+    finish: Arc<Notify>,
+}
+
+impl Provider for Thinking {
+    fn model(&self) -> &str {
+        "thinking"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            turn.stream("Tracing the neon");
+            turn.stream("Tracing the neon grid, one wire at a time");
+            self.finish.notified().await;
+            turn.answer("The grid is lit.")
+        })
+    }
+}
+
+struct Asking;
+
+impl Provider for Asking {
+    fn model(&self) -> &str {
+        "asking"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let call = ToolCall {
+                id: "call-1".into(),
+                name: "Bash".into(),
+                args: serde_json::json!({ "command": "rm -rf build", "description": "Clean the build" }),
+            };
+            let outcome = turn
+                .call_tool(call, Approval::Ask, |_| ToolOutcome {
+                    output: "removed build\n".into(),
+                    ..ToolOutcome::default()
+                })
+                .await?;
+            turn.answer(&format!("Done: {}", outcome.output.trim()))
+        })
+    }
+}
+
 #[tokio::test]
 async fn a_new_conversation_opens_on_the_splash() {
     let tui = Tui::start().await;
@@ -156,4 +235,70 @@ async fn a_command_and_its_output_appear_in_the_transcript() {
     tui.type_line("!echo neon");
     let screen = tui.screen.shows(&["The command ran:", "READY"]).await;
     insta::assert_snapshot!(without_conversation_id(&screen));
+}
+
+#[tokio::test]
+async fn the_model_s_unfinished_message_shows_live_until_it_is_committed() {
+    let finish = Arc::new(Notify::new());
+    let tui = Tui::with_model(Arc::new(Thinking {
+        finish: finish.clone(),
+    }))
+    .await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("light the grid");
+    let streaming = tui
+        .screen
+        .shows(&["Tracing the neon grid, one wire at a time▍"])
+        .await;
+    finish.notify_one();
+    let answered = tui.screen.shows(&["The grid is lit.", "READY"]).await;
+
+    insta::assert_snapshot!("streaming", steady(&without_conversation_id(&streaming)));
+    insta::assert_snapshot!("answered", without_conversation_id(&answered));
+}
+
+#[tokio::test]
+async fn the_status_bar_names_the_server_s_model_before_it_answers() {
+    let tui = Tui::with_model(Arc::new(Thinking {
+        finish: Arc::new(Notify::new()),
+    }))
+    .await;
+    let screen = tui.screen.shows(&["READY"]).await;
+    let status_bar = screen.lines().last().unwrap();
+    assert!(status_bar.contains("thinking"), "{status_bar}");
+}
+
+#[tokio::test]
+async fn ctrl_y_allows_the_call_waiting_for_approval() {
+    let tui = Tui::with_model(Arc::new(Asking)).await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("clean up");
+    let asking = tui
+        .screen
+        .shows(&["APPROVE BASH", "^Y allow · ^N deny", "APPROVAL"])
+        .await;
+    tui.chord(KeyCode::Char('y'), KeyModifiers::CONTROL);
+    let allowed = tui
+        .screen
+        .shows(&["ALLOWED by owner", "Done: removed build", "READY"])
+        .await;
+
+    insta::assert_snapshot!("asking", without_conversation_id(&asking));
+    insta::assert_snapshot!("allowed", without_conversation_id(&allowed));
+}
+
+#[tokio::test]
+async fn a_message_typed_while_a_call_waits_for_approval_does_not_answer_it() {
+    let tui = Tui::with_model(Arc::new(Asking)).await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("clean up");
+    tui.screen.shows(&["APPROVE BASH", "APPROVAL"]).await;
+    tui.type_text("yes, but keep the logs");
+    let typed = tui.screen.shows(&["❯ yes, but keep the logs▍"]).await;
+    assert!(typed.contains("^Y allow · ^N deny"), "{typed}");
+    assert!(!typed.contains("ALLOWED"), "{typed}");
+
+    tui.chord(KeyCode::Char('n'), KeyModifiers::CONTROL);
+    let denied = tui.screen.shows(&["DENIED", "READY"]).await;
+    assert!(denied.contains("❯ yes, but keep the logs▍"), "{denied}");
 }

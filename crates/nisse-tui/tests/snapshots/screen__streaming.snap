@@ -1,0 +1,28 @@
+---
+source: crates/nisse-tui/tests/screen.rs
+expression: steady(&without_conversation_id(&streaming))
+---
+░▒▓ N I S S E ▓▒░ // conversation [id]
+
+  OWNER ▓▒░ ───────────────────────────────────────────────────────────────────
+   light the grid
+
+  NISSE ▓▒░ ───────────────────────────────────────────────────────────────────
+   Tracing the neon grid, one wire at a time▍
+
+
+
+
+
+
+
+
+
+
+
+
+
+╭ QUEUE ───────────────────────────────────────────────────────────────────────╮
+│ ❯ ▍type to queue a follow-up                                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ⣿ WORKING ▓▒░ 00:00:00                                thinking  │  nisse 0.1.0

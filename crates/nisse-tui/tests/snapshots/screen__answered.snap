@@ -1,0 +1,28 @@
+---
+source: crates/nisse-tui/tests/screen.rs
+expression: without_conversation_id(&answered)
+---
+░▒▓ N I S S E ▓▒░ // conversation [id]
+
+  OWNER ▓▒░ ───────────────────────────────────────────────────────────────────
+   light the grid
+
+  NISSE ▓▒░ ───────────────────────────────────────────────────────────────────
+   The grid is lit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
+│ ❯ ▍type a message, or !cmd to run a shell command                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ■ READY ▓▒░                                           thinking  │  nisse 0.1.0

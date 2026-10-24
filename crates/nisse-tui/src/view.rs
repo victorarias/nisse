@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use nisse_protocol::{Actor, ConversationStatus, Entry, kinds};
 use ratatui::{
     Frame,
@@ -6,6 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Padding, Paragraph},
 };
+use serde_json::Value;
 
 use crate::{
     App, gnome,
@@ -26,7 +29,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         Paragraph::new(header_line(app, theme)).style(theme.bar()),
         header,
     );
-    if app.entries.is_empty() {
+    if app.entries.is_empty() && app.live.is_empty() {
         draw_splash(frame, transcript, theme);
     } else {
         draw_transcript(frame, transcript, app, theme);
@@ -170,16 +173,17 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         height: area.height.saturating_sub(1),
     };
     let width = inner.width as usize;
+    let calls = Calls::of(&app.entries);
     let mut lines: Vec<Line> = app
         .entries
         .iter()
-        .flat_map(|entry| entry_lines(entry, width, theme))
+        .flat_map(|entry| entry_lines(entry, &calls, width, theme))
         .collect();
     let running_tool = app.status == ConversationStatus::Working
-        && app
-            .entries
-            .last()
-            .is_some_and(|entry| entry.kind == kinds::TOOL_CALL);
+        && app.entries.last().is_some_and(|entry| {
+            entry.kind == kinds::TOOL_CALL
+                || (entry.kind == kinds::APPROVAL && entry.data["allow"].as_bool() == Some(true))
+        });
     if running_tool {
         lines.push(Line::from(vec![
             Span::styled("┗━ ", theme.fg(theme.faint)),
@@ -188,6 +192,17 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
                 theme.glow(theme.yellow),
             ),
         ]));
+    }
+    if !app.live.is_empty() {
+        lines.push(speaker("NISSE".into(), theme.cyan, width, theme));
+        lines.extend(body(
+            &app.live,
+            width.saturating_sub(1),
+            theme.fg(theme.ink),
+        ));
+        if let Some(last) = lines.last_mut() {
+            last.push_span(Span::styled("▍", theme.glow(theme.cyan)));
+        }
     }
     let visible = inner.height as usize;
     let bottom = lines.len().saturating_sub(app.scroll_back as usize);
@@ -216,7 +231,162 @@ fn body(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn entry_lines(entry: &Entry, width: usize, theme: &Theme) -> Vec<Line<'static>> {
+struct Calls<'a> {
+    called: HashSet<&'a str>,
+    asked: HashSet<&'a str>,
+    answers: HashMap<&'a str, &'a Entry>,
+    finished: HashSet<&'a str>,
+}
+
+impl<'a> Calls<'a> {
+    fn of(entries: &'a [Entry]) -> Self {
+        let mut calls = Self {
+            called: HashSet::new(),
+            asked: HashSet::new(),
+            answers: HashMap::new(),
+            finished: HashSet::new(),
+        };
+        for entry in entries {
+            match entry.kind.as_str() {
+                kinds::TOOL_CALL => {
+                    calls.called.insert(call_id(entry, "id"));
+                }
+                kinds::APPROVAL_REQUEST => {
+                    calls.asked.insert(call_id(entry, "call_id"));
+                }
+                kinds::APPROVAL => {
+                    calls.answers.insert(call_id(entry, "call_id"), entry);
+                }
+                kinds::TOOL_RESULT => {
+                    calls.finished.insert(call_id(entry, "call_id"));
+                }
+                _ => {}
+            }
+        }
+        calls
+    }
+
+    fn waiting(&self, id: &str) -> bool {
+        !self.answers.contains_key(id) && !self.finished.contains(id)
+    }
+}
+
+fn call_id<'a>(entry: &'a Entry, field: &str) -> &'a str {
+    entry.data[field].as_str().unwrap_or_default()
+}
+
+/// The call id of the oldest approval request that still waits for an answer.
+pub fn pending_approval(entries: &[Entry]) -> Option<&str> {
+    let calls = Calls::of(entries);
+    entries
+        .iter()
+        .filter(|entry| entry.kind == kinds::APPROVAL_REQUEST)
+        .map(|request| call_id(request, "call_id"))
+        .find(|id| calls.waiting(id))
+}
+
+fn args_summary(args: &Value) -> String {
+    ["command", "file_path", "path", "pattern"]
+        .into_iter()
+        .find_map(|key| args[key].as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| args.to_string())
+}
+
+fn card_head(
+    icon: &str,
+    color: Color,
+    entry: &Entry,
+    width: usize,
+    theme: &Theme,
+) -> Line<'static> {
+    let label = format!(
+        "{icon} {}",
+        entry.data["name"].as_str().unwrap_or("tool").to_uppercase()
+    );
+    let room = width.saturating_sub(label.chars().count() + 5);
+    Line::from(vec![
+        Span::styled("┏━ ", theme.fg(theme.faint)),
+        Span::styled(label, theme.glow(color)),
+        Span::raw("  "),
+        Span::styled(
+            truncate(&args_summary(&entry.data["args"]), room),
+            theme.fg(theme.ink),
+        ),
+    ])
+}
+
+fn actor_name(actor: &Actor) -> String {
+    match actor {
+        Actor::Person { name, .. } | Actor::Extension { name } => name.clone(),
+        Actor::Model { model } => model.clone(),
+        Actor::Agent { .. } => "an agent".into(),
+        Actor::System => "nisse".into(),
+    }
+}
+
+fn approval_lines(
+    request: &Entry,
+    calls: &Calls,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let id = call_id(request, "call_id");
+    let waiting = calls.waiting(id);
+    let mut lines = vec![if waiting {
+        card_head("⏸ APPROVE", theme.yellow, request, width, theme)
+    } else {
+        card_head("⚙", theme.violet, request, width, theme)
+    }];
+    if let Some(reason) = request.data["reason"]
+        .as_str()
+        .filter(|reason| !reason.is_empty())
+    {
+        lines.extend(
+            wrap(reason, width.saturating_sub(3))
+                .into_iter()
+                .map(|row| {
+                    Line::from(vec![
+                        Span::styled("┃ ", theme.fg(theme.faint)),
+                        Span::styled(row, theme.fg(theme.dim)),
+                    ])
+                }),
+        );
+    }
+    if waiting {
+        lines.push(Line::from(vec![
+            Span::styled("┗━ ", theme.fg(theme.faint)),
+            Span::styled("^Y", theme.glow(theme.yellow)),
+            Span::styled(" allow · ", theme.fg(theme.dim)),
+            Span::styled("^N", theme.glow(theme.yellow)),
+            Span::styled(" deny", theme.fg(theme.dim)),
+        ]));
+        return lines;
+    }
+    let Some(answer) = calls.answers.get(id) else {
+        return lines;
+    };
+    let (mark, color) = if answer.data["allow"].as_bool() == Some(true) {
+        ("✓ ALLOWED", theme.cyan)
+    } else {
+        ("⊘ DECLINED", theme.yellow)
+    };
+    let continues = calls.called.contains(id);
+    lines.push(Line::from(vec![
+        Span::styled(if continues { "┣━ " } else { "┗━ " }, theme.fg(theme.faint)),
+        Span::styled(mark, theme.glow(color)),
+        Span::styled(
+            format!(" by {}", actor_name(&answer.author)),
+            theme.fg(theme.dim),
+        ),
+    ]));
+    if !continues {
+        lines.push(Line::raw(""));
+    }
+    lines
+}
+
+fn entry_lines(entry: &Entry, calls: &Calls, width: usize, theme: &Theme) -> Vec<Line<'static>> {
     let text = entry.data["text"].as_str().unwrap_or_default();
     let mut lines = match entry.kind.as_str() {
         kinds::USER => {
@@ -235,26 +405,14 @@ fn entry_lines(entry: &Entry, width: usize, theme: &Theme) -> Vec<Line<'static>>
             lines.extend(body(text, width, theme.fg(theme.ink)));
             lines
         }
-        kinds::TOOL_CALL => {
-            let name = entry.data["name"].as_str().unwrap_or("tool").to_uppercase();
-            let command = entry.data["args"]["command"]
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| entry.data["args"].to_string());
-            let room = width.saturating_sub(name.chars().count() + 8);
-            vec![Line::from(vec![
-                Span::styled("┏━ ", theme.fg(theme.faint)),
-                Span::styled(format!("⚙ {name}"), theme.glow(theme.violet)),
-                Span::styled("  ", Style::new()),
-                Span::styled(truncate(&command, room), theme.fg(theme.ink)),
-            ])]
-        }
+        kinds::TOOL_CALL if calls.asked.contains(call_id(entry, "id")) => return Vec::new(),
+        kinds::TOOL_CALL => return vec![card_head("⚙", theme.violet, entry, width, theme)],
+        kinds::APPROVAL_REQUEST => return approval_lines(entry, calls, width, theme),
+        kinds::APPROVAL => return Vec::new(),
         kinds::TOOL_RESULT => tool_result_lines(entry, width, theme),
         other => vec![Line::styled(format!("· {other}"), theme.fg(theme.dim))],
     };
-    if entry.kind != kinds::TOOL_CALL {
-        lines.push(Line::raw(""));
-    }
+    lines.push(Line::raw(""));
     lines
 }
 
@@ -346,7 +504,9 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if typed.is_empty() {
         spans.push(Span::styled("▍", theme.glow(theme.magenta)));
         spans.push(Span::styled(
-            if working {
+            if pending_approval(&app.entries).is_some() {
+                "^Y to allow, ^N to deny, or type a message"
+            } else if working {
                 "type to queue a follow-up"
             } else {
                 "type a message, or !cmd to run a shell command"

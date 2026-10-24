@@ -1,15 +1,18 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
-
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-use nisse_client::Client;
-use nisse_core::{EchoModel, Harness, HarnessOptions};
-use nisse_lua::LuaHost;
-use nisse_protocol::{
-    Actor, ClientRequest, Conversation, ConversationCreateParams, ConversationReadResult,
-    ConversationSubmitParams, ConversationSubmitResult, ConversationSubscribeParams, Input,
-    ServerNotification, WhenBusy, kinds,
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+    sync::{Arc, OnceLock},
+    time::Duration,
 };
+
+use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand, ValueEnum};
+use nisse_claude::{Claude, ClaudeOptions};
+use nisse_client::Client;
+use nisse_core::{Echo, Harness, HarnessOptions, Provider};
+use nisse_lua::LuaHost;
+use nisse_openai::{LoginMethod, LoginPrompt, OpenAi, OpenAiOptions};
+use nisse_protocol::{Actor, InitializeResult, ServerNotification};
 use nisse_server::Server;
 use tokio::sync::{broadcast, mpsc};
 
@@ -25,6 +28,18 @@ struct Cli {
     /// Open this conversation instead of starting a new one.
     #[arg(long)]
     conversation: Option<String>,
+    /// Who answers, when this process runs the server.
+    #[arg(long, env = "NISSE_PROVIDER", value_enum, default_value_t = ProviderName::Claude, global = true)]
+    provider: ProviderName,
+    /// The provider's model; each provider has its own default.
+    #[arg(long, env = "NISSE_MODEL", global = true)]
+    model: Option<String>,
+    /// Save every provider exchange in this folder as a replayable fixture.
+    #[arg(long, env = "NISSE_RECORD", global = true)]
+    record: Option<PathBuf>,
+    /// The `claude` binary to drive.
+    #[arg(long, env = "NISSE_CLAUDE", default_value = "claude", global = true)]
+    claude: PathBuf,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -41,6 +56,39 @@ enum Command {
     Exec { prompt: String },
     /// Print the protocol's JSON Schema.
     Schema,
+    /// Sign in to a provider.
+    Login {
+        #[command(subcommand)]
+        provider: LoginProvider,
+    },
+}
+
+#[derive(Subcommand)]
+enum LoginProvider {
+    /// Sign in with ChatGPT; usage counts against your plan.
+    Openai {
+        /// Sign in on another device with a code, for a machine without a browser.
+        #[arg(long)]
+        device: bool,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ProviderName {
+    /// Claude through the Claude Code CLI, with its own tools.
+    Claude,
+    /// OpenAI through a ChatGPT sign-in (`nisse login openai`).
+    Openai,
+    /// Echoes input and runs `!command`; for trying Nisse out without a model.
+    Echo,
+}
+
+struct ServerConfig {
+    home: PathBuf,
+    provider: ProviderName,
+    model: Option<String>,
+    record: Option<PathBuf>,
+    claude: PathBuf,
 }
 
 #[tokio::main]
@@ -51,11 +99,48 @@ async fn main() -> Result<()> {
         None => PathBuf::from(std::env::var_os("HOME").context("set HOME or NISSE_HOME")?)
             .join(".nisse"),
     };
+    let config = ServerConfig {
+        home,
+        provider: cli.provider,
+        model: cli.model,
+        record: cli.record,
+        claude: cli.claude,
+    };
     match cli.command {
-        Some(Command::Serve { stdio }) => serve(&home, stdio).await,
+        Some(Command::Serve { stdio }) => serve(&config, stdio).await,
         Some(Command::Exec { prompt }) => {
-            let (client, notifications, _server) = connect(&home, cli.connect).await?;
-            exec(client, notifications, prompt).await
+            let (client, mut notifications, _, _embedded) = connect(&config, cli.connect).await?;
+            nisse::exec(
+                &client,
+                &mut notifications,
+                prompt,
+                tokio::io::BufReader::new(tokio::io::stdin()),
+                &mut std::io::stdout(),
+            )
+            .await
+        }
+        Some(Command::Login {
+            provider: LoginProvider::Openai { device },
+        }) => {
+            std::fs::create_dir_all(&config.home)?;
+            let method = if device {
+                LoginMethod::DeviceCode
+            } else {
+                LoginMethod::Browser
+            };
+            nisse_openai::login(&openai_auth(&config.home), method, |prompt| match prompt {
+                LoginPrompt::OpenUrl { url } => {
+                    eprintln!(
+                        "Open this link in your browser to sign in with ChatGPT:\n\n  {url}\n"
+                    )
+                }
+                LoginPrompt::EnterCode { url, code } => {
+                    eprintln!("On any device, open {url} and enter the code {code}\n")
+                }
+            })
+            .await?;
+            eprintln!("Signed in. Start Nisse with --provider openai.");
+            Ok(())
         }
         Some(Command::Schema) => {
             let schema = serde_json::json!({
@@ -67,10 +152,11 @@ async fn main() -> Result<()> {
             Ok(())
         }
         None => {
-            let (client, notifications, _server) = connect(&home, cli.connect).await?;
+            let (client, notifications, hello, _embedded) = connect(&config, cli.connect).await?;
             nisse_tui::run(
                 client,
                 notifications,
+                hello.model,
                 cli.conversation,
                 nisse_tui::Theme::from_env(),
             )
@@ -87,22 +173,75 @@ fn owner() -> Actor {
     }
 }
 
-fn start_server(home: &std::path::Path) -> Result<Arc<Server>> {
+fn openai_auth(home: &std::path::Path) -> PathBuf {
+    home.join("auth").join("openai.json")
+}
+
+fn provider(config: &ServerConfig) -> Result<Arc<dyn Provider>> {
+    let cwd = std::env::current_dir()?;
+    Ok(match config.provider {
+        ProviderName::Claude => Arc::new(Claude::new(ClaudeOptions {
+            binary: config.claude.clone(),
+            cwd,
+            model: config.model.clone(),
+            record: config.record.clone(),
+        })),
+        ProviderName::Openai => {
+            let mut options = OpenAiOptions::new(openai_auth(&config.home), instructions(&cwd));
+            if let Some(model) = &config.model {
+                options.model.clone_from(model);
+            }
+            options.record.clone_from(&config.record);
+            Arc::new(OpenAi::new(options)?)
+        }
+        ProviderName::Echo => {
+            let think = std::env::var("NISSE_ECHO_THINK_MS")
+                .ok()
+                .and_then(|ms| ms.parse().ok())
+                .unwrap_or(600);
+            Arc::new(Echo {
+                think: Duration::from_millis(think),
+            })
+        }
+    })
+}
+
+fn instructions(cwd: &std::path::Path) -> String {
+    format!(
+        "{}\nThe working directory is {}.\n",
+        include_str!("instructions.md"),
+        cwd.display()
+    )
+}
+
+static HELD_HOME: OnceLock<File> = OnceLock::new();
+
+/// Takes the home for this process unless another process holds it: one process serves a
+/// home's store and runs at a time, and holds it until it exits.
+fn hold_home(home: &Path) -> Result<bool> {
     std::fs::create_dir_all(home).with_context(|| format!("creating {}", home.display()))?;
+    let hold = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(home.join("nisse.lock"))?;
+    match hold.try_lock() {
+        Ok(()) => Ok(HELD_HOME.set(hold).is_ok()),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(false),
+        Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
+    }
+}
+
+fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
+    let home = &config.home;
     let (ui, _) = broadcast::channel(256);
     let sink = ui.clone();
     let roots = [home.join("extensions"), PathBuf::from(".nisse/extensions")];
     let hooks = LuaHost::load(&roots, Arc::new(move |changed| drop(sink.send(changed))))?;
-    let think = std::env::var("NISSE_ECHO_THINK_MS")
-        .ok()
-        .and_then(|ms| ms.parse().ok())
-        .unwrap_or(600);
     let harness = Harness::open(
         &home.join("nisse.sqlite"),
         HarnessOptions {
-            model: Arc::new(EchoModel {
-                think: Duration::from_millis(think),
-            }),
+            provider: provider(config)?,
             hooks: Arc::new(hooks),
         },
     )?;
@@ -110,14 +249,19 @@ fn start_server(home: &std::path::Path) -> Result<Arc<Server>> {
     Ok(Server::new(harness, ui, owner()))
 }
 
-async fn serve(home: &std::path::Path, stdio: bool) -> Result<()> {
-    let server = start_server(home)?;
+/// Serves the home on its socket, or one client on stdio. The socket is bound before the server
+/// starts, so a client that arrives meanwhile waits for it.
+async fn serve(config: &ServerConfig, stdio: bool) -> Result<()> {
+    if !hold_home(&config.home)? {
+        bail!("another nisse already serves {}", config.home.display());
+    }
     if stdio {
-        server.serve_stdio().await;
+        start_server(config)?.serve_stdio().await;
         return Ok(());
     }
-    let socket = home.join("nisse.sock");
+    let socket = config.home.join("nisse.sock");
     let listener = Server::bind_unix(&socket)?;
+    let server = start_server(config)?;
     eprintln!("nisse: serving on {}", socket.display());
     tokio::select! {
         served = server.serve_unix(listener) => served,
@@ -125,86 +269,38 @@ async fn serve(home: &std::path::Path, stdio: bool) -> Result<()> {
     }
 }
 
-/// Attaches to a running server when there is one; otherwise runs one in this process.
+/// Attaches to the home's server when one serves its socket; otherwise runs the server in this
+/// process, for this client alone.
 async fn connect(
-    home: &std::path::Path,
+    config: &ServerConfig,
     socket: Option<PathBuf>,
 ) -> Result<(
     Client,
     mpsc::UnboundedReceiver<ServerNotification>,
+    InitializeResult,
     Option<Arc<Server>>,
 )> {
     let explicit = socket.is_some();
-    let socket = socket.unwrap_or_else(|| home.join("nisse.sock"));
-    let (client, notifications, server) = match Client::connect_unix(&socket).await {
+    let socket = socket.unwrap_or_else(|| config.home.join("nisse.sock"));
+    let (client, notifications, embedded) = match Client::connect_unix(&socket).await {
         Ok((client, notifications)) => (client, notifications, None),
         Err(error) if explicit => return Err(error),
-        Err(_) => {
-            let server = start_server(home)?;
+        Err(_) if hold_home(&config.home)? => {
+            let server = start_server(config)?;
             let (client, notifications) = Client::new(server.connect_in_process());
             (client, notifications, Some(server))
         }
-    };
-    client.initialize("nisse-cli").await?;
-    Ok((client, notifications, server))
-}
-
-async fn exec(
-    client: Client,
-    mut notifications: mpsc::UnboundedReceiver<ServerNotification>,
-    prompt: String,
-) -> Result<()> {
-    let conversation: Conversation = client
-        .request(ClientRequest::ConversationCreate(
-            ConversationCreateParams::default(),
-        ))
-        .await?;
-    let _: ConversationReadResult = client
-        .request(ClientRequest::ConversationSubscribe(
-            ConversationSubscribeParams {
-                conversation_id: conversation.id.clone(),
-                since_seq: 0,
-            },
-        ))
-        .await?;
-    let _: ConversationSubmitResult = client
-        .request(ClientRequest::ConversationSubmit(
-            ConversationSubmitParams {
-                conversation_id: conversation.id.clone(),
-                input: Input::Text { text: prompt },
-                request_id: uuid::Uuid::now_v7().to_string(),
-                when_busy: WhenBusy::Reject,
-            },
-        ))
-        .await?;
-    while let Some(notification) = notifications.recv().await {
-        let ServerNotification::Committed(commit) = notification else {
-            continue;
-        };
-        for entry in commit.entries {
-            let text = entry.data["text"].as_str().unwrap_or_default();
-            match entry.kind.as_str() {
-                kinds::USER => println!("> {text}"),
-                kinds::TOOL_CALL => println!(
-                    "⚡ {} {}",
-                    entry.data["name"].as_str().unwrap_or("tool"),
-                    entry.data["args"]
-                ),
-                kinds::TOOL_RESULT => println!(
-                    "{}",
-                    entry.data["denied"]
-                        .as_str()
-                        .unwrap_or(entry.data["output"].as_str().unwrap_or_default())
-                        .trim_end()
-                ),
-                kinds::ASSISTANT => {
-                    println!("{text}");
-                    println!("conversation {}", conversation.id);
-                    return Ok(());
-                }
-                _ => {}
-            }
+        Err(_) => {
+            let (client, notifications) =
+                Client::connect_unix(&socket).await.with_context(|| {
+                    format!(
+                        "another nisse runs {} in its own process; use `nisse serve` to share it",
+                        config.home.display()
+                    )
+                })?;
+            (client, notifications, None)
         }
-    }
-    Ok(())
+    };
+    let hello = client.initialize("nisse-cli").await?;
+    Ok((client, notifications, hello, embedded))
 }

@@ -1,0 +1,28 @@
+---
+source: crates/nisse-tui/tests/screen.rs
+expression: without_conversation_id(&allowed)
+---
+░▒▓ N I S S E ▓▒░ // conversation [id]
+
+  OWNER ▓▒░ ───────────────────────────────────────────────────────────────────
+   clean up
+
+ ┏━ ⚙ BASH  rm -rf build
+ ┣━ ✓ ALLOWED by owner
+ ┃ removed build
+ ┗━ ✓ DONE
+
+  NISSE ▓▒░ ───────────────────────────────────────────────────────────────────
+   Done: removed build
+
+
+
+
+
+
+
+
+╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
+│ ❯ ▍type a message, or !cmd to run a shell command                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ■ READY ▓▒░                                             asking  │  nisse 0.1.0
