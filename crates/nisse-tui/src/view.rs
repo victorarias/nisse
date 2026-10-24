@@ -23,7 +23,35 @@ use crate::{
 
 const SPINNER: [char; 8] = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
 
-pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
+/// Where the transcript sits: `back` rows above its bottom, at most `most`. While scrolled back,
+/// rows added below keep the reader's place.
+#[derive(Clone, Copy, Default)]
+pub struct Scroll {
+    back: usize,
+    most: usize,
+    entries: usize,
+    tail: usize,
+    width: u16,
+}
+
+const PAGE: usize = 10;
+
+impl Scroll {
+    pub fn page_up(&mut self) {
+        self.back = (self.back + PAGE).min(self.most);
+    }
+
+    pub fn page_down(&mut self) {
+        self.back = self.back.saturating_sub(PAGE);
+    }
+
+    pub fn follow(&mut self) {
+        self.back = 0;
+    }
+}
+
+/// Draws the app and says where the transcript ended up.
+pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) -> Scroll {
     let [header, transcript, input, status] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Fill(1),
@@ -36,13 +64,16 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         header,
     );
     let said_nothing = app.entries.iter().all(|entry| entry.kind == kinds::MODEL);
-    if let Some(picker) = &app.picker {
+    let calls = Calls::of(&app.entries);
+    let scroll = if let Some(picker) = &app.picker {
         draw_picker(frame, transcript, picker, theme);
+        app.scroll
     } else if said_nothing && app.live.is_empty() {
         draw_splash(frame, transcript, app, theme);
+        Scroll::default()
     } else {
-        draw_transcript(frame, transcript, app, theme);
-    }
+        draw_transcript(frame, transcript, app, &calls, theme)
+    };
     draw_input(frame, input, app, theme);
     frame.render_widget(
         Paragraph::new(status_left(app, theme)).style(theme.bar()),
@@ -52,6 +83,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
         Paragraph::new(status_right(app, theme)).alignment(Alignment::Right),
         status,
     );
+    scroll
 }
 
 /// A solid tag that fades into the bar behind it.
@@ -421,7 +453,14 @@ fn selection_label(selection: &ModelSelection) -> String {
     }
 }
 
-fn draw_transcript(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+/// Builds rows from the newest entry back, only as far as the view and one page above it reach.
+fn draw_transcript(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    calls: &Calls,
+    theme: &Theme,
+) -> Scroll {
     let inner = Rect {
         x: area.x + 1,
         y: area.y + 1,
@@ -429,12 +468,58 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         height: area.height.saturating_sub(1),
     };
     let width = inner.width as usize;
-    let calls = Calls::of(&app.entries);
-    let mut lines: Vec<Line> = app
-        .entries
+    let visible = inner.height as usize;
+    let last = app.scroll;
+    let reflowed = last.width != inner.width;
+    let seen = if reflowed {
+        app.entries.len()
+    } else {
+        last.entries.min(app.entries.len())
+    };
+    let (older, newer) = app.entries.split_at(seen);
+    let mut lines: Vec<Line> = newer
         .iter()
-        .flat_map(|entry| entry_lines(entry, &calls, app, width, theme))
+        .flat_map(|entry| entry_lines(entry, calls, app, width, theme))
         .collect();
+    let added = lines.len();
+    let tail = tail_lines(app, width, theme);
+    let tail_rows = tail.len();
+    lines.extend(tail);
+    let back = if last.back == 0 || reflowed {
+        last.back
+    } else {
+        (last.back + added + tail_rows).saturating_sub(last.tail)
+    };
+    let wanted = visible + back + PAGE;
+    let mut above: Vec<Vec<Line>> = Vec::new();
+    let mut rows = lines.len();
+    for entry in older.iter().rev() {
+        if rows >= wanted {
+            break;
+        }
+        let entry_lines = entry_lines(entry, calls, app, width, theme);
+        rows += entry_lines.len();
+        above.push(entry_lines);
+    }
+    let lines: Vec<Line> = above.into_iter().rev().flatten().chain(lines).collect();
+    let most = lines.len().saturating_sub(visible);
+    let back = back.min(most);
+    let bottom = lines.len() - back;
+    let top = bottom.saturating_sub(visible);
+    let shown: Vec<Line> = lines.into_iter().skip(top).take(bottom - top).collect();
+    frame.render_widget(Paragraph::new(shown), inner);
+    Scroll {
+        back,
+        most,
+        entries: app.entries.len(),
+        tail: tail_rows,
+        width: inner.width,
+    }
+}
+
+/// What the run is doing now, below everything committed: a call running, the answer so far.
+fn tail_lines(app: &App, width: usize, theme: &Theme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
     let running_tool = app.status == ConversationStatus::Working
         && app.entries.last().is_some_and(|entry| {
             entry.kind == kinds::TOOL_CALL
@@ -460,11 +545,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             last.push_span(Span::styled("▍", theme.glow(theme.cyan)));
         }
     }
-    let visible = inner.height as usize;
-    let bottom = lines.len().saturating_sub(app.scroll_back as usize);
-    let top = bottom.saturating_sub(visible);
-    let shown: Vec<Line> = lines.into_iter().skip(top).take(bottom - top).collect();
-    frame.render_widget(Paragraph::new(shown), inner);
+    lines
 }
 
 fn speaker(label: String, color: Color, width: usize, theme: &Theme) -> Line<'static> {
@@ -531,6 +612,14 @@ impl<'a> Calls<'a> {
     fn waiting(&self, id: &str) -> bool {
         !self.answers.contains_key(id) && !self.finished.contains(id)
     }
+
+    fn pending(&self, entries: &'a [Entry]) -> Option<&'a str> {
+        entries
+            .iter()
+            .filter(|entry| entry.kind == kinds::APPROVAL_REQUEST)
+            .map(|request| call_id(request, "call_id"))
+            .find(|id| self.waiting(id))
+    }
 }
 
 fn call_id<'a>(entry: &'a Entry, field: &str) -> &'a str {
@@ -539,12 +628,7 @@ fn call_id<'a>(entry: &'a Entry, field: &str) -> &'a str {
 
 /// The call id of the oldest approval request that still waits for an answer.
 pub fn pending_approval(entries: &[Entry]) -> Option<&str> {
-    let calls = Calls::of(entries);
-    entries
-        .iter()
-        .filter(|entry| entry.kind == kinds::APPROVAL_REQUEST)
-        .map(|request| call_id(request, "call_id"))
-        .find(|id| calls.waiting(id))
+    Calls::of(entries).pending(entries)
 }
 
 fn args_summary(args: &Value) -> String {

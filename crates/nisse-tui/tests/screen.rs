@@ -14,7 +14,7 @@ use nisse_core::{
 };
 use nisse_protocol::{
     Actor, AuthInteraction, AuthMethod, AuthResponse, ConversationStartParams, ModelInfo,
-    ProviderHealth, ProviderStatus,
+    ProviderHealth, ProviderStatus, kinds,
 };
 use nisse_server::Server;
 use ratatui::{
@@ -763,4 +763,81 @@ async fn esc_stops_the_conversation_s_run() {
     tui.screen.shows(&["WORKING", "Esc to stop"]).await;
     tui.press(KeyCode::Esc);
     tui.screen.shows(&["Interrupted.", "READY"]).await;
+}
+
+/// Recites thirty verses, then on every later turn streams an answer that waits to finish.
+struct Reciting {
+    finish: Arc<Notify>,
+}
+
+impl Provider for Reciting {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let recited = turn
+                .transcript()?
+                .iter()
+                .any(|entry| entry.kind == kinds::ASSISTANT);
+            if !recited {
+                let verses: Vec<String> = (1..=30).map(|verse| format!("verse {verse}")).collect();
+                return turn.answer(&verses.join("\n"));
+            }
+            turn.stream("Tracing the neon");
+            self.finish.notified().await;
+            turn.stream("Tracing the neon grid,\none wire\nat a time");
+            turn.answer("The grid is lit.\nEvery wire of it.")
+        })
+    }
+}
+
+fn reciting() -> (Arc<Notify>, Arc<dyn Provider>) {
+    let finish = Arc::new(Notify::new());
+    let provider = Arc::new(Reciting {
+        finish: finish.clone(),
+    });
+    (finish, provider)
+}
+
+fn transcript_rows(screen: &str) -> Vec<&str> {
+    screen.lines().skip(1).take(19).collect()
+}
+
+#[tokio::test]
+async fn page_up_stops_at_the_top_and_page_down_comes_straight_back() {
+    let (_, provider) = reciting();
+    let tui = Tui::with_model("reciting", provider).await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("recite");
+    let bottom = tui.screen.shows(&["verse 30", "READY"]).await;
+    assert!(!bottom.contains("OWNER"), "{bottom}");
+
+    for _ in 0..5 {
+        tui.press(KeyCode::PageUp);
+    }
+    tui.screen.shows(&["OWNER", "verse 1"]).await;
+    tui.press(KeyCode::PageDown);
+    tui.press(KeyCode::PageDown);
+    tui.screen.shows(&["verse 30"]).await;
+}
+
+#[tokio::test]
+async fn a_reader_scrolled_back_keeps_their_place_while_the_answer_arrives() {
+    let (finish, provider) = reciting();
+    let tui = Tui::with_model("reciting", provider).await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("recite");
+    tui.screen.shows(&["verse 30", "READY"]).await;
+    tui.type_line("light the grid");
+    tui.screen.shows(&["Tracing the neon▍"]).await;
+
+    tui.press(KeyCode::PageUp);
+    let reading = tui.screen.shows(&["verse 9"]).await;
+    assert!(!reading.contains("Tracing"), "{reading}");
+    finish.notify_one();
+    let answered = tui.screen.shows(&["READY"]).await;
+
+    assert_eq!(transcript_rows(&answered), transcript_rows(&reading));
 }
