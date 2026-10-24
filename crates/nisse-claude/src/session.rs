@@ -14,6 +14,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::process::Process;
 
 pub(crate) const PRE_TOOL_USE: &str = "nisse_pre_tool_use";
+/// The tools Claude Code starts its subagents with.
+const STARTS_SUBAGENTS: &[&str] = &["Agent", "Task"];
 /// The errors Claude Code reports when its API refuses the credentials it holds.
 const AUTH_ERRORS: &[&str] = &["authentication_failed", "oauth_org_not_allowed"];
 
@@ -64,6 +66,28 @@ pub(crate) struct Session {
     auth_failed: bool,
     model: Option<String>,
     effort: Option<String>,
+    subagents: Subagents,
+}
+
+/// Claude Code's subagents in this session, each committed into a conversation of its own:
+/// by the `Agent` call that started it, and by Claude Code's id for it.
+#[derive(Default)]
+struct Subagents {
+    turns: HashMap<String, Turn>,
+    started_by: HashMap<String, String>,
+}
+
+impl Subagents {
+    /// The subagent a frame or a hook comes from, by its `agent_id`, or by the call that
+    /// started it as a frame's `parent_tool_use_id` names it.
+    fn of(&self, agent_id: &Value, started_by: &Value) -> Option<&Turn> {
+        let call = agent_id
+            .as_str()
+            .and_then(|agent| self.started_by.get(agent))
+            .map(String::as_str)
+            .or(started_by.as_str())?;
+        self.turns.get(call)
+    }
 }
 
 /// A user message Nisse sent, which Claude acknowledges by replaying its uuid.
@@ -80,6 +104,8 @@ struct Held {
 }
 
 struct Call {
+    /// The subagent that made it, by the call that started the subagent.
+    subagent: Option<String>,
     hook_request: String,
     asked_args: Value,
     hook_answered: bool,
@@ -125,6 +151,7 @@ impl Session {
             auth_failed: false,
             model: model.map(str::to_owned),
             effort: effort.map(str::to_owned),
+            subagents: Subagents::default(),
         }
     }
 
@@ -331,8 +358,45 @@ impl Session {
         match frame["type"].as_str() {
             Some("stream_event") if is_main_chain => self.on_stream(turn, &frame["event"]),
             Some("assistant") if is_main_chain => self.on_assistant(turn, &frame, text, said)?,
+            Some("assistant") => {
+                if let Some(subagent) = self
+                    .subagents
+                    .of(&frame["agent_id"], &frame["parent_tool_use_id"])
+                {
+                    texts(&frame).try_for_each(|text| subagent.say(text))?;
+                }
+            }
+            Some("system") => self.on_task(turn, &frame)?,
             Some("control_response") => self.initialized = true,
             Some("control_request") => self.on_control_request(turn, &frame, started, pending),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// A subagent starts in a conversation of its own under this one, and finishes there.
+    fn on_task(&mut self, turn: &Turn, frame: &Value) -> Result<()> {
+        let Some(call) = frame["tool_use_id"].as_str() else {
+            return Ok(());
+        };
+        match frame["subtype"].as_str() {
+            Some("task_started") if frame["subagent_type"].is_string() => {
+                let title = frame["description"].as_str().unwrap_or("subagent");
+                let prompt = frame["prompt"].as_str().unwrap_or_default();
+                let subagent =
+                    turn.start_hosted(call, title, frame["subagent_type"].as_str(), prompt)?;
+                if let Some(agent) = frame["task_id"].as_str() {
+                    self.subagents
+                        .started_by
+                        .insert(agent.to_owned(), call.to_owned());
+                }
+                self.subagents.turns.insert(call.to_owned(), subagent);
+            }
+            Some("task_notification") => {
+                if let Some(subagent) = self.subagents.turns.remove(call) {
+                    subagent.finish_hosted(frame["summary"].as_str())?;
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -477,10 +541,22 @@ impl Session {
                     args: input["tool_input"].clone(),
                     parent: None,
                 };
+                let subagent = input["agent_id"]
+                    .as_str()
+                    .and_then(|agent| self.subagents.started_by.get(agent))
+                    .cloned();
+                let caller = subagent
+                    .as_ref()
+                    .and_then(|started_by| self.subagents.turns.get(started_by))
+                    .cloned();
+                let refused = (caller.is_none() && STARTS_SUBAGENTS.contains(&call.name.as_str()))
+                    .then(|| turn.may_spawn().err())
+                    .flatten();
                 let (waiter, result) = oneshot::channel();
                 self.calls.insert(
                     call.id.clone(),
                     Call {
+                        subagent,
                         hook_request: request_id,
                         asked_args: call.args.clone(),
                         hook_answered: false,
@@ -492,21 +568,35 @@ impl Session {
                 let started = started.clone();
                 let id = call.id.clone();
                 let run = move |call: ToolCall| {
+                    if let Some(reason) = refused {
+                        return ToolOutcome::denied(reason);
+                    }
                     let _ = started.send((id, call));
                     result.blocking_recv().unwrap_or_else(|_| {
                         ToolOutcome::error("claude stopped before the tool finished")
                     })
                 };
-                let heads = self.heads.clone();
-                let settled = call.id.clone();
-                let head = move || heads.lock().expect("heads lock").settle(&settled);
-                pending.push(Box::pin(async move {
-                    let id = call.id.clone();
-                    let outcome = turn
-                        .call_tool_with_state(call, Approval::NotNeeded, run, head)
-                        .await;
-                    Event::CallDone { id, outcome }
-                }));
+                match caller {
+                    Some(subagent) => pending.push(Box::pin(async move {
+                        let id = call.id.clone();
+                        let outcome = subagent
+                            .call_tool_with_state(call, Approval::NotNeeded, run, || Ok(None))
+                            .await;
+                        Event::CallDone { id, outcome }
+                    })),
+                    None => {
+                        let heads = self.heads.clone();
+                        let settled = call.id.clone();
+                        let head = move || heads.lock().expect("heads lock").settle(&settled);
+                        pending.push(Box::pin(async move {
+                            let id = call.id.clone();
+                            let outcome = turn
+                                .call_tool_with_state(call, Approval::NotNeeded, run, head)
+                                .await;
+                            Event::CallDone { id, outcome }
+                        }));
+                    }
+                }
             }
             Some("hook_callback") => self.reply(&request_id, json!({ "continue": true })),
             Some("can_use_tool") => {
@@ -523,8 +613,22 @@ impl Session {
                     .as_str()
                     .or(request["description"].as_str())
                     .map(str::to_owned);
+                let started_by = self
+                    .calls
+                    .get(&call.id)
+                    .and_then(|known| known.subagent.clone());
+                let asker = self
+                    .subagents
+                    .of(
+                        &request["agent_id"],
+                        &started_by.map_or(Value::Null, Value::String),
+                    )
+                    .cloned();
                 pending.push(Box::pin(async move {
-                    let decision = turn.ask(&call, reason).await;
+                    let decision = match &asker {
+                        Some(subagent) => subagent.ask(&call, reason).await,
+                        None => turn.ask(&call, reason).await,
+                    };
                     Event::Asked {
                         request_id,
                         id: call.id,

@@ -277,3 +277,57 @@ async fn input_that_names_no_known_skill_goes_as_typed() {
         1
     );
 }
+
+#[tokio::test]
+async fn agent_types_come_from_claude_folders_up_to_the_repository_then_claude_codes_own() {
+    let folders = Folders::new();
+    let agent = |folder: &Path, name: &str, description: &str, body: &str| {
+        folders.write(
+            &folder.join(format!(".claude/agents/{name}.md")),
+            &format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"),
+        );
+    };
+    agent(
+        &folders.repo,
+        "reviewer",
+        "Reviews diffs.",
+        "Read the diff twice.",
+    );
+    agent(&folders.home, "reviewer", "Shadowed.", "Never seen.");
+    agent(&folders.home, "scribe", "Writes notes.", "Write it down.");
+    let fake = Fake::start().await;
+    fake.play("subagent_of_a_type");
+    let mut nisse = folders.nisse(&fake).await;
+
+    let entries = nisse
+        .converse("Have a reviewer look at the diff.", true)
+        .await;
+
+    let sent: Vec<Value> = fake
+        .received("/codex/responses")
+        .iter()
+        .map(|request| request.json())
+        .collect();
+    let spawn = sent[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "spawn_agent")
+        .unwrap();
+    let agent_type = spawn["parameters"]["properties"]["agent_type"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(
+        agent_type.ends_with("\n- reviewer: Reviews diffs.\n- scribe: Writes notes."),
+        "{agent_type}"
+    );
+    let instructions = sent[1]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.ends_with("\n# You are a reviewer agent\n\nRead the diff twice.\n"),
+        "{instructions}"
+    );
+    assert_eq!(
+        entries.last().unwrap().data["text"],
+        "The reviewer approves."
+    );
+}

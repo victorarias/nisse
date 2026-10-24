@@ -23,6 +23,6 @@ expression: steady(&without_conversation_id(&streaming))
 
 
 ╭ QUEUE ───────────────────────────────────────────────────────────────────────╮
-│ ❯ ▍type to queue a follow-up                                                 │
+│ ❯ ▍type to queue a follow-up, or Esc to stop                                 │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ⣿ WORKING ▓▒░ 00:00:00                                thinking  │  nisse 0.1.0

@@ -1,0 +1,14 @@
+{"type":"transcript_start","provider":"openai","scenario":"a subagent of a type, spawned and waited on","metadata":{}}
+{"type":"expect_outbound","frame":{"model":"gpt-5.5","instructions":"<any>","input":"<any>","tools":"<any>","tool_choice":"auto","parallel_tool_calls":true,"store":false,"stream":true,"prompt_cache_key":"<any>"}}
+{"type":"emit_inbound","frame":{"type":"response.created","response":{"id":"resp_1"}}}
+{"type":"emit_inbound","frame":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"spawn_agent","arguments":"{\"task_name\": \"review\", \"message\": \"Review the diff.\", \"agent_type\": \"reviewer\", \"fork_turns\": \"none\"}"}}}
+{"type":"emit_inbound","frame":{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_2","name":"wait_agent","arguments":"{\"timeout_ms\": 30000}"}}}
+{"type":"emit_inbound","frame":{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":0,"input_tokens_details":null,"output_tokens":0,"output_tokens_details":null,"total_tokens":0}}}}
+{"type":"expect_outbound","frame":{"model":"gpt-5.5","instructions":"<any>","input":"<any>","tools":"<any>","tool_choice":"auto","parallel_tool_calls":true,"store":false,"stream":true,"prompt_cache_key":"<any>"}}
+{"type":"emit_inbound","frame":{"type":"response.created","response":{"id":"resp_2"}}}
+{"type":"emit_inbound","frame":{"type":"response.output_item.done","item":{"type":"message","role":"assistant","id":"msg_resp_2","content":[{"type":"output_text","text":"Looks good."}]}}}
+{"type":"emit_inbound","frame":{"type":"response.completed","response":{"id":"resp_2","usage":{"input_tokens":0,"input_tokens_details":null,"output_tokens":0,"output_tokens_details":null,"total_tokens":0}}}}
+{"type":"expect_outbound","frame":{"model":"gpt-5.5","instructions":"<any>","input":"<any>","tools":"<any>","tool_choice":"auto","parallel_tool_calls":true,"store":false,"stream":true,"prompt_cache_key":"<any>"}}
+{"type":"emit_inbound","frame":{"type":"response.created","response":{"id":"resp_3"}}}
+{"type":"emit_inbound","frame":{"type":"response.output_item.done","item":{"type":"message","role":"assistant","id":"msg_resp_3","content":[{"type":"output_text","text":"The reviewer approves."}]}}}
+{"type":"emit_inbound","frame":{"type":"response.completed","response":{"id":"resp_3","usage":{"input_tokens":0,"input_tokens_details":null,"output_tokens":0,"output_tokens_details":null,"total_tokens":0}}}}

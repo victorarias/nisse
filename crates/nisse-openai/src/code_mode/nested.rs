@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use nisse_core::{ToolCall, ToolOutcome, builtin_tools, run_builtin_tool};
+use nisse_core::{ToolCall, ToolOutcome, ToolSpec, builtin_tools, run_builtin_tool};
 use serde_json::{Value, json};
 
 use super::apply_patch::apply_patch;
@@ -48,17 +48,16 @@ pub(super) struct Nested {
 const OUTCOME: &str = "{ denied?: string; is_error: boolean; output: string; }";
 
 impl NestedTools {
-    pub(super) fn tools(self) -> Vec<Nested> {
+    /// The tools in this shape, then `agents`, the tools that start and steer subagents.
+    pub(super) fn tools(self, agents: &[ToolSpec]) -> Vec<Nested> {
+        let mut tools = self.own_tools();
+        tools.extend(agents.iter().cloned().map(Nested::function));
+        tools
+    }
+
+    fn own_tools(self) -> Vec<Nested> {
         match self {
-            Self::ClaudeCode => builtin_tools()
-                .into_iter()
-                .map(|tool| Nested {
-                    name: tool.name,
-                    description: tool.description,
-                    kind: Kind::Function,
-                    input: Some(tool.parameters),
-                })
-                .collect(),
+            Self::ClaudeCode => builtin_tools().into_iter().map(Nested::function).collect(),
             Self::Codex => vec![
                 Nested {
                     name: "exec_command".into(),
@@ -88,8 +87,16 @@ impl NestedTools {
     }
 
     /// The Nisse call a script's `tools.<tool>(input)` makes, as `(name, args)`.
-    pub(super) fn call(self, tool: &str, input: Value) -> Result<(String, Value), String> {
-        let known = self.tools().into_iter().find(|nested| nested.name == tool);
+    pub(super) fn call(
+        self,
+        agents: &[ToolSpec],
+        tool: &str,
+        input: Value,
+    ) -> Result<(String, Value), String> {
+        let known = self
+            .tools(agents)
+            .into_iter()
+            .find(|nested| nested.name == tool);
         let Some(nested) = known else {
             return Err(format!("no tool named {tool}"));
         };
@@ -123,6 +130,15 @@ pub(super) fn run_nested_tool(cwd: &Path) -> impl FnOnce(ToolCall) -> ToolOutcom
 }
 
 impl Nested {
+    fn function(tool: ToolSpec) -> Self {
+        Self {
+            name: tool.name,
+            description: tool.description,
+            kind: Kind::Function,
+            input: Some(tool.parameters),
+        }
+    }
+
     /// The tool as the host lists it in `ALL_TOOLS`, its description ending in its declaration.
     pub fn definition(&self) -> Value {
         json!({

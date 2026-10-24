@@ -1,6 +1,7 @@
 //! The providers a conversation can name: `claude`, `openai` and `echo`, and the ones
 //! `NISSE_HOME/config.toml` names, which can also replace those; and the model new
-//! conversations get, from a project's `.nisse/config.toml` or else that file.
+//! conversations get, from a project's `.nisse/config.toml` or else that file; and how far
+//! subagents may go.
 
 use std::{
     collections::BTreeMap,
@@ -11,7 +12,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use nisse_claude::{Claude, ClaudeOptions};
-use nisse_core::{DefaultModel, Echo, Provider};
+use nisse_core::{DefaultModel, Echo, Limits, Provider};
 use nisse_openai::{HOST_PROGRAM, OpenAi, OpenAiOptions};
 use nisse_protocol::ModelSelection;
 use serde::{Deserialize, de::DeserializeOwned};
@@ -24,6 +25,25 @@ struct Config {
     #[serde(default)]
     providers: BTreeMap<String, InstanceConfig>,
     default_model: Option<SelectionConfig>,
+    #[serde(default)]
+    agents: AgentsConfig,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentsConfig {
+    max_depth: Option<usize>,
+    max_threads: Option<usize>,
+}
+
+impl From<AgentsConfig> for Limits {
+    fn from(config: AgentsConfig) -> Self {
+        let defaults = Self::default();
+        Self {
+            max_depth: config.max_depth.unwrap_or(defaults.max_depth),
+            max_threads: config.max_threads.unwrap_or(defaults.max_threads),
+        }
+    }
 }
 
 /// What a project's `.nisse/config.toml` may set: nothing secret.
@@ -89,6 +109,7 @@ pub(crate) struct Configured {
     /// Every provider, the default first.
     pub(crate) providers: Vec<(String, Arc<dyn Provider>)>,
     pub(crate) default_model: DefaultModel,
+    pub(crate) agents: Limits,
 }
 
 pub(crate) fn configured(server: &ServerConfig) -> Result<Configured> {
@@ -105,6 +126,7 @@ pub(crate) fn configured(server: &ServerConfig) -> Result<Configured> {
     Ok(Configured {
         providers: named(config.providers, server, &path)?,
         default_model,
+        agents: config.agents.into(),
     })
 }
 

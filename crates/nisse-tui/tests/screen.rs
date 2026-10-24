@@ -132,6 +132,7 @@ impl Tui {
                 providers,
                 hooks: same_hooks(Arc::new(NoHooks)),
                 default_model: no_default_model(),
+                agents: Default::default(),
             },
         );
         let owner = Actor::Person {
@@ -683,4 +684,83 @@ async fn the_model_picker_switches_the_conversation_to_the_model_and_effort_chos
     insta::assert_snapshot!("picker", without_conversation_id(&picker));
     insta::assert_snapshot!("chosen", without_conversation_id(&chosen));
     insta::assert_snapshot!("switched", without_conversation_id(&answered));
+}
+
+/// Hands the cleanup to a subagent, which asks before it runs `rm`.
+struct Delegating;
+
+impl Provider for Delegating {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            if turn.lineage().is_some() {
+                return Asking.run(turn).await;
+            }
+            let calls = [
+                (
+                    "spawn_agent",
+                    serde_json::json!({ "task_name": "cleaner", "message": "Clean the build." }),
+                ),
+                ("wait_agent", serde_json::json!({ "timeout_ms": 60000 })),
+            ];
+            for (index, (name, args)) in calls.into_iter().enumerate() {
+                let call = ToolCall {
+                    id: format!("call-{index}"),
+                    name: name.into(),
+                    args,
+                    parent: None,
+                };
+                turn.call_tool(call, Approval::NotNeeded, turn.run_agent_tool())
+                    .await?;
+            }
+            turn.place_steers()?;
+            turn.answer("The cleaner is done.")
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_subagent_s_card_shows_its_approval_and_ctrl_y_answers_it_from_the_parent() {
+    let tui = Tui::with_model("delegating", Arc::new(Delegating)).await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("clean up, through a helper");
+    let asking = tui
+        .screen
+        .shows(&[
+            "◆ AGENT",
+            "APPROVE BASH",
+            "^Y allow · ^N deny",
+            "WAIT_AGENT",
+        ])
+        .await;
+    tui.chord(KeyCode::Char('y'), KeyModifiers::CONTROL);
+    let done = tui
+        .screen
+        .shows(&["✓ DONE", "The cleaner is done.", "READY"])
+        .await;
+
+    insta::assert_snapshot!(
+        "delegated_asking",
+        steady(&without_conversation_id(&asking))
+    );
+    insta::assert_snapshot!("delegated_done", without_conversation_id(&done));
+}
+
+#[tokio::test]
+async fn esc_stops_the_conversation_s_run() {
+    let tui = Tui::with_model(
+        "thinking",
+        Arc::new(Thinking {
+            finish: Arc::new(Notify::new()),
+        }),
+    )
+    .await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("light the grid");
+    tui.screen.shows(&["WORKING", "Esc to stop"]).await;
+    tui.press(KeyCode::Esc);
+    tui.screen.shows(&["Interrupted.", "READY"]).await;
 }

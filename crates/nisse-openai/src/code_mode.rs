@@ -15,7 +15,10 @@ use std::{
 };
 
 use anyhow::{Result, bail};
-use nisse_core::{Approval, ToolCall, ToolOutcome, Turn, approval_for, with_nested_results};
+use nisse_core::{
+    Approval, ToolCall, ToolOutcome, ToolSpec, Turn, approval_for, is_agent_tool,
+    with_nested_results,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{sync::mpsc, task::JoinSet};
@@ -88,9 +91,9 @@ impl CodeMode {
         }
     }
 
-    /// `exec` and `wait`, as the Responses API takes them.
-    pub fn tools(&self) -> Vec<Value> {
-        let nested = self.tools.tools();
+    /// `exec` and `wait`, as the Responses API takes them, with `agents` among the nested tools.
+    pub fn tools(&self, agents: &[ToolSpec]) -> Vec<Value> {
+        let nested = self.tools.tools(agents);
         let mut description = EXEC_DESCRIPTION.replace(
             "{{ first_tool }}",
             nested.first().map_or("name", |tool| tool.name.as_str()),
@@ -126,8 +129,9 @@ impl CodeMode {
         ]
     }
 
-    /// Readies code mode for one run of `turn`. The host itself starts with the first `exec`.
-    pub fn begin(&self, turn: &Turn) -> Result<Run> {
+    /// Readies code mode for one run of `turn`, whose scripts can call `agents` too. The host
+    /// itself starts with the first `exec`.
+    pub fn begin(&self, turn: &Turn, agents: Vec<ToolSpec>) -> Result<Run> {
         if !is_installed(self.host.program()) {
             bail!(
                 "this model works in code mode, which needs Codex's {HOST_PROGRAM}; \
@@ -137,15 +141,19 @@ impl CodeMode {
         let (calls, delegated) = mpsc::unbounded_channel();
         self.host.begin_run(turn.conversation_id(), calls);
         let cells = Arc::new(Cells::default());
+        let tools = Toolbox {
+            shape: self.tools,
+            agents: agents.into(),
+        };
         let nested = tokio::spawn(answer_nested_calls(
             delegated,
             turn.clone(),
             cells.clone(),
-            self.tools,
+            tools.clone(),
         ));
         Ok(Run {
             host: self.host.clone(),
-            tools: self.tools,
+            tools,
             turn: turn.clone(),
             cells,
             nested,
@@ -183,9 +191,26 @@ impl Cells {
     }
 }
 
+/// The tools a run's scripts call: Nisse's own in the chosen shape, and the agent tools.
+#[derive(Clone)]
+struct Toolbox {
+    shape: NestedTools,
+    agents: Arc<[ToolSpec]>,
+}
+
+impl Toolbox {
+    fn tools(&self) -> Vec<nested::Nested> {
+        self.shape.tools(&self.agents)
+    }
+
+    fn call(&self, tool: &str, input: Value) -> Result<(String, Value), String> {
+        self.shape.call(&self.agents, tool, input)
+    }
+}
+
 pub(crate) struct Run {
     host: Arc<Host>,
-    tools: NestedTools,
+    tools: Toolbox,
     turn: Turn,
     cells: Arc<Cells>,
     nested: tokio::task::JoinHandle<()>,
@@ -196,14 +221,14 @@ impl Run {
         let host = self.host.clone();
         let cells = self.cells.clone();
         let turn = self.turn.clone();
-        let tools = self.tools;
+        let tools = self.tools.clone();
         let runtime = tokio::runtime::Handle::current();
         self.turn
             .call_tool(call, Approval::NotNeeded, move |call| {
                 runtime.block_on(async {
                     let started = Instant::now();
                     match call.name.as_str() {
-                        EXEC => exec(&host, tools, &cells, &turn, &call, started).await,
+                        EXEC => exec(&host, &tools, &cells, &turn, &call, started).await,
                         _ => wait(&host, &cells, &turn, &call, started).await,
                     }
                 })
@@ -213,7 +238,7 @@ impl Run {
 
     /// Ends the run's scripts. A nested call still waiting for its approval or its tool is cut
     /// off, and the run closes it as it closes any call it ended.
-    pub async fn finish(self) {
+    pub async fn finish(&self) {
         let conversation = self.turn.conversation_id();
         let running: Vec<String> = self
             .cells
@@ -229,9 +254,14 @@ impl Run {
                 let _ = connection.terminate(conversation, &cell_id).await;
             }
         }
-        self.host.end_run(conversation);
+    }
+}
+
+/// A run that ends, however it ends, stops answering its scripts' calls and lets the host go.
+impl Drop for Run {
+    fn drop(&mut self) {
         self.nested.abort();
-        let _ = self.nested.await;
+        self.host.end_run(self.turn.conversation_id());
     }
 }
 
@@ -243,7 +273,7 @@ struct Pragma {
 
 async fn exec(
     host: &Host,
-    tools: NestedTools,
+    tools: &Toolbox,
     cells: &Cells,
     turn: &Turn,
     call: &ToolCall,
@@ -441,13 +471,13 @@ async fn answer_nested_calls(
     mut delegated: mpsc::UnboundedReceiver<Delegated>,
     turn: Turn,
     cells: Arc<Cells>,
-    tools: NestedTools,
+    tools: Toolbox,
 ) {
     let mut calls = JoinSet::new();
     loop {
         tokio::select! {
             Some(delegated) = delegated.recv() => {
-                calls.spawn(answer_nested_call(delegated, turn.clone(), cells.clone(), tools));
+                calls.spawn(answer_nested_call(delegated, turn.clone(), cells.clone(), tools.clone()));
             }
             Some(_) = calls.join_next(), if !calls.is_empty() => {}
             else => return,
@@ -455,12 +485,7 @@ async fn answer_nested_calls(
     }
 }
 
-async fn answer_nested_call(
-    delegated: Delegated,
-    turn: Turn,
-    cells: Arc<Cells>,
-    tools: NestedTools,
-) {
+async fn answer_nested_call(delegated: Delegated, turn: Turn, cells: Arc<Cells>, tools: Toolbox) {
     let Delegated {
         id,
         cell_id,
@@ -484,9 +509,11 @@ async fn answer_nested_call(
         parent: Some(parent),
     };
     let approval = approval_for(&call.name);
-    let answered = turn
-        .call_tool(call, approval, run_nested_tool(turn.cwd()))
-        .await;
+    let run: Box<dyn FnOnce(ToolCall) -> ToolOutcome + Send> = match is_agent_tool(&call.name) {
+        true => Box::new(turn.run_agent_tool()),
+        false => Box::new(run_nested_tool(turn.cwd())),
+    };
+    let answered = turn.call_tool(call, approval, run).await;
     connection.answer(
         id,
         answered

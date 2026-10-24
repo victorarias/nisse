@@ -8,6 +8,7 @@ use nisse_protocol::{
 use tokio::sync::mpsc;
 
 use crate::{
+    agents::AgentType,
     tools::{ToolCall, run_builtin_tool},
     turn::{Approval, Turn},
 };
@@ -32,6 +33,12 @@ pub trait Provider: Send + Sync {
     /// The skills Nisse lists for a conversation in `cwd`, and attaches to input that names
     /// them. A provider whose agent expands skills itself, like Claude Code, has none here.
     fn skills(&self, cwd: &Path) -> Vec<Skill> {
+        let _ = cwd;
+        Vec::new()
+    }
+
+    /// The kinds of subagent its model can start in `cwd`.
+    fn agent_types(&self, cwd: &Path) -> Vec<AgentType> {
         let _ = cwd;
         Vec::new()
     }

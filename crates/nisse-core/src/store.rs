@@ -3,14 +3,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use nisse_protocol::{
     Actor, Commit, Conversation, ConversationStatus, ConversationSubmitResult, Entry, Input,
-    ModelSelection, Seq, SubmissionStatus, WhenBusy, kinds,
+    Lineage, Mail, ModelSelection, Seq, SubmissionStatus, WhenBusy, kinds,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
 
 use crate::{new_id, now_ms, workspace::AttachedSkill};
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// One SQLite file. Every change goes through `commit`, which is atomic and gets the next `seq`.
 pub struct Store {
@@ -24,7 +24,18 @@ pub struct Submission {
     pub when_busy: WhenBusy,
     pub input: Input,
     pub skills: Vec<AttachedSkill>,
+    pub mail: Option<Mail>,
     pub author: Actor,
+}
+
+impl Submission {
+    /// Whether it starts a run of its own, as people's input and new tasks do. Other mail is
+    /// taken in by a run that is going anyway.
+    pub fn starts_a_run(&self) -> bool {
+        self.mail
+            .as_ref()
+            .is_none_or(|mail| mail.kind.starts_a_run())
+    }
 }
 
 pub struct NewConversation {
@@ -32,6 +43,7 @@ pub struct NewConversation {
     pub creator: Actor,
     pub cwd: PathBuf,
     pub selection: ModelSelection,
+    pub lineage: Option<Lineage>,
 }
 
 pub struct Tx<'a> {
@@ -119,6 +131,22 @@ impl Store {
                 COMMIT;",
             )?;
         }
+        if version < 6 {
+            db.execute_batch(
+                "BEGIN;
+                ALTER TABLE conversations ADD COLUMN parent TEXT;
+                ALTER TABLE conversations ADD COLUMN root TEXT;
+                ALTER TABLE conversations ADD COLUMN parent_call TEXT;
+                ALTER TABLE conversations ADD COLUMN task TEXT;
+                ALTER TABLE conversations ADD COLUMN agent_type TEXT;
+                ALTER TABLE conversations ADD COLUMN hosted INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE conversations ADD COLUMN forked_at INTEGER;
+                CREATE INDEX conversations_by_root ON conversations (root);
+                ALTER TABLE submissions ADD COLUMN mail TEXT;
+                PRAGMA user_version = 6;
+                COMMIT;",
+            )?;
+        }
         Ok(Self { db })
     }
 
@@ -183,6 +211,15 @@ impl Store {
             "SELECT {CONVERSATION_COLUMNS} FROM conversations ORDER BY id DESC"
         ))?;
         let rows = statement.query_map([], conversation_from_row)?;
+        rows.map(|row| row?).collect()
+    }
+
+    /// Every conversation under `root`, in the order they started.
+    pub fn tree(&self, root: &str) -> Result<Vec<Conversation>> {
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE root = ?1 ORDER BY id"
+        ))?;
+        let rows = statement.query_map([root], conversation_from_row)?;
         rows.map(|row| row?).collect()
     }
 
@@ -261,11 +298,13 @@ impl Tx<'_> {
             created_at_ms: now_ms(),
             cwd: start.cwd,
             selection: start.selection,
+            lineage: start.lineage,
         };
+        let lineage = conversation.lineage.as_ref();
         self.tx.execute(
             &format!(
                 "INSERT INTO conversations ({CONVERSATION_COLUMNS}, state_provider)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?7)"
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?7)"
             ),
             params![
                 conversation.id,
@@ -280,6 +319,13 @@ impl Tx<'_> {
                 conversation.selection.provider,
                 conversation.selection.model,
                 conversation.selection.effort,
+                lineage.map(|lineage| &lineage.parent),
+                lineage.map(|lineage| &lineage.root),
+                lineage.map(|lineage| &lineage.call_id),
+                lineage.and_then(|lineage| lineage.task.as_ref()),
+                lineage.and_then(|lineage| lineage.agent_type.as_ref()),
+                lineage.is_some_and(|lineage| lineage.hosted),
+                lineage.and_then(|lineage| lineage.forked_at),
             ],
         )?;
         self.status = Some(ConversationStatus::Idle);
@@ -410,12 +456,13 @@ impl Tx<'_> {
         when_busy: WhenBusy,
         input: &Input,
         skills: &[AttachedSkill],
+        mail: Option<&Mail>,
         author: &Actor,
     ) -> Result<String> {
         let id = new_id();
         self.tx.execute(
-            "INSERT INTO submissions (id, conversation_id, request_id, status, when_busy, input, skills, author, seq)
-             VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO submissions (id, conversation_id, request_id, status, when_busy, input, skills, mail, author, seq)
+             VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 id,
                 self.conversation_id,
@@ -423,6 +470,7 @@ impl Tx<'_> {
                 to_text(&when_busy)?,
                 serde_json::to_string(input)?,
                 serde_json::to_string(skills)?,
+                mail.map(serde_json::to_string).transpose()?,
                 serde_json::to_string(author)?,
                 self.seq
             ],
@@ -469,8 +517,8 @@ fn entries_since(db: &Connection, conversation_id: &str, since_seq: Seq) -> Resu
     rows.map(|row| row?).collect()
 }
 
-const CONVERSATION_COLUMNS: &str =
-    "id, title, creator, status, created_at_ms, cwd, provider, model, effort";
+const CONVERSATION_COLUMNS: &str = "id, title, creator, status, created_at_ms, cwd, provider, model, effort, \
+     parent, root, parent_call, task, agent_type, hosted, forked_at";
 
 const BY_REQUEST: &str = "conversation_id = ?1 AND request_id = ?2";
 
@@ -483,7 +531,7 @@ fn submissions_where(
     values: impl rusqlite::Params,
 ) -> Result<Vec<Submission>> {
     let mut statement = db.prepare(&format!(
-        "SELECT id, conversation_id, status, when_busy, input, skills, author FROM submissions WHERE {condition}"
+        "SELECT id, conversation_id, status, when_busy, input, skills, mail, author FROM submissions WHERE {condition}"
     ))?;
     let rows = statement.query_map(values, |row| {
         Ok((|| {
@@ -494,7 +542,11 @@ fn submissions_where(
                 when_busy: from_text(&row.get::<_, String>(3)?)?,
                 input: serde_json::from_str(&row.get::<_, String>(4)?)?,
                 skills: serde_json::from_str(&row.get::<_, String>(5)?)?,
-                author: serde_json::from_str(&row.get::<_, String>(6)?)?,
+                mail: row
+                    .get::<_, Option<String>>(6)?
+                    .map(|mail| serde_json::from_str(&mail))
+                    .transpose()?,
+                author: serde_json::from_str(&row.get::<_, String>(7)?)?,
             })
         })())
     })?;
@@ -514,6 +566,18 @@ fn conversation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<Con
                 provider: row.get(6)?,
                 model: row.get(7)?,
                 effort: row.get(8)?,
+            },
+            lineage: match row.get::<_, Option<String>>(9)? {
+                Some(parent) => Some(Lineage {
+                    parent,
+                    root: row.get(10)?,
+                    call_id: row.get(11)?,
+                    task: row.get(12)?,
+                    agent_type: row.get(13)?,
+                    hosted: row.get(14)?,
+                    forked_at: row.get(15)?,
+                }),
+                None => None,
             },
         })
     })())

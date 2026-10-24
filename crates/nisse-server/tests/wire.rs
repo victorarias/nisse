@@ -4,16 +4,17 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use nisse_client::Client;
 use nisse_core::{
-    DefaultModel, Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, ProviderFuture, Store,
-    Turn, no_default_model, same_hooks,
+    DefaultModel, Echo, Harness, HarnessOptions, Hooks, Limits, NoHooks, Provider, ProviderFuture,
+    Store, Turn, no_default_model, same_hooks,
 };
 use nisse_lua::LuaHost;
 use nisse_protocol::{
-    Actor, ClientRequest, Conversation, ConversationListResult, ConversationReadParams,
-    ConversationReadResult, ConversationSelectModelParams, ConversationStartParams,
-    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
-    ConversationSubscribeParams, Entry, Input, ModelSelection, ModelsListParams, ModelsListResult,
-    ServerNotification, UiChanged, WhenBusy, kinds,
+    Actor, ClientRequest, Conversation, ConversationInterruptParams, ConversationInterruptResult,
+    ConversationListResult, ConversationReadParams, ConversationReadResult,
+    ConversationSelectModelParams, ConversationStartParams, ConversationStatus,
+    ConversationSubmitParams, ConversationSubmitResult, ConversationSubscribeParams, Entry, Input,
+    ModelSelection, ModelsListParams, ModelsListResult, ServerNotification, UiChanged, WhenBusy,
+    kinds,
 };
 use nisse_server::Server;
 use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
@@ -39,6 +40,7 @@ fn start(
             providers: vec![("test".into(), provider)],
             hooks: same_hooks(hooks),
             default_model: no_default_model(),
+            agents: Default::default(),
         },
     );
     harness.resume().unwrap();
@@ -1288,6 +1290,7 @@ async fn each_conversation_keeps_the_provider_and_model_it_started_with() {
             ],
             hooks: same_hooks(Arc::new(NoHooks)),
             default_model: no_default_model(),
+            agents: Default::default(),
         },
     );
     let server = Server::new(harness, broadcast::channel(16).0, owner());
@@ -1395,6 +1398,7 @@ async fn a_project_s_extensions_apply_only_to_conversations_in_that_project() {
                 )?))
             }),
             default_model: no_default_model(),
+            agents: Default::default(),
         },
     );
     let server = Server::new(harness, broadcast::channel(16).0, owner());
@@ -1481,6 +1485,7 @@ fn echo_and_named(default_model: DefaultModel) -> Arc<Server> {
             ],
             hooks: same_hooks(Arc::new(NoHooks)),
             default_model,
+            agents: Default::default(),
         },
     );
     Server::new(harness, broadcast::channel(16).0, owner())
@@ -1639,5 +1644,322 @@ async fn models_list_names_each_provider_s_models_and_its_default() {
             ("echo", Some("echo"), vec!["echo"]),
             ("named", None, vec![])
         ]
+    );
+}
+
+/// Runs the subagent calls its input lists, as JSON `[{"name", "args"}]`, and answers with
+/// their outputs, one per line. Any other input is a task: it answers `finished <task>`, and
+/// works on `hang` until stopped.
+struct Delegates;
+
+impl Provider for Delegates {
+    fn driver(&self) -> &str {
+        "test"
+    }
+
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let transcript = turn.transcript()?;
+            let input = transcript
+                .iter()
+                .rev()
+                .find(|entry| entry.kind == kinds::USER)
+                .unwrap();
+            let text = input.data["text"].as_str().unwrap().to_owned();
+            if text == "hang" {
+                return std::future::pending().await;
+            }
+            let Ok(calls) = serde_json::from_str::<Vec<serde_json::Value>>(&text) else {
+                return turn.answer(&format!("finished {text}"));
+            };
+            let mut outputs = Vec::new();
+            for (index, call) in calls.into_iter().enumerate() {
+                let call = nisse_core::ToolCall {
+                    id: format!("call-{index}"),
+                    name: call["name"].as_str().unwrap().into(),
+                    args: call["args"].clone(),
+                    parent: None,
+                };
+                let outcome = turn
+                    .call_tool(call, nisse_core::Approval::NotNeeded, turn.run_agent_tool())
+                    .await?;
+                outputs.push(outcome.output);
+            }
+            turn.answer(&outputs.join("\n"))
+        })
+    }
+}
+
+fn delegating(agents: Limits) -> Arc<Server> {
+    delegating_through(agents, Arc::new(NoHooks))
+}
+
+fn delegating_through(agents: Limits, hooks: Arc<dyn Hooks>) -> Arc<Server> {
+    let harness = Harness::with_store(
+        Store::open_in_memory().unwrap(),
+        HarnessOptions {
+            providers: vec![("test".into(), Arc::new(Delegates))],
+            hooks: same_hooks(hooks),
+            default_model: no_default_model(),
+            agents,
+        },
+    );
+    Server::new(harness, broadcast::channel(16).0, owner())
+}
+
+fn spawn(task_name: &str, message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": "spawn_agent",
+        "args": { "task_name": task_name, "message": message, "fork_turns": "none" }
+    })
+}
+
+fn wait() -> serde_json::Value {
+    serde_json::json!({ "name": "wait_agent", "args": { "timeout_ms": 10000 } })
+}
+
+async fn read(client: &Client, conversation_id: &str) -> ConversationReadResult {
+    client
+        .request(ClientRequest::ConversationRead(ConversationReadParams {
+            conversation_id: conversation_id.into(),
+            since_seq: 0,
+        }))
+        .await
+        .unwrap()
+}
+
+async fn children(client: &Client, parent: &Conversation) -> Vec<Conversation> {
+    let listed: ConversationListResult = client
+        .request(ClientRequest::ConversationList(Default::default()))
+        .await
+        .unwrap();
+    listed
+        .conversations
+        .into_iter()
+        .filter(|conversation| {
+            conversation
+                .lineage
+                .as_ref()
+                .is_some_and(|lineage| lineage.parent == parent.id)
+        })
+        .collect()
+}
+
+/// Waits for the conversation to work on what was just submitted, and then go idle.
+async fn until_done(
+    notifications: &mut UnboundedReceiver<ServerNotification>,
+    conversation_id: &str,
+) {
+    until_status(notifications, conversation_id, ConversationStatus::Working).await;
+    until_status(notifications, conversation_id, ConversationStatus::Idle).await;
+}
+
+async fn until_status(
+    notifications: &mut UnboundedReceiver<ServerNotification>,
+    conversation_id: &str,
+    status: ConversationStatus,
+) {
+    tokio::time::timeout(PATIENCE, async {
+        while let Some(notification) = notifications.recv().await {
+            if matches!(&notification, ServerNotification::Status(changed)
+                if changed.conversation_id == conversation_id && changed.status == status)
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{conversation_id} went {status:?} in time"));
+}
+
+fn answer(entries: &[Entry]) -> &str {
+    entries
+        .iter()
+        .rev()
+        .find(|entry| entry.kind == kinds::ASSISTANT)
+        .and_then(|entry| entry.data["text"].as_str())
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_spawned_agent_works_in_a_conversation_under_its_parent_and_its_answer_reaches_it() {
+    let server = delegating(Limits::default());
+    let (client, mut notifications) = connect(&server).await;
+    let parent = create(&client).await;
+
+    let script = serde_json::json!([spawn("scout", "look around"), wait()]);
+    submit(&client, &parent, &script.to_string()).await;
+    until_done(&mut notifications, &parent.id).await;
+
+    let [child] = &children(&client, &parent).await[..] else {
+        panic!("one child: {:#?}", read(&client, &parent.id).await.entries);
+    };
+    let lineage = child.lineage.as_ref().unwrap();
+    assert_eq!(lineage.root, parent.id);
+    assert_eq!(lineage.task.as_deref(), Some("/root/scout"));
+    let child_read = read(&client, &child.id).await;
+    assert_eq!(answer(&child_read.entries), "finished look around");
+    let parent_read = read(&client, &parent.id).await;
+    let card = parent_read
+        .entries
+        .iter()
+        .find(|entry| entry.kind == kinds::SUBAGENT)
+        .expect("the parent shows its subagent");
+    assert_eq!(card.data["conversation_id"], child.id);
+    let answers = answer(&parent_read.entries);
+    assert!(
+        answers.contains("\"task_name\":\"/root/scout\""),
+        "{answers}"
+    );
+    assert!(answers.contains("Wait completed."), "{answers}");
+    let final_answer = parent_read
+        .entries
+        .iter()
+        .find(|entry| entry.kind == kinds::USER && entry.data["mail"]["type"] == "final_answer")
+        .expect("the child's answer reached its parent");
+    assert_eq!(final_answer.data["text"], "finished look around");
+    assert_eq!(final_answer.data["mail"]["sender"], "/root/scout");
+}
+
+#[tokio::test]
+async fn interrupting_a_conversation_stops_its_subagents_too() {
+    let server = delegating(Limits::default());
+    let (client, mut notifications) = connect(&server).await;
+    let parent = create(&client).await;
+    let script = serde_json::json!([
+        spawn("sleeper", "hang"),
+        { "name": "wait_agent", "args": { "timeout_ms": 3_600_000 } }
+    ]);
+    submit(&client, &parent, &script.to_string()).await;
+    let child = tokio::time::timeout(PATIENCE, async {
+        loop {
+            if let Some(ServerNotification::Status(changed)) = notifications.recv().await
+                && changed.conversation_id != parent.id
+                && changed.status == ConversationStatus::Working
+            {
+                return changed.conversation_id;
+            }
+        }
+    })
+    .await
+    .expect("the subagent started working in time");
+
+    let interrupted: ConversationInterruptResult = client
+        .request(ClientRequest::ConversationInterrupt(
+            ConversationInterruptParams {
+                conversation_id: parent.id.clone(),
+            },
+        ))
+        .await
+        .unwrap();
+    assert!(interrupted.interrupted);
+    until_status(&mut notifications, &parent.id, ConversationStatus::Idle).await;
+
+    let parent_read = read(&client, &parent.id).await;
+    let child_read = read(&client, &child).await;
+    assert_eq!(child_read.conversation.status, ConversationStatus::Idle);
+    for entries in [&parent_read.entries, &child_read.entries] {
+        let last = entries
+            .iter()
+            .rev()
+            .find(|entry| entry.kind == kinds::ASSISTANT)
+            .unwrap();
+        assert_eq!(last.data["interrupted"], true);
+    }
+}
+
+#[tokio::test]
+async fn a_subagent_at_the_depth_limit_cannot_spawn_its_own() {
+    let server = delegating(Limits::default());
+    let (client, mut notifications) = connect(&server).await;
+    let parent = create(&client).await;
+    let nested = serde_json::json!([spawn("grandchild", "anything")]).to_string();
+    let script = serde_json::json!([spawn("child", &nested), wait()]);
+
+    submit(&client, &parent, &script.to_string()).await;
+    until_done(&mut notifications, &parent.id).await;
+
+    let [child] = &children(&client, &parent).await[..] else {
+        panic!("one child");
+    };
+    let child_read = read(&client, &child.id).await;
+    let refused = child_read
+        .entries
+        .iter()
+        .find(|entry| entry.kind == kinds::TOOL_RESULT)
+        .unwrap();
+    assert_eq!(refused.data["is_error"], true);
+    assert!(
+        refused.data["output"]
+            .as_str()
+            .unwrap()
+            .contains("at most 1 deep"),
+        "{}",
+        refused.data["output"]
+    );
+    assert!(children(&client, child).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_spawn_past_the_thread_limit_is_refused_while_the_others_run() {
+    let server = delegating(Limits {
+        max_depth: 1,
+        max_threads: 1,
+    });
+    let (client, mut notifications) = connect(&server).await;
+    let parent = create(&client).await;
+    let script = serde_json::json!([
+        spawn("first", "hang"),
+        spawn("second", "anything"),
+        { "name": "interrupt_agent", "args": { "target": "first" } }
+    ]);
+
+    submit(&client, &parent, &script.to_string()).await;
+    until_done(&mut notifications, &parent.id).await;
+
+    let outputs = answer(&read(&client, &parent.id).await.entries).to_owned();
+    let lines: Vec<&str> = outputs.lines().collect();
+    assert!(lines[1].contains("the most allowed"), "{outputs}");
+    assert_eq!(children(&client, &parent).await.len(), 1);
+}
+
+const ROOT_LISTS: &str = r#"
+return function(on)
+  on("tool.call", { tool = "list_agents" }, function(nisse, e, next)
+    if e.conversation.parent then
+      return { deny = "only " .. e.conversation.parent .. " lists agents" }
+    end
+    return next(e)
+  end)
+end
+"#;
+
+#[tokio::test]
+async fn a_hook_knows_a_subagent_s_call_by_its_parent_and_can_deny_it() {
+    let extensions = tempfile::tempdir().unwrap();
+    extension(extensions.path(), "root-lists", ROOT_LISTS);
+    let hooks = LuaHost::load(&[extensions.path().to_owned()], Arc::new(|_| {})).unwrap();
+    let server = delegating_through(Limits::default(), Arc::new(hooks));
+    let (client, mut notifications) = connect(&server).await;
+    let parent = create(&client).await;
+    let list = serde_json::json!({ "name": "list_agents", "args": {} });
+    let script = serde_json::json!([
+        spawn("child", &serde_json::json!([list]).to_string()),
+        wait(),
+        list
+    ]);
+
+    submit(&client, &parent, &script.to_string()).await;
+    until_done(&mut notifications, &parent.id).await;
+
+    let [child] = &children(&client, &parent).await[..] else {
+        panic!("one child");
+    };
+    let child_answer = answer(&read(&client, &child.id).await.entries).to_owned();
+    assert_eq!(child_answer, format!("only {} lists agents", parent.id));
+    let parent_answer = answer(&read(&client, &parent.id).await.entries).to_owned();
+    assert!(
+        parent_answer.contains("\"agent_name\":\"/root/child\""),
+        "{parent_answer}"
     );
 }

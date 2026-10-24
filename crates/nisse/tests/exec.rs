@@ -59,6 +59,7 @@ async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
             providers: vec![("test".into(), provider)],
             hooks: same_hooks(Arc::new(NoHooks)),
             default_model: no_default_model(),
+            agents: Default::default(),
         },
     );
     let owner = Actor::Person {

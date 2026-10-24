@@ -433,7 +433,7 @@ fn draw_transcript(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let mut lines: Vec<Line> = app
         .entries
         .iter()
-        .flat_map(|entry| entry_lines(entry, &calls, width, theme))
+        .flat_map(|entry| entry_lines(entry, &calls, app, width, theme))
         .collect();
     let running_tool = app.status == ConversationStatus::Working
         && app.entries.last().is_some_and(|entry| {
@@ -488,6 +488,8 @@ fn body(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
 }
 
 struct Calls<'a> {
+    /// The calls that started a subagent, which its card shows instead.
+    spawned: HashSet<&'a str>,
     called: HashSet<&'a str>,
     asked: HashSet<&'a str>,
     answers: HashMap<&'a str, &'a Entry>,
@@ -497,6 +499,7 @@ struct Calls<'a> {
 impl<'a> Calls<'a> {
     fn of(entries: &'a [Entry]) -> Self {
         let mut calls = Self {
+            spawned: HashSet::new(),
             called: HashSet::new(),
             asked: HashSet::new(),
             answers: HashMap::new(),
@@ -515,6 +518,9 @@ impl<'a> Calls<'a> {
                 }
                 kinds::TOOL_RESULT => {
                     calls.finished.insert(call_id(entry, "call_id"));
+                }
+                kinds::SUBAGENT => {
+                    calls.spawned.insert(call_id(entry, "call_id"));
                 }
                 _ => {}
             }
@@ -646,11 +652,17 @@ fn approval_lines(
 }
 
 /// An entry's lines; a call a script made, and what came of it, sit inside the script's card.
-fn entry_lines(entry: &Entry, calls: &Calls, width: usize, theme: &Theme) -> Vec<Line<'static>> {
+fn entry_lines(
+    entry: &Entry,
+    calls: &Calls,
+    app: &App,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     if !entry.data["parent"].is_string() {
-        return own_lines(entry, calls, width, theme);
+        return own_lines(entry, calls, app, width, theme);
     }
-    let mut lines = own_lines(entry, calls, width.saturating_sub(2), theme);
+    let mut lines = own_lines(entry, calls, app, width.saturating_sub(2), theme);
     if lines.last().is_some_and(|last| last.width() == 0) {
         lines.pop();
     }
@@ -664,12 +676,27 @@ fn entry_lines(entry: &Entry, calls: &Calls, width: usize, theme: &Theme) -> Vec
         .collect()
 }
 
-fn own_lines(entry: &Entry, calls: &Calls, width: usize, theme: &Theme) -> Vec<Line<'static>> {
+fn own_lines(
+    entry: &Entry,
+    calls: &Calls,
+    app: &App,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     let text = entry.data["text"].as_str().unwrap_or_default();
+    let spawned = match entry.kind.as_str() {
+        kinds::TOOL_CALL => calls.spawned.contains(call_id(entry, "id")),
+        kinds::TOOL_RESULT => calls.spawned.contains(call_id(entry, "call_id")),
+        _ => false,
+    };
+    if spawned {
+        return Vec::new();
+    }
     let mut lines = match entry.kind.as_str() {
         kinds::USER => {
-            let who = match &entry.author {
-                Actor::Person { name, .. } => name.to_uppercase(),
+            let who = match (&entry.author, entry.data["mail"]["sender"].as_str()) {
+                (_, Some(sender)) => sender.rsplit('/').next().unwrap_or(sender).to_uppercase(),
+                (Actor::Person { name, .. }, None) => name.to_uppercase(),
                 _ => "INPUT".into(),
             };
             let mut lines = vec![speaker(who, theme.magenta, width, theme)];
@@ -703,9 +730,103 @@ fn own_lines(entry: &Entry, calls: &Calls, width: usize, theme: &Theme) -> Vec<L
             ])]
         }
         kinds::TOOL_RESULT => tool_result_lines(entry, width, theme),
+        kinds::SUBAGENT => subagent_lines(entry, app, width, theme),
         other => vec![Line::styled(format!("· {other}"), theme.fg(theme.dim))],
     };
     lines.push(Line::raw(""));
+    lines
+}
+
+/// A subagent's card: what it last did, and whether it works, waits on a person, or ended.
+fn subagent_lines(entry: &Entry, app: &App, width: usize, theme: &Theme) -> Vec<Line<'static>> {
+    let mut label = entry.data["title"]
+        .as_str()
+        .unwrap_or("subagent")
+        .to_owned();
+    if let Some(agent_type) = entry.data["agent_type"].as_str() {
+        label.push_str(&format!(" · {agent_type}"));
+    }
+    let mut lines = vec![Line::from(vec![
+        Span::styled("┏━ ", theme.fg(theme.faint)),
+        Span::styled("◆ AGENT", theme.glow(theme.magenta)),
+        Span::raw("  "),
+        Span::styled(
+            truncate(&label, width.saturating_sub(12)),
+            theme.fg(theme.ink),
+        ),
+    ])];
+    let Some(subagent) = entry.data["conversation_id"]
+        .as_str()
+        .and_then(|id| app.subagents.get(id))
+    else {
+        return lines;
+    };
+    let latest = subagent
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| entry.kind == kinds::TOOL_CALL || entry.kind == kinds::ASSISTANT);
+    let activity = latest.map(|entry| match entry.kind.as_str() {
+        kinds::TOOL_CALL => format!(
+            "⚙ {}  {}",
+            entry.data["name"].as_str().unwrap_or("tool").to_uppercase(),
+            args_summary(&entry.data["args"])
+        ),
+        _ => entry.data["text"].as_str().unwrap_or_default().to_owned(),
+    });
+    let asking = pending_approval(&subagent.entries).and_then(|id| {
+        subagent
+            .entries
+            .iter()
+            .find(|entry| entry.kind == kinds::APPROVAL_REQUEST && call_id(entry, "call_id") == id)
+    });
+    if let Some(request) = asking {
+        let label = format!(
+            "⏸ APPROVE {}",
+            request.data["name"]
+                .as_str()
+                .unwrap_or("tool")
+                .to_uppercase()
+        );
+        let room = width.saturating_sub(label.chars().count() + 5);
+        lines.push(Line::from(vec![
+            Span::styled("┃ ", theme.fg(theme.faint)),
+            Span::styled(label, theme.glow(theme.yellow)),
+            Span::raw("  "),
+            Span::styled(
+                truncate(&args_summary(&request.data["args"]), room),
+                theme.fg(theme.ink),
+            ),
+        ]));
+    } else if let Some(activity) = activity.filter(|activity| !activity.is_empty()) {
+        lines.push(Line::from(vec![
+            Span::styled("┃ ", theme.fg(theme.faint)),
+            Span::styled(
+                truncate(&activity, width.saturating_sub(3)),
+                theme.fg(theme.dim),
+            ),
+        ]));
+    }
+    let interrupted = latest.is_some_and(|entry| entry.data["interrupted"] == true);
+    let end = match (asking, subagent.status) {
+        (Some(_), _) => vec![
+            Span::styled("^Y", theme.glow(theme.yellow)),
+            Span::styled(" allow · ", theme.fg(theme.dim)),
+            Span::styled("^N", theme.glow(theme.yellow)),
+            Span::styled(" deny", theme.fg(theme.dim)),
+        ],
+        (None, ConversationStatus::Idle) if interrupted => {
+            vec![Span::styled("■ STOPPED", theme.glow(theme.yellow))]
+        }
+        (None, ConversationStatus::Idle) => vec![Span::styled("✓ DONE", theme.glow(theme.cyan))],
+        (None, _) => vec![Span::styled(
+            format!("{} WORKING", SPINNER[app.frame % SPINNER.len()]),
+            theme.glow(theme.yellow),
+        )],
+    };
+    let mut last = Line::from(Span::styled("┗━ ", theme.fg(theme.faint)));
+    last.spans.extend(end);
+    lines.push(last);
     lines
 }
 
@@ -797,12 +918,12 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     if typed.is_empty() {
         spans.push(Span::styled("▍", theme.glow(theme.magenta)));
         spans.push(Span::styled(
-            if pending_approval(&app.entries).is_some() {
+            if app.pending_approval().is_some() {
                 "^Y to allow, ^N to deny, or type a message"
             } else if app.awaits_callback() {
                 "paste the address your browser ended on"
             } else if working {
-                "type to queue a follow-up"
+                "type to queue a follow-up, or Esc to stop"
             } else {
                 "type a message, or !cmd to run a shell command"
             },

@@ -260,6 +260,7 @@ fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
             providers: configured.providers,
             hooks,
             default_model: configured.default_model,
+            agents: configured.agents,
         },
     )?;
     harness.resume()?;

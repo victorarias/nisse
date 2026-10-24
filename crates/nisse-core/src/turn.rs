@@ -6,14 +6,16 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use nisse_protocol::{
-    Actor, Conversation, ConversationStatus, Entry, Seq, SubmissionStatus, kinds,
+    Actor, Conversation, ConversationStatus, Entry, Lineage, ModelSelection, Seq, SubmissionStatus,
+    kinds,
 };
 use serde_json::{Value, json};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{
+    agents::{self, AgentType},
     harness::{Harness, is_steer, place_steers, tool_result},
-    tools::{ToolCall, ToolOutcome},
+    tools::{CallContext, ToolCall, ToolOutcome, ToolSpec},
 };
 
 /// Streamed text is committed at most this often, so every client sees it at most this late.
@@ -39,9 +41,11 @@ pub struct Turn {
     cwd: PathBuf,
     model: Option<String>,
     effort: Option<String>,
+    lineage: Option<Lineage>,
     provider_changed: bool,
     actor: Actor,
     live: Arc<Mutex<Live>>,
+    stopped: watch::Receiver<bool>,
 }
 
 #[derive(Default)]
@@ -56,6 +60,7 @@ impl Turn {
         conversation: &Conversation,
         actor: Actor,
         provider_changed: bool,
+        stopped: watch::Receiver<bool>,
     ) -> Self {
         Self {
             harness,
@@ -63,9 +68,11 @@ impl Turn {
             cwd: conversation.cwd.clone(),
             model: conversation.selection.model.clone(),
             effort: conversation.selection.effort.clone(),
+            lineage: conversation.lineage.clone(),
             provider_changed,
             actor,
             live: Arc::default(),
+            stopped,
         }
     }
 
@@ -73,6 +80,138 @@ impl Turn {
         &self.conversation_id
     }
 
+    /// Where the conversation comes from, when it is a subagent.
+    pub fn lineage(&self) -> Option<&Lineage> {
+        self.lineage.as_ref()
+    }
+
+    pub(crate) fn harness(&self) -> &Harness {
+        &self.harness
+    }
+
+    pub(crate) fn actor(&self) -> &Actor {
+        &self.actor
+    }
+
+    /// Returns once someone stops the run.
+    pub async fn stopped(&self) {
+        let mut stopped = self.stopped.clone();
+        let _ = stopped.wait_for(|stopped| *stopped).await;
+    }
+
+    /// The tools that start and steer subagents, for a provider whose model runs them: a
+    /// subagent at the deepest level allowed starts none.
+    pub fn agent_tools(&self, types: &[AgentType]) -> Vec<ToolSpec> {
+        let may_spawn = agents::depth(self.lineage()) < self.harness.limits().max_depth;
+        agents::tool_specs(types, may_spawn)
+    }
+
+    /// Runs an agent tool's call. Call it off the async runtime, as `call_tool` does.
+    pub fn run_agent_tool(&self) -> impl FnOnce(ToolCall) -> ToolOutcome + Send + 'static {
+        let turn = self.clone();
+        let runtime = tokio::runtime::Handle::current();
+        move |call| runtime.block_on(agents::run(&turn, &call))
+    }
+
+    /// Whether this conversation may start another subagent now, and why not.
+    pub fn may_spawn(&self) -> Result<(), String> {
+        let limits = self.harness.limits();
+        if agents::depth(self.lineage()) >= limits.max_depth {
+            return Err(format!(
+                "agents nest at most {} deep here; do this task yourself",
+                limits.max_depth
+            ));
+        }
+        let conversation = self
+            .harness
+            .conversation(&self.conversation_id)
+            .map_err(|error| format!("{error:#}"))?;
+        let family = self
+            .harness
+            .family(&conversation)
+            .map_err(|error| format!("{error:#}"))?;
+        let store = self.harness.store();
+        let mut live = 0;
+        for agent in family.iter().filter(|agent| agent.lineage.is_some()) {
+            let starting = store
+                .open_submissions(&agent.id)
+                .map_err(|error| format!("{error:#}"))?
+                .iter()
+                .any(|open| open.starts_a_run());
+            if agent.status != ConversationStatus::Idle || starting {
+                live += 1;
+            }
+        }
+        if live >= limits.max_threads {
+            return Err(format!(
+                "{live} agents already run here, the most allowed; wait for one to finish"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Starts a subagent this run's provider runs itself, as Claude Code runs its own, for the
+    /// call `call_id`: a conversation under this one that hears `prompt` from it. Its turn
+    /// commits what the subagent does.
+    pub fn start_hosted(
+        &self,
+        call_id: &str,
+        title: &str,
+        agent_type: Option<&str>,
+        prompt: &str,
+    ) -> Result<Turn> {
+        let parent = self.harness.conversation(&self.conversation_id)?;
+        let lineage = Lineage {
+            parent: parent.id.clone(),
+            root: parent
+                .lineage
+                .as_ref()
+                .map_or_else(|| parent.id.clone(), |lineage| lineage.root.clone()),
+            call_id: call_id.to_owned(),
+            task: None,
+            agent_type: agent_type.map(str::to_owned),
+            hosted: true,
+            forked_at: None,
+        };
+        let selection = ModelSelection {
+            effort: None,
+            ..parent.selection.clone()
+        };
+        let child = self
+            .harness
+            .start_child(&parent, title, selection, lineage, &self.actor)?;
+        let author = Actor::Agent {
+            conversation_id: parent.id.clone(),
+        };
+        self.harness.commit(&child.id, |tx| {
+            tx.append(kinds::USER, &author, json!({ "text": prompt }))?;
+            tx.set_status(ConversationStatus::Working)
+        })?;
+        Ok(Turn::new(
+            self.harness.clone(),
+            &child,
+            self.actor.clone(),
+            false,
+            self.stopped.clone(),
+        ))
+    }
+
+    /// The hosted subagent this turn commits for is done; `text` is its last word, committed
+    /// unless it already said so.
+    pub fn finish_hosted(&self, text: Option<&str>) -> Result<()> {
+        let said = self.entries_since(0)?;
+        let last = said
+            .iter()
+            .rev()
+            .find(|entry| entry.kind == kinds::ASSISTANT)
+            .and_then(|entry| entry.data["text"].as_str());
+        self.settled_live(|tx, actor| {
+            if let Some(text) = text.filter(|text| !text.trim().is_empty() && Some(*text) != last) {
+                tx.append(kinds::ASSISTANT, actor, json!({ "text": text }))?;
+            }
+            tx.set_status(ConversationStatus::Idle)
+        })
+    }
     /// The conversation's directory: tools run here.
     pub fn cwd(&self) -> &Path {
         &self.cwd
@@ -94,8 +233,28 @@ impl Turn {
         self.provider_changed
     }
 
+    /// What the model hears: the conversation, after whatever a subagent inherited from the
+    /// conversations it was forked from.
     pub fn transcript(&self) -> Result<Vec<Entry>> {
-        self.entries_since(0)
+        let store = self.harness.store();
+        let mut inherited: Vec<Vec<Entry>> = Vec::new();
+        let mut lineage = self.lineage.clone();
+        while let Some(Lineage {
+            parent,
+            forked_at: Some(forked_at),
+            ..
+        }) = lineage
+        {
+            let mut before = store.entries(&parent, 0)?;
+            before.retain(|entry| entry.seq < forked_at);
+            inherited.push(before);
+            lineage = store
+                .conversation(&parent)?
+                .and_then(|parent| parent.lineage);
+        }
+        let mut transcript: Vec<Entry> = inherited.into_iter().rev().flatten().collect();
+        transcript.extend(store.entries(&self.conversation_id, 0)?);
+        Ok(transcript)
     }
 
     pub fn entries_since(&self, since_seq: Seq) -> Result<Vec<Entry>> {
@@ -209,6 +368,10 @@ impl Turn {
         })?;
         let harness = self.harness.clone();
         let cwd = self.cwd.clone();
+        let context = CallContext {
+            conversation_id: self.conversation_id.clone(),
+            parent: self.lineage.as_ref().map(|lineage| lineage.parent.clone()),
+        };
         let committed_call = call.clone();
         let (asks, mut asked) = mpsc::unbounded_channel::<(ToolCall, oneshot::Sender<Decision>)>();
         let mut ran = tokio::task::spawn_blocking(move || {
@@ -219,7 +382,7 @@ impl Turn {
                 }
             };
             let run = Mutex::new(Some(run));
-            hooks.tool_call(call, &|call| {
+            hooks.tool_call(&context, call, &|call| {
                 if let Approval::Ask = approval {
                     let (answer, answered) = oneshot::channel();
                     let _ = asks.send((call.clone(), answer));

@@ -164,6 +164,18 @@
         ],
         "type": "object"
       },
+      "ConversationInterruptParams": {
+        "description": "Stops the conversation's run, if it has one, and the runs of every subagent under it.",
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ],
+        "type": "object"
+      },
       "ConversationListParams": {
         "type": "object"
       },
@@ -501,6 +513,22 @@
           },
           "params": {
             "$ref": "#/$defs/ConversationSelectModelParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "conversation/interrupt",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ConversationInterruptParams"
           }
         },
         "required": [
