@@ -29,8 +29,6 @@ pub struct ClientInfo {
 pub struct InitializeParams {
     pub client: ClientInfo,
     pub protocol_version: u32,
-    #[serde(default)]
-    pub experimental: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -209,7 +207,6 @@ pub enum ConversationStatus {
     Idle,
     Working,
     NeedsApproval,
-    Parked,
 }
 
 /// One immutable transcript record.

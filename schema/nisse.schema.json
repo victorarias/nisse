@@ -309,10 +309,6 @@
           "client": {
             "$ref": "#/$defs/ClientInfo"
           },
-          "experimental": {
-            "default": false,
-            "type": "boolean"
-          },
           "protocol_version": {
             "format": "uint32",
             "minimum": 0,
@@ -1038,8 +1034,7 @@
         "enum": [
           "idle",
           "working",
-          "needs_approval",
-          "parked"
+          "needs_approval"
         ],
         "type": "string"
       },

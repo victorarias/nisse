@@ -291,7 +291,6 @@ fn key_hints(theme: &Theme) -> Line<'static> {
     let mut spans = Vec::new();
     for (index, (key, action)) in [
         ("⏎", "send"),
-        ("!cmd", "shell"),
         ("/model", "model"),
         ("PgUp", "scroll"),
         ("^C", "quit"),
@@ -925,7 +924,7 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             } else if working {
                 "type to queue a follow-up, or Esc to stop"
             } else {
-                "type a message, or !cmd to run a shell command"
+                "type a message"
             },
             theme.fg(theme.faint),
         ));
@@ -958,7 +957,6 @@ fn status_left(app: &App, theme: &Theme) -> Line<'static> {
             spans
         }
         (ConversationStatus::NeedsApproval, _) => chip("⏸ APPROVAL", theme.yellow, theme).to_vec(),
-        (ConversationStatus::Parked, _) => chip("⏏ PARKED", theme.yellow, theme).to_vec(),
         _ => chip("■ READY", theme.magenta, theme).to_vec(),
     };
     for (extension, text) in &app.extension_status {

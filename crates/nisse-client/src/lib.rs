@@ -84,7 +84,6 @@ impl Client {
                 version: env!("CARGO_PKG_VERSION").into(),
             },
             protocol_version: PROTOCOL_VERSION,
-            experimental: false,
         }))
         .await
     }

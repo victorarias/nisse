@@ -23,6 +23,6 @@ expression: without_conversation_id(&allowed)
 
 
 ╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
-│ ❯ ▍type a message, or !cmd to run a shell command                            │
+│ ❯ ▍type a message                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ■ READY ▓▒░                                             asking  │  nisse 0.1.0
