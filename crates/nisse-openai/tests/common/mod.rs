@@ -12,11 +12,11 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use nisse_client::Client;
-use nisse_core::{Harness, HarnessOptions, NoHooks, Store};
+use nisse_core::{Harness, HarnessOptions, NoHooks, Store, same_hooks};
 use nisse_openai::{AuthServer, LoginMethod, LoginPrompt, OpenAi, OpenAiOptions, login_with};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
-    ConversationCreateParams, ConversationReadResult, ConversationStatus, ConversationSubmitParams,
+    ConversationReadResult, ConversationStartParams, ConversationStatus, ConversationSubmitParams,
     ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
     WhenBusy, kinds,
 };
@@ -380,17 +380,20 @@ impl Nisse {
         let harness = Harness::with_store(
             Store::open_in_memory().unwrap(),
             HarnessOptions {
-                provider,
-                hooks: Arc::new(NoHooks),
+                providers: vec![("openai".into(), provider)],
+                hooks: same_hooks(Arc::new(NoHooks)),
             },
         );
         let server = Server::new(harness, broadcast::channel(16).0, owner());
         let (client, notifications) = Client::new(server.connect_in_process());
         client.initialize("openai-test").await.unwrap();
         let conversation: Conversation = client
-            .request(ClientRequest::ConversationCreate(
-                ConversationCreateParams::default(),
-            ))
+            .request(ClientRequest::ConversationStart(ConversationStartParams {
+                title: None,
+                cwd: std::env::current_dir().unwrap(),
+                provider: None,
+                model: None,
+            }))
             .await
             .unwrap();
         let _: ConversationReadResult = client

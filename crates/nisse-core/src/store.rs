@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use nisse_protocol::{
@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::{new_id, now_ms};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// One SQLite file. Every change goes through `commit`, which is atomic and gets the next `seq`.
 pub struct Store {
@@ -24,6 +24,14 @@ pub struct Submission {
     pub when_busy: WhenBusy,
     pub input: Input,
     pub author: Actor,
+}
+
+pub struct NewConversation {
+    pub title: Option<String>,
+    pub creator: Actor,
+    pub cwd: PathBuf,
+    pub provider: String,
+    pub model: Option<String>,
 }
 
 pub struct Tx<'a> {
@@ -82,6 +90,16 @@ impl Store {
                 COMMIT;",
             )?;
         }
+        if version < 3 {
+            db.execute_batch(
+                "BEGIN;
+                ALTER TABLE conversations ADD COLUMN cwd TEXT NOT NULL DEFAULT '/';
+                ALTER TABLE conversations ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude';
+                ALTER TABLE conversations ADD COLUMN model TEXT;
+                PRAGMA user_version = 3;
+                COMMIT;",
+            )?;
+        }
         Ok(Self { db })
     }
 
@@ -133,7 +151,7 @@ impl Store {
     pub fn conversation(&self, id: &str) -> Result<Option<Conversation>> {
         self.db
             .query_row(
-                "SELECT id, title, creator, status, created_at_ms FROM conversations WHERE id = ?1",
+                &format!("SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"),
                 [id],
                 conversation_from_row,
             )
@@ -142,9 +160,9 @@ impl Store {
     }
 
     pub fn conversations(&self) -> Result<Vec<Conversation>> {
-        let mut statement = self.db.prepare(
-            "SELECT id, title, creator, status, created_at_ms FROM conversations ORDER BY id DESC",
-        )?;
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {CONVERSATION_COLUMNS} FROM conversations ORDER BY id DESC"
+        ))?;
         let rows = statement.query_map([], conversation_from_row)?;
         rows.map(|row| row?).collect()
     }
@@ -202,26 +220,34 @@ impl Store {
 }
 
 impl Tx<'_> {
-    pub fn create_conversation(
-        &mut self,
-        title: Option<String>,
-        creator: &Actor,
-    ) -> Result<Conversation> {
+    pub fn create_conversation(&mut self, start: NewConversation) -> Result<Conversation> {
         let conversation = Conversation {
             id: self.conversation_id.clone(),
-            title,
-            creator: creator.clone(),
+            title: start.title,
+            creator: start.creator,
             status: ConversationStatus::Idle,
             created_at_ms: now_ms(),
+            cwd: start.cwd,
+            provider: start.provider,
+            model: start.model,
         };
         self.tx.execute(
-            "INSERT INTO conversations (id, title, creator, status, created_at_ms) VALUES (?1, ?2, ?3, ?4, ?5)",
+            &format!(
+                "INSERT INTO conversations ({CONVERSATION_COLUMNS})
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+            ),
             params![
                 conversation.id,
                 conversation.title,
-                serde_json::to_string(creator)?,
+                serde_json::to_string(&conversation.creator)?,
                 to_text(&conversation.status)?,
-                conversation.created_at_ms
+                conversation.created_at_ms,
+                conversation
+                    .cwd
+                    .to_str()
+                    .context("the directory is not UTF-8")?,
+                conversation.provider,
+                conversation.model,
             ],
         )?;
         self.status = Some(ConversationStatus::Idle);
@@ -374,6 +400,9 @@ fn entries_since(db: &Connection, conversation_id: &str, since_seq: Seq) -> Resu
     rows.map(|row| row?).collect()
 }
 
+const CONVERSATION_COLUMNS: &str =
+    "id, title, creator, status, created_at_ms, cwd, provider, model";
+
 const BY_REQUEST: &str = "conversation_id = ?1 AND request_id = ?2";
 
 const OPEN_SUBMISSIONS: &str = "conversation_id = ?1 AND status IN ('placed', 'queued')
@@ -410,6 +439,9 @@ fn conversation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<Con
             creator: serde_json::from_str(&row.get::<_, String>(2)?)?,
             status: from_text(&row.get::<_, String>(3)?)?,
             created_at_ms: row.get(4)?,
+            cwd: PathBuf::from(row.get::<_, String>(5)?),
+            provider: row.get(6)?,
+            model: row.get(7)?,
         })
     })())
 }

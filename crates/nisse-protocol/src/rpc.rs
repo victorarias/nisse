@@ -76,8 +76,8 @@ pub struct Notification {
 pub enum ClientRequest {
     #[serde(rename = "initialize")]
     Initialize(InitializeParams),
-    #[serde(rename = "conversation/create")]
-    ConversationCreate(ConversationCreateParams),
+    #[serde(rename = "conversation/start")]
+    ConversationStart(ConversationStartParams),
     #[serde(rename = "conversation/list")]
     ConversationList(ConversationListParams),
     #[serde(rename = "conversation/read")]
@@ -88,6 +88,10 @@ pub enum ClientRequest {
     ConversationSubmit(ConversationSubmitParams),
     #[serde(rename = "approval/resolve")]
     ApprovalResolve(ApprovalResolveParams),
+    /// Asks the server to exit once this connection has closed and no run is left, whoever
+    /// else is attached.
+    #[serde(rename = "server/stop")]
+    ServerStop(ServerStopParams),
 }
 
 impl ClientRequest {
@@ -119,12 +123,13 @@ impl ClientRequest {
 
 const KNOWN_METHODS: &[&str] = &[
     "initialize",
-    "conversation/create",
+    "conversation/start",
     "conversation/list",
     "conversation/read",
     "conversation/subscribe",
     "conversation/submit",
     "approval/resolve",
+    "server/stop",
 ];
 
 /// Notifications the server sends, keyed by method.

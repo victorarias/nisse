@@ -5,9 +5,9 @@ use std::{sync::Arc, time::Duration};
 use nisse_client::Client;
 use nisse_core::{
     Approval, Harness, HarnessOptions, NoHooks, Provider, ProviderFuture, Store, ToolCall,
-    ToolOutcome, Turn,
+    ToolOutcome, Turn, same_hooks,
 };
-use nisse_protocol::Actor;
+use nisse_protocol::{Actor, ConversationStartParams};
 use nisse_server::Server;
 use tokio::sync::broadcast;
 
@@ -16,10 +16,6 @@ const PATIENCE: Duration = Duration::from_secs(10);
 struct Silent;
 
 impl Provider for Silent {
-    fn model(&self) -> &str {
-        "silent"
-    }
-
     fn run<'a>(&'a self, _: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async { Ok(()) })
     }
@@ -28,10 +24,6 @@ impl Provider for Silent {
 struct TwoCommands;
 
 impl Provider for TwoCommands {
-    fn model(&self) -> &str {
-        "two-commands"
-    }
-
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             for (id, command) in [("first", "make"), ("second", "make install")] {
@@ -55,8 +47,8 @@ async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
     let harness = Harness::with_store(
         Store::open_in_memory().unwrap(),
         HarnessOptions {
-            provider,
-            hooks: Arc::new(NoHooks),
+            providers: vec![("test".into(), provider)],
+            hooks: same_hooks(Arc::new(NoHooks)),
         },
     );
     let owner = Actor::Person {
@@ -69,7 +61,19 @@ async fn exec(provider: Arc<dyn Provider>, stdin: &'static [u8]) -> String {
     let mut out = Vec::new();
     tokio::time::timeout(
         PATIENCE,
-        nisse::exec(&client, &mut notifications, "go".into(), stdin, &mut out),
+        nisse::exec(
+            &client,
+            &mut notifications,
+            ConversationStartParams {
+                title: None,
+                cwd: std::env::current_dir().unwrap(),
+                provider: None,
+                model: None,
+            },
+            "go".into(),
+            stdin,
+            &mut out,
+        ),
     )
     .await
     .unwrap_or_else(|_| {

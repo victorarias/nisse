@@ -5,12 +5,14 @@ use std::{path::Path, sync::Arc, time::Duration};
 use nisse_client::Client;
 use nisse_core::{
     Echo, Harness, HarnessOptions, Hooks, NoHooks, Provider, ProviderFuture, Store, Turn,
+    same_hooks,
 };
 use nisse_lua::LuaHost;
 use nisse_protocol::{
-    Actor, ClientRequest, Conversation, ConversationCreateParams, ConversationReadResult,
-    ConversationStatus, ConversationSubmitParams, ConversationSubmitResult,
-    ConversationSubscribeParams, Entry, Input, ServerNotification, UiChanged, WhenBusy, kinds,
+    Actor, ClientRequest, Conversation, ConversationListResult, ConversationReadResult,
+    ConversationStartParams, ConversationStatus, ConversationSubmitParams,
+    ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
+    UiChanged, WhenBusy, kinds,
 };
 use nisse_server::Server;
 use tokio::sync::{broadcast, mpsc::UnboundedReceiver};
@@ -30,7 +32,13 @@ fn start(
     hooks: Arc<dyn Hooks>,
     ui: broadcast::Sender<UiChanged>,
 ) -> Arc<Server> {
-    let harness = Harness::with_store(store, HarnessOptions { provider, hooks });
+    let harness = Harness::with_store(
+        store,
+        HarnessOptions {
+            providers: vec![("test".into(), provider)],
+            hooks: same_hooks(hooks),
+        },
+    );
     harness.resume().unwrap();
     Server::new(harness, ui, owner())
 }
@@ -48,12 +56,23 @@ async fn connect(server: &Arc<Server>) -> (Client, UnboundedReceiver<ServerNotif
 }
 
 async fn create(client: &Client) -> Conversation {
+    start_in(client, &std::env::current_dir().unwrap()).await
+}
+
+async fn start_in(client: &Client, cwd: &Path) -> Conversation {
     client
-        .request(ClientRequest::ConversationCreate(
-            ConversationCreateParams::default(),
-        ))
+        .request(ClientRequest::ConversationStart(started_in(cwd)))
         .await
         .unwrap()
+}
+
+fn started_in(cwd: &Path) -> ConversationStartParams {
+    ConversationStartParams {
+        title: None,
+        cwd: cwd.to_owned(),
+        provider: None,
+        model: None,
+    }
 }
 
 async fn submit(
@@ -256,10 +275,6 @@ async fn subscribing_since_a_seq_replays_only_later_commits() {
 struct Hanging;
 
 impl Provider for Hanging {
-    fn model(&self) -> &str {
-        "hanging"
-    }
-
     fn run<'a>(&'a self, _turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(std::future::pending())
     }
@@ -417,10 +432,6 @@ async fn a_hook_keeps_its_time_budget_while_a_slow_command_runs_inside_it() {
 struct Careful;
 
 impl Provider for Careful {
-    fn model(&self) -> &str {
-        "careful"
-    }
-
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let transcript = turn.transcript()?;
@@ -441,7 +452,7 @@ impl Provider for Careful {
                 .call_tool(
                     call,
                     nisse_core::Approval::Ask,
-                    nisse_core::run_builtin_tool,
+                    nisse_core::run_builtin_tool(turn.cwd()),
                 )
                 .await?;
             turn.answer(outcome.denied.as_deref().unwrap_or(outcome.output.trim()))
@@ -551,16 +562,12 @@ struct GivesUp {
 }
 
 impl Provider for GivesUp {
-    fn model(&self) -> &str {
-        "gives-up"
-    }
-
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let first = turn.call_tool(
                 ask_to_run("first"),
                 nisse_core::Approval::Ask,
-                nisse_core::run_builtin_tool,
+                nisse_core::run_builtin_tool(turn.cwd()),
             );
             tokio::select! {
                 ran = first => { ran?; }
@@ -573,7 +580,7 @@ impl Provider for GivesUp {
                 .call_tool(
                     ask_to_run(second),
                     nisse_core::Approval::Ask,
-                    nisse_core::run_builtin_tool,
+                    nisse_core::run_builtin_tool(turn.cwd()),
                 )
                 .await?;
             turn.answer(outcome.output.trim())
@@ -766,10 +773,6 @@ async fn streamed_text_shows_live_until_the_message_is_committed() {
 struct Scripted;
 
 impl Provider for Scripted {
-    fn model(&self) -> &str {
-        "scripted"
-    }
-
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let transcript = turn.transcript()?;
@@ -782,7 +785,7 @@ impl Provider for Scripted {
                     args: call["args"].clone(),
                 };
                 let approval = nisse_core::approval_for(&call.name);
-                turn.call_tool(call, approval, nisse_core::run_builtin_tool)
+                turn.call_tool(call, approval, nisse_core::run_builtin_tool(turn.cwd()))
                     .await?;
             }
             turn.answer("done")
@@ -797,6 +800,14 @@ async fn run_allowing(script: serde_json::Value) -> Vec<Entry> {
 }
 
 async fn run_allowing_through(hooks: Arc<dyn Hooks>, script: serde_json::Value) -> Vec<Entry> {
+    run_allowing_in(&std::env::current_dir().unwrap(), hooks, script).await
+}
+
+async fn run_allowing_in(
+    cwd: &Path,
+    hooks: Arc<dyn Hooks>,
+    script: serde_json::Value,
+) -> Vec<Entry> {
     let server = start(
         Store::open_in_memory().unwrap(),
         Arc::new(Scripted),
@@ -804,7 +815,7 @@ async fn run_allowing_through(hooks: Arc<dyn Hooks>, script: serde_json::Value) 
         broadcast::channel(16).0,
     );
     let (client, mut notifications) = connect(&server).await;
-    let conversation = create(&client).await;
+    let conversation = start_in(&client, cwd).await;
     subscribe(&client, &conversation, 0).await;
     submit(&client, &conversation, &script.to_string()).await;
     let mut seen = Vec::new();
@@ -1041,10 +1052,6 @@ async fn ends(pid: i32) {
 struct TwoAtOnce;
 
 impl Provider for TwoAtOnce {
-    fn model(&self) -> &str {
-        "two-at-once"
-    }
-
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(async move {
             let call = |id: &str| nisse_core::ToolCall {
@@ -1056,12 +1063,12 @@ impl Provider for TwoAtOnce {
                 turn.call_tool(
                     call("first"),
                     nisse_core::Approval::Ask,
-                    nisse_core::run_builtin_tool
+                    nisse_core::run_builtin_tool(turn.cwd())
                 ),
                 turn.call_tool(
                     call("second"),
                     nisse_core::Approval::Ask,
-                    nisse_core::run_builtin_tool
+                    nisse_core::run_builtin_tool(turn.cwd())
                 ),
             );
             turn.answer(&format!(
@@ -1103,4 +1110,229 @@ async fn a_luau_hook_waiting_on_one_approval_does_not_hold_up_a_parallel_call() 
     let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
 
     assert_eq!(answered.last().unwrap().data["text"], "first second");
+}
+
+#[tokio::test]
+async fn tools_run_in_the_conversation_s_directory_and_resolve_relative_paths_there() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join("src")).unwrap();
+    std::fs::write(project.path().join("src/lib.rs"), "fn answer() {}\n").unwrap();
+
+    let committed = run_allowing_in(
+        project.path(),
+        Arc::new(NoHooks),
+        serde_json::json!([
+            { "name": "Write", "args": { "file_path": "notes.txt", "content": "tea\n" } },
+            { "name": "Edit", "args": { "file_path": "notes.txt", "old_string": "tea", "new_string": "milk" } },
+            { "name": "Read", "args": { "file_path": "notes.txt" } },
+            { "name": "Grep", "args": { "pattern": "answer" } },
+            { "name": "Grep", "args": { "pattern": "answer", "path": "src" } },
+            { "name": "Bash", "args": { "command": "pwd" } },
+        ]),
+    )
+    .await;
+
+    let results = tool_results(&committed);
+    assert_eq!(results[2], ("     1\tmilk\n".into(), false));
+    assert_eq!(results[3], ("src/lib.rs:1:fn answer() {}".into(), false));
+    assert_eq!(results[4], ("src/lib.rs:1:fn answer() {}".into(), false));
+    assert_eq!(
+        results[5].0.trim(),
+        project.path().canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("notes.txt")).unwrap(),
+        "milk\n"
+    );
+}
+
+/// Answers with the model its conversation chose.
+struct NamesItsModel;
+
+impl Provider for NamesItsModel {
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move { turn.answer(&format!("I am {}", turn.model().unwrap_or("unnamed"))) })
+    }
+}
+
+#[tokio::test]
+async fn each_conversation_keeps_the_provider_and_model_it_started_with() {
+    let harness = Harness::with_store(
+        Store::open_in_memory().unwrap(),
+        HarnessOptions {
+            providers: vec![
+                ("echo".into(), echo()),
+                ("named".into(), Arc::new(NamesItsModel)),
+            ],
+            hooks: same_hooks(Arc::new(NoHooks)),
+        },
+    );
+    let server = Server::new(harness, broadcast::channel(16).0, owner());
+    let (client, mut notifications) = connect(&server).await;
+    let cwd = std::env::current_dir().unwrap();
+    let start = |provider: Option<&str>, model: Option<&str>| {
+        let client = client.clone();
+        let mut params = started_in(&cwd);
+        params.provider = provider.map(str::to_owned);
+        params.model = model.map(str::to_owned);
+        async move {
+            client
+                .request::<Conversation>(ClientRequest::ConversationStart(params))
+                .await
+        }
+    };
+
+    let by_default = start(None, None).await.unwrap();
+    let chosen = start(Some("named"), Some("tiny")).await.unwrap();
+    let unknown = start(Some("nobody"), None).await.unwrap_err();
+    subscribe(&client, &chosen, 0).await;
+    submit(&client, &chosen, "who are you?").await;
+    let answered = entries_until(&mut notifications, kinds::ASSISTANT).await;
+
+    assert_eq!(
+        (by_default.provider.as_str(), by_default.model.as_deref()),
+        ("echo", Some("echo"))
+    );
+    assert_eq!(
+        (chosen.provider.as_str(), chosen.model.as_deref()),
+        ("named", Some("tiny"))
+    );
+    let answer = answered.last().unwrap();
+    assert_eq!(answer.data["text"], "I am tiny");
+    assert_eq!(
+        answer.author,
+        Actor::Model {
+            model: "tiny".into()
+        }
+    );
+    assert!(
+        unknown
+            .to_string()
+            .contains("no provider named nobody; this server has echo, named"),
+        "{unknown}"
+    );
+    let listed: ConversationListResult = client
+        .request(ClientRequest::ConversationList(Default::default()))
+        .await
+        .unwrap();
+    assert_eq!(listed.conversations.len(), 2);
+}
+
+#[tokio::test]
+async fn a_conversation_needs_an_absolute_directory_that_exists() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        echo(),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, _notifications) = connect(&server).await;
+
+    for cwd in ["relative/dir", "/no/such/directory"] {
+        let refused = client
+            .request::<Conversation>(ClientRequest::ConversationStart(started_in(Path::new(cwd))))
+            .await
+            .unwrap_err();
+        assert!(
+            refused
+                .to_string()
+                .contains(&format!("{cwd} is not an absolute path to a directory")),
+            "{refused}"
+        );
+    }
+}
+
+const SHOUT: &str = r#"
+return function(on)
+  on("prompt.submit", function(nisse, e, next)
+    return next({ text = e.text:upper() })
+  end)
+end
+"#;
+
+#[tokio::test]
+async fn a_project_s_extensions_apply_only_to_conversations_in_that_project() {
+    let loud = tempfile::tempdir().unwrap();
+    let quiet = tempfile::tempdir().unwrap();
+    extension(&loud.path().join(".nisse/extensions"), "shout", SHOUT);
+    let harness = Harness::with_store(
+        Store::open_in_memory().unwrap(),
+        HarnessOptions {
+            providers: vec![("echo".into(), echo())],
+            hooks: Arc::new(|cwd: &Path| -> anyhow::Result<Arc<dyn Hooks>> {
+                Ok(Arc::new(LuaHost::load(
+                    &[cwd.join(".nisse/extensions")],
+                    Arc::new(|_| {}),
+                )?))
+            }),
+        },
+    );
+    let server = Server::new(harness, broadcast::channel(16).0, owner());
+    let (client, mut notifications) = connect(&server).await;
+
+    let mut heard = Vec::new();
+    for project in [&loud, &quiet] {
+        let conversation = start_in(&client, project.path()).await;
+        subscribe(&client, &conversation, 0).await;
+        submit(&client, &conversation, "hello").await;
+        heard.push(
+            entries_until(&mut notifications, kinds::ASSISTANT).await[0].data["text"].clone(),
+        );
+    }
+
+    assert_eq!(heard, ["HELLO", "hello"]);
+}
+
+/// Holds its run open until `done` is notified.
+struct UntilReleased {
+    done: Arc<tokio::sync::Notify>,
+}
+
+impl Provider for UntilReleased {
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            self.done.notified().await;
+            turn.answer("released")
+        })
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_server_is_needed_while_a_client_is_attached_or_a_run_goes_on_and_not_after() {
+    let grace = Duration::from_secs(30);
+    let done = Arc::new(tokio::sync::Notify::new());
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        Arc::new(UntilReleased { done: done.clone() }),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let unneeded = {
+        let server = server.clone();
+        tokio::spawn(async move {
+            server.until_idle(grace).await;
+            tokio::time::Instant::now()
+        })
+    };
+    let (client, notifications) = connect(&server).await;
+    let conversation = create(&client).await;
+    submit(&client, &conversation, "take your time").await;
+    drop((client, notifications));
+    tokio::time::sleep(grace * 10).await;
+    assert!(
+        !unneeded.is_finished(),
+        "the server let go of a running run"
+    );
+
+    let released = tokio::time::Instant::now();
+    done.notify_one();
+    let gone_at = tokio::time::timeout(grace * 2, unneeded)
+        .await
+        .expect("the server let go once the run settled")
+        .unwrap();
+
+    assert!(
+        gone_at >= released + grace,
+        "it waited out the grace period first"
+    );
 }

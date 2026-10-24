@@ -56,27 +56,30 @@ impl Matches {
 
 /// Walks `path` with ripgrep's walker, honouring `.gitignore` and `.ignore` files even outside
 /// a Git repository and skipping hidden and binary files, and searches what is left in path order.
-pub fn grep(args: Grep) -> ToolOutcome {
+pub fn grep(cwd: &Path, args: Grep) -> ToolOutcome {
     let regex = match Regex::new(&args.pattern) {
         Ok(regex) => regex,
         Err(error) => return ToolOutcome::error(format!("invalid pattern: {error}")),
     };
-    let named = args.path.is_some();
-    let root = args.path.unwrap_or_else(|| PathBuf::from("."));
+    let root = match &args.path {
+        Some(path) => cwd.join(path),
+        None => cwd.to_owned(),
+    };
     if !root.exists() {
-        return ToolOutcome::error(format!("{} does not exist", root.display()));
+        let named = args.path.as_deref().unwrap_or(cwd);
+        return ToolOutcome::error(format!("{} does not exist", named.display()));
     }
     let only = match only_matching(&root, args.glob.as_deref()) {
         Ok(only) => only,
         Err(error) => return ToolOutcome::error(format!("invalid glob: {error}")),
     };
-    let shown = |path: &Path| match named {
-        true => path.display().to_string(),
-        false => path
-            .strip_prefix(&root)
-            .unwrap_or(path)
-            .display()
-            .to_string(),
+    let shown = |path: &Path| {
+        let below = path.strip_prefix(&root).unwrap_or(path);
+        match &args.path {
+            Some(named) if below.as_os_str().is_empty() => named.display().to_string(),
+            Some(named) => named.join(below).display().to_string(),
+            None => below.display().to_string(),
+        }
     };
     let mut matches = Matches::default();
     let files = WalkBuilder::new(&root)

@@ -41,17 +41,6 @@
         ],
         "type": "object"
       },
-      "ConversationCreateParams": {
-        "properties": {
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
       "ConversationListParams": {
         "type": "object"
       },
@@ -68,6 +57,38 @@
         },
         "required": [
           "conversation_id"
+        ],
+        "type": "object"
+      },
+      "ConversationStartParams": {
+        "properties": {
+          "cwd": {
+            "description": "The client's working directory, absolute: tools run here and resolve relative paths\nagainst it, and the project's extensions are found from it.",
+            "type": "string"
+          },
+          "model": {
+            "description": "The provider's model; the provider's default when absent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "description": "Who answers, by provider name; the server's default when absent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "cwd"
         ],
         "type": "object"
       },
@@ -170,6 +191,9 @@
           }
         ]
       },
+      "ServerStopParams": {
+        "type": "object"
+      },
       "WhenBusy": {
         "enum": [
           "steer",
@@ -201,11 +225,11 @@
       {
         "properties": {
           "method": {
-            "const": "conversation/create",
+            "const": "conversation/start",
             "type": "string"
           },
           "params": {
-            "$ref": "#/$defs/ConversationCreateParams"
+            "$ref": "#/$defs/ConversationStartParams"
           }
         },
         "required": [
@@ -286,6 +310,23 @@
           },
           "params": {
             "$ref": "#/$defs/ApprovalResolveParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "description": "Asks the server to exit once no run is left, whoever is attached.",
+        "properties": {
+          "method": {
+            "const": "server/stop",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/ServerStopParams"
           }
         },
         "required": [

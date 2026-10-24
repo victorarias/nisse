@@ -31,7 +31,10 @@ Milestone 1, a real agent. What runs today:
   the last message Nisse committed.
 - Luau extensions with `tool.call` and `prompt.submit` hooks, `nisse.ui.status`
   and `nisse.ui.toast`.
-- The neon TUI, which attaches to a running server or embeds one.
+- One server per home, shared by every client. A TUI or `exec` starts it when
+  none runs, and it exits once nothing needs it. Each conversation keeps its
+  own directory, provider and model.
+- The neon TUI.
 
 Next: many clients on one conversation (M2). See the design doc for the plan.
 
@@ -43,22 +46,25 @@ target/debug/nisse                         # the TUI, with Claude, in this direc
 target/debug/nisse login openai            # sign in with ChatGPT (--device on a headless box)
 target/debug/nisse --provider openai       # the TUI, with OpenAI
 target/debug/nisse exec 'what is in here?' # one prompt, headless; asks on stdin to approve
-target/debug/nisse serve                   # a server on NISSE_HOME/nisse.sock that clients share
+target/debug/nisse serve                   # the home's server in the foreground, with its log
+target/debug/nisse serve --restart         # replace the running server once its runs settle
 target/debug/nisse schema                  # the protocol's JSON Schema
 ```
 
 `NISSE_HOME` (default `~/.nisse`) holds `nisse.sqlite`, `nisse.sock`,
 `auth/` and `extensions/`. One process serves a home at a time. A TUI or
-`exec` attaches to `NISSE_HOME/nisse.sock` when `nisse serve` runs there;
-otherwise it runs the server in its own process, for itself alone, and another
-client on that home stops and points to `nisse serve`.
+`exec` attaches to `NISSE_HOME/nisse.sock`, and when nothing answers there it
+starts `nisse serve` in the background, logging to `NISSE_HOME/nisse.log`. The
+server exits 30 seconds after the last client leaves and the last run settles.
+A conversation runs in the directory its client started it in: tools run
+there, Claude Code starts there, and its `.nisse/extensions/` load for it.
 
 | Setting | What it does |
 | --- | --- |
-| `--provider` / `NISSE_PROVIDER` | `claude` (default), `openai`, or `echo`, which echoes and runs `!command` without a model |
-| `--model` / `NISSE_MODEL` | The provider's model; Claude Code's default, or `gpt-6.1-sol` |
-| `--claude` / `NISSE_CLAUDE` | The `claude` binary to drive |
-| `--record` / `NISSE_RECORD` | Save every provider exchange in this folder as a replayable test fixture |
+| `--provider` / `NISSE_PROVIDER` | Who answers a new conversation: `claude` (default), `openai`, or `echo`, which echoes and runs `!command` without a model |
+| `--model` / `NISSE_MODEL` | The new conversation's model; Claude Code's default, or `gpt-6.1-sol` |
+| `--claude` / `NISSE_CLAUDE` | The `claude` binary a server this starts drives |
+| `--record` / `NISSE_RECORD` | Save every provider exchange in this folder as a replayable test fixture, in a server this starts |
 | `NO_COLOR`, `NISSE_THEME=plain` | Turn the colours off |
 
 ### Recording fixtures

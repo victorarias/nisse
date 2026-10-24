@@ -1,6 +1,7 @@
 use std::{
     io::{ErrorKind, Read},
     os::unix::process::CommandExt,
+    path::Path,
     process::{Command, Stdio},
     sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
@@ -62,7 +63,7 @@ impl Tail {
 
 /// Ends when the shell exits, with the output written so far; processes it left running keep running.
 /// On a timeout, kills the command's process group: the command and what it started, nothing else.
-pub fn bash(args: Bash) -> ToolOutcome {
+pub fn bash(cwd: &Path, args: Bash) -> ToolOutcome {
     let timeout_ms = args
         .timeout
         .unwrap_or(DEFAULT_TIMEOUT_MS)
@@ -75,6 +76,7 @@ pub fn bash(args: Bash) -> ToolOutcome {
         Command::new("sh")
             .arg("-c")
             .arg(&args.command)
+            .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(writer)
             .stderr(stderr)

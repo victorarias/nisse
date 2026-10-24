@@ -13,7 +13,12 @@ pub type ProviderFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + '
 /// Runs one turn: answers the conversation's newest input, committing through `turn` as it goes.
 /// A provider that runs its own agent loop, like Claude Code, still commits every step there.
 pub trait Provider: Send + Sync {
-    fn model(&self) -> &str;
+    /// The model a conversation gets when it names none. `None` leaves the choice to the
+    /// provider each time it runs, as Claude Code makes it.
+    fn default_model(&self) -> Option<&str> {
+        None
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a>;
 }
 
@@ -23,8 +28,8 @@ pub struct Echo {
 }
 
 impl Provider for Echo {
-    fn model(&self) -> &str {
-        "echo"
+    fn default_model(&self) -> Option<&str> {
+        Some("echo")
     }
 
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
@@ -55,7 +60,7 @@ impl Provider for Echo {
                     name: "Bash".into(),
                     args: serde_json::json!({ "command": command.trim() }),
                 };
-                turn.call_tool(call, Approval::NotNeeded, run_builtin_tool)
+                turn.call_tool(call, Approval::NotNeeded, run_builtin_tool(turn.cwd()))
                     .await?;
                 turn.place_steers()?;
             }

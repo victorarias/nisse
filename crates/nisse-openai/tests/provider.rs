@@ -4,7 +4,9 @@ mod common;
 
 use std::os::unix::fs::PermissionsExt;
 
-use common::{ACCOUNT, Fake, Nisse, access_token, assert_requests, exchange, sign_in};
+use common::{
+    ACCOUNT, Fake, INSTRUCTIONS, Nisse, access_token, assert_requests, exchange, sign_in,
+};
 use nisse_core::LIVE_INTERVAL;
 use nisse_protocol::kinds;
 use serde_json::{Value, json};
@@ -81,6 +83,13 @@ async fn requests_carry_the_sign_in_and_the_conversation() {
     assert_eq!(header("originator"), Some("nisse"));
     assert_eq!(header("session-id"), Some(conversation_id));
     assert_eq!(sent.json()["prompt_cache_key"], conversation_id);
+    assert_eq!(
+        sent.json()["instructions"],
+        format!(
+            "{INSTRUCTIONS}\nThe working directory is {}.\n",
+            nisse.conversation.cwd.display()
+        )
+    );
 }
 
 #[tokio::test]

@@ -1,16 +1,16 @@
 //! The Nisse app server. Every transport becomes a pair of channels; one connection loop
 //! serves them all.
 
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use nisse_core::{Harness, SubmitError};
-use std::collections::HashMap;
+use nisse_core::{Harness, StartError, SubmitError};
 
 use nisse_protocol::{
     Actor, ApprovalResolveResult, ClientInfo, ClientRequest, ConversationListResult,
     ConversationSubscribeParams, ErrorResponse, InitializeResult, Message, PROTOCOL_VERSION,
-    Request, RequestId, Response, RpcError, Seq, ServerNotification, StatusChanged, UiChanged,
+    Request, RequestId, Response, RpcError, Seq, ServerNotification, ServerStopResult,
+    StatusChanged, UiChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
@@ -19,6 +19,7 @@ use tokio::{
     sync::{
         broadcast,
         mpsc::{self, error::TrySendError},
+        watch,
     },
 };
 
@@ -26,15 +27,52 @@ pub struct Server {
     harness: Harness,
     ui: broadcast::Sender<UiChanged>,
     owner: Actor,
+    connections: watch::Sender<usize>,
+    stopping: watch::Sender<bool>,
 }
 
 impl Server {
     pub fn new(harness: Harness, ui: broadcast::Sender<UiChanged>, owner: Actor) -> Arc<Self> {
-        Arc::new(Self { harness, ui, owner })
+        Arc::new(Self {
+            harness,
+            ui,
+            owner,
+            connections: watch::Sender::new(0),
+            stopping: watch::Sender::new(false),
+        })
     }
 
     pub fn harness(&self) -> &Harness {
         &self.harness
+    }
+
+    /// Returns once nothing needs the server: no run is going and no connection has been
+    /// attached for `grace`, or a client asked it to stop and no run is going. Waiting costs
+    /// nothing; it wakes only when a connection or a run comes or goes.
+    pub async fn until_idle(&self, grace: Duration) {
+        let mut connections = self.connections.subscribe();
+        let mut runs = self.harness.runs();
+        let mut stopping = self.stopping.subscribe();
+        loop {
+            let running = *runs.borrow_and_update() > 0;
+            let attached = *connections.borrow_and_update() > 0;
+            let stop = *stopping.borrow_and_update();
+            if stop && !running {
+                return;
+            }
+            let unneeded = async {
+                if running || attached {
+                    std::future::pending::<()>().await;
+                }
+                tokio::time::sleep(grace).await;
+            };
+            tokio::select! {
+                () = unneeded => return,
+                _ = connections.changed() => {}
+                _ = runs.changed() => {}
+                _ = stopping.changed() => {}
+            }
+        }
     }
 
     /// A client in this process: the TUI when no server is running.
@@ -83,12 +121,15 @@ impl Server {
             outgoing,
             mut incoming,
         } = channels;
+        self.connections.send_modify(|attached| *attached += 1);
+        let _attached = Attached(self.clone());
         let (subscribe, subscriptions) = mpsc::unbounded_channel();
         let mut forwarder = tokio::spawn(forward(self.clone(), outgoing.clone(), subscriptions));
         let mut connection = Connection {
             server: self,
             actor,
             initialized: false,
+            asked_to_stop: false,
             subscribe,
         };
         loop {
@@ -118,6 +159,17 @@ impl Server {
             }
         }
         forwarder.abort();
+        if connection.asked_to_stop {
+            connection.server.stopping.send_replace(true);
+        }
+    }
+}
+
+struct Attached(Arc<Server>);
+
+impl Drop for Attached {
+    fn drop(&mut self) {
+        self.0.connections.send_modify(|attached| *attached -= 1);
     }
 }
 
@@ -126,6 +178,8 @@ struct Connection {
     actor: Actor,
     initialized: bool,
     subscribe: mpsc::UnboundedSender<(RequestId, ConversationSubscribeParams)>,
+    /// The server stops once this connection, which asked it to, has closed.
+    asked_to_stop: bool,
 }
 
 impl Connection {
@@ -161,13 +215,19 @@ impl Connection {
                     },
                     protocol_version: PROTOCOL_VERSION,
                     actor: self.actor.clone(),
-                    model: harness.model().to_owned(),
                 })
             }
-            ClientRequest::ConversationCreate(params) => harness
-                .create_conversation(params.title, &self.actor)
-                .map_err(internal)
-                .and_then(to_result),
+            ClientRequest::ConversationStart(params) => {
+                match harness.start_conversation(params, &self.actor).await {
+                    Ok(conversation) => to_result(conversation),
+                    Err(StartError::Failed(error)) => Err(internal(error)),
+                    Err(error) => Err(RpcError::new(RpcError::INVALID_PARAMS, error.to_string())),
+                }
+            }
+            ClientRequest::ServerStop(_) => {
+                self.asked_to_stop = true;
+                to_result(ServerStopResult {})
+            }
             ClientRequest::ConversationList(_) => harness
                 .conversations()
                 .map_err(internal)

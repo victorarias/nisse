@@ -1,20 +1,31 @@
 use std::{
     fs::File,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::{Arc, OnceLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use nisse_claude::{Claude, ClaudeOptions};
 use nisse_client::Client;
-use nisse_core::{Echo, Harness, HarnessOptions, Provider};
+use nisse_core::{Echo, Harness, HarnessOptions, Hooks, Provider};
 use nisse_lua::LuaHost;
 use nisse_openai::{LoginMethod, LoginPrompt, OpenAi, OpenAiOptions};
-use nisse_protocol::{Actor, InitializeResult, ServerNotification};
+use nisse_protocol::{
+    Actor, ClientRequest, ConversationStartParams, ServerNotification, ServerStopParams,
+    ServerStopResult,
+};
 use nisse_server::Server;
 use tokio::sync::{broadcast, mpsc};
+
+/// How long a server with nothing to do waits for a client before it exits.
+const IDLE_GRACE: Duration = Duration::from_secs(30);
+/// How long a client waits for the server it started to answer.
+const STARTUP_PATIENCE: Duration = Duration::from_secs(10);
+/// `nisse serve` exits with this when another process already serves the home.
+const ALREADY_SERVED: i32 = 75;
 
 #[derive(Parser)]
 #[command(name = "nisse", version, about = "A durable, multiplayer coding agent")]
@@ -28,16 +39,18 @@ struct Cli {
     /// Open this conversation instead of starting a new one.
     #[arg(long)]
     conversation: Option<String>,
-    /// Who answers, when this process runs the server.
-    #[arg(long, env = "NISSE_PROVIDER", value_enum, default_value_t = ProviderName::Claude, global = true)]
-    provider: ProviderName,
-    /// The provider's model; each provider has its own default.
+    /// Who answers a new conversation: `claude` (the default), `openai`, or `echo`, which echoes
+    /// and runs `!command` without a model.
+    #[arg(long, env = "NISSE_PROVIDER", global = true)]
+    provider: Option<String>,
+    /// The new conversation's model; each provider has its own default.
     #[arg(long, env = "NISSE_MODEL", global = true)]
     model: Option<String>,
-    /// Save every provider exchange in this folder as a replayable fixture.
+    /// Save every provider exchange in this folder as a replayable fixture, when this starts the
+    /// server.
     #[arg(long, env = "NISSE_RECORD", global = true)]
     record: Option<PathBuf>,
-    /// The `claude` binary to drive.
+    /// The `claude` binary to drive, when this starts the server.
     #[arg(long, env = "NISSE_CLAUDE", default_value = "claude", global = true)]
     claude: PathBuf,
     #[command(subcommand)]
@@ -46,11 +59,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the app server.
+    /// Run the app server on the home's socket; it exits once no client has needed it for a
+    /// while. Clients start one when none runs.
     Serve {
         /// Serve one client on stdin and stdout.
         #[arg(long)]
         stdio: bool,
+        /// Replace the running server once its runs settle, such as after an upgrade.
+        #[arg(long, conflicts_with = "stdio")]
+        restart: bool,
+        /// Leave the terminal's session: set by a client that starts the server for itself.
+        #[arg(long, hide = true)]
+        detached: bool,
     },
     /// Send one prompt and print the run as it commits.
     Exec { prompt: String },
@@ -73,20 +93,8 @@ enum LoginProvider {
     },
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum ProviderName {
-    /// Claude through the Claude Code CLI, with its own tools.
-    Claude,
-    /// OpenAI through a ChatGPT sign-in (`nisse login openai`).
-    Openai,
-    /// Echoes input and runs `!command`; for trying Nisse out without a model.
-    Echo,
-}
-
 struct ServerConfig {
     home: PathBuf,
-    provider: ProviderName,
-    model: Option<String>,
     record: Option<PathBuf>,
     claude: PathBuf,
 }
@@ -101,18 +109,30 @@ async fn main() -> Result<()> {
     };
     let config = ServerConfig {
         home,
-        provider: cli.provider,
-        model: cli.model,
         record: cli.record,
         claude: cli.claude,
     };
+    let start = ConversationStartParams {
+        title: None,
+        cwd: std::env::current_dir()?,
+        provider: cli.provider,
+        model: cli.model,
+    };
     match cli.command {
-        Some(Command::Serve { stdio }) => serve(&config, stdio).await,
+        Some(Command::Serve {
+            stdio,
+            restart,
+            detached,
+        }) => serve(&config, stdio, restart, detached).await,
         Some(Command::Exec { prompt }) => {
-            let (client, mut notifications, _, _embedded) = connect(&config, cli.connect).await?;
+            let (client, mut notifications, notice) = attach(&config, cli.connect).await?;
+            if let Some(notice) = notice {
+                eprintln!("nisse: {notice}");
+            }
             nisse::exec(
                 &client,
                 &mut notifications,
+                start,
                 prompt,
                 tokio::io::BufReader::new(tokio::io::stdin()),
                 &mut std::io::stdout(),
@@ -152,12 +172,16 @@ async fn main() -> Result<()> {
             Ok(())
         }
         None => {
-            let (client, notifications, hello, _embedded) = connect(&config, cli.connect).await?;
+            let (client, notifications, notice) = attach(&config, cli.connect).await?;
+            let open = match cli.conversation {
+                Some(id) => nisse_tui::Open::Existing(id),
+                None => nisse_tui::Open::New(start),
+            };
             nisse_tui::run(
                 client,
                 notifications,
-                hello.model,
-                cli.conversation,
+                open,
+                notice,
                 nisse_tui::Theme::from_env(),
             )
             .await
@@ -173,58 +197,52 @@ fn owner() -> Actor {
     }
 }
 
-fn openai_auth(home: &std::path::Path) -> PathBuf {
+fn openai_auth(home: &Path) -> PathBuf {
     home.join("auth").join("openai.json")
 }
 
-fn provider(config: &ServerConfig) -> Result<Arc<dyn Provider>> {
-    let cwd = std::env::current_dir()?;
-    Ok(match config.provider {
-        ProviderName::Claude => Arc::new(Claude::new(ClaudeOptions {
-            binary: config.claude.clone(),
-            cwd,
-            model: config.model.clone(),
-            record: config.record.clone(),
-        })),
-        ProviderName::Openai => {
-            let mut options = OpenAiOptions::new(openai_auth(&config.home), instructions(&cwd));
-            if let Some(model) = &config.model {
-                options.model.clone_from(model);
-            }
-            options.record.clone_from(&config.record);
-            Arc::new(OpenAi::new(options)?)
-        }
-        ProviderName::Echo => {
-            let think = std::env::var("NISSE_ECHO_THINK_MS")
-                .ok()
-                .and_then(|ms| ms.parse().ok())
-                .unwrap_or(600);
+/// Every provider a conversation can name, the default first.
+fn providers(config: &ServerConfig) -> Result<Vec<(String, Arc<dyn Provider>)>> {
+    let mut openai = OpenAiOptions::new(openai_auth(&config.home), include_str!("instructions.md"));
+    openai.record.clone_from(&config.record);
+    let think = std::env::var("NISSE_ECHO_THINK_MS")
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .unwrap_or(600);
+    Ok(vec![
+        (
+            "claude".into(),
+            Arc::new(Claude::new(ClaudeOptions {
+                binary: config.claude.clone(),
+                record: config.record.clone(),
+            })),
+        ),
+        ("openai".into(), Arc::new(OpenAi::new(openai)?)),
+        (
+            "echo".into(),
             Arc::new(Echo {
                 think: Duration::from_millis(think),
-            })
-        }
-    })
-}
-
-fn instructions(cwd: &std::path::Path) -> String {
-    format!(
-        "{}\nThe working directory is {}.\n",
-        include_str!("instructions.md"),
-        cwd.display()
-    )
+            }),
+        ),
+    ])
 }
 
 static HELD_HOME: OnceLock<File> = OnceLock::new();
 
-/// Takes the home for this process unless another process holds it: one process serves a
-/// home's store and runs at a time, and holds it until it exits.
-fn hold_home(home: &Path) -> Result<bool> {
+/// Takes the home for this process, waiting for it when `wait` is set; otherwise only unless
+/// another process holds it. One process serves a home's store and runs at a time, and holds
+/// it until it exits.
+async fn hold_home(home: &Path, wait: bool) -> Result<bool> {
     std::fs::create_dir_all(home).with_context(|| format!("creating {}", home.display()))?;
     let hold = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(home.join("nisse.lock"))?;
+    if wait {
+        let hold = tokio::task::spawn_blocking(move || hold.lock().map(|()| hold)).await??;
+        return Ok(HELD_HOME.set(hold).is_ok());
+    }
     match hold.try_lock() {
         Ok(()) => Ok(HELD_HOME.set(hold).is_ok()),
         Err(std::fs::TryLockError::WouldBlock) => Ok(false),
@@ -236,24 +254,41 @@ fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
     let home = &config.home;
     let (ui, _) = broadcast::channel(256);
     let sink = ui.clone();
-    let roots = [home.join("extensions"), PathBuf::from(".nisse/extensions")];
-    let hooks = LuaHost::load(&roots, Arc::new(move |changed| drop(sink.send(changed))))?;
+    let extensions = home.join("extensions");
+    let hooks = Arc::new(move |cwd: &Path| -> Result<Arc<dyn Hooks>> {
+        let sink = sink.clone();
+        let roots = [extensions.clone(), cwd.join(".nisse/extensions")];
+        Ok(Arc::new(LuaHost::load(
+            &roots,
+            Arc::new(move |changed| drop(sink.send(changed))),
+        )?))
+    });
     let harness = Harness::open(
         &home.join("nisse.sqlite"),
         HarnessOptions {
-            provider: provider(config)?,
-            hooks: Arc::new(hooks),
+            providers: providers(config)?,
+            hooks,
         },
     )?;
     harness.resume()?;
     Ok(Server::new(harness, ui, owner()))
 }
 
-/// Serves the home on its socket, or one client on stdio. The socket is bound before the server
-/// starts, so a client that arrives meanwhile waits for it.
-async fn serve(config: &ServerConfig, stdio: bool) -> Result<()> {
-    if !hold_home(&config.home)? {
-        bail!("another nisse already serves {}", config.home.display());
+/// Serves the home on its socket until no client needs it, or one client on stdio. The socket
+/// is bound before the server starts, so a client that arrives meanwhile waits for it.
+async fn serve(config: &ServerConfig, stdio: bool, restart: bool, detached: bool) -> Result<()> {
+    if detached {
+        let _ = rustix::process::setsid();
+    }
+    if restart {
+        stop_running(&config.home).await?;
+    }
+    if !hold_home(&config.home, restart).await? {
+        eprintln!(
+            "nisse: another nisse already serves {}",
+            config.home.display()
+        );
+        std::process::exit(ALREADY_SERVED);
     }
     if stdio {
         start_server(config)?.serve_stdio().await;
@@ -263,44 +298,120 @@ async fn serve(config: &ServerConfig, stdio: bool) -> Result<()> {
     let listener = Server::bind_unix(&socket)?;
     let server = start_server(config)?;
     eprintln!("nisse: serving on {}", socket.display());
+    let grace = std::env::var("NISSE_IDLE_GRACE_MS")
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map_or(IDLE_GRACE, Duration::from_millis);
     tokio::select! {
-        served = server.serve_unix(listener) => served,
+        served = server.clone().serve_unix(listener) => served,
+        () = server.until_idle(grace) => {
+            eprintln!("nisse: nothing to do; exiting");
+            Ok(())
+        }
         _ = tokio::signal::ctrl_c() => Ok(()),
     }
 }
 
-/// Attaches to the home's server when one serves its socket; otherwise runs the server in this
-/// process, for this client alone.
-async fn connect(
+/// Asks the home's running server to exit once its runs settle. Taking the home afterwards
+/// waits for it to have exited.
+async fn stop_running(home: &Path) -> Result<()> {
+    let Ok((client, _notifications)) = Client::connect_unix(&home.join("nisse.sock")).await else {
+        return Ok(());
+    };
+    client.initialize("nisse-restart").await?;
+    let _: ServerStopResult = client
+        .request(ClientRequest::ServerStop(ServerStopParams {}))
+        .await?;
+    eprintln!("nisse: waiting for the running server's work to settle");
+    Ok(())
+}
+
+/// Attaches to the home's server, starting one when nothing answers on its socket. The notice
+/// says when that server is another version than this client.
+async fn attach(
     config: &ServerConfig,
     socket: Option<PathBuf>,
 ) -> Result<(
     Client,
     mpsc::UnboundedReceiver<ServerNotification>,
-    InitializeResult,
-    Option<Arc<Server>>,
+    Option<String>,
 )> {
-    let explicit = socket.is_some();
-    let socket = socket.unwrap_or_else(|| config.home.join("nisse.sock"));
-    let (client, notifications, embedded) = match Client::connect_unix(&socket).await {
-        Ok((client, notifications)) => (client, notifications, None),
-        Err(error) if explicit => return Err(error),
-        Err(_) if hold_home(&config.home)? => {
-            let server = start_server(config)?;
-            let (client, notifications) = Client::new(server.connect_in_process());
-            (client, notifications, Some(server))
-        }
-        Err(_) => {
-            let (client, notifications) =
-                Client::connect_unix(&socket).await.with_context(|| {
-                    format!(
-                        "another nisse runs {} in its own process; use `nisse serve` to share it",
-                        config.home.display()
-                    )
-                })?;
-            (client, notifications, None)
+    let (client, notifications) = match socket {
+        Some(socket) => Client::connect_unix(&socket).await?,
+        None => {
+            let socket = config.home.join("nisse.sock");
+            match Client::connect_unix(&socket).await {
+                Ok(connected) => connected,
+                Err(_) => start_detached(config, &socket).await?,
+            }
         }
     };
     let hello = client.initialize("nisse-cli").await?;
-    Ok((client, notifications, hello, embedded))
+    let ours = env!("CARGO_PKG_VERSION");
+    let notice = (hello.server.version != ours).then(|| {
+        format!(
+            "this home is served by nisse {}, and this is {ours}; `nisse serve --restart` \
+             switches once its work settles",
+            hello.server.version
+        )
+    });
+    Ok((client, notifications, notice))
+}
+
+/// Starts `nisse serve` for the home in its own session, logging to `nisse.log`, and connects
+/// once it answers. When another client started one at the same moment, the one that took the
+/// home serves it and the other exits, so either way this ends up attached to the winner.
+async fn start_detached(
+    config: &ServerConfig,
+    socket: &Path,
+) -> Result<(Client, mpsc::UnboundedReceiver<ServerNotification>)> {
+    std::fs::create_dir_all(&config.home)
+        .with_context(|| format!("creating {}", config.home.display()))?;
+    let log_path = config.home.join("nisse.log");
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("opening {}", log_path.display()))?;
+    let mut command = tokio::process::Command::new(std::env::current_exe()?);
+    command
+        .arg("--home")
+        .arg(&config.home)
+        .arg("--claude")
+        .arg(&config.claude);
+    if let Some(record) = &config.record {
+        command.arg("--record").arg(record);
+    }
+    let mut server = command
+        .args(["serve", "--detached"])
+        .current_dir(&config.home)
+        .stdin(Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log)
+        .spawn()
+        .context("starting nisse serve")?;
+    let deadline = Instant::now() + STARTUP_PATIENCE;
+    let mut lost_the_home = false;
+    loop {
+        match Client::connect_unix(socket).await {
+            Ok(connected) => return Ok(connected),
+            Err(error) if Instant::now() >= deadline => {
+                return Err(error.context(format!(
+                    "the server did not answer in time; see {}",
+                    log_path.display()
+                )));
+            }
+            Err(_) => {}
+        }
+        if !lost_the_home && let Some(exited) = server.try_wait()? {
+            if exited.code() != Some(ALREADY_SERVED) {
+                bail!(
+                    "nisse serve exited ({exited}) before it answered; see {}",
+                    log_path.display()
+                );
+            }
+            lost_the_home = true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }

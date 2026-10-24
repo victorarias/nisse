@@ -10,10 +10,12 @@ use std::{
 
 use nisse_claude::{Claude, ClaudeOptions};
 use nisse_client::Client;
-use nisse_core::{Harness, HarnessOptions, Hooks, NoHooks, Store, ToolCall, ToolOutcome};
+use nisse_core::{
+    Harness, HarnessOptions, Hooks, NoHooks, Store, ToolCall, ToolOutcome, same_hooks,
+};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
-    ConversationCreateParams, ConversationReadResult, ConversationStatus, ConversationSubmitParams,
+    ConversationReadResult, ConversationStartParams, ConversationStatus, ConversationSubmitParams,
     ConversationSubmitResult, ConversationSubscribeParams, Entry, Input, ServerNotification,
     WhenBusy, kinds,
 };
@@ -70,8 +72,6 @@ impl Scenario {
             binary: live
                 .clone()
                 .unwrap_or_else(|| env!("CARGO_BIN_EXE_nisse-claude-replay").into()),
-            cwd: self.workspace.path().to_path_buf(),
-            model: Some(MODEL.into()),
             record: live.map(|_| self.recordings.path().to_path_buf()),
         }))
     }
@@ -134,8 +134,8 @@ fn serve(store: Store, claude: Arc<Claude>, hooks: Arc<dyn Hooks>) -> Arc<Server
     let harness = Harness::with_store(
         store,
         HarnessOptions {
-            provider: claude,
-            hooks,
+            providers: vec![("claude".into(), claude)],
+            hooks: same_hooks(hooks),
         },
     );
     harness.resume().unwrap();
@@ -159,13 +159,16 @@ struct Watch {
 }
 
 impl Watch {
-    async fn new_conversation(server: &Arc<Server>) -> Self {
+    async fn new_conversation(server: &Arc<Server>, cwd: &Path, model: Option<&str>) -> Self {
         let (client, notifications) = Client::new(server.connect_in_process());
         client.initialize("claude-test").await.unwrap();
         let conversation: Conversation = client
-            .request(ClientRequest::ConversationCreate(
-                ConversationCreateParams::default(),
-            ))
+            .request(ClientRequest::ConversationStart(ConversationStartParams {
+                title: None,
+                cwd: cwd.to_owned(),
+                provider: None,
+                model: model.map(str::to_owned),
+            }))
             .await
             .unwrap();
         Self::attach(client, notifications, conversation).await
@@ -299,7 +302,7 @@ impl Watch {
 async fn claude_answers_a_prompt_with_one_committed_message() {
     let scenario = Scenario::new("text");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit("Reply with exactly: fixture text ok", WhenBusy::FollowUp)
@@ -326,7 +329,7 @@ async fn claude_reads_a_file_with_its_own_read_tool_and_nisse_commits_the_call()
     )
     .unwrap();
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -361,7 +364,7 @@ async fn claude_reads_a_file_with_its_own_read_tool_and_nisse_commits_the_call()
 async fn bash_waits_for_a_person_to_approve_and_then_runs() {
     let scenario = Scenario::new("bash_allowed");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -410,7 +413,7 @@ async fn bash_waits_for_a_person_to_approve_and_then_runs() {
 async fn a_declined_bash_call_never_runs_and_claude_hears_why() {
     let scenario = Scenario::new("bash_declined");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -453,7 +456,7 @@ impl Hooks for NoTouching {
 async fn a_hook_denies_bash_before_claude_runs_it_and_claude_hears_the_reason() {
     let scenario = Scenario::new("bash_hook_denied");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoTouching));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -495,7 +498,7 @@ impl Hooks for Rewrite {
 async fn claude_runs_bash_with_the_arguments_a_hook_rewrote() {
     let scenario = Scenario::new("bash_hook_rewritten");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(Rewrite));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -519,7 +522,7 @@ async fn claude_runs_bash_with_the_arguments_a_hook_rewrote() {
 async fn a_steer_sent_during_a_tool_reaches_claude_in_the_same_run() {
     let scenario = Scenario::new("steer");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -575,7 +578,7 @@ fn a_run_killed_mid_tool_resumes_claudes_session_where_nisse_last_committed() {
     let crashed = tokio::runtime::Runtime::new().unwrap();
     let (conversation, command_started) = crashed.block_on(async {
         let server = scenario.start(Store::open(&path).unwrap(), Arc::new(NoHooks));
-        let mut watch = Watch::new_conversation(&server).await;
+        let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
         watch
             .submit(
                 &format!(
@@ -641,7 +644,7 @@ async fn every_tool_a_subagent_calls_gets_its_result() {
     )
     .unwrap();
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -789,12 +792,10 @@ async fn a_claude_that_crashes_leaves_nothing_it_started_running() {
     std::fs::set_permissions(&crashing, std::fs::Permissions::from_mode(0o755)).unwrap();
     let claude = Arc::new(Claude::new(ClaudeOptions {
         binary: crashing,
-        cwd: workspace.path().to_path_buf(),
-        model: None,
         record: None,
     }));
     let server = serve(Store::open_in_memory().unwrap(), claude, Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, workspace.path(), None).await;
 
     watch.submit("hello", WhenBusy::FollowUp).await;
     watch
@@ -818,7 +819,7 @@ async fn a_claude_that_crashes_leaves_nothing_it_started_running() {
 async fn a_claude_that_died_while_idle_resumes_for_the_next_message() {
     let scenario = Scenario::new("died_while_idle");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
     watch.submit(REMEMBER, WhenBusy::FollowUp).await;
     watch.until_answered(1).await;
 
@@ -845,7 +846,7 @@ async fn a_conversation_whose_claude_session_is_gone_goes_on_from_its_transcript
     let path = home.path().join("nisse.sqlite");
 
     let server = scenario.start(Store::open(&path).unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
     watch.submit(REMEMBER, WhenBusy::FollowUp).await;
     watch.until_answered(1).await;
     let conversation = watch.conversation.clone();
@@ -899,7 +900,7 @@ async fn parallel_reads_through_a_one_at_a_time_tool_hook_both_finish_and_claude
     std::fs::write(scenario.workspace.path().join("b.txt"), "banana\n").unwrap();
     let hooks = Arc::new(OneAtATime(std::sync::Mutex::new(())));
     let server = scenario.start(Store::open_in_memory().unwrap(), hooks);
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -964,7 +965,7 @@ async fn a_steer_waits_for_the_calls_claude_has_still_to_stream_in_the_same_mess
     let (steered, guard_waits) = std::sync::mpsc::channel();
     let hooks = Arc::new(OffLimitsOnceSteered(std::sync::Mutex::new(guard_waits)));
     let server = scenario.start(Store::open_in_memory().unwrap(), hooks);
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -1012,7 +1013,7 @@ async fn a_steer_waits_for_the_calls_claude_has_still_to_stream_in_the_same_mess
 async fn two_steers_in_one_claude_turn_both_reach_claude_and_the_next_message_still_runs() {
     let scenario = Scenario::new("two_steers");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
-    let mut watch = Watch::new_conversation(&server).await;
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
 
     watch
         .submit(
@@ -1177,8 +1178,6 @@ fn resumed_at(store: &Path, conversation: &Conversation) -> Option<String> {
     runtime.block_on(async {
         let provider = Arc::new(Claude::new(ClaudeOptions {
             binary: claude.clone(),
-            cwd: claude_dir.path().to_path_buf(),
-            model: Some(MODEL.into()),
             record: None,
         }));
         let server = serve(Store::open(store).unwrap(), provider, Arc::new(NoHooks));
@@ -1211,7 +1210,8 @@ fn a_crash_after_any_commit_resumes_claude_exactly_where_the_transcript_ends() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let (conversation, finished, crashes) = runtime.block_on(async {
         let server = scenario.start(Store::open(&path).unwrap(), Arc::new(NoHooks));
-        let mut watch = Watch::new_conversation(&server).await;
+        let mut watch =
+            Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
         watch
             .submit(
                 "First write one short sentence saying that you will read the notes. Then use \

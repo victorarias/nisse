@@ -7,7 +7,7 @@ mod store;
 mod tools;
 mod turn;
 
-pub use harness::{Harness, HarnessOptions, SubmitError};
+pub use harness::{Harness, HarnessOptions, LoadHooks, StartError, SubmitError, same_hooks};
 pub use provider::{Echo, Provider, ProviderFuture};
 pub use store::Store;
 pub use tools::{

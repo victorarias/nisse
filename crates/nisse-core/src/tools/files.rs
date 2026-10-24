@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{self, BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use serde::Deserialize;
@@ -19,14 +19,15 @@ pub struct Read {
     limit: Option<usize>,
 }
 
-pub fn read(args: Read) -> ToolOutcome {
+pub fn read(cwd: &Path, args: Read) -> ToolOutcome {
     let path = args.file_path.display();
-    if args.file_path.is_dir() {
+    let file_path = cwd.join(&args.file_path);
+    if file_path.is_dir() {
         return ToolOutcome::error(format!(
             "{path} is a directory; use Grep or Bash to list it"
         ));
     }
-    let file = match File::open(&args.file_path) {
+    let file = match File::open(&file_path) {
         Ok(file) => file,
         Err(error) => return ToolOutcome::error(format!("could not open {path}: {error}")),
     };
@@ -110,17 +111,17 @@ pub struct Write {
     content: String,
 }
 
-pub fn write(args: Write) -> ToolOutcome {
+pub fn write(cwd: &Path, args: Write) -> ToolOutcome {
     let path = args.file_path.display();
-    if let Some(parent) = args
-        .file_path
+    let file_path = cwd.join(&args.file_path);
+    if let Some(parent) = file_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         && let Err(error) = std::fs::create_dir_all(parent)
     {
         return ToolOutcome::error(format!("could not create {}: {error}", parent.display()));
     }
-    match std::fs::write(&args.file_path, &args.content) {
+    match std::fs::write(&file_path, &args.content) {
         Ok(()) => ToolOutcome::ok(format!("Wrote {} bytes to {path}.", args.content.len())),
         Err(error) => ToolOutcome::error(format!("could not write {path}: {error}")),
     }

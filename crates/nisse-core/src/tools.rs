@@ -3,6 +3,8 @@ mod edit;
 mod files;
 mod grep;
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
@@ -178,13 +180,19 @@ pub fn approval_for(name: &str) -> Approval {
     }
 }
 
-pub fn run_builtin_tool(call: ToolCall) -> ToolOutcome {
+/// Runs built-in calls in `cwd`, the conversation's directory.
+pub fn run_builtin_tool(cwd: &Path) -> impl FnOnce(ToolCall) -> ToolOutcome + Send + 'static {
+    let cwd = cwd.to_owned();
+    move |call| run_in(&cwd, call)
+}
+
+fn run_in(cwd: &Path, call: ToolCall) -> ToolOutcome {
     match call.name.as_str() {
-        "Read" => parsed(&call, files::read),
-        "Write" => parsed(&call, files::write),
-        "Edit" => parsed(&call, edit::edit),
-        "Bash" => parsed(&call, bash::bash),
-        "Grep" => parsed(&call, grep::grep),
+        "Read" => parsed(&call, |args| files::read(cwd, args)),
+        "Write" => parsed(&call, |args| files::write(cwd, args)),
+        "Edit" => parsed(&call, |args| edit::edit(cwd, args)),
+        "Bash" => parsed(&call, |args| bash::bash(cwd, args)),
+        "Grep" => parsed(&call, |args| grep::grep(cwd, args)),
         other => ToolOutcome::error(format!("no tool named {other}")),
     }
 }

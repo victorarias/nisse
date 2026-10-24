@@ -1,4 +1,7 @@
-use std::{fmt, path::PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 
@@ -13,9 +16,10 @@ pub struct Edit {
     replace_all: bool,
 }
 
-pub fn edit(args: Edit) -> ToolOutcome {
+pub fn edit(cwd: &Path, args: Edit) -> ToolOutcome {
     let path = args.file_path.display();
-    let content = match std::fs::read(&args.file_path) {
+    let file_path = cwd.join(&args.file_path);
+    let content = match std::fs::read(&file_path) {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(content) => content,
             Err(_) => return ToolOutcome::error(format!("{path} is not UTF-8 text")),
@@ -31,7 +35,7 @@ pub fn edit(args: Edit) -> ToolOutcome {
         Ok(done) => done,
         Err(error) => return ToolOutcome::error(format!("{error} in {path}")),
     };
-    match std::fs::write(&args.file_path, edited) {
+    match std::fs::write(&file_path, edited) {
         Ok(()) => ToolOutcome::ok(match replaced {
             1 => format!("Replaced 1 occurrence in {path}."),
             many => format!("Replaced {many} occurrences in {path}."),
