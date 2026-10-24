@@ -1,7 +1,10 @@
 //! OpenAI's Responses API through a ChatGPT sign-in, as a Nisse provider. Nisse runs the agent
-//! loop, so every tool call is committed, hooked and approved by Nisse.
+//! loop, so every tool call is committed, hooked and approved by Nisse, including the calls a
+//! code-mode script makes.
 
 mod auth;
+mod catalog;
+mod code_mode;
 mod provider;
 mod record;
 mod sse;
@@ -9,6 +12,7 @@ mod sse;
 use std::time::Duration;
 
 pub use auth::{AUTH_BASE, AuthServer, CALLBACK_PORT, LoginMethod, LoginPrompt, login, login_with};
+pub use code_mode::{HOST_PROGRAM, NestedTools};
 pub use provider::{BASE_URL, MODEL, OpenAi, OpenAiOptions};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);

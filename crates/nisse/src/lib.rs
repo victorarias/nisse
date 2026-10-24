@@ -89,7 +89,10 @@ fn print_entry(entry: &Entry, out: &mut impl Write) -> std::io::Result<()> {
             out,
             "⚡ {} {}",
             data["name"].as_str().unwrap_or("tool"),
-            data["args"]
+            match &data["args"] {
+                serde_json::Value::String(script) => format!("\n{script}"),
+                args => args.to_string(),
+            }
         ),
         kinds::TOOL_RESULT => writeln!(
             out,

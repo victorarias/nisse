@@ -59,6 +59,7 @@ impl Provider for Echo {
                     id: crate::new_id(),
                     name: "Bash".into(),
                     args: serde_json::json!({ "command": command.trim() }),
+                    parent: None,
                 };
                 turn.call_tool(call, Approval::NotNeeded, run_builtin_tool(turn.cwd()))
                     .await?;

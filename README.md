@@ -64,8 +64,23 @@ there, Claude Code starts there, and its `.nisse/extensions/` load for it.
 | `--provider` / `NISSE_PROVIDER` | Who answers a new conversation: `claude` (default), `openai`, or `echo`, which echoes and runs `!command` without a model |
 | `--model` / `NISSE_MODEL` | The new conversation's model; Claude Code's default, or `gpt-6.1-sol` |
 | `--claude` / `NISSE_CLAUDE` | The `claude` binary a server this starts drives |
+| `--code-mode-host` / `NISSE_CODE_MODE_HOST` | Codex's `codex-code-mode-host`, which runs code-mode scripts in a server this starts; otherwise `NISSE_HOME/bin/`, then `PATH` |
 | `--record` / `NISSE_RECORD` | Save every provider exchange in this folder as a replayable test fixture, in a server this starts |
 | `NO_COLOR`, `NISSE_THEME=plain` | Turn the colours off |
+
+### Code mode
+
+Most of OpenAI's models work in code mode: they get two tools, `exec` and
+`wait`, and write JavaScript that calls Nisse's tools. Each call a script makes
+is an ordinary Nisse tool call, with its own approval and hooks. Scripts run in
+Codex's `codex-code-mode-host`, which Nisse starts on the first script and stops
+when idle. Install the pinned release with:
+
+```sh
+scripts/code-mode-host.sh   # into NISSE_HOME/bin
+```
+
+`gpt-5.5` keeps direct tools and needs no host.
 
 ### Recording fixtures
 
@@ -75,6 +90,7 @@ Provider tests replay real exchanges. To record OpenAI ones with your sign-in:
 NISSE_RECORD=/tmp/rec target/debug/nisse --provider openai exec 'what does `echo hi` print?'
 ```
 
+Code-mode turns record the same way; pick a code-mode model with `--model`.
 Each turn writes `/tmp/rec/openai-<id>.ndjson` with tokens, ids and paths
 replaced by placeholders. Read it for personal text before committing it under
 `crates/nisse-openai/tests/fixtures/`. Claude's fixtures re-record with

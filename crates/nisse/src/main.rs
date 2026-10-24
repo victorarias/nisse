@@ -12,7 +12,7 @@ use nisse_claude::{Claude, ClaudeOptions};
 use nisse_client::Client;
 use nisse_core::{Echo, Harness, HarnessOptions, Hooks, Provider};
 use nisse_lua::LuaHost;
-use nisse_openai::{LoginMethod, LoginPrompt, OpenAi, OpenAiOptions};
+use nisse_openai::{HOST_PROGRAM, LoginMethod, LoginPrompt, NestedTools, OpenAi, OpenAiOptions};
 use nisse_protocol::{
     Actor, ClientRequest, ConversationStartParams, ServerNotification, ServerStopParams,
     ServerStopResult,
@@ -55,6 +55,20 @@ struct Cli {
     /// The `claude` binary to drive, when this starts the server.
     #[arg(long, env = "NISSE_CLAUDE", default_value = "claude", global = true)]
     claude: PathBuf,
+    /// Codex's code-mode host, which OpenAI's code-mode models run their scripts in. Default
+    /// NISSE_HOME/bin/codex-code-mode-host when it is there, otherwise the one on PATH.
+    #[arg(long, env = "NISSE_CODE_MODE_HOST", global = true)]
+    code_mode_host: Option<PathBuf>,
+    /// The tools a code-mode script calls: `claude-code` (Read, Write, Edit, Bash, Grep) or
+    /// `codex` (exec_command, apply_patch).
+    #[arg(
+        long,
+        env = "NISSE_NESTED_TOOLS",
+        default_value = "claude-code",
+        global = true,
+        hide = true
+    )]
+    nested_tools: NestedTools,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -99,6 +113,8 @@ struct ServerConfig {
     home: PathBuf,
     record: Option<PathBuf>,
     claude: PathBuf,
+    code_mode_host: Option<PathBuf>,
+    nested_tools: NestedTools,
 }
 
 #[tokio::main]
@@ -113,6 +129,8 @@ async fn main() -> Result<()> {
         home,
         record: cli.record,
         claude: cli.claude,
+        code_mode_host: cli.code_mode_host,
+        nested_tools: cli.nested_tools,
     };
     let start = ConversationStartParams {
         title: None,
@@ -207,6 +225,13 @@ fn openai_auth(home: &Path) -> PathBuf {
 fn providers(config: &ServerConfig) -> Result<Vec<(String, Arc<dyn Provider>)>> {
     let mut openai = OpenAiOptions::new(openai_auth(&config.home), include_str!("instructions.md"));
     openai.record.clone_from(&config.record);
+    let installed = config.home.join("bin").join(HOST_PROGRAM);
+    openai.code_mode_host = match &config.code_mode_host {
+        Some(host) => host.clone(),
+        None if installed.is_file() => installed,
+        None => HOST_PROGRAM.into(),
+    };
+    openai.nested_tools = config.nested_tools;
     let think = std::env::var("NISSE_ECHO_THINK_MS")
         .ok()
         .and_then(|ms| ms.parse().ok())
@@ -385,6 +410,14 @@ async fn start_detached(
     if let Some(record) = &config.record {
         command.arg("--record").arg(record);
     }
+    if let Some(host) = &config.code_mode_host {
+        command.arg("--code-mode-host").arg(host);
+    }
+    let nested_tools = match config.nested_tools {
+        NestedTools::ClaudeCode => "claude-code",
+        NestedTools::Codex => "codex",
+    };
+    command.args(["--nested-tools", nested_tools]);
     let mut server = command
         .args(["serve", "--detached"])
         .current_dir(&config.home)
