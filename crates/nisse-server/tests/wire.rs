@@ -1963,3 +1963,34 @@ async fn a_hook_knows_a_subagent_s_call_by_its_parent_and_can_deny_it() {
         "{parent_answer}"
     );
 }
+
+#[tokio::test]
+async fn a_request_after_the_server_closes_the_connection_fails_instead_of_waiting_forever() {
+    let server = start(
+        Store::open_in_memory().unwrap(),
+        echo(),
+        Arc::new(NoHooks),
+        broadcast::channel(16).0,
+    );
+    let (client, mut notifications) = connect(&server).await;
+    let closing = server.clone();
+    tokio::spawn(async move { closing.close(PATIENCE).await });
+    tokio::time::timeout(PATIENCE, async {
+        while notifications.recv().await.is_some() {}
+    })
+    .await
+    .expect("the server closed the connection");
+
+    let refused = tokio::time::timeout(
+        PATIENCE,
+        client
+            .request::<ConversationListResult>(ClientRequest::ConversationList(Default::default())),
+    )
+    .await
+    .expect("the request failed at once");
+
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        "the server closed the connection"
+    );
+}

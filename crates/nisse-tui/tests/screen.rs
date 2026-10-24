@@ -108,6 +108,8 @@ struct Tui {
     keys: mpsc::UnboundedSender<Event>,
     ran: Ran,
     opened: Arc<Mutex<Vec<String>>>,
+    server: Arc<Server>,
+    quit: tokio::task::JoinHandle<Result<(), String>>,
 }
 
 impl Tui {
@@ -162,8 +164,9 @@ impl Tui {
             opened: Arc::default(),
         };
         let (ran, opened) = (host.ran.clone(), host.opened.clone());
-        tokio::spawn(async move {
-            let _server = server;
+        let drawn = server.clone();
+        let quit = tokio::spawn(async move {
+            let _server = drawn;
             nisse_tui::drive(
                 &mut terminal,
                 host,
@@ -180,13 +183,15 @@ impl Tui {
                 nisse_tui::Theme::NEON,
             )
             .await
-            .unwrap();
+            .map_err(|error| error.to_string())
         });
         Self {
             screen,
             keys,
             ran,
             opened,
+            server,
+            quit,
         }
     }
 
@@ -354,6 +359,24 @@ async fn a_new_conversation_opens_on_the_splash() {
     let tui = Tui::start().await;
     let screen = tui.screen.shows(&["READY"]).await;
     insta::assert_snapshot!(without_conversation_id(&screen));
+}
+
+#[tokio::test]
+async fn when_the_server_goes_away_the_tui_gives_the_terminal_back_and_says_to_reattach() {
+    let tui = Tui::start().await;
+    tui.screen.shows(&["READY"]).await;
+    let closing = tui.server.clone();
+    tokio::spawn(async move { closing.close(PATIENCE).await });
+
+    let quit = tokio::time::timeout(PATIENCE, tui.quit)
+        .await
+        .expect("the TUI quit")
+        .unwrap();
+
+    assert_eq!(
+        quit,
+        Err("the server went away; run nisse again to reattach".into())
+    );
 }
 
 #[tokio::test]

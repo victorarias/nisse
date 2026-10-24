@@ -159,7 +159,7 @@ impl Server {
                 _ = &mut forwarder => None,
                 () = until_closing(&mut closing) => {
                     let _ = (&mut forwarder).await;
-                    drop(outgoing);
+                    drop((outgoing, connection));
                     while incoming.recv().await.is_some() {}
                     return;
                 }

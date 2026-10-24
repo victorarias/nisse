@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use nisse_client::Client;
 use nisse_protocol::{
     ApprovalResolveParams, ApprovalResolveResult, AuthAccepted, AuthCancelParams, AuthInteraction,
@@ -211,7 +211,10 @@ where
                 }
                 None => return Ok(()),
             },
-            Some(notification) = notifications.recv() => {
+            notification = notifications.recv() => {
+                let Some(notification) = notification else {
+                    bail!("the server went away; run nisse again to reattach");
+                };
                 if let Some((command, env)) = app.on_notification(notification, &client, &mut host) {
                     let success = host.foreground(&command, &env).await;
                     terminal.draw(|frame| frame.render_widget(Clear, frame.area()))?;
@@ -609,17 +612,21 @@ impl App {
                 self.list_models(client);
             }
             (KeyCode::Enter, _) if !self.input.trim().is_empty() => {
-                let text = std::mem::take(&mut self.input);
                 let sent = client
                     .request::<ConversationSubmitResult>(ClientRequest::ConversationSubmit(
                         ConversationSubmitParams {
                             conversation_id: self.conversation.id.clone(),
-                            input: Input::Text { text },
+                            input: Input::Text {
+                                text: self.input.clone(),
+                            },
                             request_id: uuid::Uuid::now_v7().to_string(),
                             when_busy: WhenBusy::FollowUp,
                         },
                     ))
                     .await;
+                if sent.is_ok() {
+                    self.input.clear();
+                }
                 self.error = sent.err().map(|error| error.to_string());
             }
             (KeyCode::Backspace, _) => {
