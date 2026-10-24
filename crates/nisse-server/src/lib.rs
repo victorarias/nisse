@@ -10,7 +10,7 @@ use nisse_protocol::{
     Actor, ApprovalResolveResult, ClientInfo, ClientRequest, Commit, ConversationListResult,
     ConversationSubscribeParams, ErrorResponse, InitializeResult, Message, PROTOCOL_VERSION,
     Request, RequestId, Response, RpcError, Seq, ServerNotification, ServerStopResult,
-    StatusChanged, UiChanged,
+    SkillsListResult, StatusChanged, UiChanged,
     transport::{self, Channels},
 };
 use serde::Serialize;
@@ -259,6 +259,14 @@ impl Connection {
                 .resolve(params, self.actor.clone())
                 .map_err(internal)
                 .and_then(|accepted| to_result(ApprovalResolveResult { accepted })),
+            ClientRequest::SkillsList(params) => {
+                let harness = harness.clone();
+                tokio::task::spawn_blocking(move || harness.skills(&params.conversation_id))
+                    .await
+                    .map_err(|error| internal(error.into()))
+                    .and_then(|skills| skills.map_err(not_found))
+                    .and_then(|skills| to_result(SkillsListResult { skills }))
+            }
             ClientRequest::ConversationSubscribe(params) => {
                 let _ = self.subscribe.send((request.id.clone(), params));
                 return None;

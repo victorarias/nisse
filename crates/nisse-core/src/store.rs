@@ -8,9 +8,9 @@ use nisse_protocol::{
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
 
-use crate::{new_id, now_ms};
+use crate::{new_id, now_ms, workspace::AttachedSkill};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// One SQLite file. Every change goes through `commit`, which is atomic and gets the next `seq`.
 pub struct Store {
@@ -23,6 +23,7 @@ pub struct Submission {
     pub status: SubmissionStatus,
     pub when_busy: WhenBusy,
     pub input: Input,
+    pub skills: Vec<AttachedSkill>,
     pub author: Actor,
 }
 
@@ -97,6 +98,14 @@ impl Store {
                 ALTER TABLE conversations ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude';
                 ALTER TABLE conversations ADD COLUMN model TEXT;
                 PRAGMA user_version = 3;
+                COMMIT;",
+            )?;
+        }
+        if version < 4 {
+            db.execute_batch(
+                "BEGIN;
+                ALTER TABLE submissions ADD COLUMN skills TEXT NOT NULL DEFAULT '[]';
+                PRAGMA user_version = 4;
                 COMMIT;",
             )?;
         }
@@ -342,18 +351,20 @@ impl Tx<'_> {
         request_id: &str,
         when_busy: WhenBusy,
         input: &Input,
+        skills: &[AttachedSkill],
         author: &Actor,
     ) -> Result<String> {
         let id = new_id();
         self.tx.execute(
-            "INSERT INTO submissions (id, conversation_id, request_id, status, when_busy, input, author, seq)
-             VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6, ?7)",
+            "INSERT INTO submissions (id, conversation_id, request_id, status, when_busy, input, skills, author, seq)
+             VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6, ?7, ?8)",
             params![
                 id,
                 self.conversation_id,
                 request_id,
                 to_text(&when_busy)?,
                 serde_json::to_string(input)?,
+                serde_json::to_string(skills)?,
                 serde_json::to_string(author)?,
                 self.seq
             ],
@@ -414,7 +425,7 @@ fn submissions_where(
     values: impl rusqlite::Params,
 ) -> Result<Vec<Submission>> {
     let mut statement = db.prepare(&format!(
-        "SELECT id, conversation_id, status, when_busy, input, author FROM submissions WHERE {condition}"
+        "SELECT id, conversation_id, status, when_busy, input, skills, author FROM submissions WHERE {condition}"
     ))?;
     let rows = statement.query_map(values, |row| {
         Ok((|| {
@@ -424,7 +435,8 @@ fn submissions_where(
                 status: from_text(&row.get::<_, String>(2)?)?,
                 when_busy: from_text(&row.get::<_, String>(3)?)?,
                 input: serde_json::from_str(&row.get::<_, String>(4)?)?,
-                author: serde_json::from_str(&row.get::<_, String>(5)?)?,
+                skills: serde_json::from_str(&row.get::<_, String>(5)?)?,
+                author: serde_json::from_str(&row.get::<_, String>(6)?)?,
             })
         })())
     })?;

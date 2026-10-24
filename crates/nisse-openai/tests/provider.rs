@@ -83,13 +83,11 @@ async fn requests_carry_the_sign_in_and_the_conversation() {
     assert_eq!(header("originator"), Some("nisse"));
     assert_eq!(header("session-id"), Some(conversation_id));
     assert_eq!(sent.json()["prompt_cache_key"], conversation_id);
-    assert_eq!(
-        sent.json()["instructions"],
-        format!(
-            "{INSTRUCTIONS}\nThe working directory is {}.\n",
-            nisse.conversation.cwd.display()
-        )
-    );
+    let instructions = sent.json()["instructions"].as_str().unwrap().to_owned();
+    assert!(instructions.starts_with(&format!(
+        "{INSTRUCTIONS}\nThe working directory is {}.\n",
+        nisse.conversation.cwd.display()
+    )));
 }
 
 #[tokio::test]

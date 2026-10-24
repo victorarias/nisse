@@ -223,7 +223,11 @@ fn openai_auth(home: &Path) -> PathBuf {
 
 /// Every provider a conversation can name, the default first.
 fn providers(config: &ServerConfig) -> Result<Vec<(String, Arc<dyn Provider>)>> {
-    let mut openai = OpenAiOptions::new(openai_auth(&config.home), include_str!("instructions.md"));
+    let mut openai = OpenAiOptions::new(
+        openai_auth(&config.home),
+        include_str!("instructions.md"),
+        &config.home,
+    );
     openai.record.clone_from(&config.record);
     let installed = config.home.join("bin").join(HOST_PROGRAM);
     openai.code_mode_host = match &config.code_mode_host {

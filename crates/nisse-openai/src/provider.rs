@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use nisse_core::{
-    Approval, Provider, ProviderFuture, ToolCall, ToolOutcome, Turn, approval_for, builtin_tools,
-    run_builtin_tool,
+    Approval, Provider, ProviderFuture, ToolCall, ToolOutcome, Turn, Workspace, approval_for,
+    builtin_tools, run_builtin_tool,
 };
-use nisse_protocol::{Entry, kinds};
+use nisse_protocol::{Entry, Skill, kinds};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -21,6 +21,14 @@ use crate::{
 pub const BASE_URL: &str = "https://chatgpt.com/backend-api";
 pub const MODEL: &str = "gpt-6.1-sol";
 const LONGEST_ERROR_BODY: usize = 1000;
+const SKILLS: &str = "# Skills
+
+A skill is a folder of instructions for one kind of task, in a `SKILL.md` file. When a task \
+matches a skill's description, `Read` its `SKILL.md` before you start, and follow it. When a \
+message names a skill with `/name` or `$name`, the skill's `SKILL.md` comes with the message; \
+follow it. Relative paths in a skill are relative to its folder.
+
+";
 
 pub struct OpenAiOptions {
     /// The tokens `login` saved.
@@ -28,8 +36,11 @@ pub struct OpenAiOptions {
     /// Where expired tokens are refreshed.
     pub auth_base: String,
     pub base_url: String,
-    /// Nisse's own instructions; the conversation's directory is added to them.
+    /// Nisse's own instructions; the conversation's directory, its AGENTS.md files and its
+    /// skills are added to them.
     pub instructions: String,
+    /// The Nisse home, for its own AGENTS.md and skills.
+    pub home: PathBuf,
     /// A folder to write one fixture per turn into.
     pub record: Option<PathBuf>,
     /// Codex's code-mode host, for the models that work in code mode.
@@ -38,12 +49,17 @@ pub struct OpenAiOptions {
 }
 
 impl OpenAiOptions {
-    pub fn new(auth_path: impl Into<PathBuf>, instructions: impl Into<String>) -> Self {
+    pub fn new(
+        auth_path: impl Into<PathBuf>,
+        instructions: impl Into<String>,
+        home: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             auth_path: auth_path.into(),
             auth_base: AUTH_BASE.into(),
             base_url: BASE_URL.into(),
             instructions: instructions.into(),
+            home: home.into(),
             record: None,
             code_mode_host: HOST_PROGRAM.into(),
             nested_tools: NestedTools::default(),
@@ -89,8 +105,15 @@ impl OpenAi {
 
     async fn answer_in(&self, turn: &Turn, model: &str, run: Option<&Run>) -> Result<()> {
         let mut recorder = Recorder::start(self.options.record.as_deref(), model)?;
+        let instructions = self.instructions(turn.cwd());
         loop {
-            let body = self.request_body(turn, model, run.is_some(), &turn.transcript()?);
+            let body = self.request_body(
+                turn,
+                model,
+                run.is_some(),
+                &instructions,
+                &turn.transcript()?,
+            );
             let Response {
                 mut messages,
                 calls,
@@ -131,11 +154,48 @@ impl OpenAi {
         }
     }
 
+    fn workspace(&self, cwd: &Path) -> Workspace {
+        Workspace {
+            cwd: cwd.to_owned(),
+            home: self.options.home.clone(),
+        }
+    }
+
+    /// Nisse's instructions, then each AGENTS.md file, then the skills, read when a run starts.
+    fn instructions(&self, cwd: &Path) -> String {
+        let workspace = self.workspace(cwd);
+        let mut instructions = format!(
+            "{}\nThe working directory is {}.\n",
+            self.options.instructions,
+            cwd.display()
+        );
+        for file in workspace.agents_md() {
+            instructions.push_str(&format!(
+                "\n# AGENTS.md instructions from {}\n\n{}\n",
+                file.path.display(),
+                file.text.trim_end()
+            ));
+        }
+        let skills = workspace.skills();
+        if !skills.is_empty() {
+            instructions.push('\n');
+            instructions.push_str(SKILLS);
+            for skill in &skills {
+                instructions.push_str(&format!(
+                    "- {}: {} (file: {})\n",
+                    skill.name, skill.description, skill.path
+                ));
+            }
+        }
+        instructions
+    }
+
     fn request_body(
         &self,
         turn: &Turn,
         model: &str,
         in_code_mode: bool,
+        instructions: &str,
         transcript: &[Entry],
     ) -> Value {
         let tools: Vec<Value> = match in_code_mode {
@@ -155,11 +215,7 @@ impl OpenAi {
         };
         json!({
             "model": model,
-            "instructions": format!(
-                "{}\nThe working directory is {}.\n",
-                self.options.instructions,
-                turn.cwd().display()
-            ),
+            "instructions": instructions,
             "input": transcript.iter().filter_map(input_item).collect::<Vec<_>>(),
             "tools": tools,
             "tool_choice": "auto",
@@ -243,6 +299,10 @@ impl Provider for OpenAi {
         Some(MODEL)
     }
 
+    fn skills(&self, cwd: &Path) -> Vec<Skill> {
+        self.workspace(cwd).skills()
+    }
+
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
         Box::pin(self.answer(turn))
     }
@@ -256,11 +316,26 @@ fn input_item(entry: &Entry) -> Option<Value> {
         return None;
     }
     match entry.kind.as_str() {
-        kinds::USER => Some(json!({
-            "type": "message",
-            "role": "user",
-            "content": [{ "type": "input_text", "text": data["text"] }],
-        })),
+        kinds::USER => {
+            let skills = data["skills"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|skill| {
+                    json!({
+                        "type": "input_text",
+                        "text": format!(
+                            "<skill>\n<name>{}</name>\n<path>{}</path>\n{}\n</skill>",
+                            skill["name"].as_str().unwrap_or_default(),
+                            skill["path"].as_str().unwrap_or_default(),
+                            skill["text"].as_str().unwrap_or_default().trim_end(),
+                        ),
+                    })
+                });
+            let text = json!({ "type": "input_text", "text": data["text"] });
+            let content: Vec<Value> = std::iter::once(text).chain(skills).collect();
+            Some(json!({ "type": "message", "role": "user", "content": content }))
+        }
         kinds::ASSISTANT if data["is_error"] != true => Some(json!({
             "type": "message",
             "role": "assistant",
