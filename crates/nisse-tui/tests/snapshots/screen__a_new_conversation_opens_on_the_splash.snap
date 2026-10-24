@@ -20,9 +20,9 @@ expression: without_conversation_id(&screen)
 
                                   ● echo  ready
 
-       ⏎  send    !cmd  shell    /model  model    PgUp  scroll    ^C  quit
+               ⏎  send    /model  model    PgUp  scroll    ^C  quit
 
 ╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
-│ ❯ ▍type a message, or !cmd to run a shell command                            │
+│ ❯ ▍type a message                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  ■ READY ▓▒░                                               echo  │  nisse 0.1.0
