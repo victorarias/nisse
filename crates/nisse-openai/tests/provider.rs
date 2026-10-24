@@ -372,6 +372,39 @@ async fn a_recorded_turn_replays_as_a_fixture() {
     assert_requests(&replay, &expected);
 }
 
+#[tokio::test]
+async fn a_recording_names_the_conversations_directory_as_the_workspace() {
+    let fixture = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/tool_call.ndjson"
+    ))
+    .unwrap()
+    .replace("echo hi", "pwd");
+    let served = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(served.path(), fixture).unwrap();
+    let fake = Fake::start().await;
+    let (_home, auth_path) = signed_in(&fake, 3600).await;
+    fake.play_file(served.path());
+    let recordings = tempfile::tempdir().unwrap();
+    let mut nisse = Nisse::recording(&fake, &auth_path, Some(recordings.path())).await;
+
+    nisse.converse("what does echo say?", true).await;
+
+    let recording = std::fs::read_dir(recordings.path())
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let recorded = std::fs::read_to_string(recording).unwrap();
+    let cwd = nisse.conversation.cwd.to_string_lossy().into_owned();
+    assert!(!recorded.contains(&cwd), "{recorded}");
+    assert!(
+        recorded.contains(r#""output":"<workspace>\n""#),
+        "{recorded}"
+    );
+}
+
 const RECORDED_PROMPT: &str = "what does `echo hi` print?";
 
 #[tokio::test]
