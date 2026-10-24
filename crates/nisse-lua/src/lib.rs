@@ -190,7 +190,7 @@ impl Extension {
         let budget = deadline.clone();
         lua.set_interrupt(move |_| match *budget.lock().expect("deadline lock") {
             Some(deadline) if Instant::now() > deadline => {
-                Err(mlua::Error::runtime("hook ran past its time budget"))
+                Err(mlua::Error::runtime("ran past its time budget"))
             }
             _ => Ok(VmState::Continue),
         });
@@ -202,6 +202,7 @@ impl Extension {
         lua.sandbox(true)?;
 
         let source = std::fs::read_to_string(folder.join("init.luau"))?;
+        *deadline.lock().expect("deadline lock") = Some(Instant::now() + HOOK_BUDGET);
         let register: Function = lua
             .load(source)
             .set_name(format!("@{name}/init.luau"))
@@ -231,6 +232,7 @@ impl Extension {
         register
             .call::<()>((on, lua.create_table()?))
             .with_context(|| format!("registering extension {name}"))?;
+        *deadline.lock().expect("deadline lock") = None;
         let hooks = std::mem::take(&mut *registered.lock().expect("hooks lock"));
         if hooks.is_empty() {
             bail!("extension {name} registered no hooks");

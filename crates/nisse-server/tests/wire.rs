@@ -1417,6 +1417,63 @@ async fn a_project_s_extensions_apply_only_to_conversations_in_that_project() {
     assert_eq!(heard, ["HELLO", "hello"]);
 }
 
+#[tokio::test]
+async fn an_extension_that_never_finishes_loading_fails_its_project_s_start_and_no_other() {
+    let spins_at_load = tempfile::tempdir().unwrap();
+    let spins_at_register = tempfile::tempdir().unwrap();
+    let quiet = tempfile::tempdir().unwrap();
+    extension(
+        &spins_at_load.path().join(".nisse/extensions"),
+        "spin",
+        "while true do end",
+    );
+    extension(
+        &spins_at_register.path().join(".nisse/extensions"),
+        "spin",
+        "return function(on) while true do end end",
+    );
+    let harness = Harness::with_store(
+        Store::open_in_memory().unwrap(),
+        HarnessOptions {
+            providers: vec![("echo".into(), echo())],
+            hooks: Arc::new(|cwd: &Path| -> anyhow::Result<Arc<dyn Hooks>> {
+                Ok(Arc::new(LuaHost::load(
+                    &[cwd.join(".nisse/extensions")],
+                    Arc::new(|_| {}),
+                )?))
+            }),
+            default_model: no_default_model(),
+            agents: Default::default(),
+        },
+    );
+    let server = Server::new(harness, broadcast::channel(16).0, owner());
+    let (client, mut notifications) = connect(&server).await;
+
+    for spinning in [&spins_at_load, &spins_at_register] {
+        let refused = tokio::time::timeout(
+            Duration::from_secs(10),
+            client.request::<Conversation>(ClientRequest::ConversationStart(started_in(
+                spinning.path(),
+            ))),
+        )
+        .await
+        .expect("the start gave up on the extension")
+        .unwrap_err();
+        assert!(
+            refused.to_string().contains("ran past its time budget"),
+            "{refused}"
+        );
+    }
+    let conversation = start_in(&client, quiet.path()).await;
+    subscribe(&client, &conversation, 0).await;
+    submit(&client, &conversation, "hello").await;
+
+    assert_eq!(
+        entries_until(&mut notifications, kinds::ASSISTANT).await[0].data["text"],
+        "hello"
+    );
+}
+
 /// Holds its run open until `done` is notified.
 struct UntilReleased {
     done: Arc<tokio::sync::Notify>,
