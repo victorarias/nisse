@@ -361,6 +361,37 @@ async fn claude_reads_a_file_with_its_own_read_tool_and_nisse_commits_the_call()
 }
 
 #[tokio::test]
+async fn claude_runs_a_project_skill_with_its_skill_tool_and_nisse_commits_the_call() {
+    let scenario = Scenario::new("skill");
+    let skill = scenario.workspace.path().join(".claude/skills/gnome-facts");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: gnome-facts\ndescription: Facts about the gnome. Use when asked about the gnome.\n---\n\nReply with exactly: the gnome lives under the floor\n",
+    )
+    .unwrap();
+    let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));
+    let mut watch = Watch::new_conversation(&server, scenario.workspace.path(), Some(MODEL)).await;
+
+    watch
+        .submit(
+            "Use the Skill tool to run the gnome-facts skill, then do what it says.",
+            WhenBusy::FollowUp,
+        )
+        .await;
+    watch.until_idle().await;
+
+    let call = watch.last(kinds::TOOL_CALL);
+    assert_eq!(call.data["name"], "Skill");
+    assert_eq!(call.data["args"]["skill"], "gnome-facts");
+    let result = watch.last(kinds::TOOL_RESULT);
+    assert_eq!(result.data["call_id"], call.data["id"]);
+    assert_eq!(result.data["is_error"], false);
+    assert_eq!(watch.final_text(), "the gnome lives under the floor");
+    scenario.keep_recording(&watch.conversation);
+}
+
+#[tokio::test]
 async fn bash_waits_for_a_person_to_approve_and_then_runs() {
     let scenario = Scenario::new("bash_allowed");
     let server = scenario.start(Store::open_in_memory().unwrap(), Arc::new(NoHooks));

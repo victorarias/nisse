@@ -88,6 +88,8 @@ pub enum ClientRequest {
     ConversationSubmit(ConversationSubmitParams),
     #[serde(rename = "approval/resolve")]
     ApprovalResolve(ApprovalResolveParams),
+    #[serde(rename = "skills/list")]
+    SkillsList(SkillsListParams),
     /// Asks the server to exit once this connection has closed and no run is left, whoever
     /// else is attached.
     #[serde(rename = "server/stop")]
@@ -129,6 +131,7 @@ const KNOWN_METHODS: &[&str] = &[
     "conversation/subscribe",
     "conversation/submit",
     "approval/resolve",
+    "skills/list",
     "server/stop",
 ];
 

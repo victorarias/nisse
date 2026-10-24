@@ -52,10 +52,10 @@ target/debug/nisse schema                  # the protocol's JSON Schema
 ```
 
 `NISSE_HOME` (default `~/.nisse`) holds `nisse.sqlite`, `nisse.sock`,
-`auth/` and `extensions/`. One process serves a home at a time. A TUI or
-`exec` attaches to `NISSE_HOME/nisse.sock`, and when nothing answers there it
-starts `nisse serve` in the background, logging to `NISSE_HOME/nisse.log`. The
-server exits 30 seconds after the last client leaves and the last run settles.
+`auth/`, `extensions/`, and your own `AGENTS.md` and `skills/`. One process
+serves a home at a time. A TUI or `exec` attaches to `NISSE_HOME/nisse.sock`,
+and when nothing answers there it starts `nisse serve` in the background,
+logging to `NISSE_HOME/nisse.log`. The server exits 30 seconds after the last client leaves and the last run settles.
 A conversation runs in the directory its client started it in: tools run
 there, Claude Code starts there, and its `.nisse/extensions/` load for it.
 
@@ -95,6 +95,26 @@ Each turn writes `/tmp/rec/openai-<id>.ndjson` with tokens, ids and paths
 replaced by placeholders. Read it for personal text before committing it under
 `crates/nisse-openai/tests/fixtures/`. Claude's fixtures re-record with
 `NISSE_CLAUDE_LIVE=$(which claude) cargo test -p nisse-claude`.
+
+## AGENTS.md and skills
+
+Claude Code reads its own instructions and skills. On OpenAI, Nisse reads the
+same files, as Codex does, from the conversation's directory when each run
+starts:
+
+- `NISSE_HOME/AGENTS.md`, then each `AGENTS.md` from the repository root down
+  to the directory, where an `AGENTS.override.md` takes its folder's place.
+  Together they stop at 32 KiB.
+- Skills: folders with a `SKILL.md` whose frontmatter gives `name` and
+  `description`, in `.agents/skills/` and `.claude/skills/` from the directory
+  up to the repository root, then in `NISSE_HOME/skills/`. The nearest skill of
+  a name wins. The model sees each skill's name, description and path, and
+  reads the skill when a task matches.
+- `/name` at the start of a message, or `$name` anywhere in it, sends the
+  skill's `SKILL.md` with the message. It is stored with the message, so the
+  conversation keeps the skill as it was.
+
+`skills/list` lists the skills a conversation's clients can offer.
 
 ## Extensions
 

@@ -6,6 +6,7 @@ mod provider;
 mod store;
 mod tools;
 mod turn;
+mod workspace;
 
 pub use harness::{
     Harness, HarnessOptions, LoadHooks, StartError, SubmitError, same_hooks, with_nested_results,
@@ -16,6 +17,7 @@ pub use tools::{
     Hooks, NoHooks, ToolCall, ToolOutcome, ToolSpec, approval_for, builtin_tools, run_builtin_tool,
 };
 pub use turn::{Approval, Decision, LIVE_INTERVAL, Turn};
+pub use workspace::{AGENTS_MD_LIMIT, AgentsMd, AttachedSkill, Workspace};
 
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()

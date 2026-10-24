@@ -12,7 +12,7 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use nisse_client::Client;
-use nisse_core::{Harness, HarnessOptions, Hooks, NoHooks, Store, same_hooks};
+use nisse_core::{Harness, HarnessOptions, Hooks, NoHooks, Store, Workspace, same_hooks};
 use nisse_openai::{AuthServer, LoginMethod, LoginPrompt, OpenAi, OpenAiOptions, login_with};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
@@ -366,6 +366,7 @@ pub struct Nisse {
     pub conversation: Conversation,
     committed: Vec<Entry>,
     _server: Arc<Server>,
+    _workspace: Option<tempfile::TempDir>,
 }
 
 impl Nisse {
@@ -397,7 +398,38 @@ impl Nisse {
         change: impl FnOnce(&mut OpenAiOptions),
         hooks: Arc<dyn Hooks>,
     ) -> Self {
-        let mut options = OpenAiOptions::new(auth_path, INSTRUCTIONS);
+        let empty = tempfile::tempdir().unwrap();
+        let workspace = Workspace {
+            cwd: std::env::current_dir().unwrap(),
+            home: empty.path().to_owned(),
+        };
+        let mut nisse = Self::build(fake, auth_path, model, change, hooks, workspace).await;
+        nisse._workspace = Some(empty);
+        nisse
+    }
+
+    /// On a model that takes direct tools, with a conversation in `workspace`'s directory.
+    pub async fn in_workspace(fake: &Fake, auth_path: &Path, workspace: Workspace) -> Self {
+        Self::build(
+            fake,
+            auth_path,
+            DIRECT_MODEL,
+            |_| {},
+            Arc::new(NoHooks),
+            workspace,
+        )
+        .await
+    }
+
+    async fn build(
+        fake: &Fake,
+        auth_path: &Path,
+        model: &str,
+        change: impl FnOnce(&mut OpenAiOptions),
+        hooks: Arc<dyn Hooks>,
+        workspace: Workspace,
+    ) -> Self {
+        let mut options = OpenAiOptions::new(auth_path, INSTRUCTIONS, workspace.home);
         options.base_url = fake.base.clone();
         options.auth_base = fake.base.clone();
         change(&mut options);
@@ -415,7 +447,7 @@ impl Nisse {
         let conversation: Conversation = client
             .request(ClientRequest::ConversationStart(ConversationStartParams {
                 title: None,
-                cwd: std::env::current_dir().unwrap(),
+                cwd: workspace.cwd,
                 provider: None,
                 model: Some(model.into()),
             }))
@@ -436,6 +468,7 @@ impl Nisse {
             conversation,
             committed: Vec::new(),
             _server: server,
+            _workspace: None,
         }
     }
 

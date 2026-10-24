@@ -202,6 +202,25 @@ pub struct ApprovalResolveResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SkillsListParams {
+    pub conversation_id: ConversationId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SkillsListResult {
+    pub skills: Vec<Skill>,
+}
+
+/// A folder of instructions the model can be asked to follow, by `/name` or `$name` in input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Skill {
+    pub name: String,
+    pub description: String,
+    /// Its `SKILL.md`.
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StatusChanged {
     pub conversation_id: ConversationId,
     pub status: ConversationStatus,

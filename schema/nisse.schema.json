@@ -194,6 +194,17 @@
       "ServerStopParams": {
         "type": "object"
       },
+      "SkillsListParams": {
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id"
+        ],
+        "type": "object"
+      },
       "WhenBusy": {
         "enum": [
           "steer",
@@ -310,6 +321,22 @@
           },
           "params": {
             "$ref": "#/$defs/ApprovalResolveParams"
+          }
+        },
+        "required": [
+          "method",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "method": {
+            "const": "skills/list",
+            "type": "string"
+          },
+          "params": {
+            "$ref": "#/$defs/SkillsListParams"
           }
         },
         "required": [

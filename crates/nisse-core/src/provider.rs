@@ -1,7 +1,7 @@
-use std::{future::Future, pin::Pin, time::Duration};
+use std::{future::Future, path::Path, pin::Pin, time::Duration};
 
 use anyhow::Result;
-use nisse_protocol::kinds;
+use nisse_protocol::{Skill, kinds};
 
 use crate::{
     tools::{ToolCall, run_builtin_tool},
@@ -17,6 +17,13 @@ pub trait Provider: Send + Sync {
     /// provider each time it runs, as Claude Code makes it.
     fn default_model(&self) -> Option<&str> {
         None
+    }
+
+    /// The skills Nisse lists for a conversation in `cwd`, and attaches to input that names
+    /// them. A provider whose agent expands skills itself, like Claude Code, has none here.
+    fn skills(&self, cwd: &Path) -> Vec<Skill> {
+        let _ = cwd;
+        Vec::new()
     }
 
     fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a>;

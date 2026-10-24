@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, Commit, Conversation, ConversationReadResult,
     ConversationStartParams, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, Entry, Input, Seq, SubmissionStatus, WhenBusy, kinds,
+    ConversationSubmitResult, Entry, Input, Seq, Skill, SubmissionStatus, WhenBusy, kinds,
 };
 use serde_json::json;
 use tokio::sync::{broadcast, oneshot, watch};
@@ -19,6 +19,7 @@ use crate::{
     store::{NewConversation, Store, Submission, Tx},
     tools::{Hooks, ToolCall, ToolOutcome},
     turn::{Decision, Turn},
+    workspace::{attach, named_skills},
 };
 
 const COMMIT_BACKLOG: usize = 4096;
@@ -184,6 +185,21 @@ impl Harness {
         Ok(hooks)
     }
 
+    /// The skills input in the conversation can name, read from their folders now.
+    pub fn skills(&self, conversation_id: &str) -> Result<Vec<Skill>> {
+        let conversation = self
+            .store()
+            .conversation(conversation_id)?
+            .ok_or_else(|| anyhow!("no conversation {conversation_id}"))?;
+        Ok(self.skills_in(&conversation))
+    }
+
+    fn skills_in(&self, conversation: &Conversation) -> Vec<Skill> {
+        self.provider(&conversation.provider)
+            .map(|provider| provider.skills(&conversation.cwd))
+            .unwrap_or_default()
+    }
+
     pub fn conversations(&self) -> Result<Vec<Conversation>> {
         self.store().conversations()
     }
@@ -218,7 +234,7 @@ impl Harness {
         {
             return Err(SubmitError::ReservedKind(kind.clone()));
         }
-        let cwd = {
+        let conversation = {
             let store = self.store();
             let Some(conversation) = store.conversation(&conversation_id)? else {
                 return Err(SubmitError::NotFound(conversation_id));
@@ -231,21 +247,32 @@ impl Harness {
                     status: existing.status,
                 });
             }
-            conversation.cwd
+            conversation
         };
 
-        let input = match params.input {
+        let (input, skills) = match params.input {
             Input::Text { text } => {
                 let harness = self.clone();
+                let cwd = conversation.cwd.clone();
                 let text = tokio::task::spawn_blocking(move || {
                     harness.hooks(&cwd).map(|hooks| hooks.prompt_submit(text))
                 })
                 .await
                 .map_err(|error| anyhow!(error))??
                 .map_err(SubmitError::Denied)?;
-                Input::Text { text }
+                let harness = self.clone();
+                let named = text.clone();
+                let skills = tokio::task::spawn_blocking(move || {
+                    named_skills(&named, &harness.skills_in(&conversation))
+                        .into_iter()
+                        .filter_map(attach)
+                        .collect::<Vec<_>>()
+                })
+                .await
+                .map_err(|error| anyhow!(error))?;
+                (Input::Text { text }, skills)
             }
-            write @ Input::Write { .. } => write,
+            write @ Input::Write { .. } => (write, Vec::new()),
         };
 
         if let Input::Write { kind, data } = &input {
@@ -253,8 +280,13 @@ impl Harness {
                 if let Some(earlier) = tx.submission_by_request(&params.request_id)? {
                     return Ok(earlier);
                 }
-                let id =
-                    tx.insert_submission(&params.request_id, params.when_busy, &input, &author)?;
+                let id = tx.insert_submission(
+                    &params.request_id,
+                    params.when_busy,
+                    &input,
+                    &[],
+                    &author,
+                )?;
                 tx.append(kind, &author, data.clone())?;
                 tx.set_submission_status(&id, SubmissionStatus::Answered)?;
                 Ok(ConversationSubmitResult {
@@ -283,6 +315,7 @@ impl Harness {
                     &params.request_id,
                     params.when_busy,
                     &input,
+                    &skills,
                     &author,
                 )?,
                 status: SubmissionStatus::Queued,
@@ -464,7 +497,11 @@ impl Harness {
 
 fn place(tx: &mut Tx<'_>, submission: &Submission) -> Result<()> {
     if let Input::Text { text } = &submission.input {
-        tx.append(kinds::USER, &submission.author, json!({ "text": text }))?;
+        let mut data = json!({ "text": text });
+        if !submission.skills.is_empty() {
+            data["skills"] = serde_json::to_value(&submission.skills)?;
+        }
+        tx.append(kinds::USER, &submission.author, data)?;
     }
     tx.set_submission_status(&submission.id, SubmissionStatus::Placed)?;
     tx.set_status(ConversationStatus::Working)
