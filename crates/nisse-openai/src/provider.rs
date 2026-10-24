@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
 use nisse_core::{
-    Provider, ProviderFuture, ToolCall, Turn, approval_for, builtin_tools, run_builtin_tool,
+    Approval, Provider, ProviderFuture, ToolCall, ToolOutcome, Turn, approval_for, builtin_tools,
+    run_builtin_tool,
 };
 use nisse_protocol::{Entry, kinds};
 use reqwest::StatusCode;
@@ -11,6 +12,8 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth::{AUTH_BASE, Credentials, ORIGINATOR},
+    catalog::wants_code_mode,
+    code_mode::{CodeMode, EXEC, HOST_PROGRAM, NestedTools, Run, WAIT},
     record::Recorder,
     sse::Events,
 };
@@ -29,6 +32,9 @@ pub struct OpenAiOptions {
     pub instructions: String,
     /// A folder to write one fixture per turn into.
     pub record: Option<PathBuf>,
+    /// Codex's code-mode host, for the models that work in code mode.
+    pub code_mode_host: PathBuf,
+    pub nested_tools: NestedTools,
 }
 
 impl OpenAiOptions {
@@ -39,6 +45,8 @@ impl OpenAiOptions {
             base_url: BASE_URL.into(),
             instructions: instructions.into(),
             record: None,
+            code_mode_host: HOST_PROGRAM.into(),
+            nested_tools: NestedTools::default(),
         }
     }
 }
@@ -47,6 +55,7 @@ pub struct OpenAi {
     options: OpenAiOptions,
     http: reqwest::Client,
     signing_in: Mutex<()>,
+    code_mode: CodeMode,
 }
 
 #[derive(Default)]
@@ -57,18 +66,31 @@ struct Response {
 
 impl OpenAi {
     pub fn new(options: OpenAiOptions) -> Result<Self> {
+        let code_mode = CodeMode::new(options.code_mode_host.clone(), options.nested_tools);
         Ok(Self {
             options,
             http: crate::http_client()?,
             signing_in: Mutex::new(()),
+            code_mode,
         })
     }
 
     async fn answer(&self, turn: &Turn) -> Result<()> {
         let model = turn.model().unwrap_or(MODEL);
+        let run = wants_code_mode(model)
+            .then(|| self.code_mode.begin(turn))
+            .transpose()?;
+        let answered = self.answer_in(turn, model, run.as_ref()).await;
+        if let Some(run) = run {
+            run.finish().await;
+        }
+        answered
+    }
+
+    async fn answer_in(&self, turn: &Turn, model: &str, run: Option<&Run>) -> Result<()> {
         let mut recorder = Recorder::start(self.options.record.as_deref(), model)?;
         loop {
-            let body = self.request_body(turn, model, &turn.transcript()?);
+            let body = self.request_body(turn, model, run.is_some(), &turn.transcript()?);
             let Response {
                 mut messages,
                 calls,
@@ -87,27 +109,50 @@ impl OpenAi {
                 turn.say(message)?;
             }
             for call in calls {
-                let approval = approval_for(&call.name);
-                turn.call_tool(call, approval, run_builtin_tool(turn.cwd()))
-                    .await?;
+                match run {
+                    Some(run) if [EXEC, WAIT].contains(&call.name.as_str()) => {
+                        run.call(call).await?;
+                    }
+                    Some(_) => {
+                        let unknown = format!("no tool named {}; use exec", call.name);
+                        turn.call_tool(call, Approval::NotNeeded, move |_| {
+                            ToolOutcome::error(unknown)
+                        })
+                        .await?;
+                    }
+                    None => {
+                        let approval = approval_for(&call.name);
+                        turn.call_tool(call, approval, run_builtin_tool(turn.cwd()))
+                            .await?;
+                    }
+                }
             }
             turn.place_steers()?;
         }
     }
 
-    fn request_body(&self, turn: &Turn, model: &str, transcript: &[Entry]) -> Value {
-        let tools: Vec<Value> = builtin_tools()
-            .into_iter()
-            .map(|tool| {
-                json!({
-                    "type": "function",
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                    "strict": false,
+    fn request_body(
+        &self,
+        turn: &Turn,
+        model: &str,
+        in_code_mode: bool,
+        transcript: &[Entry],
+    ) -> Value {
+        let tools: Vec<Value> = match in_code_mode {
+            true => self.code_mode.tools(),
+            false => builtin_tools()
+                .into_iter()
+                .map(|tool| {
+                    json!({
+                        "type": "function",
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                        "strict": false,
+                    })
                 })
-            })
-            .collect();
+                .collect(),
+        };
         json!({
             "model": model,
             "instructions": format!(
@@ -203,8 +248,13 @@ impl Provider for OpenAi {
     }
 }
 
+/// The entry as the model sees it. The calls a script made are the script's business: the model
+/// sees what the script reported.
 fn input_item(entry: &Entry) -> Option<Value> {
     let data = &entry.data;
+    if data.get("parent").is_some_and(Value::is_string) {
+        return None;
+    }
     match entry.kind.as_str() {
         kinds::USER => Some(json!({
             "type": "message",
@@ -215,6 +265,17 @@ fn input_item(entry: &Entry) -> Option<Value> {
             "type": "message",
             "role": "assistant",
             "content": [{ "type": "output_text", "text": data["text"] }],
+        })),
+        kinds::TOOL_CALL if data["name"] == EXEC => Some(json!({
+            "type": "custom_tool_call",
+            "call_id": data["id"],
+            "name": EXEC,
+            "input": data["args"].as_str().unwrap_or_default(),
+        })),
+        kinds::TOOL_RESULT if data["name"] == EXEC => Some(json!({
+            "type": "custom_tool_call_output",
+            "call_id": data["call_id"],
+            "output": tool_output(data),
         })),
         kinds::TOOL_CALL => Some(json!({
             "type": "function_call",
@@ -228,12 +289,16 @@ fn input_item(entry: &Entry) -> Option<Value> {
         kinds::TOOL_RESULT => Some(json!({
             "type": "function_call_output",
             "call_id": data["call_id"],
-            "output": match data["denied"].as_str() {
-                Some(reason) => format!("denied: {reason}"),
-                None => data["output"].as_str().unwrap_or_default().to_owned(),
-            },
+            "output": tool_output(data),
         })),
         _ => None,
+    }
+}
+
+fn tool_output(result: &Value) -> String {
+    match result["denied"].as_str() {
+        Some(reason) => format!("denied: {reason}"),
+        None => result["output"].as_str().unwrap_or_default().to_owned(),
     }
 }
 
@@ -262,6 +327,7 @@ async fn read_stream(
                     }
                 }
                 Some("function_call") => finished.calls.push(tool_call(item)?),
+                Some("custom_tool_call") => finished.calls.push(custom_tool_call(item)?),
                 _ => {}
             },
             "response.completed" | "response.done" => return Ok(finished),
@@ -300,6 +366,19 @@ fn tool_call(item: &Value) -> Result<ToolCall> {
         id: id.into(),
         name: item["name"].as_str().unwrap_or_default().into(),
         args: serde_json::from_str(arguments).unwrap_or_else(|_| json!(arguments)),
+        parent: None,
+    })
+}
+
+fn custom_tool_call(item: &Value) -> Result<ToolCall> {
+    let id = item["call_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("a custom tool call without a call_id"))?;
+    Ok(ToolCall {
+        id: id.into(),
+        name: item["name"].as_str().unwrap_or_default().into(),
+        args: item["input"].as_str().unwrap_or_default().into(),
+        parent: None,
     })
 }
 

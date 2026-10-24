@@ -286,6 +286,9 @@ pub fn pending_approval(entries: &[Entry]) -> Option<&str> {
 }
 
 fn args_summary(args: &Value) -> String {
+    if let Some(script) = args.as_str() {
+        return script.to_owned();
+    }
     ["command", "file_path", "path", "pattern"]
         .into_iter()
         .find_map(|key| args[key].as_str())
@@ -386,7 +389,26 @@ fn approval_lines(
     lines
 }
 
+/// An entry's lines; a call a script made, and what came of it, sit inside the script's card.
 fn entry_lines(entry: &Entry, calls: &Calls, width: usize, theme: &Theme) -> Vec<Line<'static>> {
+    if !entry.data["parent"].is_string() {
+        return own_lines(entry, calls, width, theme);
+    }
+    let mut lines = own_lines(entry, calls, width.saturating_sub(2), theme);
+    if lines.last().is_some_and(|last| last.width() == 0) {
+        lines.pop();
+    }
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut nested = Line::from(Span::styled("┃ ", theme.fg(theme.faint)));
+            nested.spans.extend(line.spans);
+            nested
+        })
+        .collect()
+}
+
+fn own_lines(entry: &Entry, calls: &Calls, width: usize, theme: &Theme) -> Vec<Line<'static>> {
     let text = entry.data["text"].as_str().unwrap_or_default();
     let mut lines = match entry.kind.as_str() {
         kinds::USER => {

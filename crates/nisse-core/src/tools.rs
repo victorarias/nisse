@@ -15,6 +15,9 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub args: Value,
+    /// The call whose script made this one, as in code mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

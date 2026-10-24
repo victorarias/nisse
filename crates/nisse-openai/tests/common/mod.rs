@@ -5,14 +5,14 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    path::Path,
-    sync::{Arc, Mutex},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use nisse_client::Client;
-use nisse_core::{Harness, HarnessOptions, NoHooks, Store, same_hooks};
+use nisse_core::{Harness, HarnessOptions, Hooks, NoHooks, Store, same_hooks};
 use nisse_openai::{AuthServer, LoginMethod, LoginPrompt, OpenAi, OpenAiOptions, login_with};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, ApprovalResolveResult, ClientRequest, Conversation,
@@ -32,6 +32,8 @@ use tokio::{
 pub const PATIENCE: Duration = Duration::from_secs(10);
 pub const ACCOUNT: &str = "acct-test";
 pub const INSTRUCTIONS: &str = "You are a test.";
+pub const DIRECT_MODEL: &str = "gpt-5.5";
+pub const CODE_MODE_MODEL: &str = "gpt-6.1-sol";
 const ANY: &str = "<any>";
 
 #[derive(Debug, Clone)]
@@ -367,21 +369,44 @@ pub struct Nisse {
 }
 
 impl Nisse {
+    /// On a model that takes direct tools.
     pub async fn start(fake: &Fake, auth_path: &Path) -> Self {
-        Self::recording(fake, auth_path, None).await
+        Self::with(fake, auth_path, DIRECT_MODEL, |_| {}).await
     }
 
     pub async fn recording(fake: &Fake, auth_path: &Path, record: Option<&Path>) -> Self {
+        Self::with(fake, auth_path, DIRECT_MODEL, |options| {
+            options.record = record.map(Path::to_owned)
+        })
+        .await
+    }
+
+    pub async fn with(
+        fake: &Fake,
+        auth_path: &Path,
+        model: &str,
+        change: impl FnOnce(&mut OpenAiOptions),
+    ) -> Self {
+        Self::with_hooks(fake, auth_path, model, change, Arc::new(NoHooks)).await
+    }
+
+    pub async fn with_hooks(
+        fake: &Fake,
+        auth_path: &Path,
+        model: &str,
+        change: impl FnOnce(&mut OpenAiOptions),
+        hooks: Arc<dyn Hooks>,
+    ) -> Self {
         let mut options = OpenAiOptions::new(auth_path, INSTRUCTIONS);
-        options.record = record.map(Path::to_owned);
         options.base_url = fake.base.clone();
         options.auth_base = fake.base.clone();
+        change(&mut options);
         let provider = Arc::new(OpenAi::new(options).unwrap());
         let harness = Harness::with_store(
             Store::open_in_memory().unwrap(),
             HarnessOptions {
                 providers: vec![("openai".into(), provider)],
-                hooks: same_hooks(Arc::new(NoHooks)),
+                hooks: same_hooks(hooks),
             },
         );
         let server = Server::new(harness, broadcast::channel(16).0, owner());
@@ -392,7 +417,7 @@ impl Nisse {
                 title: None,
                 cwd: std::env::current_dir().unwrap(),
                 provider: None,
-                model: None,
+                model: Some(model.into()),
             }))
             .await
             .unwrap();
@@ -499,6 +524,25 @@ impl Nisse {
         std::mem::take(&mut self.committed)
     }
 
+    /// The next entry of `kind` the run commits, keeping what it committed before for `finish`.
+    pub async fn next(&mut self, kind: &str) -> Entry {
+        tokio::time::timeout(PATIENCE, async {
+            loop {
+                if let Some(ServerNotification::Committed(commit)) = self.notifications.recv().await
+                {
+                    for entry in commit.entries {
+                        self.committed.push(entry.clone());
+                        if entry.kind == kind {
+                            return entry;
+                        }
+                    }
+                }
+            }
+        })
+        .await
+        .expect("the entry was committed in time")
+    }
+
     async fn resolve(&self, request: &Entry, allow: bool) {
         let _: ApprovalResolveResult = self
             .client
@@ -520,4 +564,32 @@ pub fn exchange(entries: &[Entry]) -> Vec<(String, Value)> {
         .filter(|entry| entry.kind != kinds::APPROVAL_REQUEST && entry.kind != kinds::APPROVAL)
         .map(|entry| (entry.kind.clone(), entry.data.clone()))
         .collect()
+}
+
+/// Codex's code-mode host at the release Nisse pins, installed once into the target directory,
+/// or the one `NISSE_CODE_MODE_HOST` names.
+pub fn code_mode_host() -> PathBuf {
+    static HOST: OnceLock<PathBuf> = OnceLock::new();
+    HOST.get_or_init(|| {
+        if let Some(host) = std::env::var_os("NISSE_CODE_MODE_HOST") {
+            return host.into();
+        }
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let installed = std::process::Command::new(workspace.join("scripts/code-mode-host.sh"))
+            .arg(workspace.join("target/code-mode-host"))
+            .output()
+            .expect("scripts/code-mode-host.sh runs");
+        assert!(
+            installed.status.success(),
+            "installing the code-mode host failed: {}",
+            String::from_utf8_lossy(&installed.stderr)
+        );
+        PathBuf::from(String::from_utf8(installed.stdout).unwrap().trim())
+    })
+    .clone()
+}
+
+/// Code-mode scripts run by the real host.
+pub fn in_code_mode(options: &mut OpenAiOptions) {
+    options.code_mode_host = code_mode_host();
 }

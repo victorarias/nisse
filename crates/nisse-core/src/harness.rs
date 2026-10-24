@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use nisse_protocol::{
     Actor, ApprovalResolveParams, Commit, Conversation, ConversationReadResult,
     ConversationStartParams, ConversationStatus, ConversationSubmitParams,
-    ConversationSubmitResult, Input, Seq, SubmissionStatus, WhenBusy, kinds,
+    ConversationSubmitResult, Entry, Input, Seq, SubmissionStatus, WhenBusy, kinds,
 };
 use serde_json::json;
 use tokio::sync::{broadcast, oneshot, watch};
@@ -535,6 +535,7 @@ fn close_dangling_calls(tx: &mut Tx<'_>, cutoff: Cutoff, since: Seq) -> Result<(
                     .to_owned(),
                 name: entry.data["name"].as_str().unwrap_or_default().to_owned(),
                 args: entry.data["args"].clone(),
+                parent: entry.data["parent"].as_str().map(str::to_owned),
             },
             _ => continue,
         };
@@ -546,9 +547,9 @@ fn close_dangling_calls(tx: &mut Tx<'_>, cutoff: Cutoff, since: Seq) -> Result<(
         let waited_for_approval =
             asked.contains(&call.id) && !approved_or_denied.contains(&call.id);
         let outcome = ToolOutcome::error(if waited_for_approval {
-            cutoff.not_run()
+            cutoff.not_run().to_owned()
         } else {
-            cutoff.interrupted()
+            with_nested_results(cutoff.interrupted(), &call.id, &entries)
         });
         let mut result = tool_result(&call, &outcome);
         result["cut_off"] = true.into();
@@ -557,12 +558,47 @@ fn close_dangling_calls(tx: &mut Tx<'_>, cutoff: Cutoff, since: Seq) -> Result<(
     Ok(())
 }
 
+/// `interrupted`, followed by the results of the calls `parent` made that finished, so the model
+/// knows what a cut-off script already did.
+pub fn with_nested_results(interrupted: &str, parent: &str, entries: &[Entry]) -> String {
+    let nested: Vec<String> = entries
+        .iter()
+        .filter(|entry| entry.kind == kinds::TOOL_RESULT && entry.data["parent"] == parent)
+        .map(|result| {
+            format!(
+                "- {} ({}): {}",
+                result.data["name"].as_str().unwrap_or_default(),
+                if result.data["is_error"] == true {
+                    "failed"
+                } else {
+                    "done"
+                },
+                result.data["output"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .trim_end()
+            )
+        })
+        .collect();
+    if nested.is_empty() {
+        return interrupted.to_owned();
+    }
+    format!(
+        "{interrupted}\nThe calls it made that finished:\n{}",
+        nested.join("\n")
+    )
+}
+
 pub(crate) fn tool_result(call: &ToolCall, outcome: &ToolOutcome) -> serde_json::Value {
-    json!({
+    let mut result = json!({
         "call_id": call.id,
         "name": call.name,
         "output": outcome.output,
         "is_error": outcome.is_error,
         "denied": outcome.denied,
-    })
+    });
+    if let Some(parent) = &call.parent {
+        result["parent"] = parent.clone().into();
+    }
+    result
 }

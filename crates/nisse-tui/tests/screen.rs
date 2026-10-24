@@ -209,6 +209,7 @@ impl Provider for Asking {
                 id: "call-1".into(),
                 name: "Bash".into(),
                 args: serde_json::json!({ "command": "rm -rf build", "description": "Clean the build" }),
+                parent: None,
             };
             let outcome = turn
                 .call_tool(call, Approval::Ask, |_| ToolOutcome {
@@ -219,6 +220,63 @@ impl Provider for Asking {
             turn.answer(&format!("Done: {}", outcome.output.trim()))
         })
     }
+}
+
+/// Runs a script that reads a file, as a code-mode model does.
+struct Scripting;
+
+impl Provider for Scripting {
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let (read, finish) = std::sync::mpsc::channel::<()>();
+            let script = ToolCall {
+                id: "script".into(),
+                name: "exec".into(),
+                args: serde_json::json!(
+                    "const notes = await tools.Read({ file_path: \"notes.md\" });\ntext(notes.output);"
+                ),
+                parent: None,
+            };
+            let nested = ToolCall {
+                id: "script/1".into(),
+                name: "Read".into(),
+                args: serde_json::json!({ "file_path": "notes.md" }),
+                parent: Some("script".into()),
+            };
+            let (script, nested) = tokio::join!(
+                turn.call_tool(script, Approval::NotNeeded, move |_| {
+                    let _ = finish.recv();
+                    ToolOutcome::ok(
+                        "Script completed\nWall time 0.1 seconds\nOutput:\nwire the grid",
+                    )
+                }),
+                async move {
+                    let outcome = turn
+                        .call_tool(nested, Approval::NotNeeded, |_| {
+                            ToolOutcome::ok("     1\twire the grid")
+                        })
+                        .await;
+                    drop(read);
+                    outcome
+                },
+            );
+            nested?;
+            script?;
+            turn.answer("The notes say to wire the grid.")
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_script_s_calls_show_inside_its_card() {
+    let tui = Tui::with_model("scripting", Arc::new(Scripting)).await;
+    tui.screen.shows(&["READY"]).await;
+    tui.type_line("what do the notes say?");
+    let screen = tui
+        .screen
+        .shows(&["The notes say to wire the grid.", "READY"])
+        .await;
+    insta::assert_snapshot!(without_conversation_id(&screen));
 }
 
 #[tokio::test]

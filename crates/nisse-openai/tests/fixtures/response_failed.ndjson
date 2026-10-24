@@ -1,4 +1,4 @@
 {"type":"transcript_start","provider":"openai","scenario":"the response fails","metadata":{}}
-{"type":"expect_outbound","frame":{"model":"gpt-6.1-sol","instructions":"<any>","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":"<any>","tool_choice":"auto","parallel_tool_calls":true,"store":false,"stream":true,"prompt_cache_key":"<any>"}}
+{"type":"expect_outbound","frame":{"model":"gpt-5.5","instructions":"<any>","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":"<any>","tool_choice":"auto","parallel_tool_calls":true,"store":false,"stream":true,"prompt_cache_key":"<any>"}}
 {"type":"emit_inbound","frame":{"type":"response.created","response":{"id":"resp_1"}}}
 {"type":"emit_inbound","frame":{"type":"response.failed","response":{"id":"resp_1","status":"failed","error":{"code":"server_error","message":"The model crashed."}}}}

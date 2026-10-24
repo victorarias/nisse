@@ -430,6 +430,7 @@ impl Session {
                     id: input["tool_use_id"].as_str().unwrap_or_default().to_owned(),
                     name: input["tool_name"].as_str().unwrap_or_default().to_owned(),
                     args: input["tool_input"].clone(),
+                    parent: None,
                 };
                 let (waiter, result) = oneshot::channel();
                 self.calls.insert(
@@ -471,6 +472,7 @@ impl Session {
                         .to_owned(),
                     name: request["tool_name"].as_str().unwrap_or_default().to_owned(),
                     args: request["input"].clone(),
+                    parent: None,
                 };
                 let reason = request["decision_reason"]
                     .as_str()

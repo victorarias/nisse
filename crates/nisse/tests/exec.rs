@@ -31,6 +31,7 @@ impl Provider for TwoCommands {
                     id: id.into(),
                     name: "Bash".into(),
                     args: serde_json::json!({ "command": command }),
+                    parent: None,
                 };
                 turn.call_tool(call, Approval::Ask, move |_| ToolOutcome {
                     output: format!("ran {command}\n"),

@@ -255,7 +255,13 @@ impl Turn {
             tx.append(
                 kinds::APPROVAL_REQUEST,
                 &self.actor,
-                json!({ "call_id": call.id, "name": call.name, "args": call.args, "reason": reason }),
+                json!({
+                    "call_id": call.id,
+                    "name": call.name,
+                    "args": call.args,
+                    "reason": reason,
+                    "parent": call.parent,
+                }),
             )?;
             tx.set_status(ConversationStatus::NeedsApproval)
         })?;

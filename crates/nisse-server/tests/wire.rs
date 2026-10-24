@@ -447,6 +447,7 @@ impl Provider for Careful {
                 id: format!("call-{command}"),
                 name: "Bash".into(),
                 args: serde_json::json!({ "command": command }),
+                parent: None,
             };
             let outcome = turn
                 .call_tool(
@@ -551,6 +552,7 @@ fn ask_to_run(command: &str) -> nisse_core::ToolCall {
         id: format!("call-{command}"),
         name: "Bash".into(),
         args: serde_json::json!({ "command": command }),
+        parent: None,
     }
 }
 
@@ -744,6 +746,87 @@ fn a_call_waiting_for_approval_when_nisse_restarts_is_not_run_and_the_model_hear
     });
 }
 
+/// Runs a script that makes one call, which finishes, and then never finishes itself.
+struct StuckScript;
+
+impl Provider for StuckScript {
+    fn run<'a>(&'a self, turn: &'a Turn) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let call = |id: &str, name: &str, parent: Option<&str>| nisse_core::ToolCall {
+                id: id.into(),
+                name: name.into(),
+                args: serde_json::json!("await tools.Bash({ command: 'echo made it' })"),
+                parent: parent.map(str::to_owned),
+            };
+            let script = turn.call_tool(
+                call("script", "exec", None),
+                nisse_core::Approval::NotNeeded,
+                |_| loop {
+                    std::thread::park();
+                },
+            );
+            let nested = turn.call_tool(
+                call("script/1", "Bash", Some("script")),
+                nisse_core::Approval::NotNeeded,
+                |_| nisse_core::ToolOutcome::ok("made it\n"),
+            );
+            let (script, nested) = tokio::join!(script, nested);
+            nested?;
+            script?;
+            Ok(())
+        })
+    }
+}
+
+#[test]
+fn a_script_cut_off_by_a_restart_is_closed_with_the_results_of_the_calls_it_made() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("nisse.sqlite");
+
+    let crashed = tokio::runtime::Runtime::new().unwrap();
+    let conversation = crashed.block_on(async {
+        let server = start(
+            Store::open(&path).unwrap(),
+            Arc::new(StuckScript),
+            Arc::new(NoHooks),
+            broadcast::channel(16).0,
+        );
+        let (client, mut notifications) = connect(&server).await;
+        let conversation = create(&client).await;
+        subscribe(&client, &conversation, 0).await;
+        submit(&client, &conversation, "run the script").await;
+        entries_until(&mut notifications, kinds::TOOL_RESULT).await;
+        conversation
+    });
+    crashed.shutdown_background();
+
+    let reopened = tokio::runtime::Runtime::new().unwrap();
+    reopened.block_on(async {
+        let server = start(
+            Store::open(&path).unwrap(),
+            echo(),
+            Arc::new(NoHooks),
+            broadcast::channel(16).0,
+        );
+        let (client, mut notifications) = connect(&server).await;
+        let mut entries = subscribe(&client, &conversation, 0).await.entries;
+        while !entries.iter().any(|entry| entry.kind == kinds::ASSISTANT) {
+            entries.extend(entries_until(&mut notifications, kinds::ASSISTANT).await);
+        }
+
+        let script = entries
+            .iter()
+            .find(|entry| entry.kind == kinds::TOOL_RESULT && entry.data["call_id"] == "script")
+            .unwrap();
+        assert_eq!(
+            script.data["output"],
+            "interrupted: nisse stopped while this ran; it may or may not have taken effect\n\
+             The calls it made that finished:\n\
+             - Bash (done): made it"
+        );
+    });
+}
+
 #[tokio::test]
 async fn streamed_text_shows_live_until_the_message_is_committed() {
     let server = start(
@@ -783,6 +866,7 @@ impl Provider for Scripted {
                     id: format!("call-{index}"),
                     name: call["name"].as_str().unwrap().into(),
                     args: call["args"].clone(),
+                    parent: None,
                 };
                 let approval = nisse_core::approval_for(&call.name);
                 turn.call_tool(call, approval, nisse_core::run_builtin_tool(turn.cwd()))
@@ -1058,6 +1142,7 @@ impl Provider for TwoAtOnce {
                 id: id.into(),
                 name: "Bash".into(),
                 args: serde_json::json!({ "command": format!("echo {id}") }),
+                parent: None,
             };
             let (first, second) = tokio::join!(
                 turn.call_tool(
