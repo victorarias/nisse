@@ -24,6 +24,8 @@ use tokio::sync::{broadcast, mpsc};
 const IDLE_GRACE: Duration = Duration::from_secs(30);
 /// How long a client waits for the server it started to answer.
 const STARTUP_PATIENCE: Duration = Duration::from_secs(10);
+/// How long an exiting server waits for its clients to take what it already committed.
+const CLOSE_PATIENCE: Duration = Duration::from_secs(5);
 /// `nisse serve` exits with this when another process already serves the home.
 const ALREADY_SERVED: i32 = 75;
 
@@ -306,6 +308,7 @@ async fn serve(config: &ServerConfig, stdio: bool, restart: bool, detached: bool
         served = server.clone().serve_unix(listener) => served,
         () = server.until_idle(grace) => {
             eprintln!("nisse: nothing to do; exiting");
+            server.close(CLOSE_PATIENCE).await;
             Ok(())
         }
         _ = tokio::signal::ctrl_c() => Ok(()),
