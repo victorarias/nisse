@@ -1,6 +1,7 @@
 //! Stack tests: the real `nisse` binary, driven over its socket, killed and restarted.
 
 use std::{
+    io::Write,
     path::Path,
     process::{Command, Stdio},
     time::Duration,
@@ -20,35 +21,42 @@ use tokio::{
 
 const PATIENCE: Duration = Duration::from_secs(20);
 
+fn nisse(home: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_nisse"));
+    command
+        .arg("--home")
+        .arg(home)
+        .args(["--provider", "echo"])
+        .current_dir(home)
+        .env("NISSE_ECHO_THINK_MS", "0")
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    command
+}
+
 async fn serve(home: &Path) -> Child {
-    let mut child = tokio::process::Command::from({
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nisse"));
-        command
-            .arg("--home")
-            .arg(home)
-            .arg("--provider")
-            .arg("echo")
-            .arg("serve")
-            .current_dir(home)
-            .env("NISSE_ECHO_THINK_MS", "0")
-            .stdin(Stdio::null())
-            .stderr(Stdio::piped());
-        command
-    })
-    .kill_on_drop(true)
-    .spawn()
-    .unwrap();
+    serve_until(home, "nisse: serving on").await
+}
+
+/// Starts `nisse serve` on the home and waits until it says `said`.
+async fn serve_until(home: &Path, said: &str) -> Child {
+    let mut child = nisse(home)
+        .arg("serve")
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
     tokio::time::timeout(PATIENCE, async {
         while let Some(line) = stderr.next_line().await.unwrap() {
-            if line.starts_with("nisse: serving on") {
+            if line.starts_with(said) {
                 return;
             }
         }
-        panic!("nisse serve exited before serving");
+        panic!("nisse serve exited before it said {said:?}");
     })
     .await
-    .expect("nisse serve never started serving");
+    .unwrap_or_else(|_| panic!("nisse serve never said {said:?}"));
+    tokio::spawn(async move { while let Ok(Some(_)) = stderr.next_line().await {} });
     child
 }
 
@@ -154,14 +162,7 @@ async fn a_second_server_on_one_home_refuses_to_start_and_the_first_keeps_servin
     let home = tempfile::tempdir().unwrap();
     let _first = serve(home.path()).await;
 
-    let second = tokio::process::Command::new(env!("CARGO_BIN_EXE_nisse"))
-        .arg("--home")
-        .arg(home.path())
-        .args(["--provider", "echo", "serve"])
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output();
-    let second = tokio::time::timeout(PATIENCE, second)
+    let second = tokio::time::timeout(PATIENCE, nisse(home.path()).arg("serve").output())
         .await
         .expect("the second server gave up in time")
         .unwrap();
@@ -178,33 +179,62 @@ async fn a_second_server_on_one_home_refuses_to_start_and_the_first_keeps_servin
         .unwrap();
 }
 
+const SLOW_TO_LOAD: &str = r#"
+nisse.log("loading")
+local sum = 0
+for i = 1, 5000000 do
+  sum += i
+end
+return function(on)
+  on("prompt.submit", function(nisse, e, next)
+    return next(e)
+  end)
+end
+"#;
+
 #[tokio::test]
-async fn a_client_attaches_to_the_server_an_exec_runs_in_its_own_process() {
+async fn a_client_started_while_the_server_loads_its_extensions_waits_for_it() {
     let home = tempfile::tempdir().unwrap();
-    let release = home.path().join("release.fifo");
+    let extension = home.path().join("extensions").join("slow");
+    std::fs::create_dir_all(&extension).unwrap();
+    std::fs::write(extension.join("init.luau"), SLOW_TO_LOAD).unwrap();
+    let _server = serve_until(home.path(), "nisse: extension slow: loading").await;
+
+    let exec = tokio::time::timeout(PATIENCE, nisse(home.path()).args(["exec", "hi"]).output())
+        .await
+        .expect("nisse exec finished in time")
+        .unwrap();
+
+    assert!(
+        exec.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exec.stderr)
+    );
+    assert!(String::from_utf8_lossy(&exec.stdout).contains("You said: hi"));
+}
+
+#[tokio::test]
+async fn a_second_client_on_the_home_an_exec_runs_stops_and_points_to_nisse_serve() {
+    let home = tempfile::tempdir().unwrap();
+    let fifo = home.path().join("release.fifo");
     assert!(
         Command::new("mkfifo")
-            .arg(&release)
+            .arg(&fifo)
             .status()
             .unwrap()
             .success()
     );
-    let mut exec = tokio::process::Command::from({
-        let mut command = Command::new(env!("CARGO_BIN_EXE_nisse"));
-        command
-            .arg("--home")
-            .arg(home.path())
-            .args(["--provider", "echo", "exec"])
-            .arg(format!("!cat {}", release.display()))
-            .current_dir(home.path())
-            .env("NISSE_ECHO_THINK_MS", "0")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped());
-        command
-    })
-    .kill_on_drop(true)
-    .spawn()
-    .unwrap();
+    let mut release = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&fifo)
+        .unwrap();
+    let mut exec = nisse(home.path())
+        .arg("exec")
+        .arg(format!("!timeout 20 head -n1 {}", fifo.display()))
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
     let mut printed = BufReader::new(exec.stdout.take().unwrap()).lines();
     tokio::time::timeout(PATIENCE, async {
         while let Some(line) = printed.next_line().await.unwrap() {
@@ -217,18 +247,18 @@ async fn a_client_attaches_to_the_server_an_exec_runs_in_its_own_process() {
     .await
     .expect("nisse exec ran the command in time");
 
-    let (client, _notifications) = attach(home.path()).await;
-    let listed: nisse_protocol::ConversationListResult = client
-        .request(ClientRequest::ConversationList(Default::default()))
+    let second = tokio::time::timeout(PATIENCE, nisse(home.path()).args(["exec", "hi"]).output())
         .await
+        .expect("the second client gave up in time")
         .unwrap();
-    let released = tokio::task::spawn_blocking(move || std::fs::write(release, "done\n"));
-    released.await.unwrap().unwrap();
+    release.write_all(b"done\n").unwrap();
     let ended = tokio::time::timeout(PATIENCE, exec.wait())
         .await
         .expect("nisse exec finished in time")
         .unwrap();
 
-    assert_eq!(listed.conversations.len(), 1);
+    assert!(!second.status.success());
+    let said = String::from_utf8_lossy(&second.stderr);
+    assert!(said.contains("use `nisse serve` to share it"), "{said}");
     assert!(ended.success());
 }

@@ -43,15 +43,15 @@ target/debug/nisse                         # the TUI, with Claude, in this direc
 target/debug/nisse login openai            # sign in with ChatGPT (--device on a headless box)
 target/debug/nisse --provider openai       # the TUI, with OpenAI
 target/debug/nisse exec 'what is in here?' # one prompt, headless; asks on stdin to approve
-target/debug/nisse serve                   # a server on NISSE_HOME/nisse.sock for other clients
+target/debug/nisse serve                   # a server on NISSE_HOME/nisse.sock that clients share
 target/debug/nisse schema                  # the protocol's JSON Schema
 ```
 
 `NISSE_HOME` (default `~/.nisse`) holds `nisse.sqlite`, `nisse.sock`,
 `auth/` and `extensions/`. One process serves a home at a time. A TUI or
-`exec` attaches to `NISSE_HOME/nisse.sock` when a server runs there; otherwise
-it runs the server in-process and serves the socket itself, so the next client
-attaches to it.
+`exec` attaches to `NISSE_HOME/nisse.sock` when `nisse serve` runs there;
+otherwise it runs the server in its own process, for itself alone, and another
+client on that home stops and points to `nisse serve`.
 
 | Setting | What it does |
 | --- | --- |

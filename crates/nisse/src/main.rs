@@ -1,4 +1,9 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -209,15 +214,11 @@ fn instructions(cwd: &std::path::Path) -> String {
     )
 }
 
-/// A server and its hold on the home: one process serves a home's store and runs at a time.
-struct Owner {
-    server: Arc<Server>,
-    _home: std::fs::File,
-}
+static HELD_HOME: OnceLock<File> = OnceLock::new();
 
-/// Starts this home's server, unless another process already serves it.
-fn start_server(config: &ServerConfig) -> Result<Option<Owner>> {
-    let home = &config.home;
+/// Takes the home for this process unless another process holds it: one process serves a
+/// home's store and runs at a time, and holds it until it exits.
+fn hold_home(home: &Path) -> Result<bool> {
     std::fs::create_dir_all(home).with_context(|| format!("creating {}", home.display()))?;
     let hold = std::fs::OpenOptions::new()
         .create(true)
@@ -225,10 +226,14 @@ fn start_server(config: &ServerConfig) -> Result<Option<Owner>> {
         .write(true)
         .open(home.join("nisse.lock"))?;
     match hold.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
-        Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+        Ok(()) => Ok(HELD_HOME.set(hold).is_ok()),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(false),
+        Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
     }
+}
+
+fn start_server(config: &ServerConfig) -> Result<Arc<Server>> {
+    let home = &config.home;
     let (ui, _) = broadcast::channel(256);
     let sink = ui.clone();
     let roots = [home.join("extensions"), PathBuf::from(".nisse/extensions")];
@@ -241,31 +246,31 @@ fn start_server(config: &ServerConfig) -> Result<Option<Owner>> {
         },
     )?;
     harness.resume()?;
-    Ok(Some(Owner {
-        server: Server::new(harness, ui, owner()),
-        _home: hold,
-    }))
+    Ok(Server::new(harness, ui, owner()))
 }
 
+/// Serves the home on its socket, or one client on stdio. The socket is bound before the server
+/// starts, so a client that arrives meanwhile waits for it.
 async fn serve(config: &ServerConfig, stdio: bool) -> Result<()> {
-    let Some(owner) = start_server(config)? else {
+    if !hold_home(&config.home)? {
         bail!("another nisse already serves {}", config.home.display());
-    };
+    }
     if stdio {
-        owner.server.clone().serve_stdio().await;
+        start_server(config)?.serve_stdio().await;
         return Ok(());
     }
     let socket = config.home.join("nisse.sock");
     let listener = Server::bind_unix(&socket)?;
+    let server = start_server(config)?;
     eprintln!("nisse: serving on {}", socket.display());
     tokio::select! {
-        served = owner.server.clone().serve_unix(listener) => served,
+        served = server.serve_unix(listener) => served,
         _ = tokio::signal::ctrl_c() => Ok(()),
     }
 }
 
-/// Attaches to the server of the home when one runs; otherwise runs it in this process, serving
-/// the home's socket too, so the next client attaches here instead of opening the store again.
+/// Attaches to the home's server when one serves its socket; otherwise runs the server in this
+/// process, for this client alone.
 async fn connect(
     config: &ServerConfig,
     socket: Option<PathBuf>,
@@ -273,32 +278,29 @@ async fn connect(
     Client,
     mpsc::UnboundedReceiver<ServerNotification>,
     InitializeResult,
-    Option<Owner>,
+    Option<Arc<Server>>,
 )> {
     let explicit = socket.is_some();
     let socket = socket.unwrap_or_else(|| config.home.join("nisse.sock"));
-    let (client, notifications, owner) = match Client::connect_unix(&socket).await {
+    let (client, notifications, embedded) = match Client::connect_unix(&socket).await {
         Ok((client, notifications)) => (client, notifications, None),
         Err(error) if explicit => return Err(error),
-        Err(_) => match start_server(config)? {
-            Some(owner) => {
-                let listener = Server::bind_unix(&socket)?;
-                tokio::spawn(owner.server.clone().serve_unix(listener));
-                let (client, notifications) = Client::new(owner.server.connect_in_process());
-                (client, notifications, Some(owner))
-            }
-            None => {
-                let (client, notifications) =
-                    Client::connect_unix(&socket).await.with_context(|| {
-                        format!(
-                            "another nisse serves {} without its socket, as `nisse serve --stdio` does",
-                            config.home.display()
-                        )
-                    })?;
-                (client, notifications, None)
-            }
-        },
+        Err(_) if hold_home(&config.home)? => {
+            let server = start_server(config)?;
+            let (client, notifications) = Client::new(server.connect_in_process());
+            (client, notifications, Some(server))
+        }
+        Err(_) => {
+            let (client, notifications) =
+                Client::connect_unix(&socket).await.with_context(|| {
+                    format!(
+                        "another nisse runs {} in its own process; use `nisse serve` to share it",
+                        config.home.display()
+                    )
+                })?;
+            (client, notifications, None)
+        }
     };
     let hello = client.initialize("nisse-cli").await?;
-    Ok((client, notifications, hello, owner))
+    Ok((client, notifications, hello, embedded))
 }
