@@ -1632,6 +1632,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "tokio",
+ "unicode-width",
  "uuid",
  "vt100",
 ]

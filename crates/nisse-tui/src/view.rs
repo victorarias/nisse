@@ -12,6 +12,7 @@ use ratatui::{
     widgets::{Block, BorderType, Padding, Paragraph},
 };
 use serde_json::Value;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use nisse_protocol::AuthState;
 
@@ -863,28 +864,61 @@ fn tool_result_lines(entry: &Entry, width: usize, theme: &Theme) -> Vec<Line<'st
 }
 
 fn truncate(text: &str, room: usize) -> String {
-    let first_line = text.lines().next().unwrap_or_default();
-    if first_line.chars().count() <= room && !text.contains('\n') {
-        return first_line.to_owned();
+    let first_line = expand_tabs(text.lines().next().unwrap_or_default());
+    if first_line.width() <= room && !text.contains('\n') {
+        return first_line;
     }
-    let kept: String = first_line.chars().take(room.saturating_sub(1)).collect();
-    format!("{kept}…")
+    let mut kept = take_cells(&first_line, room.saturating_sub(1)).to_owned();
+    kept.push('…');
+    kept
 }
 
 fn wrap(text: &str, width: usize) -> Vec<String> {
     let width = width.max(8);
     text.split('\n')
         .flat_map(|line| {
-            let characters: Vec<char> = line.chars().collect();
-            if characters.is_empty() {
-                return vec![String::new()];
+            let line = expand_tabs(line);
+            let mut rest = line.as_str();
+            let mut rows = Vec::new();
+            loop {
+                let row = take_cells(rest, width);
+                rows.push(row.to_owned());
+                rest = &rest[row.len()..];
+                if rest.is_empty() {
+                    return rows;
+                }
             }
-            characters
-                .chunks(width)
-                .map(|chunk| chunk.iter().collect())
-                .collect()
         })
         .collect()
+}
+
+const TAB_STOP: usize = 8;
+
+fn expand_tabs(line: &str) -> String {
+    let mut expanded = String::with_capacity(line.len());
+    let mut column = 0;
+    for character in line.chars() {
+        if character == '\t' {
+            let gap = TAB_STOP - column % TAB_STOP;
+            expanded.extend(std::iter::repeat_n(' ', gap));
+            column += gap;
+        } else {
+            expanded.push(character);
+            column += character.width().unwrap_or_default();
+        }
+    }
+    expanded
+}
+
+fn take_cells(text: &str, cells: usize) -> &str {
+    let mut used = 0;
+    for (index, character) in text.char_indices() {
+        used += character.width().unwrap_or_default();
+        if used > cells {
+            return &text[..index];
+        }
+    }
+    text
 }
 
 fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
@@ -905,15 +939,18 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
         )));
     }
     let room = area.width.saturating_sub(8) as usize;
-    let typed: String = app
+    let mut used = 0;
+    let tail = app
         .input
-        .chars()
+        .char_indices()
         .rev()
-        .take(room)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
+        .take_while(|(_, character)| {
+            used += character.width().unwrap_or_default();
+            used <= room
+        })
+        .last()
+        .map_or(app.input.len(), |(start, _)| start);
+    let typed = app.input[tail..].to_owned();
     let mut spans = vec![Span::styled("❯ ", theme.glow(theme.magenta))];
     if typed.is_empty() {
         spans.push(Span::styled("▍", theme.glow(theme.magenta)));
