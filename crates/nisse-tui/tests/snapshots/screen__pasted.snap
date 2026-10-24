@@ -1,0 +1,28 @@
+---
+source: crates/nisse-tui/tests/screen.rs
+expression: without_conversation_id(&typed)
+---
+░▒▓ N I S S E ▓▒░ // conversation [id]
+
+
+
+
+       D U R A B L E  ·  M U L T I P L A Y E R  ·  C O D I N G   A G E N T
+
+                       ━━━━━━━━━━━━━━━━ ◆ ━━━━━━━━━━━━━━━━
+
+                                  ● echo  ready
+
+       ⏎  send    !cmd  shell    /model  model    PgUp  scroll    ^C  quit
+
+
+
+
+
+╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
+│ ❯ wire the grid                                                              │
+│   light the sign                                                             │
+│   sweep the alley                                                            │
+│   then rest▍                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ■ READY ▓▒░                                               echo  │  nisse 0.1.0

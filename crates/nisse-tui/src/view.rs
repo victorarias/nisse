@@ -24,10 +24,12 @@ use crate::{
 const SPINNER: [char; 8] = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
 
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
+    let typed = wrap(&app.input, input_room(frame.area().width));
+    let shown_rows = typed.len().min(INPUT_ROWS);
     let [header, transcript, input, status] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Fill(1),
-        Constraint::Length(3),
+        Constraint::Length(shown_rows as u16 + 2),
         Constraint::Length(1),
     ])
     .areas(frame.area());
@@ -43,7 +45,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme) {
     } else {
         draw_transcript(frame, transcript, app, theme);
     }
-    draw_input(frame, input, app, theme);
+    draw_input(frame, input, app, &typed, theme);
     frame.render_widget(
         Paragraph::new(status_left(app, theme)).style(theme.bar()),
         status,
@@ -887,7 +889,15 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
+const INPUT_ROWS: usize = 6;
+
+/// The columns a prompt row holds, leaving the border, padding, marker and cursor theirs.
+fn input_room(width: u16) -> usize {
+    width.saturating_sub(8) as usize
+}
+
+/// The prompt, over as many rows as its lines need up to [`INPUT_ROWS`], showing the newest.
+fn draw_input(frame: &mut Frame, area: Rect, app: &App, typed: &[String], theme: &Theme) {
     let working = app.status == ConversationStatus::Working;
     let accent = if working { theme.faint } else { theme.magenta };
     let mut block = Block::bordered()
@@ -904,36 +914,43 @@ fn draw_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
             theme.glow(theme.yellow),
         )));
     }
-    let room = area.width.saturating_sub(8) as usize;
-    let typed: String = app
-        .input
-        .chars()
-        .rev()
-        .take(room)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    let mut spans = vec![Span::styled("❯ ", theme.glow(theme.magenta))];
-    if typed.is_empty() {
-        spans.push(Span::styled("▍", theme.glow(theme.magenta)));
-        spans.push(Span::styled(
-            if app.pending_approval().is_some() {
-                "^Y to allow, ^N to deny, or type a message"
-            } else if app.awaits_callback() {
-                "paste the address your browser ended on"
-            } else if working {
-                "type to queue a follow-up, or Esc to stop"
-            } else {
-                "type a message, or !cmd to run a shell command"
-            },
-            theme.fg(theme.faint),
-        ));
-    } else {
-        spans.push(Span::styled(typed, theme.fg(theme.ink)));
-        spans.push(Span::styled("▍", theme.glow(theme.magenta)));
+    if app.input.is_empty() {
+        let line = Line::from(vec![
+            Span::styled("❯ ", theme.glow(theme.magenta)),
+            Span::styled("▍", theme.glow(theme.magenta)),
+            Span::styled(
+                if app.pending_approval().is_some() {
+                    "^Y to allow, ^N to deny, or type a message"
+                } else if app.awaits_callback() {
+                    "paste the address your browser ended on"
+                } else if working {
+                    "type to queue a follow-up, or Esc to stop"
+                } else {
+                    "type a message, or !cmd to run a shell command"
+                },
+                theme.fg(theme.faint),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(line).block(block), area);
+        return;
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
+    let hidden = typed.len().saturating_sub(INPUT_ROWS);
+    let mut lines: Vec<Line> = typed
+        .iter()
+        .enumerate()
+        .skip(hidden)
+        .map(|(index, row)| {
+            let marker = if index == 0 { "❯ " } else { "  " };
+            Line::from(vec![
+                Span::styled(marker, theme.glow(theme.magenta)),
+                Span::styled(row.clone(), theme.fg(theme.ink)),
+            ])
+        })
+        .collect();
+    if let Some(last) = lines.last_mut() {
+        last.push_span(Span::styled("▍", theme.glow(theme.magenta)));
+    }
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn status_left(app: &App, theme: &Theme) -> Line<'static> {

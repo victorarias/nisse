@@ -117,7 +117,7 @@ pub async fn run(
     notice: Option<String>,
     theme: Theme,
 ) -> Result<()> {
-    let mut terminal = ratatui::init();
+    let mut terminal = host::take_over();
     let outcome = drive(
         &mut terminal,
         host::Tty::new(),
@@ -128,7 +128,7 @@ pub async fn run(
         theme,
     )
     .await;
-    ratatui::restore();
+    host::release();
     outcome
 }
 
@@ -559,6 +559,11 @@ impl App {
 
     /// Returns true when the user quits.
     async fn on_event(&mut self, event: Event, client: &Client, host: &impl Host) -> Result<bool> {
+        if let Event::Paste(pasted) = &event {
+            self.input
+                .push_str(&pasted.replace("\r\n", "\n").replace('\r', "\n"));
+            return Ok(false);
+        }
         let Event::Key(KeyEvent {
             code,
             modifiers,
@@ -597,6 +602,7 @@ impl App {
                     .await;
                 self.error = interrupted.err().map(|error| error.to_string());
             }
+            (KeyCode::Enter, KeyModifiers::ALT) => self.input.push('\n'),
             (KeyCode::Enter, _)
                 if self.awaits_callback() && self.input.trim().starts_with("http") =>
             {
