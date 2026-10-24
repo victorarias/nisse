@@ -197,14 +197,16 @@ async fn main() -> Result<()> {
                 Some(id) => nisse_tui::Open::Existing(id),
                 None => nisse_tui::Open::New(start),
             };
-            nisse_tui::run(
+            let conversation_id = nisse_tui::run(
                 client,
                 notifications,
                 open,
                 notice,
                 nisse_tui::Theme::from_env(),
             )
-            .await
+            .await?;
+            println!("nisse --conversation {conversation_id}");
+            Ok(())
         }
     }
 }
