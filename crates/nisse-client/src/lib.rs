@@ -19,7 +19,9 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
-type Pending = Arc<Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, RpcError>>>>>;
+type Waiters = HashMap<RequestId, oneshot::Sender<Result<Value, RpcError>>>;
+
+type Pending = Arc<Mutex<Option<Waiters>>>;
 
 #[derive(Clone)]
 pub struct Client {
@@ -35,7 +37,7 @@ impl Client {
             outgoing,
             mut incoming,
         } = channels;
-        let pending: Pending = Arc::default();
+        let pending: Pending = Arc::new(Mutex::new(Some(Waiters::new())));
         let (notify, notifications) = mpsc::unbounded_channel();
         let routing = pending.clone();
         tokio::spawn(async move {
@@ -51,11 +53,16 @@ impl Client {
                     }
                     Message::Request(_) => continue,
                 };
-                if let Some(waiter) = routing.lock().expect("pending lock").remove(&id) {
+                let waiter = routing
+                    .lock()
+                    .expect("pending lock")
+                    .as_mut()
+                    .and_then(|waiters| waiters.remove(&id));
+                if let Some(waiter) = waiter {
                     let _ = waiter.send(answer);
                 }
             }
-            routing.lock().expect("pending lock").clear();
+            routing.lock().expect("pending lock").take();
         });
         (
             Self {
@@ -95,15 +102,21 @@ impl Client {
         self.pending
             .lock()
             .expect("pending lock")
+            .as_mut()
+            .ok_or_else(closed)?
             .insert(id.clone(), answer);
         self.outgoing
             .send(Message::Request(call.into_request(id)))
             .await
-            .map_err(|_| anyhow!("the server closed the connection"))?;
+            .map_err(|_| closed())?;
         let result = answered
             .await
-            .map_err(|_| anyhow!("the server closed the connection"))?
+            .map_err(|_| closed())?
             .map_err(|error| anyhow!("{} ({})", error.message, error.code))?;
         Ok(serde_json::from_value(result)?)
     }
+}
+
+fn closed() -> anyhow::Error {
+    anyhow!("the server closed the connection")
 }
