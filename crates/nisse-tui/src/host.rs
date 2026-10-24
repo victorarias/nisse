@@ -4,7 +4,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use crossterm::event::{Event, EventStream};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste, Event, EventStream};
 use futures_util::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
@@ -26,6 +26,19 @@ pub trait Host: Send {
     /// Whether the person sits at another machine, as over SSH, so a browser there can't call
     /// back to this one.
     fn is_remote(&self) -> bool;
+}
+
+/// Takes over the process's terminal, with a paste arriving whole rather than as typed keys.
+pub(crate) fn take_over() -> ratatui::DefaultTerminal {
+    let terminal = ratatui::init();
+    let _ = crossterm::execute!(std::io::stdout(), EnableBracketedPaste);
+    terminal
+}
+
+/// Gives the terminal back as it was before [`take_over`].
+pub(crate) fn release() {
+    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
+    ratatui::restore();
 }
 
 /// The process's own terminal.
@@ -91,7 +104,7 @@ impl Host for Tty {
         if self.pauses.send((released, resumed)).is_err() || let_go.await.is_err() {
             return false;
         }
-        ratatui::restore();
+        release();
         let succeeded = tokio::process::Command::new(program)
             .args(args)
             .envs(env)
@@ -99,7 +112,11 @@ impl Host for Tty {
             .await
             .is_ok_and(|status| status.success());
         let _ = crossterm::terminal::enable_raw_mode();
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen);
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::EnterAlternateScreen,
+            EnableBracketedPaste
+        );
         let _ = resume.send(());
         succeeded
     }

@@ -201,6 +201,10 @@ impl Tui {
         }
     }
 
+    fn paste(&self, text: &str) {
+        self.keys.send(Event::Paste(text.into())).unwrap();
+    }
+
     fn press(&self, code: KeyCode) {
         self.chord(code, KeyModifiers::NONE);
     }
@@ -386,6 +390,27 @@ async fn the_model_s_unfinished_message_shows_live_until_it_is_committed() {
 
     insta::assert_snapshot!("streaming", steady(&without_conversation_id(&streaming)));
     insta::assert_snapshot!("answered", without_conversation_id(&answered));
+}
+
+#[tokio::test]
+async fn pasted_lines_stay_in_the_prompt_and_send_as_one_message() {
+    let tui = Tui::start().await;
+    tui.screen.shows(&["READY"]).await;
+    tui.paste("wire the grid\r\nlight the sign\rsweep the alley");
+    tui.chord(KeyCode::Enter, KeyModifiers::ALT);
+    tui.type_text("then rest");
+    let typed = tui
+        .screen
+        .shows(&["❯ wire the grid", "light the sign", "then rest▍"])
+        .await;
+    tui.press(KeyCode::Enter);
+    let sent = tui
+        .screen
+        .shows(&["You said: wire the grid", "then rest", "READY"])
+        .await;
+
+    insta::assert_snapshot!("pasted", without_conversation_id(&typed));
+    insta::assert_snapshot!("sent", without_conversation_id(&sent));
 }
 
 #[tokio::test]

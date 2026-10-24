@@ -1,0 +1,29 @@
+---
+source: crates/nisse-tui/tests/screen.rs
+assertion_line: 410
+expression: without_conversation_id(&sent)
+---
+░▒▓ N I S S E ▓▒░ // conversation [id]
+
+  OWNER ▓▒░ ───────────────────────────────────────────────────────────────────
+   wire the grid
+   light the sign
+   sweep the alley
+   then rest
+
+  NISSE ▓▒░ ───────────────────────────────────────────────────────────────────
+   You said: wire the grid
+   light the sign
+   sweep the alley
+   then rest
+
+
+
+
+
+
+
+╭ PROMPT ──────────────────────────────────────────────────────────────────────╮
+│ ❯ ▍type a message, or !cmd to run a shell command                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ■ READY ▓▒░                                               echo  │  nisse 0.1.0
