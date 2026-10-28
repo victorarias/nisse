@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { AuthState, Delivery, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { installedCodeModeHost } from "./support/code-mode-host.ts"
 import { accessToken, ACCOUNT, EMAIL, FakeOpenAi, matches, signIn } from "./support/openai.ts"
@@ -649,6 +649,44 @@ withCodeModeHost("a script that yields is resumed by wait", async () => {
   expect(yielded).toEndWith("started")
   expect(finished).toStartWith("Script completed\n")
   expect(finished).toEndWith("finished")
+  expectRequests(fake, expected)
+})
+
+withCodeModeHost("terminating a script ends the call it was waiting on before the model hears it stopped", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_terminate")
+  await using session = await conversationWith(fake, { ...inCodeMode, approvals: "ask" })
+  await session.submit("run it, then stop it")
+  await session.view.until(settled(1))
+  const entries = bodies(session.view.deliveries)
+  const bash = entries.find((body) => body._tag === "tool_call" && body.tool === "Bash") as { call: string }
+  const ended = entries.findIndex((body) => body._tag === "tool_result" && body.call === bash.call)
+  const waited = entries.findIndex((body) => body._tag === "tool_result" && body.call === "call_2")
+  expect(entries[ended]).toMatchObject({ output: "interrupted; it may or may not have taken effect", error: true })
+  expect(ended).toBeLessThan(waited)
+  const approval = entries.find((body) => body._tag === "approval") as { approval: string }
+  const late = await session.client.call("approval/resolve", {
+    conversation: session.conversation,
+    approval: approval.approval,
+    author: "ada",
+    allow: true,
+  })
+  expect(late.result).toEqual({ accepted: false })
+  expect(existsSync(join(session.server.home.dir, "late.txt"))).toBe(false)
+  expectRequests(fake, expected)
+})
+
+withCodeModeHost("a patch that moves a file to another spelling of its own path keeps the file", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_patch_same_path")
+  await using session = await conversationWith(fake, { ...inCodeMode, approvals: "auto" })
+  const notes = join(session.server.home.dir, "notes.txt")
+  writeFileSync(notes, "draft\n")
+  await session.submit("finalize the notes")
+  await session.view.until(settled(1))
+  const patched = resultsOf(session.view.deliveries).find((result) => result.call !== "call_1")!
+  expect(patched).toMatchObject({ error: false })
+  expect(readFileSync(notes, "utf8")).toBe("final\n")
   expectRequests(fake, expected)
 })
 

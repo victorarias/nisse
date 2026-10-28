@@ -1,7 +1,7 @@
 import type { CallId, Entry } from "@nisse/protocol"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, FiberSet, Queue } from "effect"
+import { Effect, Fiber, FiberSet, Queue } from "effect"
 import type { Call, Turn } from "../../../provider.ts"
 import { failed, type ToolOutcome } from "../../../tools/tool.ts"
 import { Host, type Delegated, type HostConnection, type Runtime } from "./host.ts"
@@ -203,8 +203,22 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
     )
 
   const nested = yield* FiberSet.make()
+  const nestedByCell = new Map<string, Set<Fiber.Fiber<unknown, unknown>>>()
+  const answeredInCell = (call: Delegated) =>
+    Effect.withFiber((fiber) => {
+      const inCell = nestedByCell.get(call.cellId) ?? new Set()
+      nestedByCell.set(call.cellId, inCell.add(fiber))
+      return Effect.ensuring(
+        answerNested(call),
+        Effect.sync(() => {
+          inCell.delete(fiber)
+          if (inCell.size === 0) nestedByCell.delete(call.cellId)
+        }),
+      )
+    })
+  const stopNested = (cell: string) => Fiber.interruptAll([...(nestedByCell.get(cell) ?? [])])
   yield* Effect.forkScoped(
-    Effect.forever(Effect.flatMap(Queue.take(delegated), (call) => FiberSet.run(nested, answerNested(call)))),
+    Effect.forever(Effect.flatMap(Queue.take(delegated), (call) => FiberSet.run(nested, answeredInCell(call)))),
   )
 
   yield* Effect.addFinalizer(() =>
@@ -271,14 +285,17 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
     if (typeof args?.cell_id !== "string")
       return Effect.succeed(failed("bad arguments for wait: `cell_id` must be a string"))
     const maxTokens = typeof args.max_tokens === "number" ? args.max_tokens : undefined
+    if (args.terminate === true)
+      return Effect.tap(
+        outcomeOf(call, startedAt, maxTokens, (connection) => connection.terminate(conversation, args.cell_id)),
+        () => stopNested(args.cell_id),
+      )
     return outcomeOf(call, startedAt, maxTokens, (connection) =>
-      args.terminate === true
-        ? connection.terminate(conversation, args.cell_id)
-        : connection.wait(
-            conversation,
-            args.cell_id,
-            typeof args.yield_time_ms === "number" ? args.yield_time_ms : DEFAULT_YIELD_TIME_MS,
-          ),
+      connection.wait(
+        conversation,
+        args.cell_id,
+        typeof args.yield_time_ms === "number" ? args.yield_time_ms : DEFAULT_YIELD_TIME_MS,
+      ),
     )
   }
 

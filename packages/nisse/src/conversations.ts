@@ -29,9 +29,11 @@ const LIVE_WINDOW = "100 millis"
 export const RESTART_LIMIT = 3
 const nisse = { _tag: "nisse" } as const
 
+const interruptedOutcome: ToolOutcome = { output: "interrupted; it may or may not have taken effect", error: true }
+
 const interruptedResult = (call: CallId): NewEntry => ({
   author: nisse,
-  body: { _tag: "tool_result", call, output: "interrupted; it may or may not have taken effect", error: true },
+  body: { _tag: "tool_result", call, ...interruptedOutcome },
 })
 
 const withChange = (changes: ReadonlyArray<LiveChange>, change: LiveChange): Array<LiveChange> => {
@@ -219,12 +221,15 @@ export class Conversations extends Context.Service<
               approval: { id: approval, call: call.call },
               status: "waiting",
             })
-            const allow = yield* Deferred.await(answered).pipe(
-              Effect.ensuring(Effect.sync(() => waiting.delete(approval))),
+            const settled = Effect.sync(() => {
+              waiting.delete(approval)
+              openApprovals.delete(approval)
+              if (openApprovals.size === 0) store.commit(id, { status: "working" })
+            })
+            return yield* Deferred.await(answered).pipe(
+              Effect.onInterrupt(() => Effect.andThen(expire(id, [approval]), settled)),
+              Effect.tap(() => settled),
             )
-            openApprovals.delete(approval)
-            if (openApprovals.size === 0) store.commit(id, { status: "working" })
-            return allow
           })
 
         const turn: Turn = {
@@ -274,7 +279,11 @@ export class Conversations extends Context.Service<
                     })
               yield* recordResult(call.call, outcome)
               return outcome
-            }),
+            }).pipe(
+              Effect.onInterrupt(() =>
+                openCalls.has(call.call) ? recordResult(call.call, interruptedOutcome) : Effect.void,
+              ),
+            ),
           steers: Effect.andThen(
             flush,
             Effect.sync(() => {

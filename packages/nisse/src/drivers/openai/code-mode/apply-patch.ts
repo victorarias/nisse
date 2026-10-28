@@ -139,7 +139,7 @@ const apply = (cwd: string, change: Change) => {
       }
       const target = change.moveTo ?? change.path
       write(target, text)
-      if (target !== change.path) rmSync(at(change.path))
+      if (at(target) !== at(change.path)) rmSync(at(change.path))
       return `M ${target}`
     }
   }
