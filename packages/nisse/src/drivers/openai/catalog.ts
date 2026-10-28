@@ -52,9 +52,11 @@ export const catalog = (savedPath: string) => {
       renameSync(`${savedPath}.partial`, savedPath)
       known = models
     },
+    wantsCodeMode: (slug: string) =>
+      current().models.find((model) => model.slug === slug)?.tool_mode === "code_mode_only",
     listed: (): ReadonlyArray<ModelInfo> =>
       current()
-        .models.filter((model) => (model.visibility ?? "list") === "list" && model.tool_mode !== "code_mode_only")
+        .models.filter((model) => (model.visibility ?? "list") === "list")
         .toSorted((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
         .map(info),
   }

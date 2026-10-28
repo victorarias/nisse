@@ -39,6 +39,7 @@ const Handlers = NisseRpcs.toLayer(
       "conversation/interrupt": ({ conversation }) => conversations.interrupt(conversation),
       "approval/resolve": ({ conversation, approval, author, allow }) =>
         Effect.map(conversations.resolve(conversation, approval, author, allow), (accepted) => ({ accepted })),
+      "skills/list": ({ conversation }) => conversations.skills(conversation),
       "server/stop": () => Effect.andThen(conversations.settle, afterReply(lifetime.stop)),
       "providers/list": ({ refresh }) => setup.providers(refresh ?? false),
       "models/list": ({ refresh }) => setup.models(refresh ?? false),

@@ -203,8 +203,9 @@ test("a sign-in cancelled from another connection stops Claude's sign-in in the 
   await other.call("auth/cancel", { provider: "claude", flow: waiting.flow })
   other.close()
 
-  const screen = await session.waitFor((screen) => /○ claude +signed out/.test(screen) && !screen.includes("SIGN IN"))
-  expect(screen).toContain("READY")
+  await session.waitFor(
+    (screen) => /○ claude +signed out/.test(screen) && !screen.includes("SIGN IN") && screen.includes("READY"),
+  )
   const fakeDir = join(nisseHome.dir, "fake-claude")
   const ended = () => readFileSync(join(fakeDir, "log.ndjson"), "utf8").includes('"authEnded":"SIGTERM"')
   const watcher = watch(fakeDir)

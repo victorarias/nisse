@@ -24,9 +24,28 @@ export type CallId = typeof CallId.Type
 export const ApprovalId = Schema.String.pipe(Schema.brand("ApprovalId"))
 export type ApprovalId = typeof ApprovalId.Type
 
-export const UserText = Schema.TaggedStruct("user", { submission: SubmissionId, text: Schema.String })
+export const Skill = Schema.Struct({ name: Schema.String, description: Schema.String, path: Schema.String })
+export type Skill = typeof Skill.Type
+
+export const AttachedSkill = Schema.Struct({ name: Schema.String, path: Schema.String, text: Schema.String }).annotate({
+  description: "A skill's SKILL.md as it was when the input named it.",
+})
+export type AttachedSkill = typeof AttachedSkill.Type
+
+export const UserText = Schema.TaggedStruct("user", {
+  submission: SubmissionId,
+  text: Schema.String,
+  skills: Schema.optionalKey(Schema.Array(AttachedSkill)),
+})
 export const Message = Schema.TaggedStruct("message", { text: Schema.String })
-export const ToolCall = Schema.TaggedStruct("tool_call", { call: CallId, tool: Schema.String, input: Schema.Unknown })
+export const ToolCall = Schema.TaggedStruct("tool_call", {
+  call: CallId,
+  tool: Schema.String,
+  input: Schema.Unknown,
+  parent: Schema.optionalKey(
+    CallId.annotate({ description: "The call that made this one, such as the script that ran it in code mode." }),
+  ),
+})
 export const ToolResult = Schema.TaggedStruct("tool_result", {
   call: CallId,
   output: Schema.String,
@@ -216,6 +235,15 @@ export const SelectModel = Rpc.make("conversation/select_model", {
 
 export const StopServer = Rpc.make("server/stop")
 
+export const ListSkills = Rpc.make("skills/list", {
+  payload: { conversation: ConversationId },
+  success: Schema.Array(Skill).annotate({
+    description:
+      "The skills input to this conversation can name with /name or $name. Empty when its provider expands skills itself.",
+  }),
+  error: NoSuchConversation,
+})
+
 export const AuthMethod = Schema.Literals(["browser", "device_code", "terminal"]).annotate({
   description:
     "browser: a browser on the server's machine signs in and calls back to it. device_code: any device signs in with a short code. terminal: the provider's own sign-in command runs in a terminal on the server's machine.",
@@ -349,6 +377,7 @@ export const NisseRpcs = RpcGroup.make(
   ResolveApproval,
   SelectModel,
   StopServer,
+  ListSkills,
   ListProviders,
   ListModels,
   StartAuth,

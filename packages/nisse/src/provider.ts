@@ -8,9 +8,10 @@ import type {
   ModelInfo,
   ModelSelection,
   ProviderHealth,
+  Skill,
 } from "@nisse/protocol"
 import { Context, Effect, Schema } from "effect"
-import type { ToolOutcome, ToolSpec } from "./tools/index.ts"
+import type { Tool, ToolOutcome, ToolSpec } from "./tools/index.ts"
 
 export class ProviderError extends Schema.TaggedError<ProviderError>()("ProviderError", { message: Schema.String }) {}
 
@@ -18,6 +19,7 @@ export interface Call {
   readonly call: CallId
   readonly tool: string
   readonly input: unknown
+  readonly parent?: CallId
 }
 
 export interface Saved {
@@ -32,7 +34,7 @@ export interface Turn {
   readonly tools: ReadonlyArray<ToolSpec>
   readonly say: (text: string) => Effect.Effect<void>
   readonly message: (text: string, saved?: Saved) => Effect.Effect<void>
-  readonly runTool: (call: Call, saved?: Saved) => Effect.Effect<ToolOutcome>
+  readonly runTool: (call: Call, tool?: Tool) => Effect.Effect<ToolOutcome>
   readonly recordCall: (call: Call, saved?: Saved) => Effect.Effect<void>
   readonly approve: (call: Call) => Effect.Effect<boolean>
   readonly recordResult: (call: CallId, outcome: ToolOutcome, saved?: Saved) => Effect.Effect<void>
@@ -56,7 +58,10 @@ export interface Driver {
   readonly signInMethods: ReadonlyArray<AuthMethod>
   readonly signIn: (method: AuthMethod, flow: SignInFlow) => Effect.Effect<void, ProviderError>
   readonly signOut: Effect.Effect<void, ProviderError>
+  readonly skills: (cwd: string) => ReadonlyArray<Skill>
 }
+
+export const noSkills = { skills: () => [] } satisfies Pick<Driver, "skills">
 
 export const nothingToSignIn = {
   signInMethods: [],

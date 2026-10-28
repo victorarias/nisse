@@ -24,6 +24,7 @@ export interface Tool {
 
 export const ok = (output: string): ToolOutcome => ({ output, error: false })
 export const failed = (output: string): ToolOutcome => ({ output, error: true })
+export const interrupted = failed("interrupted; it may or may not have taken effect")
 
 export const tool = <S extends Schema.Top & { readonly DecodingServices: never }>(options: {
   readonly name: string

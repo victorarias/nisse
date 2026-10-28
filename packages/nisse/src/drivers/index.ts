@@ -1,6 +1,6 @@
 import type { ModelSelection } from "@nisse/protocol"
 import { join } from "node:path"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, type Scope } from "effect"
 import { expandHome, type HomeConfig, type Instance } from "../config.ts"
 import type { Home } from "../home.ts"
 import instructions from "../instructions.md" with { type: "text" }
@@ -26,6 +26,8 @@ export const openAiOptions =
     baseUrl: BASE_URL,
     callbackPort: CALLBACK_PORT,
     instructions,
+    home: home.dir,
+    ...(process.env.NISSE_CODE_MODE_HOST ? { codeModeHost: process.env.NISSE_CODE_MODE_HOST } : {}),
   })
 
 const claudeInstance = (base: ClaudeOptions, instance: Instance): ClaudeOptions => {
@@ -42,7 +44,11 @@ const claudeInstance = (base: ClaudeOptions, instance: Instance): ClaudeOptions 
   }
 }
 
-const instanceDriver = (options: ProviderOptions, id: string, instance: Instance): Effect.Effect<Driver> =>
+const instanceDriver = (
+  options: ProviderOptions,
+  id: string,
+  instance: Instance,
+): Effect.Effect<Driver, never, Scope.Scope> =>
   instance.driver === "claude"
     ? Effect.succeed(claudeDriver(claudeInstance(options.claude, instance)))
     : openAiDriver(options.openai(id))

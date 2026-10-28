@@ -61,7 +61,7 @@ export class FakeOpenAi {
     return `http://127.0.0.1:${this.server.port}`
   }
 
-  options(instructions = "You are a test.") {
+  options(instructions = "You are a test.", codeModeHost?: string) {
     return (home: Home) =>
       (id: string): OpenAiOptions => ({
         authPath: join(home.dir, "auth", `${id}.json`),
@@ -70,12 +70,15 @@ export class FakeOpenAi {
         baseUrl: this.base,
         callbackPort: 0,
         instructions,
+        home: home.dir,
+        ...(codeModeHost === undefined ? {} : { codeModeHost }),
       })
   }
 
   play(fixture: string) {
     const expected: Array<unknown> = []
     const replies: Array<Array<any>> = []
+    const held = new Set<number>()
     for (const line of readFileSync(join(FIXTURES, `${fixture}.ndjson`), "utf8").split("\n")) {
       if (line.trim() === "") continue
       const parsed = JSON.parse(line)
@@ -83,10 +86,11 @@ export class FakeOpenAi {
         expected.push(parsed.frame)
         replies.push([])
       } else if (parsed.type === "emit_inbound") replies.at(-1)!.push(parsed.frame)
+      else if (parsed.type === "hold_open") held.add(replies.length - 1)
     }
-    for (const frames of replies) {
-      this.replies.push(frames[0]?.http ? { http: frames[0].http } : { events: frames })
-    }
+    replies.forEach((frames, index) =>
+      this.replies.push(frames[0]?.http ? { http: frames[0].http } : { events: frames, hold: held.has(index) }),
+    )
     return expected
   }
 

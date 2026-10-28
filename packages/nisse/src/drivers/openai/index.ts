@@ -3,9 +3,24 @@ import { Effect, Semaphore } from "effect"
 import { rmSync } from "node:fs"
 import { ProviderError, type Call, type Driver, type Health, type Turn } from "../../provider.ts"
 import { catalog, CLIENT_VERSION } from "./catalog.ts"
+import { interrupted } from "../../tools/tool.ts"
+import {
+  codeModeRun,
+  codeModeTools,
+  EXEC,
+  finishedCall,
+  WAIT,
+  Host,
+  HOST_IDLE_MS,
+  installedHost,
+  isYielded,
+  missingHost,
+  withFinishedCalls,
+} from "./code-mode/index.ts"
 import { accountOf, isExpired, loadCredentials, refreshed, saveCredentials, type Credentials } from "./credentials.ts"
 import { CALLBACK_PORT, signIn } from "./signin.ts"
 import { events } from "./sse.ts"
+import { agentsMd, skillsFor } from "../../workspace.ts"
 
 export const BASE_URL = "https://chatgpt.com/backend-api"
 export const AUTH_BASE = "https://auth.openai.com"
@@ -22,29 +37,122 @@ export interface OpenAiOptions {
   readonly baseUrl: string
   readonly callbackPort: number
   readonly instructions: string
+  readonly home: string
+  readonly codeModeHost?: string
 }
 
 const failure = (message: string) => new ProviderError({ message })
 
-const inputItem = (entry: Entry): unknown => {
-  const body = entry.body
-  switch (body._tag) {
-    case "user":
-      return { type: "message", role: "user", content: [{ type: "input_text", text: body.text }] }
-    case "message":
-      return { type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] }
-    case "tool_call":
-      return {
-        type: "function_call",
-        call_id: body.call,
-        name: body.tool,
-        arguments: typeof body.input === "string" ? body.input : JSON.stringify(body.input),
-      }
-    case "tool_result":
-      return { type: "function_call_output", call_id: body.call, output: body.output }
-    default:
-      return undefined
+const SKILLS = `# Skills
+
+A skill is a folder of instructions for one kind of task, in a \`SKILL.md\` file. When a task matches a skill's description, \`Read\` its \`SKILL.md\` before you start, and follow it. When a message names a skill with \`/name\` or \`$name\`, the skill's \`SKILL.md\` comes with the message; follow it. Relative paths in a skill are relative to its folder.
+
+`
+
+const instructionsFor = (options: OpenAiOptions, cwd: string) => {
+  let text = `${options.instructions}\nThe working directory is ${cwd}.\n`
+  for (const file of agentsMd(cwd, options.home)) {
+    text += `\n# AGENTS.md instructions from ${file.path}\n\n${file.text.trimEnd()}\n`
   }
+  const skills = skillsFor(cwd, options.home)
+  if (skills.length > 0) {
+    text += `\n${SKILLS}${skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.path})\n`).join("")}`
+  }
+  return text
+}
+
+const stoppedCellNote = (script: CallId, when: string, finished: ReadonlyArray<string>) => ({
+  type: "message",
+  role: "developer",
+  content: [
+    {
+      type: "input_text",
+      text: withFinishedCalls(`Cell ${script} was stopped ${when}, before its script finished.`, finished),
+    },
+  ],
+})
+
+const inputItems = (transcript: ReadonlyArray<Entry>, runStartedAt: number): Array<unknown> => {
+  const nested = new Map<CallId, { tool: string; script: CallId }>()
+  const custom = new Set<CallId>()
+  const waitedScript = new Map<CallId, CallId>()
+  const finishedIn = new Map<CallId, Array<string>>()
+  const scriptOf = (call: CallId) => (custom.has(call) ? call : waitedScript.get(call))
+  const yielded = new Set<CallId>()
+  const stopYielded = (when: string) => {
+    const notes = [...yielded].map((script) => stoppedCellNote(script, when, finishedIn.get(script) ?? []))
+    yielded.clear()
+    return notes
+  }
+  const itemsOf = (body: Entry["body"]): Array<unknown> => {
+    switch (body._tag) {
+      case "user":
+        return [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_text", text: body.text },
+              ...(body.skills ?? []).map((skill) => ({
+                type: "input_text",
+                text: `<skill>\n<name>${skill.name}</name>\n<path>${skill.path}</path>\n${skill.text.trimEnd()}\n</skill>`,
+              })),
+            ],
+          },
+        ]
+      case "message":
+        return [{ type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] }]
+      case "tool_call":
+        if (body.parent !== undefined) {
+          nested.set(body.call, { tool: body.tool, script: body.parent })
+          return []
+        }
+        if (body.tool === WAIT && typeof (body.input as { cell_id?: unknown })?.cell_id === "string")
+          waitedScript.set(body.call, (body.input as { cell_id: CallId }).cell_id)
+        if (body.tool === EXEC && typeof body.input === "string") {
+          custom.add(body.call)
+          return [{ type: "custom_tool_call", call_id: body.call, name: body.tool, input: body.input }]
+        }
+        return [
+          {
+            type: "function_call",
+            call_id: body.call,
+            name: body.tool,
+            arguments: typeof body.input === "string" ? body.input : JSON.stringify(body.input),
+          },
+        ]
+      case "tool_result": {
+        const inner = nested.get(body.call)
+        if (inner !== undefined) {
+          finishedIn.set(inner.script, [...(finishedIn.get(inner.script) ?? []), finishedCall(inner.tool, body)])
+          return []
+        }
+        const script = scriptOf(body.call)
+        if (script !== undefined) {
+          if (isYielded(body.output)) yielded.add(script)
+          else yielded.delete(script)
+        }
+        const finished = script === undefined ? [] : (finishedIn.get(script) ?? [])
+        const output = body.output === interrupted.output ? withFinishedCalls(body.output, finished) : body.output
+        return [
+          {
+            type: custom.has(body.call) ? "custom_tool_call_output" : "function_call_output",
+            call_id: body.call,
+            output,
+          },
+        ]
+      }
+      case "run_end":
+        return stopYielded("when the run ended")
+      default:
+        return []
+    }
+  }
+  const serverStopped = () => stopYielded("when the server stopped")
+  return [
+    ...transcript.flatMap(({ body }, index) => [...(index === runStartedAt ? serverStopped() : []), ...itemsOf(body)]),
+    ...(runStartedAt === transcript.length ? serverStopped() : []),
+  ]
 }
 
 const messageText = (item: any): string =>
@@ -70,6 +178,15 @@ const toolCall = (item: any): Effect.Effect<Call, ProviderError> =>
         input: parsedArguments(typeof item.arguments === "string" ? item.arguments : "{}"),
       })
     : Effect.fail(failure("a function call without a call_id"))
+
+const customToolCall = (item: any): Effect.Effect<Call, ProviderError> =>
+  typeof item?.call_id === "string"
+    ? Effect.succeed({
+        call: item.call_id as CallId,
+        tool: typeof item.name === "string" ? item.name : "",
+        input: typeof item.input === "string" ? item.input : "",
+      })
+    : Effect.fail(failure("a custom tool call without a call_id"))
 
 const isUsageLimit = (error: any) =>
   ["usage_limit_reached", "usage_not_included", "rate_limit_exceeded"].includes(error?.code ?? error?.type)
@@ -106,6 +223,8 @@ const httpFailure = (status: number, body: any) => {
 export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions) {
   const signingIn = yield* Semaphore.make(1)
   const models = catalog(options.modelsPath)
+  const host = new Host(HOST_IDLE_MS)
+  yield* Effect.addFinalizer(() => Effect.sync(() => host.stop()))
   let askedForModels = false
   let rejected: string | undefined
 
@@ -171,6 +290,8 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
               if (text !== "") yield* turn.message(text)
             } else if (item?.type === "function_call") {
               calls.push(yield* toolCall(item))
+            } else if (item?.type === "custom_tool_call") {
+              calls.push(yield* customToolCall(item))
             }
             break
           case "response.completed":
@@ -264,6 +385,7 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
         return models.listed()
       }),
     signInMethods: ["browser", "device_code"],
+    skills: (cwd) => skillsFor(cwd, options.home),
     signIn: (method, flow) =>
       Effect.gen(function* () {
         const credentials = yield* signIn(
@@ -283,22 +405,30 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
     ),
     run: (turn) =>
       Effect.gen(function* () {
-        const instructions = `${options.instructions}\nThe working directory is ${turn.conversation.cwd}.\n`
-        const tools = turn.tools.map((tool) => ({
+        const instructions = instructionsFor(options, turn.conversation.cwd)
+        const { model = MODEL, effort } = turn.conversation.model
+        let tools: ReadonlyArray<unknown> = turn.tools.map((tool) => ({
           type: "function",
           name: tool.name,
           description: tool.description,
           parameters: tool.parameters,
           strict: false,
         }))
+        let runTool = (call: Call) => turn.runTool(call)
+        if (models.wantsCodeMode(model)) {
+          const program = installedHost(options.codeModeHost, options.home)
+          if (program === undefined) return yield* failure(missingHost)
+          tools = codeModeTools()
+          runTool = yield* codeModeRun(host, program, turn)
+        }
+        const runStartedAt = (yield* turn.transcript).length
         while (true) {
           const transcript = yield* turn.transcript
-          const { model, effort } = turn.conversation.model
           const calls = yield* respond(turn, {
-            model: model ?? MODEL,
+            model,
             ...(effort ? { reasoning: { effort } } : {}),
             instructions,
-            input: transcript.map(inputItem).filter((item) => item !== undefined),
+            input: inputItems(transcript, runStartedAt),
             tools,
             tool_choice: "auto",
             parallel_tool_calls: true,
@@ -307,10 +437,10 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
             prompt_cache_key: turn.conversation.id,
           })
           if (calls.length === 0) return
-          for (const call of calls) yield* turn.runTool(call)
+          for (const call of calls) yield* runTool(call)
           yield* turn.steers
         }
-      }),
+      }).pipe(Effect.scoped),
   }
   return driver
 })

@@ -42,7 +42,8 @@ enter where those consumers enter:
 
 Provider tests replay recorded exchanges from `fixtures/`. The fake OpenAI
 server serves each `emit_inbound` frame and the test checks every request
-against its `expect_outbound` frame, where `"<any>"` matches anything. The fake
+against its `expect_outbound` frame, where `"<any>"` matches anything; a
+`hold_open` line leaves that reply's stream open until the test ends. The fake
 `claude` executable (`test/support/fake-claude`) plays one recorded Claude Code
 process per spawn, and one recorded probe per probe (a spawn with
 `--no-session-persistence`), and logs what nisse sent it; tests judge Claude by

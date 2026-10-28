@@ -9,6 +9,8 @@ import {
   type Entry,
   type LiveChange,
   type ModelSelection,
+  type Queued,
+  type Skill,
   type NoSuchApproval,
   type NoSuchConversation,
   type Outcome,
@@ -17,10 +19,12 @@ import {
 import { Cause, Context, Deferred, Effect, Fiber, FiberSet, Layer, Option, Ref } from "effect"
 import { projectDefaultModel } from "./config.ts"
 import { newId } from "./ids.ts"
+import { attachedSkills } from "./workspace.ts"
 import { Lifetime } from "./lifetime.ts"
 import { Providers, type Call, type Driver, type Saved, type Turn } from "./provider.ts"
 import { Store, type Change, type NewEntry } from "./store.ts"
 import { builtinTools, toolNamed, type ToolOutcome } from "./tools/index.ts"
+import { interrupted } from "./tools/tool.ts"
 
 const LIVE_WINDOW = "100 millis"
 export const RESTART_LIMIT = 3
@@ -28,7 +32,7 @@ const nisse = { _tag: "nisse" } as const
 
 const interruptedResult = (call: CallId): NewEntry => ({
   author: nisse,
-  body: { _tag: "tool_result", call, output: "interrupted; it may or may not have taken effect", error: true },
+  body: { _tag: "tool_result", call, ...interrupted },
 })
 
 const withChange = (changes: ReadonlyArray<LiveChange>, change: LiveChange): Array<LiveChange> => {
@@ -89,6 +93,7 @@ export class Conversations extends Context.Service<
       author: string,
       allow: boolean,
     ) => Effect.Effect<boolean, NoSuchConversation | NoSuchApproval>
+    readonly skills: (conversation: ConversationId) => Effect.Effect<ReadonlyArray<Skill>, NoSuchConversation>
     readonly settle: Effect.Effect<void>
   }
 >()("nisse/Conversations") {
@@ -103,6 +108,20 @@ export class Conversations extends Context.Service<
       const runs = new Map<ConversationId, Fiber.Fiber<void, unknown>>()
       const waiting = new Map<ApprovalId, Deferred.Deferred<boolean>>()
       let settling = false
+
+      const placed = (conversation: Conversation, queued: Queued): NewEntry => {
+        const driver = providers.drivers.get(conversation.model.provider)
+        const skills = driver ? attachedSkills(queued.text, driver.skills(conversation.cwd)) : []
+        return {
+          author: queued.author,
+          body: {
+            _tag: "user",
+            submission: queued.submission,
+            text: queued.text,
+            ...(skills.length > 0 ? { skills } : {}),
+          },
+        }
+      }
 
       const expire = (conversation: ConversationId, approvals: Iterable<ApprovalId>) =>
         Effect.forEach(approvals, (approval) =>
@@ -143,7 +162,13 @@ export class Conversations extends Context.Service<
                     entries: [
                       {
                         author: nisse,
-                        body: { _tag: "tool_call", call: call.call, tool: call.tool, input: call.input },
+                        body: {
+                          _tag: "tool_call",
+                          call: call.call,
+                          tool: call.tool,
+                          input: call.input,
+                          ...(call.parent === undefined ? {} : { parent: call.parent }),
+                        },
                       },
                     ],
                   },
@@ -194,12 +219,15 @@ export class Conversations extends Context.Service<
               approval: { id: approval, call: call.call },
               status: "waiting",
             })
-            const allow = yield* Deferred.await(answered).pipe(
-              Effect.ensuring(Effect.sync(() => waiting.delete(approval))),
+            const settled = Effect.sync(() => {
+              waiting.delete(approval)
+              openApprovals.delete(approval)
+              if (openApprovals.size === 0) store.commit(id, { status: "working" })
+            })
+            return yield* Deferred.await(answered).pipe(
+              Effect.onInterrupt(() => Effect.andThen(expire(id, [approval]), settled)),
+              Effect.tap(() => settled),
             )
-            openApprovals.delete(approval)
-            if (openApprovals.size === 0) store.commit(id, { status: "working" })
-            return allow
           })
 
         const turn: Turn = {
@@ -235,10 +263,9 @@ export class Conversations extends Context.Service<
           recordResult,
           approve,
           toolOutput: (call, text) => (text === "" ? Effect.void : live({ _tag: "output", call, append: text })),
-          runTool: (call, saved) =>
+          runTool: (call, tool = toolNamed(call.tool)) =>
             Effect.gen(function* () {
-              yield* recordCall(call, saved)
-              const tool = toolNamed(call.tool)
+              yield* recordCall(call)
               const outcome: ToolOutcome = !tool
                 ? { output: `no tool named ${call.tool}`, error: true }
                 : !tool.readOnly && !(yield* approve(call))
@@ -250,7 +277,9 @@ export class Conversations extends Context.Service<
                     })
               yield* recordResult(call.call, outcome)
               return outcome
-            }),
+            }).pipe(
+              Effect.onInterrupt(() => (openCalls.has(call.call) ? recordResult(call.call, interrupted) : Effect.void)),
+            ),
           steers: Effect.andThen(
             flush,
             Effect.sync(() => {
@@ -258,10 +287,7 @@ export class Conversations extends Context.Service<
               if (steers.length === 0) return []
               store.commit(id, {
                 place: steers.map((steer) => steer.submission),
-                entries: steers.map((steer) => ({
-                  author: steer.author,
-                  body: { _tag: "user" as const, submission: steer.submission, text: steer.text },
-                })),
+                entries: steers.map((steer) => placed(conversation, steer)),
               })
               return steers.map((steer) => steer.text)
             }),
@@ -320,9 +346,7 @@ export class Conversations extends Context.Service<
         return queued
           ? {
               place: [queued.submission],
-              entries: [
-                { author: queued.author, body: { _tag: "user", submission: queued.submission, text: queued.text } },
-              ],
+              entries: [placed(Effect.runSync(Effect.orDie(store.state(conversation))).conversation, queued)],
               status: "working",
             }
           : { status: "idle" }
@@ -430,6 +454,11 @@ export class Conversations extends Context.Service<
             if (accepted && answered) yield* Deferred.succeed(answered, allow)
             return accepted
           }),
+        skills: (id) =>
+          Effect.map(
+            store.state(id),
+            ({ conversation }) => providers.drivers.get(conversation.model.provider)?.skills(conversation.cwd) ?? [],
+          ),
         settle: Effect.suspend(() => {
           settling = true
           return FiberSet.awaitEmpty(runners)
