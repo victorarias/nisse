@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { Duration, Effect, Exit, Layer, Scope } from "effect"
 import { homeAt } from "../../src/home.ts"
 import { scriptedModel } from "../../src/model.ts"
-import { serve, serverLayer } from "../../src/server.ts"
+import { Lifetime } from "../../src/lifetime.ts"
+import { serverLayer } from "../../src/server.ts"
 
 type Steps = Parameters<typeof scriptedModel>[0]
 
@@ -23,5 +24,15 @@ export const runningServer = async (steps: Steps = []) => {
   }
 }
 
-export const serveUntilDone = (home: ReturnType<typeof tempHome>, idleGrace: Duration.Input) =>
-  Effect.runPromise(serve(home, { idleGrace }).pipe(Effect.provide(scriptedModel([]))))
+export const servingUntilIdle = async (home: ReturnType<typeof tempHome>, idleGrace: Duration.Input) => {
+  const listening = Promise.withResolvers<void>()
+  const exited = Effect.runPromise(
+    Effect.gen(function* () {
+      const lifetime = yield* Lifetime
+      listening.resolve()
+      yield* lifetime.ended
+    }).pipe(Effect.provide(serverLayer(home, { idleGrace }).pipe(Layer.provide(scriptedModel([])))), Effect.scoped),
+  )
+  await Promise.race([listening.promise, exited])
+  return { exited }
+}

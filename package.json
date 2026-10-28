@@ -8,8 +8,7 @@
   "scripts": {
     "check": "tsc --noEmit && prettier --check . && bun test",
     "format": "prettier --write .",
-    "schema": "bun packages/nisse/src/main.ts schema > schema/nisse.schema.json",
-    "build": "bun packages/nisse/scripts/build.ts"
+    "schema": "bun packages/nisse/src/main.ts schema > schema/nisse.schema.json"
   },
   "devDependencies": {
     "@types/bun": "1.4.4",

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { bodies, deadline, errorTag, RawClient } from "./support/raw.ts"
-import { runningServer, serveUntilDone, tempHome } from "./support/server.ts"
+import { runningServer, servingUntilIdle, tempHome } from "./support/server.ts"
 
 const start = async (client: RawClient) => (await client.call("conversation/start", { cwd: "/work" })).result.id
 
@@ -145,23 +145,11 @@ test("subscribing to a conversation that does not exist says so", async () => {
 
 test("the server exits once no client is connected and nothing is running", async () => {
   const home = tempHome()
-  const served = serveUntilDone(home, "200 millis")
-  const client = await deadline(
-    (async () => {
-      while (true) {
-        try {
-          return await RawClient.connect(home.socket)
-        } catch {
-          await Bun.sleep(10)
-        }
-      }
-    })(),
-    5000,
-    "server listening",
-  )
+  const served = await deadline(servingUntilIdle(home, "200 millis"), 5000, "server listening")
+  const client = await RawClient.connect(home.socket)
   const conversation = await start(client)
   const view = client.subscribe({ conversation })
   await view.until((deliveries) => deliveries.length > 0)
   client.close()
-  await deadline(served, 5000, "server exit")
+  await deadline(served.exited, 5000, "server exit")
 })
