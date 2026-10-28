@@ -1,7 +1,10 @@
 import type { CallId, Entry } from "@nisse/protocol"
 import { Effect, Semaphore } from "effect"
-import { ProviderError, type Call, type Driver, type Turn } from "../../provider.ts"
-import { isExpired, loadCredentials, refreshed, saveCredentials, type Credentials } from "./credentials.ts"
+import { rmSync } from "node:fs"
+import { ProviderError, type Call, type Driver, type Health, type Turn } from "../../provider.ts"
+import { catalog, CLIENT_VERSION } from "./catalog.ts"
+import { accountOf, isExpired, loadCredentials, refreshed, saveCredentials, type Credentials } from "./credentials.ts"
+import { CALLBACK_PORT, signIn } from "./signin.ts"
 import { events } from "./sse.ts"
 
 export const BASE_URL = "https://chatgpt.com/backend-api"
@@ -10,10 +13,14 @@ export const MODEL = "gpt-5.5"
 const ORIGINATOR = "nisse"
 const LONGEST_ERROR_BODY = 1000
 
+export { CALLBACK_PORT }
+
 export interface OpenAiOptions {
   readonly authPath: string
+  readonly modelsPath: string
   readonly authBase: string
   readonly baseUrl: string
+  readonly callbackPort: number
   readonly instructions: string
 }
 
@@ -98,9 +105,15 @@ const httpFailure = (status: number, body: any) => {
 
 export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions) {
   const signingIn = yield* Semaphore.make(1)
+  const models = catalog(options.modelsPath)
+  let askedForModels = false
+  let rejected: string | undefined
 
   const refresh = (credentials: Credentials) =>
-    Effect.tap(refreshed(credentials, options.authBase), (fresh) => saveCredentials(options.authPath, fresh))
+    refreshed(credentials, options.authBase).pipe(
+      Effect.tap((fresh) => saveCredentials(options.authPath, fresh)),
+      Effect.tapError((error) => Effect.sync(() => (rejected = error.message))),
+    )
 
   const signedIn = signingIn.withPermits(1)(
     Effect.flatMap(loadCredentials(options.authPath), (credentials) =>
@@ -108,10 +121,10 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
     ),
   )
 
-  const refreshedAfterRejection = (rejected: Credentials) =>
+  const refreshedAfterRejection = (turnedDown: Credentials) =>
     signingIn.withPermits(1)(
       Effect.flatMap(loadCredentials(options.authPath), (saved) =>
-        saved.access_token !== rejected.access_token && !isExpired(saved) ? Effect.succeed(saved) : refresh(saved),
+        saved.access_token !== turnedDown.access_token && !isExpired(saved) ? Effect.succeed(saved) : refresh(saved),
       ),
     )
 
@@ -185,13 +198,17 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
       let retried = false
       while (true) {
         const response = yield* post(turn, credentials, body, controller.signal)
-        if (response.ok) return yield* read(turn, response, controller.signal)
+        if (response.ok) {
+          rejected = undefined
+          return yield* read(turn, response, controller.signal)
+        }
         const text = yield* Effect.promise(() => response.text().catch(() => ""))
         if (response.status === 401 && !retried) {
           credentials = yield* refreshedAfterRejection(credentials)
           retried = true
           continue
         }
+        if (response.status === 401) rejected = "ChatGPT turned the sign-in down; sign in again"
         let error: unknown = text
         try {
           error = JSON.parse(text)
@@ -200,7 +217,70 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
       }
     }).pipe(Effect.scoped)
 
+  const fetchModels = Effect.gen(function* () {
+    const credentials = yield* signedIn
+    const response = yield* Effect.tryPromise({
+      try: (signal) =>
+        fetch(`${options.baseUrl}/codex/models?client_version=${CLIENT_VERSION}`, {
+          signal,
+          headers: {
+            authorization: `Bearer ${credentials.access_token}`,
+            "chatgpt-account-id": credentials.account_id,
+            originator: ORIGINATOR,
+          },
+        }),
+      catch: (error) => failure(`could not reach ChatGPT: ${String(error)}`),
+    })
+    if (!response.ok) return yield* failure(`ChatGPT answered ${response.status} when asked for its models`)
+    const body = yield* Effect.tryPromise({
+      try: () => response.json(),
+      catch: () => failure("ChatGPT sent a model list that is not JSON"),
+    })
+    yield* Effect.try({
+      try: () => models.fetched(body),
+      catch: (error) => failure(`ChatGPT sent a model list nisse can't read: ${String(error)}`),
+    })
+  })
+
+  const health: Effect.Effect<Health> = Effect.match(signingIn.withPermits(1)(loadCredentials(options.authPath)), {
+    onFailure: (): Health => ({ status: "signed_out", message: "not signed in to ChatGPT" }),
+    onSuccess: (credentials): Health => {
+      const account = accountOf(credentials)
+      if (rejected) return { status: "signed_out", message: rejected, ...(account ? { account } : {}) }
+      return { status: "ready", ...(account ? { account } : {}) }
+    },
+  })
+
   const driver: Driver = {
+    kind: "openai",
+    defaultModel: MODEL,
+    health: () => health,
+    models: (refresh) =>
+      Effect.gen(function* () {
+        if (refresh || !askedForModels) {
+          askedForModels = true
+          yield* Effect.ignore(fetchModels)
+        }
+        return models.listed()
+      }),
+    signInMethods: ["browser", "device_code"],
+    signIn: (method, flow) =>
+      Effect.gen(function* () {
+        yield* signIn(
+          { authBase: options.authBase, callbackPort: options.callbackPort, originator: ORIGINATOR },
+          options.authPath,
+          method,
+          flow,
+        )
+        rejected = undefined
+        askedForModels = false
+      }),
+    signOut: signingIn.withPermits(1)(
+      Effect.try({
+        try: () => rmSync(options.authPath, { force: true }),
+        catch: (error) => failure(`could not sign out: ${String(error)}`),
+      }),
+    ),
     run: (turn) =>
       Effect.gen(function* () {
         const instructions = `${options.instructions}\nThe working directory is ${turn.conversation.cwd}.\n`
@@ -213,8 +293,10 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
         }))
         while (true) {
           const transcript = yield* turn.transcript
+          const { model, effort } = turn.conversation.model
           const calls = yield* respond(turn, {
-            model: MODEL,
+            model: model ?? MODEL,
+            ...(effort ? { reasoning: { effort } } : {}),
             instructions,
             input: transcript.map(inputItem).filter((item) => item !== undefined),
             tools,

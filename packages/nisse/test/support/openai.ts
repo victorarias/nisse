@@ -5,6 +5,7 @@ import type { Home } from "../../src/home.ts"
 
 const FIXTURES = join(import.meta.dir, "../../../../fixtures/openai")
 export const ACCOUNT = "acct-test"
+export const EMAIL = "ada@example.com"
 const ANY = "<any>"
 
 type Reply =
@@ -21,7 +22,11 @@ export const accessToken = (label: string) => {
   const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url")
   return [
     part({ alg: "none" }),
-    part({ label, "https://api.openai.com/auth": { chatgpt_account_id: ACCOUNT } }),
+    part({
+      label,
+      "https://api.openai.com/auth": { chatgpt_account_id: ACCOUNT, chatgpt_plan_type: "plus" },
+      "https://api.openai.com/profile": { email: EMAIL },
+    }),
     "signature",
   ].join(".")
 }
@@ -45,6 +50,8 @@ export class FakeOpenAi {
   private readonly held = new Set<ReadableStreamDefaultController<Uint8Array>>()
   private readonly abandoned = Promise.withResolvers<void>()
   private readonly server: ReturnType<typeof Bun.serve>
+  modelList: unknown
+  devicePolls = 1
 
   constructor() {
     this.server = Bun.serve({ port: 0, fetch: (request) => this.answer(request) })
@@ -55,12 +62,15 @@ export class FakeOpenAi {
   }
 
   options(instructions = "You are a test.") {
-    return (home: Home): OpenAiOptions => ({
-      authPath: join(home.dir, "auth", "openai.json"),
-      authBase: this.base,
-      baseUrl: this.base,
-      instructions,
-    })
+    return (home: Home) =>
+      (id: string): OpenAiOptions => ({
+        authPath: join(home.dir, "auth", `${id}.json`),
+        modelsPath: join(home.dir, "cache", `${id}-models.json`),
+        authBase: this.base,
+        baseUrl: this.base,
+        callbackPort: 0,
+        instructions,
+      })
   }
 
   play(fixture: string) {
@@ -101,6 +111,16 @@ export class FakeOpenAi {
     const path = new URL(request.url).pathname
     const body = await request.text()
     this.received.push({ path, headers: request.headers, body })
+    if (path === "/codex/models") {
+      return this.modelList ? Response.json(this.modelList) : Response.json({ error: "down" }, { status: 500 })
+    }
+    if (path === "/api/accounts/deviceauth/usercode") {
+      return Response.json({ device_auth_id: "device-1", user_code: "ABCD-1234", interval: "0" })
+    }
+    if (path === "/api/accounts/deviceauth/token") {
+      if (this.devicePolls-- > 0) return new Response("", { status: 403 })
+      return Response.json({ authorization_code: "device-code", code_verifier: "device-verifier" })
+    }
     if (path === "/oauth/token") {
       const tokens = this.tokens.shift()
       return tokens ? Response.json(tokens) : Response.json({ error: "invalid_grant" }, { status: 400 })

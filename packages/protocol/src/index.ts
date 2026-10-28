@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import * as Rpc from "effect/rpc/Rpc"
 import * as RpcGroup from "effect/rpc/RpcGroup"
 
-export const PROTOCOL_VERSION = 2
+export const PROTOCOL_VERSION = 3
 
 export const ConversationId = Schema.String.pipe(Schema.brand("ConversationId"))
 export type ConversationId = typeof ConversationId.Type
@@ -38,6 +38,18 @@ export const ApprovalRequest = Schema.TaggedStruct("approval", {
   tool: Schema.String,
   input: Schema.Unknown,
 })
+export const ModelSelection = Schema.Struct({
+  provider: Schema.String,
+  model: Schema.optionalKey(
+    Schema.String.annotate({ description: "Absent for the provider's own choice, as Claude Code makes it." }),
+  ),
+  effort: Schema.optionalKey(Schema.String.annotate({ description: "Absent for the model's own default." })),
+})
+export type ModelSelection = typeof ModelSelection.Type
+
+export const ModelSwitch = Schema.TaggedStruct("model", { selection: ModelSelection }).annotate({
+  description: "Someone switched the conversation's model; it answers with it from the next run on.",
+})
 export const ApprovalAnswer = Schema.TaggedStruct("approval_answer", { approval: ApprovalId, allow: Schema.Boolean })
 export const Outcome = Schema.Literals(["answered", "interrupted", "failed", "restart_limit"])
 export type Outcome = typeof Outcome.Type
@@ -50,6 +62,7 @@ export const EntryBody = Schema.Union([
   ApprovalRequest,
   ApprovalAnswer,
   RunEnd,
+  ModelSwitch,
 ])
 export type EntryBody = typeof EntryBody.Type
 
@@ -69,7 +82,7 @@ export const Conversation = Schema.Struct({
   id: ConversationId,
   cwd: Schema.String,
   createdAt: Schema.Int,
-  provider: Schema.String,
+  model: ModelSelection,
   approvals: Approvals,
 })
 export type Conversation = typeof Conversation.Type
@@ -136,6 +149,11 @@ export class UnknownProvider extends Schema.TaggedError<UnknownProvider>()("Unkn
   provider: Schema.String,
 }) {}
 
+export class CannotSignIn extends Schema.TaggedError<CannotSignIn>()("CannotSignIn", {
+  provider: Schema.String,
+  message: Schema.String,
+}) {}
+
 export class FellBehind extends Schema.TaggedError<FellBehind>()("FellBehind", {
   seq: Schema.Int,
 }) {}
@@ -149,6 +167,8 @@ export const StartConversation = Rpc.make("conversation/start", {
   payload: {
     cwd: Schema.String,
     provider: Schema.optionalKey(Schema.String),
+    model: Schema.optionalKey(Schema.String),
+    effort: Schema.optionalKey(Schema.String),
     approvals: Schema.optionalKey(Approvals),
   },
   success: Conversation,
@@ -189,7 +209,123 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
   error: Schema.Union([NoSuchConversation, NoSuchApproval]),
 })
 
+export const SelectModel = Rpc.make("conversation/select_model", {
+  payload: { conversation: ConversationId, author: Schema.String, selection: ModelSelection },
+  error: Schema.Union([NoSuchConversation, UnknownProvider]),
+})
+
 export const StopServer = Rpc.make("server/stop")
+
+export const AuthMethod = Schema.Literals(["browser", "device_code", "terminal"]).annotate({
+  description:
+    "browser: a browser on the server's machine signs in and calls back to it. device_code: any device signs in with a short code. terminal: the provider's own sign-in command runs in a terminal on the server's machine.",
+})
+export type AuthMethod = typeof AuthMethod.Type
+
+export const ProviderStatus = Schema.Literals(["ready", "signed_out", "unavailable"])
+export type ProviderStatus = typeof ProviderStatus.Type
+
+export const ProviderHealth = Schema.Struct({
+  status: ProviderStatus,
+  version: Schema.optionalKey(Schema.String),
+  account: Schema.optionalKey(Schema.String.annotate({ description: "Who it is signed in as, and on what plan." })),
+  message: Schema.optionalKey(Schema.String.annotate({ description: "Why it is not ready, or what to do about it." })),
+  checkedAt: Schema.Int,
+})
+export type ProviderHealth = typeof ProviderHealth.Type
+
+export const ProviderSnapshot = Schema.Struct({
+  id: Schema.String,
+  driver: Schema.String,
+  signIn: Schema.Array(AuthMethod).annotate({ description: "The ways to sign in, the first one preferred." }),
+  health: ProviderHealth,
+})
+export type ProviderSnapshot = typeof ProviderSnapshot.Type
+
+export const ModelInfo = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.optionalKey(Schema.String),
+  efforts: Schema.Array(Schema.String).annotate({ description: "The reasoning efforts it takes, least first." }),
+  defaultEffort: Schema.optionalKey(Schema.String),
+  contextWindow: Schema.optionalKey(Schema.Int),
+})
+export type ModelInfo = typeof ModelInfo.Type
+
+export const ProviderModels = Schema.Struct({
+  provider: Schema.String,
+  defaultModel: Schema.optionalKey(
+    Schema.String.annotate({ description: "What a selection naming no model gets; absent when the provider picks." }),
+  ),
+  models: Schema.Array(ModelInfo).annotate({ description: "Best first." }),
+})
+export type ProviderModels = typeof ProviderModels.Type
+
+export const AuthPhase = Schema.Literals(["starting", "waiting", "verifying", "succeeded", "failed", "cancelled"])
+export type AuthPhase = typeof AuthPhase.Type
+
+export const BrowserInteraction = Schema.TaggedStruct("browser", { url: Schema.String }).annotate({
+  description:
+    "Open url and sign in. A browser on another machine can't call back: answer with the address it ends on.",
+})
+export const DeviceCodeInteraction = Schema.TaggedStruct("device_code", { url: Schema.String, code: Schema.String })
+export const TerminalInteraction = Schema.TaggedStruct("terminal", {
+  command: Schema.Array(Schema.String),
+  env: Schema.Record(Schema.String, Schema.String),
+}).annotate({ description: "Run command with env in a terminal on the server's machine, then answer terminal_exited." })
+export const AuthInteraction = Schema.Union([BrowserInteraction, DeviceCodeInteraction, TerminalInteraction])
+export type AuthInteraction = typeof AuthInteraction.Type
+
+export const AuthState = Schema.Struct({
+  provider: Schema.String,
+  flow: Schema.String,
+  phase: AuthPhase,
+  interaction: Schema.optionalKey(AuthInteraction.annotate({ description: "What a person must do while it waits." })),
+  message: Schema.optionalKey(Schema.String.annotate({ description: "Who it signed in as, or why it failed." })),
+}).annotate({ description: "One sign-in, as every connection sees it. A provider has at most one at a time." })
+export type AuthState = typeof AuthState.Type
+
+export const CallbackResponse = Schema.TaggedStruct("callback", { url: Schema.String })
+export const TerminalExited = Schema.TaggedStruct("terminal_exited", { success: Schema.Boolean })
+export const AuthResponse = Schema.Union([CallbackResponse, TerminalExited])
+export type AuthResponse = typeof AuthResponse.Type
+
+export const ListProviders = Rpc.make("providers/list", {
+  payload: { refresh: Schema.optionalKey(Schema.Boolean) },
+  success: Schema.Array(ProviderSnapshot),
+})
+
+export const ListModels = Rpc.make("models/list", {
+  payload: { refresh: Schema.optionalKey(Schema.Boolean) },
+  success: Schema.Array(ProviderModels),
+})
+
+export const StartAuth = Rpc.make("auth/start", {
+  payload: { provider: Schema.String, method: Schema.optionalKey(AuthMethod) },
+  success: AuthState,
+  error: Schema.Union([UnknownProvider, CannotSignIn]),
+})
+
+export const RespondAuth = Rpc.make("auth/respond", {
+  payload: { provider: Schema.String, flow: Schema.String, response: AuthResponse },
+  success: Schema.Struct({ accepted: Schema.Boolean }),
+})
+
+export const CancelAuth = Rpc.make("auth/cancel", {
+  payload: { provider: Schema.String, flow: Schema.String },
+  success: Schema.Struct({ accepted: Schema.Boolean }),
+})
+
+export const Logout = Rpc.make("auth/logout", {
+  payload: { provider: Schema.String },
+  success: ProviderSnapshot,
+  error: Schema.Union([UnknownProvider, CannotSignIn]),
+})
+
+export const WatchAuth = Rpc.make("auth/watch", {
+  success: AuthState,
+  stream: true,
+})
 
 export const NisseRpcs = RpcGroup.make(
   Initialize,
@@ -199,5 +335,13 @@ export const NisseRpcs = RpcGroup.make(
   Submit,
   Interrupt,
   ResolveApproval,
+  SelectModel,
   StopServer,
+  ListProviders,
+  ListModels,
+  StartAuth,
+  RespondAuth,
+  CancelAuth,
+  Logout,
+  WatchAuth,
 )

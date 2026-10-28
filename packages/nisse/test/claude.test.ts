@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Delivery } from "@nisse/protocol"
+import type { AuthState, Delivery, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
 import { FakeClaude } from "./support/claude.ts"
 import { bodies, RawClient, statusOf } from "./support/raw.ts"
 import { runningServer, type ServerOptions } from "./support/server.ts"
@@ -12,14 +12,23 @@ const said = (deliveries: ReadonlyArray<Delivery>): Array<unknown> =>
     (body) => body._tag !== "user" && body._tag !== "approval" && body._tag !== "approval_answer",
   )
 
-const conversationWith = async (claude: FakeClaude, options: { approvals?: string } & ServerOptions = {}) => {
+interface StartWith {
+  readonly approvals?: string
+  readonly provider?: string
+  readonly model?: string
+  readonly effort?: string
+}
+
+const conversationWith = async (claude: FakeClaude, options: StartWith & ServerOptions = {}) => {
   const server = await runningServer([], { ...options, claude: claude.options })
   const client = await RawClient.connect(server.home.socket)
   const conversation = (
     await client.call("conversation/start", {
       cwd: server.home.dir,
-      provider: "claude",
+      provider: options.provider ?? "claude",
       approvals: options.approvals ?? "ask",
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
     })
   ).result.id as string
   const view = client.subscribe({ conversation })
@@ -170,7 +179,7 @@ test("a run cut off by a server stop resumes, and Claude Code is told which call
     "Run the bash command `echo started > started.fifo && python3 -c 'import time; time.sleep(120)'` with the Bash tool. If the call is cut off or interrupted, do not run anything again; reply with exactly: resumed ok"
   await first.submit(prompt)
   await first.answer(true)
-  await claude.logged((fake) => fake.permissionAnswers().length === 1)
+  await first.view.until(() => claude.permissionAnswers().length === 1)
   first.client.close()
   await first.server.stop()
 
@@ -204,4 +213,96 @@ test("the calls a Claude subagent makes show in the conversation with their resu
     ["message", undefined],
     ["run_end", undefined],
   ])
+})
+
+test("Claude Code says once how it is signed in and which models it offers, without asking Claude anything", async () => {
+  using claude = new FakeClaude("models")
+  await using server = await runningServer([], { claude: claude.options })
+  const client = await RawClient.connect(server.home.socket)
+
+  const providers = (await client.call("providers/list", {})).result as Array<ProviderSnapshot>
+  const models = (await client.call("models/list", {})).result as Array<ProviderModels>
+  client.close()
+
+  expect(providers.find((provider) => provider.id === "claude")).toMatchObject({
+    driver: "claude",
+    signIn: ["terminal"],
+    health: { status: "ready", version: "2.1.310" },
+  })
+  const listed = models.find((list) => list.provider === "claude")!
+  expect(listed.defaultModel).toBeUndefined()
+  expect(listed.models[0]).toEqual({
+    id: "sonnet",
+    name: "Sonnet",
+    description: "Sonnet 5.5 · Efficient for routine tasks",
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+  })
+  expect(listed.models.map((model) => model.id)).not.toContain("default")
+  expect(claude.probes()).toBe(1)
+  expect(claude.spawns()).toHaveLength(0)
+})
+
+test("signing in to Claude runs Claude Code's own sign-in in a terminal, then names the account", async () => {
+  using claude = new FakeClaude("terminal_sign_in")
+  await using server = await runningServer([], { claude: claude.options })
+  const client = await RawClient.connect(server.home.socket)
+  const auth = client.watch<AuthState>("auth/watch")
+  const before = ((await client.call("providers/list", {})).result as Array<ProviderSnapshot>).find(
+    (provider) => provider.id === "claude",
+  )!
+
+  const started = (await client.call("auth/start", { provider: "claude" })).result as AuthState
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  const waiting = auth.items.find((state) => state.phase === "waiting")!
+  await client.call("auth/respond", {
+    provider: "claude",
+    flow: started.flow,
+    response: { _tag: "terminal_exited", success: true },
+  })
+  await auth.until((states) => states.at(-1)?.phase === "succeeded", 30_000)
+  client.close()
+
+  expect(before.health).toMatchObject({ status: "signed_out", message: "not signed in to Claude Code" })
+  expect(waiting.interaction).toEqual({
+    _tag: "terminal",
+    command: [claude.options.executable!, "auth", "login"],
+    env: {},
+  })
+  expect(auth.items.at(-1)?.message).toBe("person@example.com · Claude Max")
+}, 40_000)
+
+test("the conversation's model and effort reach Claude Code", async () => {
+  using claude = new FakeClaude("text")
+  await using session = await conversationWith(claude, { model: "opus", effort: "high" })
+  await session.submit("Reply with exactly: fixture text ok")
+  await session.view.until(settled(1))
+  expect(claude.spawns()[0]).toMatchObject({ "--model": "opus", "--effort": "high" })
+})
+
+test("switching to Claude from another provider retells the conversation to a new Claude Code session", async () => {
+  using claude = new FakeClaude("text")
+  await using session = await conversationWith(claude, { provider: "script" })
+  await session.submit("first words")
+  await session.view.until(settled(1))
+  await session.client.call("conversation/select_model", {
+    conversation: session.conversation,
+    author: "ada",
+    selection: { provider: "claude" },
+  })
+  await session.submit("Reply with exactly: fixture text ok")
+  await session.view.until(settled(2))
+
+  expect(claude.spawns()[0]!["--resume"]).toBeUndefined()
+  expect(claude.userTexts(0)).toEqual([
+    [
+      "This Claude Code session joins a conversation it does not hold. This is the conversation so far; continue it.",
+      "first words",
+      "You answered: You said: first words",
+      "Reply with exactly: fixture text ok",
+    ],
+  ])
+  expect(bodies(session.view.deliveries).find((body) => body._tag === "model")).toEqual({
+    _tag: "model",
+    selection: { provider: "claude" },
+  })
 })

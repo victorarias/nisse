@@ -16,6 +16,8 @@ export class Client extends Context.Service<Client, RpcClient.FromGroup<typeof N
 
 export interface StartOptions {
   readonly provider?: string
+  readonly model?: string
+  readonly effort?: string
   readonly approvals?: Approvals
 }
 

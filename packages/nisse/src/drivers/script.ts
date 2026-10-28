@@ -1,7 +1,7 @@
 import type { CallId, Entry } from "@nisse/protocol"
 import { Effect, Schema } from "effect"
 import { newId } from "../ids.ts"
-import { ProviderError, type Driver, type Turn } from "../provider.ts"
+import { nothingToSignIn, ProviderError, type Driver, type Turn } from "../provider.ts"
 
 const Step = Schema.Struct({
   text: Schema.optionalKey(Schema.String),
@@ -31,6 +31,11 @@ const speak = (turn: Turn, step: Step) =>
 export const scriptDriver = (steps: ReadonlyArray<Step>): Driver => {
   let next = 0
   return {
+    kind: "script",
+    defaultModel: "script",
+    health: () => Effect.succeed({ status: "ready" }),
+    models: () => Effect.succeed([{ id: "script", name: "Script", efforts: [] }]),
+    ...nothingToSignIn,
     run: (turn) =>
       Effect.gen(function* () {
         while (true) {

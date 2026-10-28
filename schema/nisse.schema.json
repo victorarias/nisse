@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nisse protocol",
-  "protocol": 2,
+  "protocol": 3,
   "methods": {
     "initialize": {
       "params": {
@@ -59,6 +59,12 @@
           "provider": {
             "type": "string"
           },
+          "model": {
+            "type": "string"
+          },
+          "effort": {
+            "type": "string"
+          },
           "approvals": {
             "type": "string",
             "enum": [
@@ -86,8 +92,25 @@
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
           },
-          "provider": {
-            "type": "string"
+          "model": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string",
+                "description": "Absent for the provider's own choice, as Claude Code makes it."
+              },
+              "effort": {
+                "type": "string",
+                "description": "Absent for the model's own default."
+              }
+            },
+            "required": [
+              "provider"
+            ],
+            "additionalProperties": true
           },
           "approvals": {
             "type": "string",
@@ -101,7 +124,7 @@
           "id",
           "cwd",
           "createdAt",
-          "provider",
+          "model",
           "approvals"
         ],
         "additionalProperties": true
@@ -131,8 +154,25 @@
               "minimum": -9007199254740991,
               "maximum": 9007199254740991
             },
-            "provider": {
-              "type": "string"
+            "model": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Absent for the provider's own choice, as Claude Code makes it."
+                },
+                "effort": {
+                  "type": "string",
+                  "description": "Absent for the model's own default."
+                }
+              },
+              "required": [
+                "provider"
+              ],
+              "additionalProperties": true
             },
             "approvals": {
               "type": "string",
@@ -146,7 +186,7 @@
             "id",
             "cwd",
             "createdAt",
-            "provider",
+            "model",
             "approvals"
           ],
           "additionalProperties": true
@@ -200,8 +240,25 @@
                     "minimum": -9007199254740991,
                     "maximum": 9007199254740991
                   },
-                  "provider": {
-                    "type": "string"
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string",
+                        "description": "Absent for the provider's own choice, as Claude Code makes it."
+                      },
+                      "effort": {
+                        "type": "string",
+                        "description": "Absent for the model's own default."
+                      }
+                    },
+                    "required": [
+                      "provider"
+                    ],
+                    "additionalProperties": true
                   },
                   "approvals": {
                     "type": "string",
@@ -215,7 +272,7 @@
                   "id",
                   "cwd",
                   "createdAt",
-                  "provider",
+                  "model",
                   "approvals"
                 ],
                 "additionalProperties": true
@@ -456,6 +513,43 @@
                             "outcome"
                           ],
                           "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "model"
+                              ]
+                            },
+                            "selection": {
+                              "type": "object",
+                              "properties": {
+                                "provider": {
+                                  "type": "string"
+                                },
+                                "model": {
+                                  "type": "string",
+                                  "description": "Absent for the provider's own choice, as Claude Code makes it."
+                                },
+                                "effort": {
+                                  "type": "string",
+                                  "description": "Absent for the model's own default."
+                                }
+                              },
+                              "required": [
+                                "provider"
+                              ],
+                              "additionalProperties": true
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "selection"
+                          ],
+                          "additionalProperties": true,
+                          "description": "Someone switched the conversation's model; it answers with it from the next run on."
                         }
                       ]
                     }
@@ -824,6 +918,43 @@
                             "outcome"
                           ],
                           "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "model"
+                              ]
+                            },
+                            "selection": {
+                              "type": "object",
+                              "properties": {
+                                "provider": {
+                                  "type": "string"
+                                },
+                                "model": {
+                                  "type": "string",
+                                  "description": "Absent for the provider's own choice, as Claude Code makes it."
+                                },
+                                "effort": {
+                                  "type": "string",
+                                  "description": "Absent for the model's own default."
+                                }
+                              },
+                              "required": [
+                                "provider"
+                              ],
+                              "additionalProperties": true
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "selection"
+                          ],
+                          "additionalProperties": true,
+                          "description": "Someone switched the conversation's model; it answers with it from the next run on."
                         }
                       ]
                     }
@@ -1143,6 +1274,59 @@
       },
       "stream": false
     },
+    "conversation/select_model": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "selection": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string",
+                "description": "Absent for the provider's own choice, as Claude Code makes it."
+              },
+              "effort": {
+                "type": "string",
+                "description": "Absent for the model's own default."
+              }
+            },
+            "required": [
+              "provider"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "conversation",
+          "author",
+          "selection"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/UnknownProviderEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
     "server/stop": {
       "params": {
         "type": "null"
@@ -1154,6 +1338,629 @@
         "not": {}
       },
       "stream": false
+    },
+    "providers/list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "refresh": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "driver": {
+              "type": "string"
+            },
+            "signIn": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "browser",
+                  "device_code",
+                  "terminal"
+                ],
+                "description": "browser: a browser on the server's machine signs in and calls back to it. device_code: any device signs in with a short code. terminal: the provider's own sign-in command runs in a terminal on the server's machine."
+              },
+              "description": "The ways to sign in, the first one preferred."
+            },
+            "health": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "signed_out",
+                    "unavailable"
+                  ]
+                },
+                "version": {
+                  "type": "string"
+                },
+                "account": {
+                  "type": "string",
+                  "description": "Who it is signed in as, and on what plan."
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Why it is not ready, or what to do about it."
+                },
+                "checkedAt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "status",
+                "checkedAt"
+              ],
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "id",
+            "driver",
+            "signIn",
+            "health"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "models/list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "refresh": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "defaultModel": {
+              "type": "string",
+              "description": "What a selection naming no model gets; absent when the provider picks."
+            },
+            "models": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "efforts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The reasoning efforts it takes, least first."
+                  },
+                  "defaultEffort": {
+                    "type": "string"
+                  },
+                  "contextWindow": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "efforts"
+                ],
+                "additionalProperties": true
+              },
+              "description": "Best first."
+            }
+          },
+          "required": [
+            "provider",
+            "models"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "auth/start": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "browser",
+              "device_code",
+              "terminal"
+            ],
+            "description": "browser: a browser on the server's machine signs in and calls back to it. device_code: any device signs in with a short code. terminal: the provider's own sign-in command runs in a terminal on the server's machine."
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "waiting",
+              "verifying",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "interaction": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "browser"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "url"
+                ],
+                "additionalProperties": true,
+                "description": "Open url and sign in. A browser on another machine can't call back: answer with the address it ends on."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "device_code"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "url",
+                  "code"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "terminal"
+                    ]
+                  },
+                  "command": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "command",
+                  "env"
+                ],
+                "additionalProperties": true,
+                "description": "Run command with env in a terminal on the server's machine, then answer terminal_exited."
+              }
+            ],
+            "description": "What a person must do while it waits."
+          },
+          "message": {
+            "type": "string",
+            "description": "Who it signed in as, or why it failed."
+          }
+        },
+        "required": [
+          "provider",
+          "flow",
+          "phase"
+        ],
+        "additionalProperties": true,
+        "description": "One sign-in, as every connection sees it. A provider has at most one at a time."
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/UnknownProviderEncoded"
+          },
+          {
+            "$ref": "#/$defs/CannotSignInEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "auth/respond": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "callback"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "url"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "terminal_exited"
+                    ]
+                  },
+                  "success": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "success"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "provider",
+          "flow",
+          "response"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "auth/cancel": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "flow"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "auth/logout": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "driver": {
+            "type": "string"
+          },
+          "signIn": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "browser",
+                "device_code",
+                "terminal"
+              ],
+              "description": "browser: a browser on the server's machine signs in and calls back to it. device_code: any device signs in with a short code. terminal: the provider's own sign-in command runs in a terminal on the server's machine."
+            },
+            "description": "The ways to sign in, the first one preferred."
+          },
+          "health": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "signed_out",
+                  "unavailable"
+                ]
+              },
+              "version": {
+                "type": "string"
+              },
+              "account": {
+                "type": "string",
+                "description": "Who it is signed in as, and on what plan."
+              },
+              "message": {
+                "type": "string",
+                "description": "Why it is not ready, or what to do about it."
+              },
+              "checkedAt": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "status",
+              "checkedAt"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "id",
+          "driver",
+          "signIn",
+          "health"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/UnknownProviderEncoded"
+          },
+          {
+            "$ref": "#/$defs/CannotSignInEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "auth/watch": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "waiting",
+              "verifying",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "interaction": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "browser"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "url"
+                ],
+                "additionalProperties": true,
+                "description": "Open url and sign in. A browser on another machine can't call back: answer with the address it ends on."
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "device_code"
+                    ]
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "url",
+                  "code"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "terminal"
+                    ]
+                  },
+                  "command": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "command",
+                  "env"
+                ],
+                "additionalProperties": true,
+                "description": "Run command with env in a terminal on the server's machine, then answer terminal_exited."
+              }
+            ],
+            "description": "What a person must do while it waits."
+          },
+          "message": {
+            "type": "string",
+            "description": "Who it signed in as, or why it failed."
+          }
+        },
+        "required": [
+          "provider",
+          "flow",
+          "phase"
+        ],
+        "additionalProperties": true,
+        "description": "One sign-in, as every connection sees it. A provider has at most one at a time."
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": true
     }
   },
   "$defs": {
@@ -1232,6 +2039,29 @@
       "required": [
         "_tag",
         "approval"
+      ],
+      "additionalProperties": true
+    },
+    "CannotSignInEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "CannotSignIn"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "provider",
+        "message"
       ],
       "additionalProperties": true
     }

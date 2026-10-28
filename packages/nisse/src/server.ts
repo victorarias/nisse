@@ -7,6 +7,7 @@ import { Conversations } from "./conversations.ts"
 import type { Home } from "./home.ts"
 import { Lifetime } from "./lifetime.ts"
 import type { Providers } from "./provider.ts"
+import { Setup } from "./setup.ts"
 import { Store } from "./store.ts"
 import { VERSION } from "./version.ts"
 
@@ -22,9 +23,12 @@ const Handlers = NisseRpcs.toLayer(
     const store = yield* Store
     const conversations = yield* Conversations
     const lifetime = yield* Lifetime
+    const setup = yield* Setup
     return NisseRpcs.of({
       initialize: () => Effect.succeed({ version: VERSION, protocol: PROTOCOL_VERSION }),
-      "conversation/start": ({ cwd, provider, approvals }) => conversations.start(cwd, provider, approvals),
+      "conversation/start": ({ cwd, ...options }) => conversations.start(cwd, options),
+      "conversation/select_model": ({ conversation, author, selection }) =>
+        conversations.selectModel(conversation, author, selection),
       "conversation/list": () => Effect.sync(() => store.list()),
       "conversation/subscribe": ({ conversation, sinceSeq }) =>
         Stream.unwrap(Effect.as(lifetime.hold, store.subscribe(conversation, sinceSeq))),
@@ -36,12 +40,20 @@ const Handlers = NisseRpcs.toLayer(
       "approval/resolve": ({ conversation, approval, author, allow }) =>
         Effect.map(conversations.resolve(conversation, approval, author, allow), (accepted) => ({ accepted })),
       "server/stop": () => Effect.andThen(conversations.settle, afterReply(lifetime.stop)),
+      "providers/list": ({ refresh }) => setup.providers(refresh ?? false),
+      "models/list": ({ refresh }) => setup.models(refresh ?? false),
+      "auth/start": ({ provider, method }) => setup.start(provider, method),
+      "auth/respond": ({ provider, flow, response }) =>
+        Effect.map(setup.respond(provider, flow, response), (accepted) => ({ accepted })),
+      "auth/cancel": ({ provider, flow }) => Effect.map(setup.cancel(provider, flow), (accepted) => ({ accepted })),
+      "auth/logout": ({ provider }) => setup.logout(provider),
+      "auth/watch": () => Stream.unwrap(Effect.as(lifetime.hold, setup.watch)),
     })
   }),
 )
 
 export const serverLayer = (home: Home, options: { readonly idleGrace: Duration.Input }) => {
-  const app = Conversations.layer.pipe(
+  const app = Layer.merge(Conversations.layer, Setup.layer).pipe(
     Layer.provideMerge(Store.layer(home.database)),
     Layer.provideMerge(Lifetime.layer(options.idleGrace)),
   )
