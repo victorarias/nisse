@@ -1,0 +1,7 @@
+preload = ["@opentui/solid/preload"]
+
+[install]
+linker = "hoisted"
+
+[test]
+preload = ["@opentui/solid/preload"]
