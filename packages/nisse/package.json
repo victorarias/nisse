@@ -1,0 +1,16 @@
+{
+  "name": "nisse",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "nisse": "./src/main.ts"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.6",
+    "@nisse/protocol": "workspace:*",
+    "@opentui/core": "0.7.0",
+    "@opentui/solid": "0.7.0",
+    "effect": "4.0.6",
+    "solid-js": "1.9.12"
+  }
+}

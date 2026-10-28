@@ -1,1219 +1,798 @@
 {
-  "client_request": {
-    "$defs": {
-      "ApprovalResolveParams": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nisse protocol",
+  "protocol": 1,
+  "methods": {
+    "initialize": {
+      "params": {
+        "type": "object",
         "properties": {
-          "allow": {
-            "type": "boolean"
-          },
-          "call_id": {
-            "type": "string"
-          },
-          "conversation_id": {
-            "type": "string"
-          },
-          "reason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "conversation_id",
-          "call_id",
-          "allow"
-        ],
-        "type": "object"
-      },
-      "AuthCancelParams": {
-        "properties": {
-          "flow_id": {
-            "type": "string"
-          },
-          "provider": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "provider",
-          "flow_id"
-        ],
-        "type": "object"
-      },
-      "AuthLogoutParams": {
-        "properties": {
-          "provider": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "provider"
-        ],
-        "type": "object"
-      },
-      "AuthMethod": {
-        "oneOf": [
-          {
-            "const": "browser",
-            "description": "A browser on the server's machine signs in and calls back to it.",
-            "type": "string"
-          },
-          {
-            "const": "device_code",
-            "description": "Any device signs in with a short code.",
-            "type": "string"
-          },
-          {
-            "const": "terminal",
-            "description": "The provider's own sign-in command runs in a terminal on the server's machine.",
-            "type": "string"
-          }
-        ]
-      },
-      "AuthRespondParams": {
-        "properties": {
-          "flow_id": {
-            "type": "string"
-          },
-          "provider": {
-            "type": "string"
-          },
-          "response": {
-            "$ref": "#/$defs/AuthResponse"
-          }
-        },
-        "required": [
-          "provider",
-          "flow_id",
-          "response"
-        ],
-        "type": "object"
-      },
-      "AuthResponse": {
-        "oneOf": [
-          {
-            "description": "The address the browser ended on after signing in.",
-            "properties": {
-              "type": {
-                "const": "callback",
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "url"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "success": {
-                "type": "boolean"
-              },
-              "type": {
-                "const": "terminal_exited",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "success"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "AuthStartParams": {
-        "properties": {
-          "method": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/AuthMethod"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The instance's preferred method when absent."
-          },
-          "provider": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "provider"
-        ],
-        "type": "object"
-      },
-      "ClientInfo": {
-        "properties": {
-          "name": {
+          "client": {
             "type": "string"
           },
           "version": {
             "type": "string"
+          },
+          "protocol": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
-          "name",
-          "version"
+          "client",
+          "version",
+          "protocol"
         ],
-        "type": "object"
+        "additionalProperties": true
       },
-      "ConversationInterruptParams": {
-        "description": "Stops the conversation's run, if it has one, and the runs of every subagent under it.",
+      "result": {
+        "type": "object",
         "properties": {
-          "conversation_id": {
+          "version": {
             "type": "string"
+          },
+          "protocol": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
-          "conversation_id"
+          "version",
+          "protocol"
         ],
-        "type": "object"
+        "additionalProperties": true
       },
-      "ConversationListParams": {
-        "type": "object"
+      "error": {
+        "not": {}
       },
-      "ConversationReadParams": {
-        "properties": {
-          "conversation_id": {
-            "type": "string"
-          },
-          "since_seq": {
-            "default": 0,
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "conversation_id"
-        ],
-        "type": "object"
-      },
-      "ConversationSelectModelParams": {
-        "description": "Switches the conversation's model from its next run on, with a `nisse.model` entry.",
-        "properties": {
-          "conversation_id": {
-            "type": "string"
-          },
-          "effort": {
-            "description": "Absent for the model's own default.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "model": {
-            "description": "Absent when the provider picks its own model at run time, as Claude Code does.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "provider": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "conversation_id",
-          "provider"
-        ],
-        "type": "object"
-      },
-      "ConversationStartParams": {
+      "stream": false
+    },
+    "conversation/start": {
+      "params": {
+        "type": "object",
         "properties": {
           "cwd": {
-            "description": "The client's working directory, absolute: tools run here and resolve relative paths\nagainst it, and the project's extensions are found from it.",
             "type": "string"
-          },
-          "effort": {
-            "description": "The model's reasoning effort; the default selection's when it names the same model.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "model": {
-            "description": "The provider's model; the default selection's, or the provider's default, when absent.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "provider": {
-            "description": "Who answers, by provider name; the default selection's provider when absent.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
           "cwd"
         ],
-        "type": "object"
+        "additionalProperties": true
       },
-      "ConversationSubmitParams": {
+      "result": {
+        "type": "object",
         "properties": {
-          "conversation_id": {
+          "id": {
             "type": "string"
           },
-          "input": {
-            "$ref": "#/$defs/Input"
-          },
-          "request_id": {
-            "description": "Retrying with the same id returns the first submission instead of submitting twice.",
+          "cwd": {
             "type": "string"
           },
-          "when_busy": {
-            "$ref": "#/$defs/WhenBusy",
-            "default": "follow_up"
+          "createdAt": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
-          "conversation_id",
-          "input",
-          "request_id"
+          "id",
+          "cwd",
+          "createdAt"
         ],
-        "type": "object"
+        "additionalProperties": true
       },
-      "ConversationSubscribeParams": {
-        "properties": {
-          "conversation_id": {
-            "type": "string"
-          },
-          "since_seq": {
-            "default": 0,
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "conversation_id"
-        ],
-        "type": "object"
+      "error": {
+        "not": {}
       },
-      "InitializeParams": {
-        "properties": {
-          "client": {
-            "$ref": "#/$defs/ClientInfo"
-          },
-          "experimental": {
-            "default": false,
-            "type": "boolean"
-          },
-          "protocol_version": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "client",
-          "protocol_version"
-        ],
-        "type": "object"
-      },
-      "Input": {
-        "oneOf": [
-          {
-            "properties": {
-              "text": {
-                "type": "string"
-              },
-              "type": {
-                "const": "text",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "text"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "data": true,
-              "kind": {
-                "type": "string"
-              },
-              "type": {
-                "const": "write",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "kind",
-              "data"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "ModelsListParams": {
-        "properties": {
-          "refresh": {
-            "default": false,
-            "description": "Ask every provider again instead of answering with what was last found.",
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
-      "ProvidersListParams": {
-        "properties": {
-          "refresh": {
-            "default": false,
-            "description": "Check every instance again instead of answering with what was last found.",
-            "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
-      "ServerStopParams": {
-        "type": "object"
-      },
-      "SkillsListParams": {
-        "properties": {
-          "conversation_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "conversation_id"
-        ],
-        "type": "object"
-      },
-      "WhenBusy": {
-        "enum": [
-          "steer",
-          "follow_up",
-          "reject"
-        ],
-        "type": "string"
-      }
+      "stream": false
     },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "Requests a client sends, keyed by method.",
-    "oneOf": [
-      {
+    "conversation/list": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "id",
+            "cwd",
+            "createdAt"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "conversation/subscribe": {
+      "params": {
+        "type": "object",
         "properties": {
-          "method": {
-            "const": "initialize",
+          "conversation": {
             "type": "string"
           },
-          "params": {
-            "$ref": "#/$defs/InitializeParams"
+          "sinceSeq": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
-          "method",
-          "params"
+          "conversation"
         ],
-        "type": "object"
+        "additionalProperties": true
       },
-      {
-        "properties": {
-          "method": {
-            "const": "conversation/start",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ConversationStartParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "conversation/list",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ConversationListParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "conversation/read",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ConversationReadParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "conversation/subscribe",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ConversationSubscribeParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "conversation/submit",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ConversationSubmitParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "conversation/select_model",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ConversationSelectModelParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "conversation/interrupt",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ConversationInterruptParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "approval/resolve",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ApprovalResolveParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "skills/list",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/SkillsListParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "description": "Asks the server to exit once this connection has closed and no run is left, whoever\nelse is attached.",
-        "properties": {
-          "method": {
-            "const": "server/stop",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ServerStopParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "providers/list",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ProvidersListParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "auth/start",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/AuthStartParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "auth/respond",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/AuthRespondParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "auth/cancel",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/AuthCancelParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "auth/logout",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/AuthLogoutParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "properties": {
-          "method": {
-            "const": "models/list",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/ModelsListParams"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
-      }
-    ],
-    "title": "ClientRequest"
-  },
-  "message": {
-    "$defs": {
-      "ErrorResponse": {
-        "properties": {
-          "error": {
-            "$ref": "#/$defs/RpcError"
-          },
-          "id": {
-            "$ref": "#/$defs/RequestId"
-          }
-        },
-        "required": [
-          "id",
-          "error"
-        ],
-        "type": "object"
-      },
-      "Notification": {
-        "properties": {
-          "method": {
-            "type": "string"
-          },
-          "params": true
-        },
-        "required": [
-          "method"
-        ],
-        "type": "object"
-      },
-      "Request": {
-        "properties": {
-          "id": {
-            "$ref": "#/$defs/RequestId"
-          },
-          "method": {
-            "type": "string"
-          },
-          "params": true
-        },
-        "required": [
-          "id",
-          "method"
-        ],
-        "type": "object"
-      },
-      "RequestId": {
+      "result": {
         "anyOf": [
           {
-            "format": "int64",
-            "type": "integer"
-          },
-          {
-            "type": "string"
-          }
-        ]
-      },
-      "Response": {
-        "properties": {
-          "id": {
-            "$ref": "#/$defs/RequestId"
-          },
-          "result": true
-        },
-        "required": [
-          "id",
-          "result"
-        ],
-        "type": "object"
-      },
-      "RpcError": {
-        "properties": {
-          "code": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "data": true,
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message"
-        ],
-        "type": "object"
-      }
-    },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "anyOf": [
-      {
-        "$ref": "#/$defs/Request"
-      },
-      {
-        "$ref": "#/$defs/Response"
-      },
-      {
-        "$ref": "#/$defs/ErrorResponse"
-      },
-      {
-        "$ref": "#/$defs/Notification"
-      }
-    ],
-    "title": "Message"
-  },
-  "server_notification": {
-    "$defs": {
-      "Actor": {
-        "description": "Who caused an entry or a submission.",
-        "oneOf": [
-          {
+            "type": "object",
             "properties": {
-              "id": {
-                "type": "string"
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "snapshot"
+                ]
               },
-              "kind": {
-                "const": "person",
-                "type": "string"
+              "conversation": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "id",
+                  "cwd",
+                  "createdAt"
+                ],
+                "additionalProperties": true
               },
-              "name": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id",
-              "name"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "conversation_id": {
-                "type": "string"
+              "seq": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
-              "kind": {
-                "const": "agent",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "conversation_id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "const": "extension",
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "name"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "const": "model",
-                "type": "string"
-              },
-              "model": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "model"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "kind": {
-                "const": "system",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "AuthInteraction": {
-        "oneOf": [
-          {
-            "description": "Open `url` and sign in. A browser on another machine can't call back: paste the address\nit ends on with a `callback` response.",
-            "properties": {
-              "type": {
-                "const": "browser",
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "url"
-            ],
-            "type": "object"
-          },
-          {
-            "description": "Open `url` on any device and enter `code`.",
-            "properties": {
-              "code": {
-                "type": "string"
-              },
-              "type": {
-                "const": "device_code",
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "url",
-              "code"
-            ],
-            "type": "object"
-          },
-          {
-            "description": "Run `command` with `env` in a terminal on the server's machine, then answer\n`terminal_exited`.",
-            "properties": {
-              "command": {
+              "entries": {
+                "type": "array",
                 "items": {
-                  "type": "string"
-                },
-                "type": "array"
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "seq": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "at": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "author": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "person"
+                              ]
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "name"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "nisse"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "_tag"
+                          ],
+                          "additionalProperties": true
+                        }
+                      ]
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "user"
+                              ]
+                            },
+                            "submission": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "submission",
+                            "text"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "answer"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "interrupted": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "text",
+                            "interrupted"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "run_failed"
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "message"
+                          ],
+                          "additionalProperties": true
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "seq",
+                    "at",
+                    "author",
+                    "body"
+                  ],
+                  "additionalProperties": true
+                }
               },
-              "env": {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              "type": {
-                "const": "terminal",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "command"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "AuthPhase": {
-        "enum": [
-          "starting",
-          "waiting",
-          "verifying",
-          "succeeded",
-          "failed",
-          "cancelled"
-        ],
-        "type": "string"
-      },
-      "AuthState": {
-        "description": "One sign-in, as every connection sees it. A provider has at most one at a time.",
-        "properties": {
-          "flow_id": {
-            "type": "string"
-          },
-          "interaction": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/AuthInteraction"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "What a person must do now, while the flow waits."
-          },
-          "message": {
-            "description": "Who it signed in as, or why it failed.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "phase": {
-            "$ref": "#/$defs/AuthPhase"
-          },
-          "provider": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "provider",
-          "flow_id",
-          "phase"
-        ],
-        "type": "object"
-      },
-      "Commit": {
-        "description": "One atomic write, as seen by subscribers of its conversation.",
-        "properties": {
-          "conversation_id": {
-            "type": "string"
-          },
-          "entries": {
-            "items": {
-              "$ref": "#/$defs/Entry"
-            },
-            "type": "array"
-          },
-          "live": {
-            "description": "The text the model is still writing; empty once it became an entry.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "seq": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ConversationStatus"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "seq",
-          "conversation_id",
-          "entries"
-        ],
-        "type": "object"
-      },
-      "ConversationStatus": {
-        "enum": [
-          "idle",
-          "working",
-          "needs_approval",
-          "parked"
-        ],
-        "type": "string"
-      },
-      "Entry": {
-        "description": "One immutable transcript record.",
-        "properties": {
-          "author": {
-            "$ref": "#/$defs/Actor"
-          },
-          "conversation_id": {
-            "type": "string"
-          },
-          "created_at_ms": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "data": true,
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "seq": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "seq",
-          "conversation_id",
-          "kind",
-          "author",
-          "data",
-          "created_at_ms"
-        ],
-        "type": "object"
-      },
-      "StatusChanged": {
-        "properties": {
-          "conversation_id": {
-            "type": "string"
-          },
-          "seq": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "status": {
-            "$ref": "#/$defs/ConversationStatus"
-          }
-        },
-        "required": [
-          "conversation_id",
-          "status",
-          "seq"
-        ],
-        "type": "object"
-      },
-      "UiChanged": {
-        "oneOf": [
-          {
-            "properties": {
-              "extension": {
+              "live": {
                 "type": "string"
               },
-              "surface": {
-                "const": "status",
-                "type": "string"
+              "queued": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "submission": {
+                      "type": "string"
+                    },
+                    "author": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "person"
+                              ]
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "name"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "nisse"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "_tag"
+                          ],
+                          "additionalProperties": true
+                        }
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "submission",
+                    "author",
+                    "text"
+                  ],
+                  "additionalProperties": true
+                }
               },
-              "text": {
-                "type": [
-                  "string",
-                  "null"
+              "status": {
+                "type": "string",
+                "enum": [
+                  "idle",
+                  "working"
                 ]
               }
             },
             "required": [
-              "surface",
-              "extension"
+              "_tag",
+              "conversation",
+              "seq",
+              "entries",
+              "live",
+              "queued",
+              "status"
             ],
-            "type": "object"
+            "additionalProperties": true
           },
           {
+            "type": "object",
             "properties": {
-              "extension": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "commit"
+                ]
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "at": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "conversation": {
                 "type": "string"
               },
-              "surface": {
-                "const": "toast",
-                "type": "string"
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "seq": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "at": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "author": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "person"
+                              ]
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "name"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "nisse"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "_tag"
+                          ],
+                          "additionalProperties": true
+                        }
+                      ]
+                    },
+                    "body": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "user"
+                              ]
+                            },
+                            "submission": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "submission",
+                            "text"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "answer"
+                              ]
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "interrupted": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "text",
+                            "interrupted"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "run_failed"
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "message"
+                          ],
+                          "additionalProperties": true
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "seq",
+                    "at",
+                    "author",
+                    "body"
+                  ],
+                  "additionalProperties": true
+                }
               },
-              "text": {
-                "type": "string"
+              "live": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "_tag": {
+                        "type": "string",
+                        "enum": [
+                          "append"
+                        ]
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "_tag",
+                      "text"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "_tag": {
+                        "type": "string",
+                        "enum": [
+                          "clear"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "_tag"
+                    ],
+                    "additionalProperties": true
+                  }
+                ]
+              },
+              "enqueued": {
+                "type": "object",
+                "properties": {
+                  "submission": {
+                    "type": "string"
+                  },
+                  "author": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "person"
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "_tag",
+                          "name"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "nisse"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "_tag"
+                        ],
+                        "additionalProperties": true
+                      }
+                    ]
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "submission",
+                  "author",
+                  "text"
+                ],
+                "additionalProperties": true
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "idle",
+                  "working"
+                ]
               }
             },
             "required": [
-              "surface",
-              "extension",
-              "text"
+              "_tag",
+              "seq",
+              "at",
+              "conversation",
+              "entries"
             ],
-            "type": "object"
+            "additionalProperties": true
           }
         ]
-      }
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/FellBehindEncoded"
+          }
+        ]
+      },
+      "stream": true
     },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "Notifications the server sends, keyed by method.",
-    "oneOf": [
-      {
+    "conversation/submit": {
+      "params": {
+        "type": "object",
         "properties": {
-          "method": {
-            "const": "conversation/committed",
+          "conversation": {
             "type": "string"
           },
-          "params": {
-            "$ref": "#/$defs/Commit"
+          "requestId": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
           }
         },
         "required": [
-          "method",
-          "params"
+          "conversation",
+          "requestId",
+          "author",
+          "text"
         ],
-        "type": "object"
+        "additionalProperties": true
       },
-      {
+      "result": {
+        "type": "object",
         "properties": {
-          "method": {
-            "const": "conversation/status",
+          "submission": {
             "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/StatusChanged"
           }
         },
         "required": [
-          "method",
-          "params"
+          "submission"
         ],
-        "type": "object"
+        "additionalProperties": true
       },
-      {
-        "properties": {
-          "method": {
-            "const": "ui/changed",
-            "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/UiChanged"
-          }
-        },
-        "required": [
-          "method",
-          "params"
-        ],
-        "type": "object"
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
       },
-      {
+      "stream": false
+    },
+    "conversation/interrupt": {
+      "params": {
+        "type": "object",
         "properties": {
-          "method": {
-            "const": "auth/state",
+          "conversation": {
             "type": "string"
-          },
-          "params": {
-            "$ref": "#/$defs/AuthState"
           }
         },
         "required": [
-          "method",
-          "params"
+          "conversation"
         ],
-        "type": "object"
-      }
-    ],
-    "title": "ServerNotification"
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
+    },
+    "server/stop": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    }
+  },
+  "$defs": {
+    "NoSuchConversationEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "NoSuchConversation"
+          ]
+        },
+        "conversation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "conversation"
+      ],
+      "additionalProperties": true
+    },
+    "FellBehindEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "FellBehind"
+          ]
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "_tag",
+        "seq"
+      ],
+      "additionalProperties": true
+    }
   }
 }

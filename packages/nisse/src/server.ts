@@ -1,0 +1,50 @@
+import { BunSocketServer } from "@effect/platform-bun"
+import { NisseRpcs, PROTOCOL_VERSION } from "@nisse/protocol"
+import { Duration, Effect, Layer, Stream } from "effect"
+import * as RpcSerialization from "effect/rpc/RpcSerialization"
+import * as RpcServer from "effect/rpc/RpcServer"
+import { Conversations } from "./conversations.ts"
+import type { Home } from "./home.ts"
+import { Lifetime } from "./lifetime.ts"
+import { Model } from "./model.ts"
+import { Store } from "./store.ts"
+import { VERSION } from "./version.ts"
+
+const Handlers = NisseRpcs.toLayer(
+  Effect.gen(function* () {
+    const store = yield* Store
+    const conversations = yield* Conversations
+    const lifetime = yield* Lifetime
+    return NisseRpcs.of({
+      initialize: () => Effect.succeed({ version: VERSION, protocol: PROTOCOL_VERSION }),
+      "conversation/start": ({ cwd }) => Effect.sync(() => store.start(cwd)),
+      "conversation/list": () => Effect.sync(() => store.list()),
+      "conversation/subscribe": ({ conversation, sinceSeq }) =>
+        Stream.unwrap(Effect.as(lifetime.hold, store.subscribe(conversation, sinceSeq))),
+      "conversation/submit": ({ conversation, requestId, author, text }) =>
+        Effect.map(conversations.submit(conversation, requestId, author, text), (submission) => ({ submission })),
+      "conversation/interrupt": ({ conversation }) => conversations.interrupt(conversation),
+      "server/stop": () => Effect.andThen(conversations.settle, lifetime.stop),
+    })
+  }),
+)
+
+export const serverLayer = (home: Home, options: { readonly idleGrace: Duration.Input }) => {
+  const app = Conversations.layer.pipe(
+    Layer.provideMerge(Store.layer(home.database)),
+    Layer.provideMerge(Lifetime.layer(options.idleGrace)),
+  )
+  return RpcServer.layer(NisseRpcs).pipe(
+    Layer.provide(Handlers),
+    Layer.provide(RpcServer.layerProtocolSocketServer),
+    Layer.provide(RpcSerialization.layerNdJsonRpc()),
+    Layer.provide(BunSocketServer.layer({ path: home.socket })),
+    Layer.provideMerge(app),
+  )
+}
+
+export const serve = (home: Home, options: { readonly idleGrace: Duration.Input }) =>
+  Effect.gen(function* () {
+    const lifetime = yield* Lifetime
+    yield* lifetime.ended
+  }).pipe(Effect.provide(serverLayer(home, options)), Effect.scoped) satisfies Effect.Effect<void, unknown, Model>
