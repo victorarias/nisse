@@ -4,8 +4,12 @@ A conversation started with `--provider claude` is answered by Claude Code
 through the Claude Agent SDK, with Claude Code's own tools and session. Nisse
 shows Claude's calls under `NISSE`, asks a person before the calls Claude Code
 would ask about, resumes Claude Code's session where nisse's transcript ends,
-and after a crash tells Claude which calls were cut off. A Claude Code that
-cannot sign in ends the run failed with Claude Code's own message.
+and after a crash tells Claude which calls were cut off. Claude Code gets the
+conversation's model and effort, and a conversation switched to Claude from
+another provider is retold to a new Claude Code session. Nisse asks Claude Code
+how it is signed in and which models it offers without asking Claude anything.
+A Claude Code that cannot sign in ends the run failed with Claude Code's own
+message.
 
 ## Sub-features
 
@@ -21,12 +25,21 @@ cannot sign in ends the run failed with Claude Code's own message.
   and Claude answers knowing it was.
 - `claude-sign-in-error` ends the run failed with Claude Code's message, exit
   1 from `exec`.
+- `claude-health` lists Claude as `ready` with its account and version, and
+  its models, from Claude Code itself.
+- `claude-model` hands Claude Code the conversation's model and effort.
+- `claude-switch` retells a conversation switched to Claude to a new Claude
+  Code session.
+- `claude-sign-in` runs `claude auth login`, in [Sign-in](./sign-in.md).
 
 ## How to get to it (user POV)
 
 - Run `nisse --provider claude`, or `nisse` with no `NISSE_MODEL_SCRIPT`.
-- Run `nisse exec --provider claude '<prompt>'`, with `--auto` to allow calls.
+- Run `nisse exec --provider claude '<prompt>'`, with `--auto` to allow calls,
+  and `--model` and `--effort` to choose the model.
 - Call `conversation/start` with `"provider": "claude"`.
+- Switch a conversation to Claude with `/model` or
+  `conversation/select_model`.
 
 ## Driving it with drive.ts
 
@@ -37,6 +50,11 @@ Preconditions:
   but the sign-in error makes real Claude runs. Without a sign-in, only
   `claude-sign-in-error` can be driven.
 - A fresh run with no script; every conversation names `--provider claude`.
+- Inside a Claude Code session, the run's server started without that
+  session's variables:
+  `mkdir -p /tmp/nisse-verify/r/claude-config`, then
+  `env $(env | cut -d= -f1 | grep -E '^(CLAUDE|ANTHROPIC|CCR)' | sed 's/^/-u /') CLAUDE_CONFIG_DIR=/tmp/nisse-verify/r/claude-config`
+  before each `drive.ts` command.
 - Commands that make Claude change files only touch files under
   `/tmp/nisse-verify/r`.
 
@@ -74,6 +92,18 @@ Preconditions:
   says the call was interrupted. The snapshot holds one `tool_call`, its
   interrupted `tool_result`, a `message` and a `run_end` with
   `"outcome": "answered"`.
+- **Health.** Run `drive.ts r rpc providers/list '{}'`: `claude` with
+  `"signIn": ["terminal"]` and `"health": {"status": "ready", "version": "<version>", "account": "<account>", ...}`.
+  `drive.ts r rpc models/list '{}'`: `claude` with no `defaultModel`, and
+  Claude Code's models with their efforts.
+- **Model.** Run
+  `drive.ts r nisse exec --provider claude --model haiku --effort low 'Reply with one word: ok'`:
+  exit 0, stdout `ok`. The session Claude Code saved under
+  `/tmp/nisse-verify/r/claude-config/projects` holds `"model":"claude-haiku-...`
+  and `"effort":"low"`.
+- **Switch.** Switch a scripted conversation to Claude, as
+  [Models](./models.md) says: Claude answers with what was said before the
+  switch.
 - **Sign-in error.** In a fresh run, run
   `ANTHROPIC_API_KEY=sk-ant-not-a-key drive.ts r nisse exec --provider claude hi`.
   Exit 1, empty stdout, stderr `Invalid API key · Fix external API key`. A
@@ -91,4 +121,8 @@ Preconditions:
 - Inside a Claude Code session, run `drive.ts` without that session's
   `CLAUDE_*`, `ANTHROPIC_*` and `CCR_*` variables and with `CLAUDE_CONFIG_DIR`
   set to a folder in the run, so the nested Claude Code keeps its sessions out
-  of yours.
+  of yours. A `drive.ts r nisse ...` that finds no server starts one with
+  its own environment, so keep the prefix on every command of the run.
+- Where Claude Code is signed in by its environment rather than its config
+  folder, as in a hosted session, it stays `ready` after
+  `nisse logout claude`, and `^L` has no Claude sign-in to start.

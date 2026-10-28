@@ -19,9 +19,10 @@ repository root.
 - Wait for screen text or a commit's entry tag, never for time. The one
   exception is the idle exit, whose 30 s is the promise itself.
 - Prefer the handles the TUI draws (`READY`, `WORKING`, `WAITING`, `PROMPT`,
-  `QUEUE · tab`, `STEER · tab`, `ADA`, `NISSE`, `allow this call?`) over row
-  and column positions.
-- Wait for a run's end over the wire with `watch --until run_end`.
+  `QUEUE · tab`, `STEER · tab`, `ADA`, `NISSE`, `allow this call?`,
+  `SIGN IN · <provider>`, `MODEL`) over row and column positions.
+- Wait for a run's end over the wire with `watch --until run_end`, and for a
+  sign-in's step with `watch-auth --until <phase>`.
 - Commands are literal. Keep quoted text and flags as written.
 
 ## Proof and skip reporting
@@ -56,12 +57,19 @@ paths, handles, state, commands and proof.
   sees, then run in order.
 - [Steering](./steering.md): `Tab` or `"steer": true` sends a prompt that
   reaches the model at its next step, inside the same run.
-- [Providers](./providers.md): `--provider` or `conversation/start` picks one;
-  an unknown one is refused, a signed-out one fails the run.
+- [Providers](./providers.md): `--provider` or `conversation/start` picks one,
+  `config.toml` adds more; an unknown one is refused, a signed-out one fails
+  the run.
 - [Claude](./claude.md): Claude Code's answers, approvals, session resume and
   cut-off calls; needs a signed-in Claude Code.
 - [OpenAI](./openai.md): ChatGPT's answers and tools, token refresh and
   sign-in failures; the real journeys need a ChatGPT sign-in.
+- [Sign-in](./sign-in.md): the splash, `^L`, `nisse login` and `logout`, and
+  `auth/*` show, start, answer and cancel a sign-in by browser, device code
+  or Claude Code's terminal.
+- [Models](./models.md): `--model`, `--effort`, `/model` and
+  `conversation/select_model` choose a conversation's model; `config.toml`
+  and the model chosen last set the default.
 - [Reopen and resume](./reopen.md): quitting prints how to reopen; reopening
   and resubscribing show the same committed transcript.
 - [Server lifecycle](./server-lifecycle.md): one server per home, started on

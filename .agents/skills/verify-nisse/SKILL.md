@@ -39,8 +39,11 @@ run with `fail`, or calls its `tool` and goes on to the next step in the same
 run, or ends the run. Once the steps run out Nisse echoes, and a restarted
 server starts them over. `--script` copies the file into the run, so later
 edits to it do nothing. `up` with or without a script makes the scripted
-provider the home's default; real providers are chosen with `--provider`, see
-[Providers](features/providers.md).
+provider the one a conversation falls back to; real providers and models are
+chosen with `--provider` and `--model`, see [Providers](features/providers.md)
+and [Models](features/models.md). A run's tmux server keeps the environment of
+the `drive.ts` command that first opened a window in it, `serve` or
+`tui start`: set variables such as `SSH_CONNECTION` on that command.
 
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its
@@ -76,7 +79,10 @@ to settle and stops it, and the next client starts one on the new code.
 - **TUI.** `tui type <text>` types literally; `tui key <keys>` presses tmux
   keys: `Enter` sends, `C-j` adds a line, `Escape` stops the run, `Tab`
   switches between queueing and steering while Nisse works, `C-y` allows the
-  call Nisse asks about and `C-n` denies it, `C-c` quits. `tui wait <text>`
+  call Nisse asks about and `C-n` denies it, `C-l` signs in to a signed-out
+  provider and `Escape` cancels it, `C-c` quits. Typing `/model` and `Enter`
+  opens the model list: `Up` and `Down` pick a model, `Left` and `Right` its
+  effort, `Enter` switches and `Escape` closes it. `tui wait <text>`
   waits until the screen shows the text, or stops showing it with `--gone`; on
   a timeout it prints the screen and exits 1. Wait on text, never sleep. The
   pane is 100x30. Stable handles are the status words `READY`, `WORKING` and
@@ -85,12 +91,20 @@ to settle and stops it, and the next client starts one on the new code.
   `steering · <text>`, a call's `▸ Tool(subject)`, `allow this call?`,
   `✓ allowed by <name>` and `✗ denied by <name>`, a run's end `◆ interrupted`
   or `✗ <message>`, and the exit line `resume with: nisse --conversation <id>`.
+  The splash lists each provider as `● <id> <account>` or `○ <id> signed out`
+  over `^L  sign in`; a sign-in shows in the `SIGN IN · <provider>` panel over
+  `esc  cancel`; the model list is the `MODEL` panel, whose chosen row ends in
+  `‹ <effort> ›`; a switch shows as `◆ <name> switched to <provider> · <model> · <effort>`,
+  and the status bar ends with the conversation's model.
 - **CLI.** `drive.ts r1 nisse <args>` runs `nisse` against the run's home and
   records the command, stdout, stderr and exit code.
+  It gives `nisse` no terminal; a command that reads one, such as
+  `nisse login`, runs in the TUI's pane with `tui start login <provider>`.
 - **Wire.** `drive.ts r1 rpc <method> '<params json>'` makes one call, for
   `initialize`, `conversation/start`, `conversation/list`,
-  `conversation/submit`, `conversation/interrupt`, `approval/resolve` and
-  `server/stop`.
+  `conversation/submit`, `conversation/interrupt`, `approval/resolve`,
+  `conversation/select_model`, `providers/list`, `models/list`, `auth/start`,
+  `auth/respond`, `auth/cancel`, `auth/logout` and `server/stop`.
   `drive.ts r1 watch <conversation>` subscribes as a second client and prints
   each delivery as one JSON line: the snapshot first, then each commit.
   `--submit <text>` submits as `ada` once the snapshot is in, so nothing races;
@@ -98,6 +112,10 @@ to settle and stops it, and the next client starts one on the new code.
   such as `run_end` or `approval`, and without it `watch` returns after a
   second with no delivery; `--since <seq>` resumes after a commit; `--save <name>`
   keeps the lines as evidence.
+  `drive.ts r1 watch-auth` follows every sign-in over `auth/watch` and prints
+  each state as one JSON line, the running ones first; `--until <phase>`, such
+  as `waiting` or `failed`, returns once a state reaches it, and `--save` and
+  `--timeout` work as for `watch`.
 - **Crash.** `drive.ts r1 kill-server` sends SIGKILL to the pid holding this
   run's home lock, after checking it runs this checkout's Nisse.
 
@@ -109,7 +127,8 @@ covers every entry point the feature's file lists, not the most convenient one.
 Every helper command appends what it did to `evidence/steps.log`, with a
 timestamp. `nisse` saves each command's output; `tui screen <name>` saves the
 screen as `<name>.screen.txt`; `tui stop` saves what the TUI left in the
-terminal as `tui-exit.screen.txt`; `watch --save <name>` saves `<name>.ndjson`.
+terminal as `tui-exit.screen.txt`; `watch --save <name>` and
+`watch-auth --save <name>` save `<name>.ndjson`.
 
 Proof standards:
 
