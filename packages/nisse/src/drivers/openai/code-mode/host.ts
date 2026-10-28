@@ -11,11 +11,17 @@ export interface Runtime {
 }
 
 export interface Delegated {
-  readonly cellId: string
+  readonly script: string | undefined
   readonly runtimeCallId: string
   readonly tool: string
   readonly input: unknown
   readonly answer: (result: { ok: unknown } | { error: string }) => void
+}
+
+export class NoRunningCell extends Error {
+  constructor(readonly script: string) {
+    super(`no running cell ${script}; it already finished, or the code-mode host running it stopped`)
+  }
 }
 
 type Route = (session: string) => ((call: Delegated) => void) | undefined
@@ -50,6 +56,8 @@ const settled = (outcome: Outcome) => {
 class Connection {
   private readonly pending = new Map<number, Pending>()
   private readonly sessions = new Map<string, Promise<void>>()
+  private readonly scriptOfCell = new Map<string, string>()
+  private readonly cellOfScript = new Map<string, string>()
   private nextId = 1
   private stderr = ""
   private stopped = false
@@ -110,18 +118,22 @@ class Connection {
     return opened
   }
 
-  execute(session: string, request: unknown, started: (cellId: string) => void) {
+  execute(session: string, script: string, request: object, started: () => void) {
     return new Promise<Runtime>((resolve, reject) => {
       this.send(
-        { method: "session/execute", sessionId: session, request },
+        { method: "session/execute", sessionId: session, request: { ...request, tool_call_id: script } },
         {
           response: (outcome) => {
-            if (outcome.status === "error") reject(new Error(outcome.message))
-            else if (typeof outcome.value?.cellId === "string") started(outcome.value.cellId)
+            if (outcome.status === "error") return reject(new Error(outcome.message))
+            if (typeof outcome.value?.cellId !== "string") return
+            this.bind(session, outcome.value.cellId, script)
+            started()
           },
           initial: (outcome) => {
             try {
-              resolve(runtimeOf(settled(outcome)))
+              const runtime = runtimeOf(settled(outcome))
+              this.bind(session, runtime.cell_id, script)
+              resolve(this.ofScript(session, script, runtime))
             } catch (error) {
               reject(error)
             }
@@ -132,23 +144,38 @@ class Connection {
     })
   }
 
-  wait(session: string, cellId: string, yieldTimeMs: number) {
-    return this.waited({
+  wait(session: string, script: string, yieldTimeMs: number) {
+    return this.waited(session, script, (cell) => ({
       method: "session/wait",
       sessionId: session,
-      request: { cell_id: cellId, yield_time_ms: yieldTimeMs },
-    })
+      request: { cell_id: cell, yield_time_ms: yieldTimeMs },
+    }))
   }
 
-  terminate(session: string, cellId: string) {
-    return this.waited({ method: "session/terminate", sessionId: session, cellId })
+  terminate(session: string, script: string) {
+    return this.waited(session, script, (cell) => ({ method: "session/terminate", sessionId: session, cellId: cell }))
   }
 
-  private async waited(request: unknown) {
-    const completed = await this.operation(request)
+  private bind(session: string, cell: string, script: string) {
+    this.scriptOfCell.set(`${session} ${cell}`, script)
+    this.cellOfScript.set(`${session} ${script}`, cell)
+  }
+
+  private ofScript(session: string, script: string, runtime: Runtime): Runtime {
+    if (runtime.state !== "Yielded") {
+      this.scriptOfCell.delete(`${session} ${runtime.cell_id}`)
+      this.cellOfScript.delete(`${session} ${script}`)
+    }
+    return { ...runtime, cell_id: script }
+  }
+
+  private async waited(session: string, script: string, request: (cell: string) => unknown) {
+    const cell = this.cellOfScript.get(`${session} ${script}`)
+    if (cell === undefined) throw new NoRunningCell(script)
+    const completed = await this.operation(request(cell))
     const [runtime] = Object.values(completed?.outcome ?? {})
     if (runtime === undefined) throw new Error("the code-mode host's answer has no outcome")
-    return runtimeOf(runtime)
+    return this.ofScript(session, script, runtimeOf(runtime))
   }
 
   private operation(request: unknown) {
@@ -198,11 +225,12 @@ class Connection {
     const answer = (result: { ok: unknown } | { error: string }) => this.answer(message.id, result)
     const request = message.request
     if (request?.type !== "tool/invoke") return answer({ error: "Nisse does not support this helper" })
-    const route = this.route(String(message.sessionId))
+    const session = String(message.sessionId)
+    const route = this.route(session)
     if (!route) return answer({ error: "the run that started this script has ended" })
     const invocation = request.invocation ?? {}
     route({
-      cellId: String(invocation.cell_id ?? ""),
+      script: this.scriptOfCell.get(`${session} ${invocation.cell_id}`),
       runtimeCallId: String(invocation.runtime_tool_call_id ?? ""),
       tool: String(invocation.tool_name?.name ?? ""),
       input: invocation.input ?? null,

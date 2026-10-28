@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { Effect, Fiber, FiberSet, Queue } from "effect"
 import type { Call, Turn } from "../../../provider.ts"
 import { failed, type ToolOutcome } from "../../../tools/tool.ts"
-import { Host, type Delegated, type HostConnection, type Runtime } from "./host.ts"
+import { Host, NoRunningCell, type Delegated, type HostConnection, type Runtime } from "./host.ts"
 import { definition, nestedCall, nestedTools, section } from "./nested.ts"
 
 export const EXEC = "exec"
@@ -136,9 +136,6 @@ const withinBudget = (text: string, maxTokens: number) => {
 
 const YIELDED = "Script running with cell ID "
 
-export const yieldedCell = (output: string) =>
-  output.startsWith(YIELDED) ? output.slice(YIELDED.length).split("\n", 1)[0] : undefined
-
 const answered = (runtime: Runtime, startedAt: number, maxTokens: number | undefined): ToolOutcome => {
   const error = runtime.state === "Result" ? (runtime.error_text ?? undefined) : undefined
   const status =
@@ -181,7 +178,6 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 
 export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: string, turn: Turn) {
   const conversation = turn.conversation.id
-  const startedBy = new Map<string, CallId>()
   const running = new Set<string>()
   let starting: CallId | undefined
 
@@ -199,8 +195,8 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
 
   const answerNested = (call: Delegated) =>
     Effect.gen(function* () {
-      const parent = startedBy.get(call.cellId) ?? starting
-      if (parent === undefined) return call.answer({ error: `no exec call started cell ${call.cellId}` })
+      const parent = (call.script as CallId | undefined) ?? starting
+      if (parent === undefined) return call.answer({ error: "no exec call started this cell" })
       const resolved = nestedCall(call.tool, call.input)
       if ("error" in resolved) return call.answer({ error: resolved.error })
       const outcome = yield* turn.runTool(
@@ -217,34 +213,34 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       Effect.onInterrupt(() => Effect.sync(() => call.answer({ error: "the run that started this script has ended" }))),
     )
 
-  const nestedByCell = new Map<string, Set<Fiber.Fiber<unknown, unknown>>>()
-  const answeredInCell = (call: Delegated) =>
+  const nestedByScript = new Map<CallId, Set<Fiber.Fiber<unknown, unknown>>>()
+  const answeredInScript = (call: Delegated) =>
     Effect.withFiber((fiber) => {
-      const inCell = nestedByCell.get(call.cellId) ?? new Set()
-      nestedByCell.set(call.cellId, inCell.add(fiber))
+      const script = (call.script as CallId | undefined) ?? starting
+      if (script === undefined) return answerNested(call)
+      const inScript = nestedByScript.get(script) ?? new Set()
+      nestedByScript.set(script, inScript.add(fiber))
       return Effect.ensuring(
         answerNested(call),
         Effect.sync(() => {
-          inCell.delete(fiber)
-          if (inCell.size === 0) nestedByCell.delete(call.cellId)
+          inScript.delete(fiber)
+          if (inScript.size === 0) nestedByScript.delete(script)
         }),
       )
     })
-  const stopNested = (cells: ReadonlyArray<string>) =>
-    Fiber.interruptAll(cells.flatMap((cell) => [...(nestedByCell.get(cell) ?? [])]))
-  const cellsOf = (script: CallId) => [...startedBy].flatMap(([cell, call]) => (call === script ? [cell] : []))
+  const stopNested = (script: CallId) => Fiber.interruptAll([...(nestedByScript.get(script) ?? [])])
   yield* Effect.forkScoped(
-    Effect.forever(Effect.flatMap(Queue.take(delegated), (call) => FiberSet.run(nested, answeredInCell(call)))),
+    Effect.forever(Effect.flatMap(Queue.take(delegated), (call) => FiberSet.run(nested, answeredInScript(call)))),
   )
 
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
       if (running.size === 0) return
-      const cells = [...running]
+      const scripts = [...running]
       running.clear()
       void host
         .session(program, conversation)
-        .then((connection) => Promise.all(cells.map((cell) => connection.terminate(conversation, cell))))
+        .then((connection) => Promise.all(scripts.map((script) => connection.terminate(conversation, script))))
         .catch(() => undefined)
     }),
   )
@@ -266,10 +262,12 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       if (connection._tag === "Failure") return failed(errorText(connection.failure.cause))
       const runtime = yield* Effect.result(Effect.tryPromise(() => ask(connection.success).then(settle)))
       if (runtime._tag === "Success") {
-        if (runtime.success.state !== "Yielded") yield* stopNested([runtime.success.cell_id])
+        if (runtime.success.state !== "Yielded") yield* stopNested(script)
         return answered(runtime.success, startedAt, maxTokens)
       }
-      yield* connection.success.alive ? stopNested(cellsOf(script)) : FiberSet.clear(nested)
+      if (runtime.failure.cause instanceof NoRunningCell)
+        return failed(withNestedResults(runtime.failure.cause.message, script, yield* turn.transcript))
+      yield* connection.success.alive ? stopNested(script) : FiberSet.clear(nested)
       const interrupted = `interrupted: ${errorText(runtime.failure.cause)}; the script may or may not have taken effect`
       return failed(withNestedResults(interrupted, script, yield* turn.transcript))
     })
@@ -284,17 +282,14 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       return connection
         .execute(
           conversation,
+          call.call,
           {
-            tool_call_id: call.call,
             enabled_tools: nestedTools.map(definition),
             source: pragma.source,
             yield_time_ms: pragma.yieldTimeMs ?? DEFAULT_YIELD_TIME_MS,
             max_output_tokens: pragma.maxOutputTokens ?? null,
           },
-          (cell) => {
-            startedBy.set(cell, call.call)
-            running.add(cell)
-          },
+          () => running.add(call.call),
         )
         .finally(() => (starting = undefined))
     })
@@ -305,7 +300,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
     if (typeof args?.cell_id !== "string")
       return Effect.succeed(failed("bad arguments for wait: `cell_id` must be a string"))
     const maxTokens = typeof args.max_tokens === "number" ? args.max_tokens : undefined
-    const script = startedBy.get(args.cell_id) ?? call.call
+    const script = args.cell_id as CallId
     return outcomeOf(script, startedAt, maxTokens, (connection) =>
       args.terminate === true
         ? connection.terminate(conversation, args.cell_id)

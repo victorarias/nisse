@@ -645,7 +645,7 @@ withCodeModeHost("a script that yields is resumed by wait", async () => {
   await session.submit("count slowly")
   await session.view.until(settled(1))
   const [yielded, finished] = resultsOf(session.view.deliveries).map((result) => result.output)
-  expect(yielded).toStartWith("Script running with cell ID 1\n")
+  expect(yielded).toStartWith("Script running with cell ID call_1\n")
   expect(yielded).toEndWith("started")
   expect(finished).toStartWith("Script completed\n")
   expect(finished).toEndWith("finished")
@@ -737,6 +737,30 @@ withCodeModeHost("a host that dies while the model waits tells the wait what the
     expect(waited.output).toStartWith("interrupted: the code-mode host stopped")
     expect(waited.output).toContain("The calls it made that finished:\n- Read (done):")
     expect(waited.output).toContain("[package]")
+    expectRequests(fake, expected)
+  } finally {
+    rmSync(launcher, { recursive: true, force: true })
+  }
+})
+
+withCodeModeHost("a wait on a script whose host stopped never reaches a script the next host started", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_wait_after_host_restart")
+  const launcher = mkdtempSync("/tmp/nisse-host-")
+  const pidFile = join(launcher, "host.pid")
+  const host = join(launcher, "host")
+  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
+  chmodSync(host, 0o755)
+  try {
+    await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
+    await session.submit("start a slow script")
+    await session.view.until(settled(1))
+    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
+    await session.submit("start another, then check the first")
+    await session.view.until(settled(2))
+    const [, started, checked] = resultsOf(session.view.deliveries).map((result) => result.output)
+    expect(started).toStartWith("Script running with cell ID call_2\n")
+    expect(checked).toStartWith("no running cell call_1")
     expectRequests(fake, expected)
   } finally {
     rmSync(launcher, { recursive: true, force: true })

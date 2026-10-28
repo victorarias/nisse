@@ -10,7 +10,6 @@ import {
   EXEC,
   finishedCall,
   WAIT,
-  yieldedCell,
   Host,
   HOST_IDLE_MS,
   installedHost,
@@ -64,14 +63,9 @@ const instructionsFor = (options: OpenAiOptions, cwd: string) => {
 const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
   const nested = new Map<CallId, { tool: string; script: CallId }>()
   const custom = new Set<CallId>()
-  const scriptOfCell = new Map<string, CallId>()
-  const waitedCell = new Map<CallId, string>()
+  const waitedScript = new Map<CallId, CallId>()
   const finishedIn = new Map<CallId, Array<string>>()
-  const scriptOf = (call: CallId) => {
-    if (custom.has(call)) return call
-    const cell = waitedCell.get(call)
-    return cell === undefined ? undefined : scriptOfCell.get(cell)
-  }
+  const scriptOf = (call: CallId) => (custom.has(call) ? call : waitedScript.get(call))
   return transcript.flatMap(({ body }): Array<unknown> => {
     switch (body._tag) {
       case "user":
@@ -96,7 +90,7 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
           return []
         }
         if (body.tool === WAIT && typeof (body.input as { cell_id?: unknown })?.cell_id === "string")
-          waitedCell.set(body.call, (body.input as { cell_id: string }).cell_id)
+          waitedScript.set(body.call, (body.input as { cell_id: CallId }).cell_id)
         if (body.tool === EXEC && typeof body.input === "string") {
           custom.add(body.call)
           return [{ type: "custom_tool_call", call_id: body.call, name: body.tool, input: body.input }]
@@ -116,8 +110,6 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
           return []
         }
         const script = scriptOf(body.call)
-        const cell = custom.has(body.call) ? yieldedCell(body.output) : undefined
-        if (cell !== undefined) scriptOfCell.set(cell, body.call)
         const finished = script === undefined ? [] : (finishedIn.get(script) ?? [])
         const output = body.output === interrupted.output ? withFinishedCalls(body.output, finished) : body.output
         return [
