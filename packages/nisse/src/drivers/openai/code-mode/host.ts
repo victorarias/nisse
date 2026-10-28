@@ -118,16 +118,14 @@ class Connection {
     return opened
   }
 
-  execute(session: string, script: string, request: object, started: () => void) {
+  execute(session: string, script: string, request: object) {
     return new Promise<Runtime>((resolve, reject) => {
       this.send(
         { method: "session/execute", sessionId: session, request: { ...request, tool_call_id: script } },
         {
           response: (outcome) => {
             if (outcome.status === "error") return reject(new Error(outcome.message))
-            if (typeof outcome.value?.cellId !== "string") return
-            this.bind(session, outcome.value.cellId, script)
-            started()
+            if (typeof outcome.value?.cellId === "string") this.bind(session, outcome.value.cellId, script)
           },
           initial: (outcome) => {
             try {

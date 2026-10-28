@@ -1,14 +1,15 @@
-import type { CallId, Entry } from "@nisse/protocol"
+import type { CallId } from "@nisse/protocol"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Fiber, FiberSet, Queue } from "effect"
 import type { Call, Turn } from "../../../provider.ts"
-import { failed, type ToolOutcome } from "../../../tools/tool.ts"
+import { failed, interrupted, type ToolOutcome } from "../../../tools/tool.ts"
 import { Host, NoRunningCell, type Delegated, type HostConnection, type Runtime } from "./host.ts"
 import { definition, nestedCall, nestedTools, section } from "./nested.ts"
 
 export const EXEC = "exec"
 export const WAIT = "wait"
+export const CELL = "cell"
 export const HOST_PROGRAM = "codex-code-mode-host"
 export const HOST_IDLE_MS = 300_000
 const DEFAULT_YIELD_TIME_MS = 10_000
@@ -134,20 +135,22 @@ const withinBudget = (text: string, maxTokens: number) => {
   return `Warning: truncated output (original token count: ${Math.floor(bytes.length / BYTES_PER_TOKEN)})\n${head}…${cut} tokens truncated…${tail}`
 }
 
-const YIELDED = "Script running with cell ID "
+export const isScriptReport = (output: string) => output.startsWith("Script ")
 
-export const isYielded = (output: string) => output.startsWith(YIELDED)
+const errorOf = (runtime: Runtime) => (runtime.state === "Result" ? (runtime.error_text ?? undefined) : undefined)
+
+const statusOf = (runtime: Runtime) =>
+  runtime.state === "Yielded"
+    ? `Script running with cell ID ${runtime.cell_id}`
+    : runtime.state === "Terminated"
+      ? "Script terminated"
+      : errorOf(runtime) === undefined
+        ? "Script completed"
+        : "Script failed"
 
 const answered = (runtime: Runtime, startedAt: number, maxTokens: number | undefined): ToolOutcome => {
-  const error = runtime.state === "Result" ? (runtime.error_text ?? undefined) : undefined
-  const status =
-    runtime.state === "Yielded"
-      ? `${YIELDED}${runtime.cell_id}`
-      : runtime.state === "Terminated"
-        ? "Script terminated"
-        : error === undefined
-          ? "Script completed"
-          : "Script failed"
+  const error = errorOf(runtime)
+  const status = statusOf(runtime)
   const items = runtime.content_items.map((item) =>
     typeof item.text === "string" ? item.text : `[${item.type ?? "item"} omitted]`,
   )
@@ -159,41 +162,15 @@ const answered = (runtime: Runtime, startedAt: number, maxTokens: number | undef
   }
 }
 
-export const finishedCall = (tool: string, result: { output: string; error: boolean }) =>
-  `- ${tool} (${result.error ? "failed" : "done"}): ${result.output.trimEnd()}`
-
-export const withFinishedCalls = (interrupted: string, finished: ReadonlyArray<string>) =>
-  finished.length === 0 ? interrupted : `${interrupted}\nThe calls it made that finished:\n${finished.join("\n")}`
-
-const withNestedResults = (interrupted: string, parent: CallId, transcript: ReadonlyArray<Entry>) => {
-  const nested = new Map<CallId, string>()
-  const finished: Array<string> = []
-  for (const { body } of transcript) {
-    if (body._tag === "tool_call" && body.parent === parent) nested.set(body.call, body.tool)
-    else if (body._tag === "tool_result" && nested.has(body.call))
-      finished.push(finishedCall(nested.get(body.call)!, body))
-  }
-  return withFinishedCalls(interrupted, finished)
-}
-
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: string, turn: Turn) {
   const conversation = turn.conversation.id
-  const running = new Set<string>()
   let starting: CallId | undefined
 
   const delegated = yield* Queue.unbounded<Delegated>()
   const nested = yield* FiberSet.make()
-  yield* Effect.acquireRelease(
-    Effect.sync(() =>
-      host.beginRun(conversation, {
-        delegated: (call) => void Queue.offerUnsafe(delegated, call),
-        hostStopped: () => void Effect.runFork(FiberSet.clear(nested)),
-      }),
-    ),
-    () => Effect.sync(() => host.endRun(conversation)),
-  )
+  const cells = new Set<CallId>()
 
   const answerNested = (call: Delegated) =>
     Effect.gen(function* () {
@@ -231,15 +208,39 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       )
     })
   const stopNested = (script: CallId) => Fiber.interruptAll([...(nestedByScript.get(script) ?? [])])
+
+  const cellCall = (script: CallId) => `${script}/${CELL}` as CallId
+  const startCell = (script: CallId) =>
+    Effect.andThen(
+      turn.recordCall({ call: cellCall(script), tool: CELL, input: { cell_id: script }, parent: script }),
+      Effect.sync(() => cells.add(script)),
+    )
+  const endCell = (script: CallId, outcome: ToolOutcome) =>
+    Effect.andThen(
+      stopNested(script),
+      Effect.suspend(() => (cells.delete(script) ? turn.recordResult(cellCall(script), outcome) : Effect.void)),
+    )
+  const hostGone = Effect.andThen(
+    FiberSet.clear(nested),
+    Effect.suspend(() => Effect.forEach([...cells], (script) => endCell(script, interrupted), { discard: true })),
+  )
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      host.beginRun(conversation, {
+        delegated: (call) => void Queue.offerUnsafe(delegated, call),
+        hostStopped: () => void Effect.runFork(hostGone),
+      }),
+    ),
+    () => Effect.sync(() => host.endRun(conversation)),
+  )
   yield* Effect.forkScoped(
     Effect.forever(Effect.flatMap(Queue.take(delegated), (call) => FiberSet.run(nested, answeredInScript(call)))),
   )
 
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
-      if (running.size === 0) return
-      const scripts = [...running]
-      running.clear()
+      const scripts = starting === undefined ? [...cells] : [...cells, starting]
+      if (scripts.length === 0) return
       void host
         .session(program, conversation)
         .then((connection) => Promise.all(scripts.map((script) => connection.terminate(conversation, script))))
@@ -247,14 +248,9 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
     }),
   )
 
-  const settle = (runtime: Runtime) => {
-    if (runtime.state === "Yielded") running.add(runtime.cell_id)
-    else running.delete(runtime.cell_id)
-    return runtime
-  }
-
   const outcomeOf = (
     script: CallId,
+    tool: typeof EXEC | typeof WAIT,
     startedAt: number,
     maxTokens: number | undefined,
     ask: (connection: HostConnection) => Promise<Runtime>,
@@ -262,16 +258,20 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
     Effect.gen(function* () {
       const connection = yield* Effect.result(Effect.tryPromise(() => host.session(program, conversation)))
       if (connection._tag === "Failure") return failed(errorText(connection.failure.cause))
-      const runtime = yield* Effect.result(Effect.tryPromise(() => ask(connection.success).then(settle)))
+      const runtime = yield* Effect.result(Effect.tryPromise(() => ask(connection.success)))
       if (runtime._tag === "Success") {
-        if (runtime.success.state !== "Yielded") yield* stopNested(script)
-        return answered(runtime.success, startedAt, maxTokens)
+        const ran = runtime.success
+        if (ran.state === "Yielded") {
+          if (tool === EXEC) yield* startCell(script)
+        } else if (tool === WAIT) yield* endCell(script, { output: statusOf(ran), error: errorOf(ran) !== undefined })
+        else yield* stopNested(script)
+        return answered(ran, startedAt, maxTokens)
       }
-      if (runtime.failure.cause instanceof NoRunningCell)
-        return failed(withNestedResults(runtime.failure.cause.message, script, yield* turn.transcript))
-      yield* connection.success.alive ? stopNested(script) : FiberSet.clear(nested)
-      const interrupted = `interrupted: ${errorText(runtime.failure.cause)}; the script may or may not have taken effect`
-      return failed(withNestedResults(interrupted, script, yield* turn.transcript))
+      if (runtime.failure.cause instanceof NoRunningCell) return failed(runtime.failure.cause.message)
+      if (!connection.success.alive) yield* hostGone
+      else if (tool === WAIT) yield* endCell(script, interrupted)
+      else yield* stopNested(script)
+      return failed(`interrupted: ${errorText(runtime.failure.cause)}; the script may or may not have taken effect`)
     })
 
   const exec = (call: Call, startedAt: number): Effect.Effect<ToolOutcome> => {
@@ -279,20 +279,15 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       return Effect.succeed(failed("exec expects raw JavaScript source text"))
     const pragma = parsePragma(call.input)
     if ("error" in pragma) return Effect.succeed(failed(pragma.error as string))
-    return outcomeOf(call.call, startedAt, pragma.maxOutputTokens, (connection) => {
+    return outcomeOf(call.call, EXEC, startedAt, pragma.maxOutputTokens, (connection) => {
       starting = call.call
       return connection
-        .execute(
-          conversation,
-          call.call,
-          {
-            enabled_tools: nestedTools.map(definition),
-            source: pragma.source,
-            yield_time_ms: pragma.yieldTimeMs ?? DEFAULT_YIELD_TIME_MS,
-            max_output_tokens: pragma.maxOutputTokens ?? null,
-          },
-          () => running.add(call.call),
-        )
+        .execute(conversation, call.call, {
+          enabled_tools: nestedTools.map(definition),
+          source: pragma.source,
+          yield_time_ms: pragma.yieldTimeMs ?? DEFAULT_YIELD_TIME_MS,
+          max_output_tokens: pragma.maxOutputTokens ?? null,
+        })
         .finally(() => (starting = undefined))
     })
   }
@@ -303,7 +298,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       return Effect.succeed(failed("bad arguments for wait: `cell_id` must be a string"))
     const maxTokens = typeof args.max_tokens === "number" ? args.max_tokens : undefined
     const script = args.cell_id as CallId
-    return outcomeOf(script, startedAt, maxTokens, (connection) =>
+    return outcomeOf(script, WAIT, startedAt, maxTokens, (connection) =>
       args.terminate === true
         ? connection.terminate(conversation, args.cell_id)
         : connection.wait(

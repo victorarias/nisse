@@ -28,6 +28,12 @@ installs; without it a code-mode run fails saying how to install it.
   script, then each call the script makes as a `tool_call` with
   `"parent": "<exec call>"` and its `tool_result`, then the script's result.
   The TUI shows `▸ exec`, then `▸ Bash(<command>)` and the rest.
+- `code-mode-cells` gives a script that yields (`Script running with cell ID
+<exec call>`) a `cell` call under its `exec`, shown as `▸ cell(<exec call>)`,
+  that ends when the script does: with `Script completed`, `Script failed` or
+  `Script terminated` from `wait`, or `interrupted` when the host stops, the
+  run ends or the server stops first. A script that stops before finishing,
+  as its `exec` or as its `cell`, tells the model what its calls finished.
 - `code-mode-approvals` asks before a nested call that changes things, with
   `allow this call?`, `^Y`, `^N` or `approval/resolve`; `exec` denies them and
   `--auto` allows them, as for any call.
@@ -52,7 +58,7 @@ Preconditions:
 - A fresh run. The missing host and the host lookup need no sign-in: a run
   that finds the host goes on to fail `not signed in to ChatGPT`.
 - `code-mode-install` downloads from `github.com`.
-- `code-mode-calls`, `code-mode-approvals` and `code-mode-host-life` make real
+- `code-mode-calls`, `code-mode-cells`, `code-mode-approvals` and `code-mode-host-life` make real
   ChatGPT runs and need a ChatGPT sign-in, as [OpenAI](./openai.md) says.
   Without one they are not verified.
 

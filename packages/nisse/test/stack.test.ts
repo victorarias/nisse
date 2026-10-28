@@ -1,8 +1,11 @@
 import { afterEach, expect, test } from "bun:test"
 import type { Delivery } from "@nisse/protocol"
 import { Database } from "bun:sqlite"
-import { rmSync } from "node:fs"
-import { deadline, RawClient } from "./support/raw.ts"
+import { rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { installedCodeModeHost } from "./support/code-mode-host.ts"
+import { FakeOpenAi, matches, signIn } from "./support/openai.ts"
+import { bodies, deadline, RawClient } from "./support/raw.ts"
 import { tempHome } from "./support/server.ts"
 import { nisse, nisseEnv, stopServer } from "./support/terminal.ts"
 
@@ -219,3 +222,55 @@ test("a run that keeps crashing the server stops after three tries instead of lo
   })
   client.close()
 }, 30_000)
+
+const codeModeHost = installedCodeModeHost()
+
+test.skipIf(codeModeHost === undefined)(
+  "a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off",
+  async () => {
+    const nisseHome = home()
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_server_crash")
+    await signIn(nisseHome)
+    writeFileSync(join(nisseHome.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+    const env = nisseEnv(nisseHome, { NISSE_OPENAI_URL: fake.base, NISSE_CODE_MODE_HOST: codeModeHost! })
+    const first = await serving(env, nisseHome)
+    const conversation = (
+      await first.client.call("conversation/start", {
+        cwd: nisseHome.dir,
+        provider: "openai",
+        model: "gpt-6.1-sol",
+        approvals: "auto",
+      })
+    ).result.id
+    const view = first.client.subscribe({ conversation })
+    await first.client.call("conversation/submit", {
+      conversation,
+      requestId: "r1",
+      author: "ada",
+      text: "read the manifest, then wait in the shell",
+    })
+    await view.until((deliveries) =>
+      bodies(deliveries).some((body) => body._tag === "tool_call" && body.tool === "Bash"),
+    )
+    first.server.kill("SIGKILL")
+    await first.server.exited
+    first.client.close()
+
+    const second = await serving(env, nisseHome)
+    const resumed = second.client.subscribe({ conversation })
+    await resumed.until((deliveries) => deliveries.at(-1)?.status === "idle", 20_000)
+    second.client.close()
+    const sent = fake.responses().map((request) => JSON.parse(request.body))
+    expect(sent).toHaveLength(expected.length)
+    sent.forEach((body, i) => {
+      if (!matches(body, expected[i])) expect(body).toEqual(expected[i])
+    })
+    const note = sent[2].input.find((item: { role?: string }) => item.role === "developer").content[0].text
+    expect(note).toStartWith("Cell call_1 stopped before its script finished.")
+    expect(note).toContain("- Read (done):")
+    expect(note).toContain("[package]")
+    expect(note).toContain("- Bash (failed): interrupted; it may or may not have taken effect")
+  },
+  40_000,
+)

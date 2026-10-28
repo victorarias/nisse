@@ -12,6 +12,10 @@ const firstLine = (text: string) => {
 
 export const describeCall = (tool: string, input: unknown) => {
   const subject =
-    field(input, "command") ?? field(input, "file_path") ?? field(input, "pattern") ?? field(input, "path")
+    field(input, "command") ??
+    field(input, "file_path") ??
+    field(input, "pattern") ??
+    field(input, "path") ??
+    field(input, "cell_id")
   return subject === undefined ? tool : `${tool}(${firstLine(subject)})`
 }

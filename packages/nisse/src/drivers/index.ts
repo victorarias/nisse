@@ -22,8 +22,8 @@ export const openAiOptions =
   (id: string): OpenAiOptions => ({
     authPath: join(home.dir, "auth", `${id}.json`),
     modelsPath: join(home.dir, "cache", `${id}-models.json`),
-    authBase: AUTH_BASE,
-    baseUrl: BASE_URL,
+    authBase: process.env.NISSE_OPENAI_URL ?? AUTH_BASE,
+    baseUrl: process.env.NISSE_OPENAI_URL ?? BASE_URL,
     callbackPort: CALLBACK_PORT,
     instructions,
     home: home.dir,
