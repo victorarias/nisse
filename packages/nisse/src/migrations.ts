@@ -32,19 +32,24 @@ interface V1Entry {
   body: { _tag: string; text?: string; interrupted?: boolean; message?: string; outcome?: string }
 }
 
-const splitV1Entry = (entry: V1Entry): Array<V1Entry> => {
-  const body = entry.body
-  if (body._tag === "answer") {
-    const message = body.text ? [{ ...entry, body: { _tag: "message", text: body.text } }] : []
-    const outcome = body.interrupted ? "interrupted" : "answered"
-    return [...message, { ...entry, id: `${entry.id}-end`, body: { _tag: "run_end", outcome } }]
-  }
-  if (body._tag === "run_failed") {
-    const message = body.message === undefined ? {} : { message: body.message }
-    return [{ ...entry, body: { _tag: "run_end", outcome: "failed", ...message } }]
-  }
-  return [entry]
-}
+const failedAfter = (entry: V1Entry, next: V1Entry | undefined) =>
+  entry.body._tag === "answer" && !entry.body.interrupted && next?.body._tag === "run_failed" && next.seq === entry.seq
+
+const splitV1Entries = (entries: ReadonlyArray<V1Entry>): Array<V1Entry> =>
+  entries.flatMap((entry, index) => {
+    const body = entry.body
+    if (body._tag === "answer") {
+      const message = body.text ? [{ ...entry, body: { _tag: "message", text: body.text } }] : []
+      if (failedAfter(entry, entries[index + 1])) return message
+      const outcome = body.interrupted ? "interrupted" : "answered"
+      return [...message, { ...entry, id: `${entry.id}-end`, body: { _tag: "run_end", outcome } }]
+    }
+    if (body._tag === "run_failed") {
+      const message = body.message === undefined ? {} : { message: body.message }
+      return [{ ...entry, body: { _tag: "run_end", outcome: "failed", ...message } }]
+    }
+    return [entry]
+  })
 
 const toV2 = (db: Database) => {
   db.run("ALTER TABLE conversations ADD COLUMN provider TEXT NOT NULL DEFAULT 'script'")
@@ -60,13 +65,16 @@ const toV2 = (db: Database) => {
     answered_seq INTEGER
   )`)
 
-  const entries = db.query<{ body: string; conversation: string }, []>("SELECT body, conversation FROM entries").all()
+  const rows = db
+    .query<{ body: string; conversation: string }, []>("SELECT body, conversation FROM entries ORDER BY seq, rowid")
+    .all()
+  const byConversation = Map.groupBy(rows, (row) => row.conversation)
   db.run("DELETE FROM entries")
-  for (const row of entries) {
-    for (const entry of splitV1Entry(JSON.parse(row.body))) {
+  for (const [conversation, entries] of byConversation) {
+    for (const entry of splitV1Entries(entries.map((row) => JSON.parse(row.body)))) {
       db.run("INSERT INTO entries (id, conversation, seq, body) VALUES (?, ?, ?, ?)", [
         entry.id,
-        row.conversation,
+        conversation,
         entry.seq,
         JSON.stringify(entry),
       ])
@@ -76,7 +84,7 @@ const toV2 = (db: Database) => {
   const commits = db.query<{ seq: number; body: string }, []>("SELECT seq, body FROM commits").all()
   for (const row of commits) {
     const commit = JSON.parse(row.body)
-    commit.entries = commit.entries.flatMap(splitV1Entry)
+    commit.entries = splitV1Entries(commit.entries)
     if (commit.live) {
       commit.live = commit.live._tag === "append" ? [{ _tag: "text", append: commit.live.text }] : [{ _tag: "clear" }]
     }
