@@ -436,7 +436,7 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
     Effect.gen(function* () {
       if (state.phase === "succeeded" || state.phase === "failed" || state.phase === "cancelled") {
         mine = undefined
-        setSetup("signIn", undefined)
+        setSetup("signIn", state.phase === "failed" ? state : undefined)
         const terminal = terminals.get(state.flow)
         terminals.delete(state.flow)
         if (terminal) yield* Fiber.interrupt(terminal)
@@ -487,7 +487,7 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
       if (selection) run(client["conversation/select_model"]({ conversation, author: userName(), selection }))
     },
     signIn: () => {
-      if (setup.signIn) return
+      if (setup.signIn && setup.signIn.phase !== "failed") return
       const current = view.conversation?.model.provider
       const signedOut = setup.providers.filter((provider) => provider.health.status === "signed_out")
       const target = signedOut.find((provider) => provider.id === current) ?? signedOut[0]
@@ -507,7 +507,8 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
     },
     cancelSignIn: () => {
       const state = setup.signIn
-      if (state) run(client["auth/cancel"]({ provider: state.provider, flow: state.flow }))
+      if (state?.phase === "failed") setSetup("signIn", undefined)
+      else if (state) run(client["auth/cancel"]({ provider: state.provider, flow: state.flow }))
     },
     pasteCallback: (url) => {
       const state = setup.signIn

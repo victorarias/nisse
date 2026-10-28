@@ -110,7 +110,14 @@ export const SignInPanel = (props: { state: AuthState }) => {
       paddingLeft={1}
       paddingRight={1}
     >
-      <Show when={interaction()} fallback={<text fg={color.dim}>{`${props.state.phase}…`}</text>}>
+      <Show
+        when={interaction()}
+        fallback={
+          <Show when={props.state.phase === "failed"} fallback={<text fg={color.dim}>{`${props.state.phase}…`}</text>}>
+            <text fg={color.yellow}>{`✗ ${props.state.message ?? "the sign-in failed"}`}</text>
+          </Show>
+        }
+      >
         {(shown) => {
           const now = shown()
           switch (now._tag) {
@@ -136,7 +143,12 @@ export const SignInPanel = (props: { state: AuthState }) => {
           }
         }}
       </Show>
-      <KeyCap cap="esc" what="cancel" />
+      <Show when={props.state.phase === "failed"} fallback={<KeyCap cap="esc" what="cancel" />}>
+        <box flexDirection="row" gap={2}>
+          <KeyCap cap="^L" what="try again" />
+          <KeyCap cap="esc" what="close" />
+        </box>
+      </Show>
     </box>
   )
 }

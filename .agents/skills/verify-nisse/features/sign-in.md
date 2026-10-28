@@ -162,12 +162,13 @@ Preconditions:
 - `tui stop` presses `^C` once; Claude Code's sign-in needs it twice.
 - The TUI follows only the sign-in it started; another client's sign-in does
   not open its panel.
-- A failed or cancelled sign-in closes the TUI's panel; the reason shows in
-  `watch-auth`, not on the screen.
+- A cancelled sign-in closes the TUI's panel. A failed one keeps it, showing
+  `✗ <reason>` with `^L  try again` and `esc  close`.
 - One browser sign-in listens on port 1455 at a time; a second, from another
   home, fails at once, and `watch-auth` in that home shows
   `could not listen on 127.0.0.1:1455 for the browser's answer (is another sign-in running?); ...`.
-  `nisse login openai` there prints that failure and exits 1.
+  `nisse login openai` there prints that failure and exits 1, and `^L` in
+  that home's TUI shows it in the `SIGN IN · openai` panel.
 - `nisse logout claude` runs `claude auth logout`: drive it only with
   `CLAUDE_CONFIG_DIR` set to a folder in the run.
 - The server exits 30 s after its last client leaves even while a sign-in
