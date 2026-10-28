@@ -3,7 +3,18 @@ import { Effect, Semaphore } from "effect"
 import { rmSync } from "node:fs"
 import { ProviderError, type Call, type Driver, type Health, type Turn } from "../../provider.ts"
 import { catalog, CLIENT_VERSION } from "./catalog.ts"
-import { codeModeRun, codeModeTools, EXEC, Host, HOST_IDLE_MS, installedHost, missingHost } from "./code-mode/index.ts"
+import { interrupted } from "../../tools/tool.ts"
+import {
+  codeModeRun,
+  codeModeTools,
+  EXEC,
+  finishedCall,
+  Host,
+  HOST_IDLE_MS,
+  installedHost,
+  missingHost,
+  withFinishedCalls,
+} from "./code-mode/index.ts"
 import { accountOf, isExpired, loadCredentials, refreshed, saveCredentials, type Credentials } from "./credentials.ts"
 import { CALLBACK_PORT, signIn } from "./signin.ts"
 import { events } from "./sse.ts"
@@ -49,8 +60,9 @@ const instructionsFor = (options: OpenAiOptions, cwd: string) => {
 }
 
 const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
-  const nested = new Set<CallId>()
+  const nested = new Map<CallId, string>()
   const custom = new Set<CallId>()
+  let unreported: Array<string> = []
   return transcript.flatMap(({ body }): Array<unknown> => {
     switch (body._tag) {
       case "user":
@@ -71,7 +83,7 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
         return [{ type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] }]
       case "tool_call":
         if (body.parent !== undefined) {
-          nested.add(body.call)
+          nested.set(body.call, body.tool)
           return []
         }
         if (body.tool === EXEC && typeof body.input === "string") {
@@ -86,15 +98,22 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
             arguments: typeof body.input === "string" ? body.input : JSON.stringify(body.input),
           },
         ]
-      case "tool_result":
-        if (nested.has(body.call)) return []
+      case "tool_result": {
+        const tool = nested.get(body.call)
+        if (tool !== undefined) {
+          unreported.push(finishedCall(tool, body))
+          return []
+        }
+        const output = body.output === interrupted.output ? withFinishedCalls(body.output, unreported) : body.output
+        unreported = []
         return [
           {
             type: custom.has(body.call) ? "custom_tool_call_output" : "function_call_output",
             call_id: body.call,
-            output: body.output,
+            output,
           },
         ]
+      }
       default:
         return []
     }

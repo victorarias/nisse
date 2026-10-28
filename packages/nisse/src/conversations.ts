@@ -24,16 +24,15 @@ import { Lifetime } from "./lifetime.ts"
 import { Providers, type Call, type Driver, type Saved, type Turn } from "./provider.ts"
 import { Store, type Change, type NewEntry } from "./store.ts"
 import { builtinTools, toolNamed, type ToolOutcome } from "./tools/index.ts"
+import { interrupted } from "./tools/tool.ts"
 
 const LIVE_WINDOW = "100 millis"
 export const RESTART_LIMIT = 3
 const nisse = { _tag: "nisse" } as const
 
-const interruptedOutcome: ToolOutcome = { output: "interrupted; it may or may not have taken effect", error: true }
-
 const interruptedResult = (call: CallId): NewEntry => ({
   author: nisse,
-  body: { _tag: "tool_result", call, ...interruptedOutcome },
+  body: { _tag: "tool_result", call, ...interrupted },
 })
 
 const withChange = (changes: ReadonlyArray<LiveChange>, change: LiveChange): Array<LiveChange> => {
@@ -280,9 +279,7 @@ export class Conversations extends Context.Service<
               yield* recordResult(call.call, outcome)
               return outcome
             }).pipe(
-              Effect.onInterrupt(() =>
-                openCalls.has(call.call) ? recordResult(call.call, interruptedOutcome) : Effect.void,
-              ),
+              Effect.onInterrupt(() => (openCalls.has(call.call) ? recordResult(call.call, interrupted) : Effect.void)),
             ),
           steers: Effect.andThen(
             flush,

@@ -155,17 +155,21 @@ const answered = (runtime: Runtime, startedAt: number, maxTokens: number | undef
   }
 }
 
+export const finishedCall = (tool: string, result: { output: string; error: boolean }) =>
+  `- ${tool} (${result.error ? "failed" : "done"}): ${result.output.trimEnd()}`
+
+export const withFinishedCalls = (interrupted: string, finished: ReadonlyArray<string>) =>
+  finished.length === 0 ? interrupted : `${interrupted}\nThe calls it made that finished:\n${finished.join("\n")}`
+
 const withNestedResults = (interrupted: string, parent: CallId, transcript: ReadonlyArray<Entry>) => {
   const nested = new Map<CallId, string>()
   const finished: Array<string> = []
   for (const { body } of transcript) {
     if (body._tag === "tool_call" && body.parent === parent) nested.set(body.call, body.tool)
     else if (body._tag === "tool_result" && nested.has(body.call))
-      finished.push(`- ${nested.get(body.call)} (${body.error ? "failed" : "done"}): ${body.output.trimEnd()}`)
+      finished.push(finishedCall(nested.get(body.call)!, body))
   }
-  return finished.length === 0
-    ? interrupted
-    : `${interrupted}\nThe calls it made that finished:\n${finished.join("\n")}`
+  return withFinishedCalls(interrupted, finished)
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))

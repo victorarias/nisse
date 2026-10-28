@@ -743,6 +743,26 @@ withCodeModeHost("a host that dies while the model waits tells the wait what the
   }
 })
 
+withCodeModeHost("a script stopped mid-run still tells the model what its calls finished", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_interrupted")
+  await using session = await conversationWith(fake, inCodeMode)
+  writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+  await session.submit("read the manifest slowly")
+  await session.view.until((deliveries) => resultsOf(deliveries).length > 0)
+  await session.client.call("conversation/interrupt", { conversation: session.conversation })
+  await session.view.until(settled(1))
+  await session.submit("what did it read?")
+  await session.view.until(settled(2))
+  const script = JSON.parse(fake.responses()[1]!.body).input.find(
+    (item: { type: string }) => item.type === "custom_tool_call_output",
+  )
+  expect(script.output).toStartWith("interrupted; it may or may not have taken effect")
+  expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
+  expect(script.output).toContain("[package]")
+  expectRequests(fake, expected)
+})
+
 test("a code-mode model without the code-mode host says how to install it", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, {
