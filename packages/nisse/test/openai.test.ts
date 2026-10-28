@@ -716,6 +716,33 @@ withCodeModeHost("a host that dies mid-script interrupts the script with the nes
   }
 })
 
+withCodeModeHost("a host that dies while the model waits tells the wait what the script finished", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_host_dies_in_wait")
+  const launcher = mkdtempSync("/tmp/nisse-host-")
+  const pidFile = join(launcher, "host.pid")
+  const host = join(launcher, "host")
+  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
+  chmodSync(host, 0o755)
+  try {
+    await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
+    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+    await session.submit("read the manifest in the background")
+    await session.view.until((deliveries) =>
+      bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_2"),
+    )
+    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
+    await session.view.until(settled(1))
+    const waited = resultsOf(session.view.deliveries).find((result) => result.call === "call_2")!
+    expect(waited.output).toStartWith("interrupted: the code-mode host stopped")
+    expect(waited.output).toContain("The calls it made that finished:\n- Read (done):")
+    expect(waited.output).toContain("[package]")
+    expectRequests(fake, expected)
+  } finally {
+    rmSync(launcher, { recursive: true, force: true })
+  }
+})
+
 test("a code-mode model without the code-mode host says how to install it", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, {

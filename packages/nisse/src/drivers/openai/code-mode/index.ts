@@ -240,7 +240,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
   }
 
   const outcomeOf = (
-    call: Call,
+    script: CallId,
     startedAt: number,
     maxTokens: number | undefined,
     ask: (connection: HostConnection) => Promise<Runtime>,
@@ -251,7 +251,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       const runtime = yield* Effect.result(Effect.tryPromise(() => ask(connection.success).then(settle)))
       if (runtime._tag === "Success") return answered(runtime.success, startedAt, maxTokens)
       const interrupted = `interrupted: ${errorText(runtime.failure.cause)}; the script may or may not have taken effect`
-      return failed(withNestedResults(interrupted, call.call, yield* turn.transcript))
+      return failed(withNestedResults(interrupted, script, yield* turn.transcript))
     })
 
   const exec = (call: Call, startedAt: number): Effect.Effect<ToolOutcome> => {
@@ -259,7 +259,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       return Effect.succeed(failed("exec expects raw JavaScript source text"))
     const pragma = parsePragma(call.input)
     if ("error" in pragma) return Effect.succeed(failed(pragma.error as string))
-    return outcomeOf(call, startedAt, pragma.maxOutputTokens, (connection) => {
+    return outcomeOf(call.call, startedAt, pragma.maxOutputTokens, (connection) => {
       starting = call.call
       return connection
         .execute(
@@ -285,12 +285,13 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
     if (typeof args?.cell_id !== "string")
       return Effect.succeed(failed("bad arguments for wait: `cell_id` must be a string"))
     const maxTokens = typeof args.max_tokens === "number" ? args.max_tokens : undefined
+    const script = startedBy.get(args.cell_id) ?? call.call
     if (args.terminate === true)
       return Effect.tap(
-        outcomeOf(call, startedAt, maxTokens, (connection) => connection.terminate(conversation, args.cell_id)),
+        outcomeOf(script, startedAt, maxTokens, (connection) => connection.terminate(conversation, args.cell_id)),
         () => stopNested(args.cell_id),
       )
-    return outcomeOf(call, startedAt, maxTokens, (connection) =>
+    return outcomeOf(script, startedAt, maxTokens, (connection) =>
       connection.wait(
         conversation,
         args.cell_id,
