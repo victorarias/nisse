@@ -175,6 +175,16 @@ test("the server exits once no client is connected and nothing is running", asyn
   await deadline(served.exited, 5000, "server exit")
 })
 
+test("stopping the server answers the caller, then the server exits", async () => {
+  const home = tempHome()
+  const served = await deadline(servingUntilIdle(home, "1 hour"), 5000, "server listening")
+  const client = await RawClient.connect(home.socket)
+  const reply = await client.call("server/stop", null)
+  expect(reply).toMatchObject({ result: null })
+  await deadline(served.exited, 5000, "server exit")
+  client.close()
+})
+
 const writeCall = (path: string, content: string) => ({ tool: { name: "Write", input: { file_path: path, content } } })
 
 test("a call that changes files waits for a person's answer and runs once allowed", async () => {

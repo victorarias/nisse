@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
+import { deadline } from "./support/raw.ts"
 import { tempHome } from "./support/server.ts"
 import { nisseEnv, screenSession, stopServer } from "./support/terminal.ts"
 
@@ -28,6 +29,13 @@ test("a person types a prompt, presses enter and reads the answer under their na
   expect(screen).toContain("NISSE")
   session.type("\x03")
   expect(await session.exited).toBe(0)
+})
+
+test("closing the terminal ends nisse instead of leaving it running unseen", async () => {
+  const session = screenSession([], nisseEnv(home()))
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.hangUp()
+  await deadline(session.exited, 5000, "nisse exited")
 })
 
 test("quitting prints the command that reopens the conversation", async () => {

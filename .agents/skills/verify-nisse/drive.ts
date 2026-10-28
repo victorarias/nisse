@@ -25,7 +25,7 @@ const usage = `usage: drive.ts <run> <command> [args]
   idle [--seconds N]               measure the TUI's and server's CPU time over N seconds (10)
   tui start [nisse args...]        open the TUI in a ${COLS}x${ROWS} tmux pane
   tui type <text>                  type literal text into the TUI
-  tui key <key...>                 press tmux keys: Enter, Escape, Tab, C-c, C-j
+  tui key <key...>                 press tmux keys: Enter, Escape, Tab, C-y, C-n, C-c, C-j
   tui wait <text> [--gone] [--timeout MS]
                                    wait until the screen shows (or stops showing) text
   tui screen [NAME]                print the screen; with NAME, save it as evidence
@@ -238,7 +238,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     requireUp()
     const line = `nisse ${args.join(" ")}`
     record(line)
-    const child = Bun.spawn(["bun", MAIN, ...args], { env: env(), stdout: "pipe", stderr: "pipe", cwd: REPO })
+    const child = Bun.spawn([MAIN, ...args], { env: env(), stdout: "pipe", stderr: "pipe", cwd: REPO })
     process.stdout.write(`$ ${line}\n--- stdout\n`)
     let stdout = ""
     const decoder = new TextDecoder()
@@ -279,7 +279,7 @@ const commands: Record<string, () => Promise<void> | void> = {
   serve: async () => {
     requireUp()
     if (lockOwner()) fail(`a server already holds ${lock}`)
-    openWindow("serve", ["bun", MAIN, "serve"])
+    openWindow("serve", [MAIN, "serve"])
     record("serve")
     if (!(await until(() => existsSync(socket) && lockOwner() !== undefined, 10_000)))
       fail(`the server did not take ${lock} in 10s:\n${tmux("capture-pane", "-p", "-t", "serve").stdout}`)
@@ -379,7 +379,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     switch (sub) {
       case "start": {
         if (tuiOpen()) fail("a TUI is already open in this run: tui stop first")
-        openWindow("tui", ["bun", MAIN, ...rest])
+        openWindow("tui", [MAIN, ...rest])
         record(`tui start ${rest.join(" ")}`)
         console.log("opened; wait for READY with: tui wait READY")
         return
@@ -424,6 +424,11 @@ const commands: Record<string, () => Promise<void> | void> = {
 
   down: async () => {
     if (!existsSync(dir)) return console.log(`run ${run} has nothing to stop`)
+    const tui = tuiPid()
+    if (tui !== undefined) {
+      tmux("send-keys", "-t", TUI, "C-c")
+      if (!(await until(() => paneState().dead, 5000))) process.kill(tui, "SIGKILL")
+    }
     tmux("kill-server")
     if (existsSync(socket)) await call("server/stop", undefined, 15_000).catch(() => undefined)
     const owner = lockOwner()

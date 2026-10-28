@@ -1,7 +1,7 @@
-import type { Approvals, ConversationId, Delivery, Entry, LiveChange, SubmissionId } from "@nisse/protocol"
+import type { Delivery, Entry, LiveChange, SubmissionId } from "@nisse/protocol"
 import { Effect, Stream } from "effect"
 import { userName } from "./author.ts"
-import { Client, follow } from "./client.ts"
+import { Client, follow, startConversation, type StartOptions } from "./client.ts"
 import { describeCall } from "./tui/calls.ts"
 
 interface Watch {
@@ -68,15 +68,9 @@ const onDelivery = (watch: Watch, submission: SubmissionId) => (delivery: Delive
     if (watch.placed && !watch.outcome) show(watch, watch.live)
   })
 
-export const exec = Effect.fnUntraced(function* (
-  prompt: string,
-  existing: string | undefined,
-  approvals: Approvals | undefined,
-) {
+export const exec = Effect.fnUntraced(function* (prompt: string, existing: string | undefined, options: StartOptions) {
   const client = yield* Client
-  const conversation =
-    (existing as ConversationId | undefined) ??
-    (yield* client["conversation/start"]({ cwd: process.cwd(), ...(approvals ? { approvals } : {}) })).id
+  const conversation = yield* startConversation(client, existing, options)
   const { submission } = yield* client["conversation/submit"]({
     conversation,
     requestId: crypto.randomUUID(),

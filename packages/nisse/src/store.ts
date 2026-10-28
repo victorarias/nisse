@@ -53,6 +53,7 @@ export interface ConversationState {
   readonly status: Status
   readonly attempts: number
   readonly providerState: unknown
+  readonly providerSeq: number
 }
 
 const SUBSCRIBER_QUEUE = 4096
@@ -67,6 +68,7 @@ interface ConversationRow {
   live: string
   attempts: number
   provider_state: string | null
+  provider_seq: number
 }
 
 interface SubmissionRow {
@@ -232,8 +234,9 @@ export class Store extends Context.Service<
             db.run("UPDATE conversations SET attempts = ? WHERE id = ?", [change.attempts, conversation])
           }
           if (change.providerState !== undefined) {
-            db.run("UPDATE conversations SET provider_state = ? WHERE id = ?", [
+            db.run("UPDATE conversations SET provider_state = ?, provider_seq = ? WHERE id = ?", [
               JSON.stringify(change.providerState),
+              seq,
               conversation,
             ])
           }
@@ -308,6 +311,7 @@ export class Store extends Context.Service<
               status: row.status,
               attempts: row.attempts,
               providerState: row.provider_state === null ? undefined : JSON.parse(row.provider_state),
+              providerSeq: row.provider_seq,
             })),
           commit,
           submissionFor: (conversation, requestId) =>

@@ -29,13 +29,18 @@ usage.
 ```sh
 bun install                                                  # once per checkout
 .agents/skills/verify-nisse/drive.ts r1 up                   # nisse echoes: "You said: <prompt>"
-.agents/skills/verify-nisse/drive.ts r1 up --script s.json   # or scripted answers
+.agents/skills/verify-nisse/drive.ts r1 up --script s.json   # or scripted steps
 ```
 
 The model is the only thing a run fakes. A script is a JSON array of steps,
-the same format `NISSE_MODEL_SCRIPT` takes (see the README): each run of the
-conversation takes the next step, and once the steps run out Nisse echoes.
-`--script` copies the file into the run, so later edits to it do nothing.
+the same format `NISSE_MODEL_SCRIPT` takes (see the README). The server takes
+the steps in order across all its runs: a step says its `text`, then fails the
+run with `fail`, or calls its `tool` and goes on to the next step in the same
+run, or ends the run. Once the steps run out Nisse echoes, and a restarted
+server starts them over. `--script` copies the file into the run, so later
+edits to it do nothing. `up` with or without a script makes the scripted
+provider the home's default; real providers are chosen with `--provider`, see
+[Providers](features/providers.md).
 
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its
@@ -69,24 +74,29 @@ to settle and stops it, and the next client starts one on the new code.
 ## Drive
 
 - **TUI.** `tui type <text>` types literally; `tui key <keys>` presses tmux
-  keys: `Enter` sends, `C-j` adds a line, `Escape` stops the run, `C-c` quits.
-  `tui wait <text>` waits until the screen shows the text, or stops showing it
-  with `--gone`; on a timeout it prints the screen and exits 1. Wait on text,
-  never sleep. The pane is 100x30. Stable handles are the status words `READY`
-  and `WORKING`, the panel titles `PROMPT` and `QUEUE`, the speaker bars `ADA`
-  and `NISSE`, `queued · <text>`, `interrupted`, and the exit line
-  `resume with: nisse --conversation <id>`.
+  keys: `Enter` sends, `C-j` adds a line, `Escape` stops the run, `Tab`
+  switches between queueing and steering while Nisse works, `C-y` allows the
+  call Nisse asks about and `C-n` denies it, `C-c` quits. `tui wait <text>`
+  waits until the screen shows the text, or stops showing it with `--gone`; on
+  a timeout it prints the screen and exits 1. Wait on text, never sleep. The
+  pane is 100x30. Stable handles are the status words `READY`, `WORKING` and
+  `WAITING`, the prompt panel's titles `PROMPT`, `QUEUE · tab` and
+  `STEER · tab`, the speaker bars `ADA` and `NISSE`, `queued · <text>` and
+  `steering · <text>`, a call's `▸ Tool(subject)`, `allow this call?`,
+  `✓ allowed by <name>` and `✗ denied by <name>`, a run's end `◆ interrupted`
+  or `✗ <message>`, and the exit line `resume with: nisse --conversation <id>`.
 - **CLI.** `drive.ts r1 nisse <args>` runs `nisse` against the run's home and
   records the command, stdout, stderr and exit code.
 - **Wire.** `drive.ts r1 rpc <method> '<params json>'` makes one call, for
   `initialize`, `conversation/start`, `conversation/list`,
-  `conversation/submit`, `conversation/interrupt` and `server/stop`.
+  `conversation/submit`, `conversation/interrupt`, `approval/resolve` and
+  `server/stop`.
   `drive.ts r1 watch <conversation>` subscribes as a second client and prints
   each delivery as one JSON line: the snapshot first, then each commit.
   `--submit <text>` submits as `ada` once the snapshot is in, so nothing races;
   `--until <tag>` returns once a commit carries an entry with that body tag,
-  such as `answer`, and without it `watch` returns after a second with no
-  delivery; `--since <seq>` resumes after a commit; `--save <name>`
+  such as `run_end` or `approval`, and without it `watch` returns after a
+  second with no delivery; `--since <seq>` resumes after a commit; `--save <name>`
   keeps the lines as evidence.
 - **Crash.** `drive.ts r1 kill-server` sends SIGKILL to the pid holding this
   run's home lock, after checking it runs this checkout's Nisse.
@@ -113,11 +123,12 @@ Proof standards:
   includes seeing it again from a fresh view: `tui start --conversation <id>`,
   or `watch` from a new connection.
 - Show live text and the committed transcript as two separate things: the
-  words streaming while `WORKING`, then the answer entry and the same screen
-  after a reopen. A fix to one does not fix the other.
+  words streaming while `WORKING`, then the `message` entry and the same
+  screen after a reopen. A fix to one does not fix the other.
 - The scripted model is the only fake. When Claude or OpenAI is the subject,
   the proof needs a real signed-in provider, which only the person can supply;
-  say so rather than calling a scripted run proof.
+  say so rather than calling a scripted run proof. Without one, drive what a
+  signed-out provider shows, as [Providers](features/providers.md) says.
 - When a journey cannot be driven, report it as not verified, with the command
   you tried and what was missing. Never report a different path as proof.
 
@@ -127,8 +138,9 @@ Proof standards:
 drive.ts r1 down
 ```
 
-`down` closes the run's tmux server, asks the run's Nisse server to stop, then
-kills it if it still holds the lock, and removes the home and script. The
+`down` quits the run's TUI with `^C`, killing its pid if it does not exit,
+closes the run's tmux server, asks the run's Nisse server to stop, then kills
+it if it still holds the lock, and removes the home and script. The
 evidence folder stays. After a failed attempt, run `down` before you retry so
 nothing strands a server or a pane. Never kill Nisse or tmux by name or
 pattern: `down` only reaches what this run's home and tmux socket own.

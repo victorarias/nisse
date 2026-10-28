@@ -1,5 +1,5 @@
 import { BunSocket } from "@effect/platform-bun"
-import { NisseRpcs, type ConversationId, type Delivery, type NoSuchConversation } from "@nisse/protocol"
+import { NisseRpcs, type Approvals, type ConversationId, type Delivery, type NoSuchConversation } from "@nisse/protocol"
 import { spawn } from "node:child_process"
 import { mkdirSync, openSync } from "node:fs"
 import * as Net from "node:net"
@@ -13,6 +13,16 @@ import type { Home } from "./home.ts"
 export class Client extends Context.Service<Client, RpcClient.FromGroup<typeof NisseRpcs, RpcClientError>>()(
   "nisse/Client",
 ) {}
+
+export interface StartOptions {
+  readonly provider?: string
+  readonly approvals?: Approvals
+}
+
+export const startConversation = (client: Client["Service"], existing: string | undefined, options: StartOptions) =>
+  existing === undefined
+    ? Effect.map(client["conversation/start"]({ cwd: process.cwd(), ...options }), (conversation) => conversation.id)
+    : Effect.succeed(existing as ConversationId)
 
 const CLOSE_GRACE = "1 second"
 
@@ -40,6 +50,8 @@ const open = (path: string) =>
 
 const RESUBSCRIBE_DELAY = "50 millis"
 
+const WITHOUT_BUN_GC_TIMER = { BUN_GC_TIMER_DISABLE: "1" }
+
 export const serveCommand = (): Array<string> => {
   const script = process.argv[1]
   return script && /\.[cm]?[jt]sx?$/.test(script) && !script.startsWith("/$bunfs")
@@ -52,7 +64,11 @@ const startServer = (home: Home) =>
     mkdirSync(home.dir, { recursive: true, mode: 0o700 })
     const log = openSync(home.log, "a")
     const [command, ...args] = serveCommand()
-    spawn(command!, args, { detached: true, stdio: ["ignore", log, log] }).unref()
+    spawn(command!, args, {
+      detached: true,
+      stdio: ["ignore", log, log],
+      env: { ...process.env, ...WITHOUT_BUN_GC_TIMER },
+    }).unref()
   })
 
 const openOrStart = (home: Home) =>

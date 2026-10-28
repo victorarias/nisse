@@ -79,6 +79,7 @@ test("a second server for the same home refuses to start", async () => {
   await finished(nisse(["exec", "start one"], env))
   const second = await finished(nisse(["serve"], env))
   expect(second.stderr).toContain(`another server already serves ${nisseHome.dir}`)
+  expect(second.code).toBe(1)
 })
 
 test("a run cut off by a crashed server finishes after the server comes back", async () => {
@@ -177,7 +178,7 @@ test("a call cut off by a crashed server is recorded as interrupted and the run 
   const resumed = second.client.subscribe({ conversation, sinceSeq: view.deliveries.at(-1)!.seq })
   await resumed.until((deliveries) => deliveries.at(-1)?.status === "idle", 10_000)
   expect(resumed.deliveries.flatMap((delivery) => delivery.entries).map((entry) => entry.body)).toMatchObject([
-    { _tag: "tool_result", output: "interrupted: this call did not finish", error: true },
+    { _tag: "tool_result", output: "interrupted; it may or may not have taken effect", error: true },
     { _tag: "message", text: "picked up again" },
     { _tag: "run_end", outcome: "answered" },
   ])
