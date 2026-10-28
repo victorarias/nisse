@@ -20,7 +20,8 @@ Preconditions:
 
 - **Settle.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`,
   `drive.ts r tui type hi`, `drive.ts r tui key Enter`,
-  `drive.ts r tui wait 'You said: hi'`, and `drive.ts r tui screen settled`.
+  `drive.ts r tui wait 'You said: hi'`, `drive.ts r tui wait READY`, and
+  `drive.ts r tui screen settled`.
 - **Measure.** Run `drive.ts r idle`. It reports each of the TUI's and the
   server's CPU time over 10 s and saves `idle.txt`. Both read `0.00s`; a
   hundredth of a second is the measuring tick, more is a finding.

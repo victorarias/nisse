@@ -25,7 +25,7 @@ const usage = `usage: drive.ts <run> <command> [args]
   idle [--seconds N]               measure the TUI's and server's CPU time over N seconds (10)
   tui start [nisse args...]        open the TUI in a ${COLS}x${ROWS} tmux pane
   tui type <text>                  type literal text into the TUI
-  tui key <key...>                 press tmux keys: Enter, Escape, Tab, C-c, C-j
+  tui key <key...>                 press tmux keys: Enter, Escape, Tab, C-y, C-n, C-c, C-j
   tui wait <text> [--gone] [--timeout MS]
                                    wait until the screen shows (or stops showing) text
   tui screen [NAME]                print the screen; with NAME, save it as evidence
@@ -424,6 +424,11 @@ const commands: Record<string, () => Promise<void> | void> = {
 
   down: async () => {
     if (!existsSync(dir)) return console.log(`run ${run} has nothing to stop`)
+    const tui = tuiPid()
+    if (tui !== undefined) {
+      tmux("send-keys", "-t", TUI, "C-c")
+      if (!(await until(() => paneState().dead, 5000))) process.kill(tui, "SIGKILL")
+    }
     tmux("kill-server")
     if (existsSync(socket)) await call("server/stop", undefined, 15_000).catch(() => undefined)
     const owner = lockOwner()

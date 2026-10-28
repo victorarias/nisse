@@ -25,7 +25,8 @@ Preconditions:
 
 - **Quit.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`,
   `drive.ts r tui type 'remember me'`, `drive.ts r tui key Enter`,
-  `drive.ts r tui wait 'You said: remember me'`, `drive.ts r tui stop`. The
+  `drive.ts r tui wait 'You said: remember me'`, `drive.ts r tui wait READY`,
+  `drive.ts r tui stop`. The
   printed screen ends with `resume with: nisse --conversation <id>` and
   `[exited 0]`.
 - **Reopen.** Run `drive.ts r tui start --conversation <id>`,
@@ -37,8 +38,8 @@ Preconditions:
 - **Resume.** Run `drive.ts r watch <id> --save before` and take the
   snapshot's `seq`. Run `drive.ts r nisse exec --conversation <id> later`,
   then `drive.ts r watch <id> --since <seq> --save since`. It delivers no
-  snapshot, only the commits for `later` and its answer, each with a `seq`
-  above the one you took.
+  snapshot, only the commits for `later`, its `message` and its `run_end`,
+  each with a `seq` above the one you took.
 
 ## Gotchas
 
