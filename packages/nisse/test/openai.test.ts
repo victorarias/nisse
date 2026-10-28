@@ -763,6 +763,45 @@ withCodeModeHost("a script stopped mid-run still tells the model what its calls 
   expectRequests(fake, expected)
 })
 
+withCodeModeHost("a host that dies ends the calls its script was waiting on", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_host_dies_asking")
+  const launcher = mkdtempSync("/tmp/nisse-host-")
+  const pidFile = join(launcher, "host.pid")
+  const host = join(launcher, "host")
+  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
+  chmodSync(host, 0o755)
+  try {
+    await using session = await conversationWith(fake, {
+      model: CODE_MODE_MODEL,
+      codeModeHost: host,
+      approvals: "ask",
+    })
+    await session.submit("write it late")
+    await session.view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "approval"))
+    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
+    await session.view.until(settled(1))
+    const entries = bodies(session.view.deliveries)
+    const bash = entries.find((body) => body._tag === "tool_call" && body.tool === "Bash") as { call: string }
+    const ended = entries.findIndex((body) => body._tag === "tool_result" && body.call === bash.call)
+    const script = entries.findIndex((body) => body._tag === "tool_result" && body.call === "call_1")
+    expect(entries[ended]).toMatchObject({ output: "interrupted; it may or may not have taken effect", error: true })
+    expect(ended).toBeLessThan(script)
+    const approval = entries.find((body) => body._tag === "approval") as { approval: string }
+    const late = await session.client.call("approval/resolve", {
+      conversation: session.conversation,
+      approval: approval.approval,
+      author: "ada",
+      allow: true,
+    })
+    expect(late.result).toEqual({ accepted: false })
+    expect(existsSync(join(session.server.home.dir, "late.txt"))).toBe(false)
+    expectRequests(fake, expected)
+  } finally {
+    rmSync(launcher, { recursive: true, force: true })
+  }
+})
+
 test("a code-mode model without the code-mode host says how to install it", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, {

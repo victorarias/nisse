@@ -220,7 +220,9 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
         }),
       )
     })
-  const stopNested = (cell: string) => Fiber.interruptAll([...(nestedByCell.get(cell) ?? [])])
+  const stopNested = (cells: ReadonlyArray<string>) =>
+    Fiber.interruptAll(cells.flatMap((cell) => [...(nestedByCell.get(cell) ?? [])]))
+  const cellsOf = (script: CallId) => [...startedBy].flatMap(([cell, call]) => (call === script ? [cell] : []))
   yield* Effect.forkScoped(
     Effect.forever(Effect.flatMap(Queue.take(delegated), (call) => FiberSet.run(nested, answeredInCell(call)))),
   )
@@ -253,7 +255,11 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       const connection = yield* Effect.result(Effect.tryPromise(() => host.session(program, conversation)))
       if (connection._tag === "Failure") return failed(errorText(connection.failure.cause))
       const runtime = yield* Effect.result(Effect.tryPromise(() => ask(connection.success).then(settle)))
-      if (runtime._tag === "Success") return answered(runtime.success, startedAt, maxTokens)
+      if (runtime._tag === "Success") {
+        if (runtime.success.state !== "Yielded") yield* stopNested([runtime.success.cell_id])
+        return answered(runtime.success, startedAt, maxTokens)
+      }
+      yield* stopNested(cellsOf(script))
       const interrupted = `interrupted: ${errorText(runtime.failure.cause)}; the script may or may not have taken effect`
       return failed(withNestedResults(interrupted, script, yield* turn.transcript))
     })
@@ -290,17 +296,14 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       return Effect.succeed(failed("bad arguments for wait: `cell_id` must be a string"))
     const maxTokens = typeof args.max_tokens === "number" ? args.max_tokens : undefined
     const script = startedBy.get(args.cell_id) ?? call.call
-    if (args.terminate === true)
-      return Effect.tap(
-        outcomeOf(script, startedAt, maxTokens, (connection) => connection.terminate(conversation, args.cell_id)),
-        () => stopNested(args.cell_id),
-      )
     return outcomeOf(script, startedAt, maxTokens, (connection) =>
-      connection.wait(
-        conversation,
-        args.cell_id,
-        typeof args.yield_time_ms === "number" ? args.yield_time_ms : DEFAULT_YIELD_TIME_MS,
-      ),
+      args.terminate === true
+        ? connection.terminate(conversation, args.cell_id)
+        : connection.wait(
+            conversation,
+            args.cell_id,
+            typeof args.yield_time_ms === "number" ? args.yield_time_ms : DEFAULT_YIELD_TIME_MS,
+          ),
     )
   }
 
