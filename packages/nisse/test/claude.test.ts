@@ -306,3 +306,26 @@ test("switching to Claude from another provider retells the conversation to a ne
     selection: { provider: "claude" },
   })
 })
+
+test("retelling a long conversation to Claude keeps its first prompt and the one being answered", async () => {
+  using claude = new FakeClaude("text")
+  await using session = await conversationWith(claude, { provider: "script" })
+  const long = (word: string) => `${word} ${"x".repeat(20_000)} `
+  for (const [index, word] of ["first", "second", "third"].entries()) {
+    await session.submit(long(word))
+    await session.view.until(settled(index + 1))
+  }
+  await session.client.call("conversation/select_model", {
+    conversation: session.conversation,
+    author: "ada",
+    selection: { provider: "claude" },
+  })
+  const asked = `${"y".repeat(50_000)} Reply with exactly: fixture text ok`
+  await session.submit(asked)
+  await session.view.until(settled(4))
+
+  const told = claude.userTexts(0)[0]!
+  expect(told[1]).toBe(long("first"))
+  expect(told).toContain("(5 entries left out here)")
+  expect(told.at(-1)).toBe(asked)
+}, 20_000)

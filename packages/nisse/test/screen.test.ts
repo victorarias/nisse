@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
-import { rmSync } from "node:fs"
+import { readFileSync, rmSync, watch } from "node:fs"
 import { join } from "node:path"
-import { deadline } from "./support/raw.ts"
+import type { AuthState } from "@nisse/protocol"
+import { deadline, RawClient } from "./support/raw.ts"
 import { tempHome } from "./support/server.ts"
 import { nisseEnv, screenSession, stopServer } from "./support/terminal.ts"
 
@@ -179,6 +180,43 @@ test("^L signs in to a signed-out Claude by running its own sign-in in the termi
   const screen = await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen), 30_000)
   expect(session.output()).toContain("fake claude auth login done")
   expect(screen).not.toContain("SIGN IN")
+  session.type("\x03")
+  await session.exited
+}, 40_000)
+
+test("a sign-in cancelled from another connection stops Claude's sign-in in the terminal", async () => {
+  const nisseHome = home()
+  const session = screenSession(
+    [],
+    nisseEnv(nisseHome, {
+      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
+      FAKE_CLAUDE_AUTH_WAITS: "1",
+    }),
+  )
+  await session.waitFor((screen) => /○ claude +signed out/.test(screen))
+  session.type("\x0c")
+  await session.waitFor((screen) => screen.includes("fake claude auth login waiting"))
+  const other = await RawClient.connect(nisseHome.socket)
+  const auth = other.watch<AuthState>("auth/watch")
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  const waiting = auth.items.find((state) => state.phase === "waiting")!
+  await other.call("auth/cancel", { provider: "claude", flow: waiting.flow })
+  other.close()
+
+  const screen = await session.waitFor((screen) => /○ claude +signed out/.test(screen) && !screen.includes("SIGN IN"))
+  expect(screen).toContain("READY")
+  const fakeDir = join(nisseHome.dir, "fake-claude")
+  const ended = () => readFileSync(join(fakeDir, "log.ndjson"), "utf8").includes('"authEnded":"SIGTERM"')
+  const watcher = watch(fakeDir)
+  await deadline(
+    new Promise<void>((resolve) => {
+      const check = () => ended() && resolve()
+      watcher.on("change", check)
+      check()
+    }),
+    5000,
+    "the sign-in in the terminal ended",
+  ).finally(() => watcher.close())
   session.type("\x03")
   await session.exited
 }, 40_000)

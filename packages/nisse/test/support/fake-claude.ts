@@ -8,8 +8,18 @@ mkdirSync(dir, { recursive: true })
 
 if (argv[0] === "auth") {
   appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ auth: argv.slice(1) })}\n`)
-  process.stdout.write(`fake claude ${argv.join(" ")} done\n`)
-  process.exit(0)
+  if (process.env.FAKE_CLAUDE_AUTH_WAITS) {
+    process.stdout.write(`fake claude ${argv.join(" ")} waiting\n`)
+    process.on("SIGTERM", () => {
+      appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ authEnded: "SIGTERM" })}\n`)
+      process.exit(143)
+    })
+    setInterval(() => undefined, 1 << 30)
+    await new Promise<never>(() => undefined)
+  } else {
+    process.stdout.write(`fake claude ${argv.join(" ")} done\n`)
+    process.exit(0)
+  }
 }
 
 const isProbe = (args: ReadonlyArray<string>) => args.includes("--no-session-persistence")

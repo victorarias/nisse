@@ -108,19 +108,22 @@ const retold = (transcript: ReadonlyArray<Entry>) => {
 
 const history = (transcript: ReadonlyArray<Entry>): Array<string> => {
   const told = retold(transcript)
+  const current = transcript.findLastIndex((entry) => entry.body._tag !== "user") + 1
+  const asked = told.slice(current).filter((text) => text !== undefined)
   const first = transcript.findIndex((entry) => entry.body._tag === "user")
-  const opening = first >= 0 ? [told[first]!] : []
-  let room = RETOLD_CHARACTERS - (opening[0]?.length ?? 0)
-  let start = told.length
+  if (first < 0 || first >= current) return [...told.slice(0, current).filter((text) => text !== undefined), ...asked]
+  const opening = told[first]!
+  let room = RETOLD_CHARACTERS - opening.length - asked.reduce((total, text) => total + text.length, 0)
+  let start = current
   while (start > first + 1) {
     const text = told[start - 1]
     if (text !== undefined && text.length > room) break
     room -= text?.length ?? 0
     start--
   }
-  const newest = told.slice(start).filter((text) => text !== undefined)
+  const kept = told.slice(start, current).filter((text) => text !== undefined)
   const skipped = told.slice(first + 1, start).filter((text) => text !== undefined).length
-  return [...opening, ...(skipped > 0 ? [`(${skipped} entries left out here)`] : []), ...newest]
+  return [opening, ...(skipped > 0 ? [`(${skipped} entries left out here)`] : []), ...kept, ...asked]
 }
 
 const resultText = (content: unknown): string =>

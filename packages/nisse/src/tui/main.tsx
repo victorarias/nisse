@@ -1,11 +1,12 @@
 import { createCliRenderer, type CliRenderer, type KeyBinding, type TextareaRenderable } from "@opentui/core"
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import type { ApprovalId, AuthState, CallId, Entry, ModelSelection, Outcome, ProviderSnapshot } from "@nisse/protocol"
-import { Deferred, Effect, Stream } from "effect"
+import { Deferred, Effect, Fiber, Stream } from "effect"
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { userName } from "../author.ts"
 import { Client, follow, startConversation, type StartOptions } from "../client.ts"
+import { runTerminal } from "../login.ts"
 import { VERSION } from "../version.ts"
 import { describeCall } from "./calls.ts"
 import {
@@ -410,37 +411,35 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
   yield* Effect.forkScoped(refreshProviders(false))
 
   let renderer: CliRenderer | undefined
-  const runTerminal = (state: AuthState, command: ReadonlyArray<string>, env: Readonly<Record<string, string>>) =>
-    Effect.gen(function* () {
-      const success = yield* Effect.promise(async () => {
-        await renderer?.suspend()
-        try {
-          const child = Bun.spawn([...command], {
-            env: { ...process.env, ...env },
-            stdio: ["inherit", "inherit", "inherit"],
-          })
-          return (await child.exited) === 0
-        } catch {
-          return false
-        } finally {
-          await renderer?.resume()
-        }
-      })
-      yield* client["auth/respond"]({
-        provider: state.provider,
-        flow: state.flow,
-        response: { _tag: "terminal_exited", success },
-      })
-    })
+  const signInTerminal = (state: AuthState, command: ReadonlyArray<string>, env: Readonly<Record<string, string>>) =>
+    Effect.acquireUseRelease(
+      Effect.promise(async () => renderer?.suspend()),
+      () => runTerminal(command, env),
+      () => Effect.promise(async () => renderer?.resume()),
+    ).pipe(
+      Effect.flatMap((success) =>
+        client["auth/respond"]({
+          provider: state.provider,
+          flow: state.flow,
+          response: { _tag: "terminal_exited", success },
+        }),
+      ),
+      Effect.ignore,
+    )
 
   const seen = new Map<string, AuthState>()
   const acted = new Set<string>()
+  const terminals = new Map<string, Fiber.Fiber<void>>()
+  const scope = yield* Effect.scope
   let mine: string | undefined
   const act = (state: AuthState) =>
     Effect.gen(function* () {
       if (state.phase === "succeeded" || state.phase === "failed" || state.phase === "cancelled") {
         mine = undefined
         setSetup("signIn", undefined)
+        const terminal = terminals.get(state.flow)
+        terminals.delete(state.flow)
+        if (terminal) yield* Fiber.interrupt(terminal)
         yield* refreshProviders(false)
         return
       }
@@ -449,7 +448,11 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
       if (state.phase !== "waiting" || !interaction || acted.has(state.flow)) return
       acted.add(state.flow)
       if (interaction._tag === "browser") openBrowser(interaction.url)
-      if (interaction._tag === "terminal") yield* runTerminal(state, interaction.command, interaction.env)
+      if (interaction._tag === "terminal")
+        terminals.set(
+          state.flow,
+          yield* Effect.forkIn(signInTerminal(state, interaction.command, interaction.env), scope),
+        )
     })
   const onAuth = (state: AuthState) =>
     Effect.suspend(() => {

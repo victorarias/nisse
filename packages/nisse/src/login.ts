@@ -28,16 +28,17 @@ const pastedLines = (onLine: (line: string) => void) =>
     (lines) => Effect.sync(() => lines.close()),
   )
 
-const runTerminal = (command: ReadonlyArray<string>, env: Readonly<Record<string, string>>) =>
-  Effect.promise(async () => {
+export const runTerminal = (command: ReadonlyArray<string>, env: Readonly<Record<string, string>>) =>
+  Effect.callback<boolean>((resume) => {
     try {
       const child = Bun.spawn([...command], {
         env: { ...process.env, ...env },
         stdio: ["inherit", "inherit", "inherit"],
       })
-      return (await child.exited) === 0
+      void child.exited.then((code) => resume(Effect.succeed(code === 0)))
+      return Effect.sync(() => child.kill())
     } catch {
-      return false
+      resume(Effect.succeed(false))
     }
   })
 
@@ -60,6 +61,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
     Effect.runFork(client["auth/respond"]({ provider, flow, response: { _tag: "callback", url: line.trim() } }))
   }
 
+  let terminal: Fiber.Fiber<void, unknown> | undefined
   const shown = (state: AuthState) =>
     Effect.gen(function* () {
       const interaction = state.interaction
@@ -68,6 +70,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
       else if (state.phase === "cancelled") say(`signing in to ${provider} was cancelled`)
       if (over(state)) {
         outcome = state
+        if (terminal) yield* Fiber.interrupt(terminal)
         return
       }
       if (state.phase !== "waiting" || !interaction) return
@@ -80,10 +83,14 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
         case "device_code":
           say(`Open ${interaction.url} on any device and enter the code ${interaction.code}`)
           return
-        case "terminal": {
-          const success = yield* runTerminal(interaction.command, interaction.env)
-          yield* client["auth/respond"]({ provider, flow: state.flow, response: { _tag: "terminal_exited", success } })
-        }
+        case "terminal":
+          terminal = yield* Effect.forkScoped(
+            Effect.flatMap(runTerminal(interaction.command, interaction.env), (success) =>
+              Effect.ignore(
+                client["auth/respond"]({ provider, flow: state.flow, response: { _tag: "terminal_exited", success } }),
+              ),
+            ),
+          )
       }
     })
 
