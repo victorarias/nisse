@@ -26,6 +26,7 @@ export const openAiOptions =
     baseUrl: BASE_URL,
     callbackPort: CALLBACK_PORT,
     instructions,
+    home: home.dir,
   })
 
 const claudeInstance = (base: ClaudeOptions, instance: Instance): ClaudeOptions => {

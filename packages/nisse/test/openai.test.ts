@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { AuthState, Delivery, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
-import { readFileSync, rmSync, statSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { accessToken, ACCOUNT, EMAIL, FakeOpenAi, matches, signIn } from "./support/openai.ts"
 import { bodies, deadline, RawClient } from "./support/raw.ts"
@@ -14,13 +14,16 @@ const said = (deliveries: ReadonlyArray<Delivery>): Array<unknown> =>
     (body) => body._tag !== "user" && body._tag !== "approval" && body._tag !== "approval_answer",
   )
 
-const conversationWith = async (fake: FakeOpenAi, options: { approvals?: string; signedIn?: boolean } = {}) => {
+const conversationWith = async (
+  fake: FakeOpenAi,
+  options: { approvals?: string; signedIn?: boolean; cwd?: (home: string) => string } = {},
+) => {
   const server = await runningServer([], { openai: fake.options() })
   if (options.signedIn ?? true) await signIn(server.home)
   const client = await RawClient.connect(server.home.socket)
   const conversation = (
     await client.call("conversation/start", {
-      cwd: server.home.dir,
+      cwd: options.cwd?.(server.home.dir) ?? server.home.dir,
       provider: "openai",
       approvals: options.approvals ?? "auto",
     })
@@ -483,4 +486,74 @@ test("a switched model and effort reach ChatGPT from the next run on", async () 
   expect(first.model).toBe("gpt-5.5")
   expect(first.reasoning).toBeUndefined()
   expect(second).toMatchObject({ model: "gpt-test", reasoning: { effort: "high" } })
+})
+
+const write = (path: string, text: string) => {
+  mkdirSync(join(path, ".."), { recursive: true })
+  writeFileSync(path, text)
+}
+
+const project = (home: string) => {
+  const repo = join(home, "repo")
+  mkdirSync(join(repo, ".git"), { recursive: true })
+  write(join(home, "AGENTS.md"), "Home rules.")
+  write(join(repo, "AGENTS.md"), "Repo rules.")
+  write(join(repo, "app", "AGENTS.md"), "App rules.")
+  write(join(repo, "app", "AGENTS.override.md"), "App override rules.")
+  write(
+    join(repo, ".agents", "skills", "review", "SKILL.md"),
+    "---\nname: review\ndescription: Review a diff\n---\nLook hard.",
+  )
+  write(
+    join(repo, "app", ".claude", "skills", "review", "SKILL.md"),
+    "---\nname: review\ndescription: Nearer review\n---\nLook nearer.",
+  )
+  write(join(home, "skills", "ship", "SKILL.md"), "---\nname: ship\ndescription: >\n  Ship it\n  carefully\n---\nShip.")
+  return join(repo, "app")
+}
+
+test("ChatGPT is told the AGENTS.md files from home to the working directory, and the skills it can use", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, { cwd: project })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+
+  const app = join(session.server.home.dir, "repo", "app")
+  const { instructions } = JSON.parse(fake.responses()[0]!.body)
+  const order = ["Home rules.", "Repo rules.", "App override rules."].map((rule) => instructions.indexOf(rule))
+  expect(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]!))).toBe(true)
+  expect(instructions).not.toContain("App rules.")
+  expect(instructions).toContain(
+    `- review: Nearer review (file: ${join(app, ".claude", "skills", "review", "SKILL.md")})`,
+  )
+  expect(instructions).toContain("- ship: Ship it carefully")
+})
+
+test("a skill named in a message comes with it, for the model and for everyone watching", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, { cwd: project })
+  await session.submit("/review this, then $ship and $nothing")
+  await session.view.until(settled(1))
+
+  const user = bodies(session.view.deliveries).find((body) => body._tag === "user")
+  expect(user).toMatchObject({
+    skills: [{ name: "review", text: expect.stringContaining("Look nearer.") }, { name: "ship" }],
+  })
+  const { input } = JSON.parse(fake.responses()[0]!.body)
+  const sent = JSON.stringify(input)
+  expect(sent).toContain("<name>review</name>")
+  expect(sent).toContain("Look nearer.")
+  expect(sent).toContain("<name>ship</name>")
+})
+
+test("every client can list the skills a conversation's model can use", async () => {
+  await using fake = new FakeOpenAi()
+  await using session = await conversationWith(fake, { cwd: project })
+  const listed = await session.client.call("skills/list", { conversation: session.conversation })
+  expect(listed.result.map((skill: { name: string; description: string }) => [skill.name, skill.description])).toEqual([
+    ["review", "Nearer review"],
+    ["ship", "Ship it carefully"],
+  ])
 })

@@ -9,6 +9,8 @@ import {
   type Entry,
   type LiveChange,
   type ModelSelection,
+  type Queued,
+  type Skill,
   type NoSuchApproval,
   type NoSuchConversation,
   type Outcome,
@@ -17,6 +19,7 @@ import {
 import { Cause, Context, Deferred, Effect, Fiber, FiberSet, Layer, Option, Ref } from "effect"
 import { projectDefaultModel } from "./config.ts"
 import { newId } from "./ids.ts"
+import { attachedSkills } from "./workspace.ts"
 import { Lifetime } from "./lifetime.ts"
 import { Providers, type Call, type Driver, type Saved, type Turn } from "./provider.ts"
 import { Store, type Change, type NewEntry } from "./store.ts"
@@ -89,6 +92,7 @@ export class Conversations extends Context.Service<
       author: string,
       allow: boolean,
     ) => Effect.Effect<boolean, NoSuchConversation | NoSuchApproval>
+    readonly skills: (conversation: ConversationId) => Effect.Effect<ReadonlyArray<Skill>, NoSuchConversation>
     readonly settle: Effect.Effect<void>
   }
 >()("nisse/Conversations") {
@@ -103,6 +107,21 @@ export class Conversations extends Context.Service<
       const runs = new Map<ConversationId, Fiber.Fiber<void, unknown>>()
       const waiting = new Map<ApprovalId, Deferred.Deferred<boolean>>()
       let settling = false
+
+      const placed = (id: ConversationId, queued: Queued): NewEntry => {
+        const { conversation } = Effect.runSync(Effect.orDie(store.state(id)))
+        const driver = providers.drivers.get(conversation.model.provider)
+        const skills = driver ? attachedSkills(queued.text, driver.skills(conversation.cwd)) : []
+        return {
+          author: queued.author,
+          body: {
+            _tag: "user",
+            submission: queued.submission,
+            text: queued.text,
+            ...(skills.length > 0 ? { skills } : {}),
+          },
+        }
+      }
 
       const expire = (conversation: ConversationId, approvals: Iterable<ApprovalId>) =>
         Effect.forEach(approvals, (approval) =>
@@ -258,10 +277,7 @@ export class Conversations extends Context.Service<
               if (steers.length === 0) return []
               store.commit(id, {
                 place: steers.map((steer) => steer.submission),
-                entries: steers.map((steer) => ({
-                  author: steer.author,
-                  body: { _tag: "user" as const, submission: steer.submission, text: steer.text },
-                })),
+                entries: steers.map((steer) => placed(id, steer)),
               })
               return steers.map((steer) => steer.text)
             }),
@@ -320,9 +336,7 @@ export class Conversations extends Context.Service<
         return queued
           ? {
               place: [queued.submission],
-              entries: [
-                { author: queued.author, body: { _tag: "user", submission: queued.submission, text: queued.text } },
-              ],
+              entries: [placed(conversation, queued)],
               status: "working",
             }
           : { status: "idle" }
@@ -430,6 +444,11 @@ export class Conversations extends Context.Service<
             if (accepted && answered) yield* Deferred.succeed(answered, allow)
             return accepted
           }),
+        skills: (id) =>
+          Effect.map(
+            store.state(id),
+            ({ conversation }) => providers.drivers.get(conversation.model.provider)?.skills(conversation.cwd) ?? [],
+          ),
         settle: Effect.suspend(() => {
           settling = true
           return FiberSet.awaitEmpty(runners)

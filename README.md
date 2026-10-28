@@ -12,7 +12,7 @@ the `rust` branch.
 
 ## Status
 
-R3, models and setup. What runs today:
+R4, skills and code mode. What runs today:
 
 - One server per home, shared by every client. The TUI or `exec` starts it
   when none runs, and it exits 30 seconds after the last client leaves and the
@@ -53,6 +53,15 @@ R3, models and setup. What runs today:
   next run. Switching providers keeps the conversation: OpenAI is sent the
   whole transcript, and a new Claude Code session is told the first prompt and
   as much of the newest history as fits in about 64,000 characters.
+- Instructions and skills. Claude Code reads its own `CLAUDE.md` files and
+  skills. OpenAI is told `NISSE_HOME/AGENTS.md`, then the `AGENTS.md` (or
+  `AGENTS.override.md`) of each folder from the repository's root down to the
+  conversation's directory, up to 32 KiB, and the skills it can use: each
+  folder with a `SKILL.md` under `.agents/skills` or `.claude/skills` from the
+  conversation's directory up to the repository's root, then under
+  `NISSE_HOME/skills`; the nearest skill of a name wins. A message that starts
+  with `/name` or holds `$name` carries that skill's `SKILL.md` with it, and
+  every client sees which skills it carried.
 - The neon TUI, in OpenTUI with Solid.
 
 ## Try it

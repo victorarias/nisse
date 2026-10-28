@@ -6,6 +6,7 @@ import { catalog, CLIENT_VERSION } from "./catalog.ts"
 import { accountOf, isExpired, loadCredentials, refreshed, saveCredentials, type Credentials } from "./credentials.ts"
 import { CALLBACK_PORT, signIn } from "./signin.ts"
 import { events } from "./sse.ts"
+import { agentsMd, skillsFor } from "../../workspace.ts"
 
 export const BASE_URL = "https://chatgpt.com/backend-api"
 export const AUTH_BASE = "https://auth.openai.com"
@@ -22,15 +23,44 @@ export interface OpenAiOptions {
   readonly baseUrl: string
   readonly callbackPort: number
   readonly instructions: string
+  readonly home: string
 }
 
 const failure = (message: string) => new ProviderError({ message })
+
+const SKILLS = `# Skills
+
+A skill is a folder of instructions for one kind of task, in a \`SKILL.md\` file. When a task matches a skill's description, \`Read\` its \`SKILL.md\` before you start, and follow it. When a message names a skill with \`/name\` or \`$name\`, the skill's \`SKILL.md\` comes with the message; follow it. Relative paths in a skill are relative to its folder.
+
+`
+
+const instructionsFor = (options: OpenAiOptions, cwd: string) => {
+  let text = `${options.instructions}\nThe working directory is ${cwd}.\n`
+  for (const file of agentsMd(cwd, options.home)) {
+    text += `\n# AGENTS.md instructions from ${file.path}\n\n${file.text.trimEnd()}\n`
+  }
+  const skills = skillsFor(cwd, options.home)
+  if (skills.length > 0) {
+    text += `\n${SKILLS}${skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.path})\n`).join("")}`
+  }
+  return text
+}
 
 const inputItem = (entry: Entry): unknown => {
   const body = entry.body
   switch (body._tag) {
     case "user":
-      return { type: "message", role: "user", content: [{ type: "input_text", text: body.text }] }
+      return {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: body.text },
+          ...(body.skills ?? []).map((skill) => ({
+            type: "input_text",
+            text: `<skill>\n<name>${skill.name}</name>\n<path>${skill.path}</path>\n${skill.text.trimEnd()}\n</skill>`,
+          })),
+        ],
+      }
     case "message":
       return { type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] }
     case "tool_call":
@@ -264,6 +294,7 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
         return models.listed()
       }),
     signInMethods: ["browser", "device_code"],
+    skills: (cwd) => skillsFor(cwd, options.home),
     signIn: (method, flow) =>
       Effect.gen(function* () {
         const credentials = yield* signIn(
@@ -283,7 +314,7 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
     ),
     run: (turn) =>
       Effect.gen(function* () {
-        const instructions = `${options.instructions}\nThe working directory is ${turn.conversation.cwd}.\n`
+        const instructions = instructionsFor(options, turn.conversation.cwd)
         const tools = turn.tools.map((tool) => ({
           type: "function",
           name: tool.name,

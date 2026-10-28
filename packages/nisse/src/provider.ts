@@ -8,6 +8,7 @@ import type {
   ModelInfo,
   ModelSelection,
   ProviderHealth,
+  Skill,
 } from "@nisse/protocol"
 import { Context, Effect, Schema } from "effect"
 import type { ToolOutcome, ToolSpec } from "./tools/index.ts"
@@ -56,7 +57,10 @@ export interface Driver {
   readonly signInMethods: ReadonlyArray<AuthMethod>
   readonly signIn: (method: AuthMethod, flow: SignInFlow) => Effect.Effect<void, ProviderError>
   readonly signOut: Effect.Effect<void, ProviderError>
+  readonly skills: (cwd: string) => ReadonlyArray<Skill>
 }
+
+export const noSkills = { skills: () => [] } satisfies Pick<Driver, "skills">
 
 export const nothingToSignIn = {
   signInMethods: [],

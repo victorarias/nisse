@@ -156,6 +156,11 @@ const EntryView = (props: { view: View; entry: Entry; previous: Entry | undefine
           <text fg={color.ink} marginLeft={2}>
             {body.text}
           </text>
+          <Show when={body.skills?.length}>
+            <text fg={color.dim} marginLeft={2}>
+              {`with ${body.skills!.map((skill) => skill.name).join(", ")}`}
+            </text>
+          </Show>
         </box>
       )
     case "message":

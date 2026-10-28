@@ -354,6 +354,30 @@
                             },
                             "text": {
                               "type": "string"
+                            },
+                            "skills": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "type": "string"
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "path",
+                                  "text"
+                                ],
+                                "additionalProperties": true,
+                                "description": "A skill's SKILL.md as it was when the input named it."
+                              }
                             }
                           },
                           "required": [
@@ -759,6 +783,30 @@
                             },
                             "text": {
                               "type": "string"
+                            },
+                            "skills": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "type": "string"
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "name",
+                                  "path",
+                                  "text"
+                                ],
+                                "additionalProperties": true,
+                                "description": "A skill's SKILL.md as it was when the input named it."
+                              }
                             }
                           },
                           "required": [
@@ -1336,6 +1384,48 @@
       },
       "error": {
         "not": {}
+      },
+      "stream": false
+    },
+    "skills/list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "description",
+            "path"
+          ],
+          "additionalProperties": true
+        },
+        "description": "The skills input to this conversation can name with /name or $name. Empty when its provider expands skills itself."
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
       },
       "stream": false
     },

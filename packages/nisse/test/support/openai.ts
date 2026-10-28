@@ -70,6 +70,7 @@ export class FakeOpenAi {
         baseUrl: this.base,
         callbackPort: 0,
         instructions,
+        home: home.dir,
       })
   }
 
