@@ -106,6 +106,7 @@ export const SignInPanel = (props: { state: AuthState }) => {
       title={` SIGN IN · ${props.state.provider} `}
       titleColor={color.yellow}
       flexDirection="column"
+      flexShrink={0}
       paddingLeft={1}
       paddingRight={1}
     >

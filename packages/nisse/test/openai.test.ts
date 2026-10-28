@@ -366,6 +366,21 @@ test("a cancelled sign-in ends for every connection and frees the callback port"
   expect(await fetch(callbackFor(waiting, "late")).catch(() => "refused")).toBe("refused")
 })
 
+test("a connection that starts watching after a sign-in ended still learns how it ended", async () => {
+  await using fake = new FakeOpenAi()
+  await using setup = await setupWith(fake)
+  const started = (await setup.client.call("auth/start", { provider: "openai", method: "device_code" }))
+    .result as AuthState
+  expect(await setup.settledSignIn()).toMatchObject({ phase: "failed" })
+
+  const late = await RawClient.connect(setup.server.home.socket)
+  const auth = late.watch<AuthState>("auth/watch")
+  await auth.until((states) => states.length > 0)
+  late.close()
+
+  expect(auth.items[0]).toMatchObject({ provider: "openai", flow: started.flow, phase: "failed" })
+})
+
 test("signing out leaves the provider signed out", async () => {
   await using fake = new FakeOpenAi()
   await using setup = await setupWith(fake)

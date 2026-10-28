@@ -93,7 +93,8 @@ Preconditions:
 - **Invalid config.** In a fresh run, write `[providers.gem]` and
   `driver = "gemini"` to that file and run `drive.ts r nisse serve`: exit 1,
   stderr `/tmp/nisse-verify/r/home/config.toml: Expected "claude" | "openai"`
-  and `at ["providers"]["gem"]["driver"]`.
+  and `at ["providers"]["gem"]["driver"]`. Run `drive.ts r nisse exec hi`:
+  exit 1, empty stdout, and the same stderr from the server it tried to start.
 
 ## Gotchas
 

@@ -74,10 +74,9 @@ export class Setup extends Context.Service<
       const update = (provider: string, flow: string, change: Partial<AuthState>) =>
         Effect.sync(() => {
           const running = flows.get(provider)
-          if (!running || running.state.flow !== flow) return false
+          if (!running || running.state.flow !== flow || over(running.state.phase)) return false
           const { interaction: _, ...rest } = running.state
           running.state = { ...rest, ...change }
-          if (over(running.state.phase)) flows.delete(provider)
           publish(running.state)
           return true
         })
@@ -137,7 +136,7 @@ export class Setup extends Context.Service<
               })
             }
             const running = flows.get(provider)
-            if (running) return running.state
+            if (running && !over(running.state.phase)) return running.state
             const flow: Flow = {
               state: { provider, flow: newId(), phase: "starting" },
               responses: yield* Queue.unbounded<AuthResponse>(),

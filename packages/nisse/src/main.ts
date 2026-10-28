@@ -3,7 +3,7 @@ import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option, Schedule } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import type { UnknownProvider } from "@nisse/protocol"
-import { Client, clientLayer, type StartOptions } from "./client.ts"
+import { Client, clientLayer, ServerFailed, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, type Home } from "./home.ts"
 import { openAiOptions, providersLayer } from "./drivers/index.ts"
@@ -56,7 +56,16 @@ const startWith = (flags: {
   ...Option.match(flags.effort, { onNone: () => ({}), onSome: (effort) => ({ effort }) }),
 })
 
-const withClient = (home: Home) => Effect.provide(clientLayer(home))
+const withClient =
+  (home: Home) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provide(clientLayer(home)),
+      Effect.catchIf(
+        (error): error is ServerFailed => error instanceof ServerFailed,
+        (error) => refuse(error.output),
+      ),
+    )
 
 const refuse = (reason: string) =>
   Effect.andThen(

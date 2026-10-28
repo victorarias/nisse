@@ -73,6 +73,15 @@ test("clients starting at the same moment share one server", async () => {
   results.forEach((result, i) => expect(result).toMatchObject({ code: 0, stdout: `You said: client ${i}\n` }))
 })
 
+test("nisse exec says why the server it started could not run", async () => {
+  const nisseHome = home()
+  await Bun.write(`${nisseHome.dir}/config.toml`, '[providers.gem]\ndriver = "gemini"\n')
+  const result = await finished(nisse(["exec", "hi"], nisseEnv(nisseHome)))
+  expect(result.code).toBe(1)
+  expect(result.stdout).toBe("")
+  expect(result.stderr).toContain(`${nisseHome.dir}/config.toml`)
+})
+
 test("a second server for the same home refuses to start", async () => {
   const nisseHome = home()
   const env = nisseEnv(nisseHome)

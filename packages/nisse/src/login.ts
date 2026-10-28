@@ -1,6 +1,6 @@
 import type { AuthMethod, AuthState } from "@nisse/protocol"
 import { createInterface } from "node:readline"
-import { Effect, Fiber, Stream } from "effect"
+import { Deferred, Effect, Fiber, Stream } from "effect"
 import { Client } from "./client.ts"
 
 const say = (text: string) => process.stderr.write(`${text}\n`)
@@ -52,6 +52,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
   const method: AuthMethod | undefined =
     deviceCode || (remote() && known.signIn.includes("device_code")) ? "device_code" : undefined
   let flow: string | undefined
+  const startedFlow = yield* Deferred.make<string>()
   let outcome: AuthState | undefined
 
   const respond = (line: string) => {
@@ -88,7 +89,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
 
   yield* pastedLines(respond)
   const watching = client["auth/watch"]().pipe(
-    Stream.filter((state) => state.provider === provider && (flow === undefined || state.flow === flow)),
+    Stream.filterEffect((state) => Effect.map(Deferred.await(startedFlow), (started) => state.flow === started)),
     Stream.tap(shown),
     Stream.takeUntil(over),
     Stream.runDrain,
@@ -106,6 +107,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
   )
   if (!started) return false
   flow = started.flow
+  yield* Deferred.succeed(startedFlow, started.flow)
   yield* Effect.onInterrupt(Fiber.join(watcher), () =>
     Effect.ignore(client["auth/cancel"]({ provider, flow: started.flow })),
   )

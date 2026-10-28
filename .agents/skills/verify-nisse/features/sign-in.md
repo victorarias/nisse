@@ -167,6 +167,7 @@ Preconditions:
 - One browser sign-in listens on port 1455 at a time; a second, from another
   home, fails at once, and `watch-auth` in that home shows
   `could not listen on 127.0.0.1:1455 for the browser's answer (is another sign-in running?); ...`.
+  `nisse login openai` there prints that failure and exits 1.
 - `nisse logout claude` runs `claude auth logout`: drive it only with
   `CLAUDE_CONFIG_DIR` set to a folder in the run.
 - The server exits 30 s after its last client leaves even while a sign-in
