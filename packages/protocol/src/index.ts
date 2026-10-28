@@ -38,7 +38,14 @@ export const UserText = Schema.TaggedStruct("user", {
   skills: Schema.optionalKey(Schema.Array(AttachedSkill)),
 })
 export const Message = Schema.TaggedStruct("message", { text: Schema.String })
-export const ToolCall = Schema.TaggedStruct("tool_call", { call: CallId, tool: Schema.String, input: Schema.Unknown })
+export const ToolCall = Schema.TaggedStruct("tool_call", {
+  call: CallId,
+  tool: Schema.String,
+  input: Schema.Unknown,
+  parent: Schema.optionalKey(
+    CallId.annotate({ description: "The call that made this one, such as the script that ran it in code mode." }),
+  ),
+})
 export const ToolResult = Schema.TaggedStruct("tool_result", {
   call: CallId,
   output: Schema.String,

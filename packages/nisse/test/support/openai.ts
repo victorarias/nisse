@@ -61,7 +61,7 @@ export class FakeOpenAi {
     return `http://127.0.0.1:${this.server.port}`
   }
 
-  options(instructions = "You are a test.") {
+  options(instructions = "You are a test.", codeModeHost?: string) {
     return (home: Home) =>
       (id: string): OpenAiOptions => ({
         authPath: join(home.dir, "auth", `${id}.json`),
@@ -71,6 +71,7 @@ export class FakeOpenAi {
         callbackPort: 0,
         instructions,
         home: home.dir,
+        ...(codeModeHost === undefined ? {} : { codeModeHost }),
       })
   }
 

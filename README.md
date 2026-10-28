@@ -43,7 +43,8 @@ R4, skills and code mode. What runs today:
   Claude Code would ask about, resumes Claude Code's session where nisse's
   transcript ends, and tells Claude which calls a crash cut off. OpenAI through
   a ChatGPT sign-in (the Codex Responses endpoint), where nisse runs the loop
-  and its own tools and refreshes an expired token once. A scripted provider
+  and its own tools and refreshes an expired token once. OpenAI's code-mode
+  models run nisse's tools from JavaScript (see below). A scripted provider
   for tests.
 - Providers and sign-in. `claude` and `openai` always exist, and
   `config.toml` adds more. Every client sees how each one is signed in, and
@@ -90,7 +91,8 @@ is signed in; `^L` signs in to one that is signed out. `/model` lists every
 provider's models: `↑↓` picks one, `←→` its effort, and `⏎` switches.
 
 `NISSE_HOME` (default `~/.nisse`) holds `config.toml`, `store.sqlite`,
-`nisse.sock`, `nisse.lock`, the background server's `nisse.log`, ChatGPT
+`nisse.sock`, `nisse.lock`, the background server's `nisse.log`, the
+code-mode host under `bin/`, ChatGPT
 sign-ins under `auth/` (readable only by you), and the model lists ChatGPT
 last sent under `cache/`. One server serves a home at a time.
 
@@ -121,6 +123,23 @@ Claude. Claude's models are the ones Claude Code offers; OpenAI's come from
 ChatGPT, then the list nisse saved last, then the list nisse ships with.
 `NISSE_CLAUDE` names the `claude` binary a server this starts drives instead of
 the one the Claude Agent SDK bundles.
+
+### Code mode
+
+Most of OpenAI's models work in code mode: they get two tools, `exec` and
+`wait`, and write JavaScript that calls nisse's tools (`Read`, `Write`, `Edit`,
+`Bash`, `Grep`, `Glob`, and Codex's `apply_patch`). Each call a script makes is
+an ordinary nisse tool call under the script's own, committed and asked about
+like any other; the model sees only the script and what it printed. Scripts run
+in Codex's `codex-code-mode-host`, which nisse starts on the first script and
+stops after five idle minutes. Install the pinned release with:
+
+```sh
+scripts/code-mode-host.sh   # into NISSE_HOME/bin
+```
+
+nisse looks for the host at `NISSE_CODE_MODE_HOST`, then in `NISSE_HOME/bin`,
+then on `PATH`. `gpt-5.5` keeps direct tools and needs no host.
 
 When `NISSE_MODEL_SCRIPT` is set, a server this starts adds the scripted
 provider and uses it by default; the variable names a JSON file of scripted

@@ -162,7 +162,13 @@ export class Conversations extends Context.Service<
                     entries: [
                       {
                         author: nisse,
-                        body: { _tag: "tool_call", call: call.call, tool: call.tool, input: call.input },
+                        body: {
+                          _tag: "tool_call",
+                          call: call.call,
+                          tool: call.tool,
+                          input: call.input,
+                          ...(call.parent === undefined ? {} : { parent: call.parent }),
+                        },
                       },
                     ],
                   },
@@ -254,10 +260,9 @@ export class Conversations extends Context.Service<
           recordResult,
           approve,
           toolOutput: (call, text) => (text === "" ? Effect.void : live({ _tag: "output", call, append: text })),
-          runTool: (call, saved) =>
+          runTool: (call, tool = toolNamed(call.tool)) =>
             Effect.gen(function* () {
-              yield* recordCall(call, saved)
-              const tool = toolNamed(call.tool)
+              yield* recordCall(call)
               const outcome: ToolOutcome = !tool
                 ? { output: `no tool named ${call.tool}`, error: true }
                 : !tool.readOnly && !(yield* approve(call))
