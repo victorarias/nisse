@@ -1,27 +1,56 @@
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 const fixture = process.env.FAKE_CLAUDE_FIXTURE!
 const dir = process.env.FAKE_CLAUDE_DIR!
 const argv = process.argv.slice(2)
+mkdirSync(dir, { recursive: true })
 
-const spawnFile = join(dir, "spawns")
-const spawn = Number(readFileSync(spawnFile, { encoding: "utf8", flag: "a+" }) || "0")
-writeFileSync(spawnFile, String(spawn + 1))
+if (argv[0] === "auth") {
+  appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ auth: argv.slice(1) })}\n`)
+  if (process.env.FAKE_CLAUDE_AUTH_ASKS) {
+    process.stdout.write("fake claude asks for a code: ")
+    for await (const line of console) {
+      appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ authAnswer: line })}\n`)
+      process.exit(0)
+    }
+  } else if (process.env.FAKE_CLAUDE_AUTH_WAITS) {
+    process.stdout.write(`fake claude ${argv.join(" ")} waiting\n`)
+    process.on("SIGTERM", () => {
+      appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ authEnded: "SIGTERM" })}\n`)
+      process.exit(143)
+    })
+    setInterval(() => undefined, 1 << 30)
+    await new Promise<never>(() => undefined)
+  } else {
+    process.stdout.write(`fake claude ${argv.join(" ")} done\n`)
+    process.exit(0)
+  }
+}
+
+const isProbe = (args: ReadonlyArray<string>) => args.includes("--no-session-persistence")
+const probe = isProbe(argv)
+
+const counterFile = join(dir, probe ? "probes" : "spawns")
+const spawn = Number(readFileSync(counterFile, { encoding: "utf8", flag: "a+" }) || "0")
+writeFileSync(counterFile, String(spawn + 1))
 
 const log = (entry: unknown) =>
-  appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ spawn, ...(entry as object) })}\n`)
+  appendFileSync(
+    join(dir, "log.ndjson"),
+    `${JSON.stringify(probe ? { probe: spawn, ...(entry as object) } : { spawn, ...(entry as object) })}\n`,
+  )
 log({ argv })
 
 const segments: Array<Array<any>> = []
-let probing = false
+let playing = false
 for (const line of readFileSync(fixture, "utf8").split("\n")) {
   if (line.trim() === "") continue
   const parsed = JSON.parse(line)
   if (parsed.type === "expect_outbound" && parsed.frame.argv) {
-    probing = parsed.frame.argv.includes("--no-session-persistence")
-    if (!probing) segments.push([])
-  } else if (parsed.type !== "transcript_start" && !probing) segments.at(-1)?.push(parsed)
+    playing = isProbe(parsed.frame.argv) === probe
+    if (playing) segments.push([])
+  } else if (parsed.type !== "transcript_start" && playing) segments.at(-1)?.push(parsed)
 }
 
 const flag = (name: string) => {

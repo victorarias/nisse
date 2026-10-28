@@ -97,12 +97,20 @@ const toV3 = (db: Database) => {
   db.run("ALTER TABLE conversations ADD COLUMN provider_seq INTEGER NOT NULL DEFAULT 0")
 }
 
+const toV4 = (db: Database) => {
+  db.run("ALTER TABLE conversations ADD COLUMN model TEXT NOT NULL DEFAULT '{}'")
+  db.run("ALTER TABLE conversations ADD COLUMN model_at INTEGER NOT NULL DEFAULT 0")
+  db.run("UPDATE conversations SET model = json_object('provider', provider), model_at = created_at")
+  db.run("ALTER TABLE conversations DROP COLUMN provider")
+}
+
 const migrations: Array<(db: Database) => void> = [
   (db) => {
     for (const statement of v1) db.run(statement)
   },
   toV2,
   toV3,
+  toV4,
 ]
 
 export const migrate = (db: Database) => {

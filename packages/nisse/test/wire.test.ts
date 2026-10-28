@@ -433,3 +433,81 @@ test("Grep reports only the lines a file has, whatever its line endings", async 
   client.close()
   rmSync(cwd, { recursive: true })
 })
+
+const modelOf = async (client: RawClient, conversation: string) => {
+  const view = client.subscribe({ conversation })
+  await view.until((deliveries) => deliveries.length > 0)
+  const first = view.deliveries[0]!
+  return first._tag === "snapshot" ? first.conversation.model : undefined
+}
+
+test("a new conversation takes the project's default model, else the home's, else the one chosen last", async () => {
+  const project = workdir()
+  const inside = `${project}/src`
+  await Bun.write(`${project}/.nisse/config.toml`, 'default_model = { provider = "script", effort = "low" }\n')
+  await Bun.write(`${inside}/keep`, "")
+  try {
+    {
+      await using server = await runningServer([], {
+        config: { default_model: { provider: "openai", model: "gpt-test" } },
+      })
+      const client = await RawClient.connect(server.home.socket)
+      expect(await modelOf(client, await start(client, { cwd: inside }))).toEqual({ provider: "script", effort: "low" })
+      expect(await modelOf(client, await start(client))).toEqual({ provider: "openai", model: "gpt-test" })
+      expect(await modelOf(client, await start(client, { model: "gpt-other" }))).toEqual({
+        provider: "openai",
+        model: "gpt-other",
+      })
+      client.close()
+    }
+    await using server = await runningServer()
+    const client = await RawClient.connect(server.home.socket)
+    await start(client, { provider: "claude", model: "opus" })
+    expect(await modelOf(client, await start(client))).toEqual({ provider: "claude", model: "opus" })
+    client.close()
+  } finally {
+    rmSync(project, { recursive: true, force: true })
+  }
+})
+
+test("switching models is an entry everyone sees, and a provider nisse does not have is refused", async () => {
+  await using server = await runningServer()
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await view.until((deliveries) => deliveries.length > 0)
+
+  const switched = await client.call("conversation/select_model", {
+    conversation,
+    author: "ada",
+    selection: { provider: "openai", model: "gpt-test", effort: "high" },
+  })
+  const refused = await client.call("conversation/select_model", {
+    conversation,
+    author: "ada",
+    selection: { provider: "nobody" },
+  })
+  await view.until((deliveries) => entriesOf(deliveries).length === 1)
+
+  expect(switched.error).toBeUndefined()
+  expect(errorTag(refused)).toBe("UnknownProvider")
+  expect(entriesOf(view.deliveries)[0]).toMatchObject({
+    author: { _tag: "person", name: "ada" },
+    body: { _tag: "model", selection: { provider: "openai", model: "gpt-test", effort: "high" } },
+  })
+  expect(await modelOf(client, conversation)).toEqual({ provider: "openai", model: "gpt-test", effort: "high" })
+  client.close()
+})
+
+test("the providers config.toml names can start conversations beside the built-in ones", async () => {
+  await using server = await runningServer([], {
+    config: { providers: { "openai-work": { driver: "openai" }, "claude-personal": { driver: "claude" } } },
+  })
+  const client = await RawClient.connect(server.home.socket)
+  const work = await client.call("conversation/start", { cwd: "/work", provider: "openai-work" })
+  const personal = await client.call("conversation/start", { cwd: "/work", provider: "claude-personal" })
+  client.close()
+
+  expect(work.result.model).toEqual({ provider: "openai-work" })
+  expect(personal.result.model).toEqual({ provider: "claude-personal" })
+})

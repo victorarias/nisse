@@ -17,6 +17,7 @@ import {
   type EntryId,
   type Live,
   type LiveChange,
+  type ModelSelection,
   type Queued,
   type Snapshot,
   type Status,
@@ -46,6 +47,7 @@ export interface Change {
   readonly attempts?: number
   readonly providerState?: unknown
   readonly approval?: { readonly id: ApprovalId; readonly call: CallId }
+  readonly model?: ModelSelection
 }
 
 export interface ConversationState {
@@ -62,7 +64,7 @@ interface ConversationRow {
   id: string
   cwd: string
   created_at: number
-  provider: string
+  model: string
   approvals: Approvals
   status: Status
   live: string
@@ -82,7 +84,7 @@ const toConversation = (row: ConversationRow): Conversation => ({
   id: row.id as ConversationId,
   cwd: row.cwd,
   createdAt: row.created_at,
-  provider: row.provider,
+  model: JSON.parse(row.model) as ModelSelection,
   approvals: row.approvals,
 })
 
@@ -121,7 +123,8 @@ const applyLive = (live: Live, changes: ReadonlyArray<LiveChange>): Live => {
 export class Store extends Context.Service<
   Store,
   {
-    readonly start: (cwd: string, provider: string, approvals: Approvals) => Conversation
+    readonly start: (cwd: string, model: ModelSelection, approvals: Approvals) => Conversation
+    readonly lastModel: () => ModelSelection | undefined
     readonly list: () => ReadonlyArray<Conversation>
     readonly state: (conversation: ConversationId) => Effect.Effect<ConversationState, NoSuchConversation>
     readonly commit: (conversation: ConversationId, change: Change) => Commit
@@ -233,6 +236,21 @@ export class Store extends Context.Service<
           if (change.attempts !== undefined) {
             db.run("UPDATE conversations SET attempts = ? WHERE id = ?", [change.attempts, conversation])
           }
+          if (change.model) {
+            const row = conversationRow.get(conversation)!
+            const switched = (JSON.parse(row.model) as ModelSelection).provider !== change.model.provider
+            db.run("UPDATE conversations SET model = ?, model_at = ? WHERE id = ?", [
+              JSON.stringify(change.model),
+              at,
+              conversation,
+            ])
+            if (switched) {
+              db.run("UPDATE conversations SET provider_state = NULL, provider_seq = ? WHERE id = ?", [
+                seq,
+                conversation,
+              ])
+            }
+          }
           if (change.providerState !== undefined) {
             db.run("UPDATE conversations SET provider_state = ?, provider_seq = ? WHERE id = ?", [
               JSON.stringify(change.providerState),
@@ -292,13 +310,23 @@ export class Store extends Context.Service<
           })
 
         return Store.of({
-          start: (cwd, provider, approvals) => {
+          start: (cwd, model, approvals) => {
             const id = newId()
+            const now = Date.now()
             db.run(
-              "INSERT INTO conversations (id, cwd, created_at, provider, approvals, live) VALUES (?, ?, ?, ?, ?, ?)",
-              [id, cwd, Date.now(), provider, approvals, JSON.stringify({ text: "", output: {} })],
+              "INSERT INTO conversations (id, cwd, created_at, model, model_at, approvals, live) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              [id, cwd, now, JSON.stringify(model), now, approvals, JSON.stringify({ text: "", output: {} })],
             )
             return toConversation(conversationRow.get(id)!)
+          },
+          lastModel: () => {
+            const row = db
+              .query<
+                { model: string },
+                []
+              >("SELECT model FROM conversations ORDER BY model_at DESC, rowid DESC LIMIT 1")
+              .get()
+            return row ? (JSON.parse(row.model) as ModelSelection) : undefined
           },
           list: () =>
             db

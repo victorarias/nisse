@@ -1,26 +1,28 @@
 import { createCliRenderer, type CliRenderer, type KeyBinding, type TextareaRenderable } from "@opentui/core"
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import type { ApprovalId, CallId, Entry, Outcome } from "@nisse/protocol"
-import { Deferred, Effect, Stream } from "effect"
+import { authEnded } from "@nisse/protocol"
+import type { ApprovalId, AuthState, CallId, Entry, ModelSelection, Outcome, ProviderSnapshot } from "@nisse/protocol"
+import { Deferred, Effect, Fiber, Stream } from "effect"
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { userName } from "../author.ts"
 import { Client, follow, startConversation, type StartOptions } from "../client.ts"
+import { runTerminal } from "../login.ts"
 import { VERSION } from "../version.ts"
 import { describeCall } from "./calls.ts"
+import {
+  choicesOf,
+  chosen,
+  emptySetup,
+  modelLabel,
+  ModelPicker,
+  pickerAt,
+  ProviderList,
+  SignInPanel,
+  type SetupView,
+} from "./setup.tsx"
+import { color, KeyCap } from "./theme.tsx"
 import { apply, emptyView, type View } from "./view.ts"
-
-const color = {
-  background: "#0B0817",
-  panel: "#16122B",
-  cyan: "#00F0FF",
-  magenta: "#FF2E88",
-  yellow: "#F3E600",
-  violet: "#B46CFF",
-  ink: "#E8E6FF",
-  dim: "#8A86B8",
-  faint: "#3D366E",
-}
 
 const LOGO = [
   "█   █  ███  ████  ████  ████",
@@ -46,6 +48,12 @@ interface Actions {
   readonly answer: (approval: ApprovalId, allow: boolean) => void
   readonly interrupt: () => void
   readonly quit: () => void
+  readonly openPicker: () => void
+  readonly movePicker: (rows: number, efforts: number) => void
+  readonly closePicker: (selection: ModelSelection | undefined) => void
+  readonly signIn: () => void
+  readonly cancelSignIn: () => void
+  readonly pasteCallback: (url: string) => void
 }
 
 const Tag = (props: { label: string; color: string }) => {
@@ -168,12 +176,18 @@ const EntryView = (props: { view: View; entry: Entry; previous: Entry | undefine
       )
     case "run_end":
       return <RunEndView outcome={body.outcome} message={body.message} />
+    case "model":
+      return (
+        <text fg={color.dim} marginTop={1} marginLeft={2}>
+          {`◆ ${authorLabel(props.entry).toLowerCase()} switched to ${modelLabel(body.selection)}`}
+        </text>
+      )
     default:
       return null
   }
 }
 
-const Splash = () => (
+const Splash = (props: { providers: ReadonlyArray<ProviderSnapshot> }) => (
   <box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center">
     <For each={LOGO}>{(line, row) => <text fg={LOGO_COLORS[row()]}>{line}</text>}</For>
     <text fg={color.dim} marginTop={1}>
@@ -183,15 +197,10 @@ const Splash = () => (
       <KeyCap cap="⏎" what="send" />
       <KeyCap cap="⇧⏎" what="newline" />
       <KeyCap cap="esc" what="stop" />
+      <KeyCap cap="/model" what="switch model" />
       <KeyCap cap="^C" what="quit" />
     </box>
-  </box>
-)
-
-const KeyCap = (props: { cap: string; what: string }) => (
-  <box flexDirection="row" gap={1}>
-    <text fg={color.cyan} bg={color.faint}>{` ${props.cap} `}</text>
-    <text fg={color.dim}>{props.what}</text>
+    <ProviderList providers={props.providers} />
   </box>
 )
 
@@ -249,6 +258,9 @@ const StatusBar = (props: { view: View }) => {
         </text>
       </Show>
       <box flexGrow={1} />
+      <Show when={props.view.conversation}>
+        {(conversation) => <text fg={color.violet}>{`${modelLabel(conversation().model)}  `}</text>}
+      </Show>
       <text fg={color.dim}>{`nisse ${VERSION} `}</text>
     </box>
   )
@@ -268,14 +280,16 @@ const Header = (props: { view: View }) => (
   </box>
 )
 
-const Prompt = (props: { view: View; actions: Actions; steer: boolean }) => {
+const Prompt = (props: { view: View; setup: SetupView; actions: Actions; steer: boolean }) => {
   let input: TextareaRenderable | undefined
   const submit = () => {
     if (!input) return
     const text = input.plainText
     if (text.trim() === "") return
-    props.actions.submit(text, props.steer && props.view.status !== "idle")
     input.clear()
+    if (text.trim() === "/model") props.actions.openPicker()
+    else if (props.setup.signIn?.interaction?._tag === "browser") props.actions.pasteCallback(text.trim())
+    else props.actions.submit(text, props.steer && props.view.status !== "idle")
   }
   return (
     <box
@@ -294,7 +308,7 @@ const Prompt = (props: { view: View; actions: Actions; steer: boolean }) => {
         flexGrow={1}
         minHeight={1}
         maxHeight={8}
-        focused
+        focused={props.setup.picker === undefined}
         textColor={color.ink}
         focusedTextColor={color.ink}
         placeholder="type a message"
@@ -306,14 +320,24 @@ const Prompt = (props: { view: View; actions: Actions; steer: boolean }) => {
   )
 }
 
-const App = (props: { view: View; actions: Actions }) => {
+const App = (props: { view: View; setup: SetupView; actions: Actions }) => {
   const [steer, setSteer] = createSignal(false)
   const answer = (allow: boolean) => {
     const pending = props.view.pendingApprovals[0]
     if (pending) props.actions.answer(pending.approval, allow)
   }
   useKeyboard((key) => {
+    const picker = props.setup.picker
     if (key.ctrl && key.name === "c") props.actions.quit()
+    else if (picker) {
+      if (key.name === "up") props.actions.movePicker(-1, 0)
+      else if (key.name === "down") props.actions.movePicker(1, 0)
+      else if (key.name === "left") props.actions.movePicker(0, -1)
+      else if (key.name === "right") props.actions.movePicker(0, 1)
+      else if (key.name === "return") props.actions.closePicker(chosen(picker))
+      else if (key.name === "escape") props.actions.closePicker(undefined)
+    } else if (key.name === "escape" && props.setup.signIn) props.actions.cancelSignIn()
+    else if (key.ctrl && key.name === "l") props.actions.signIn()
     else if (key.ctrl && key.name === "y") answer(true)
     else if (key.ctrl && key.name === "n") answer(false)
     else if (key.name === "tab" && props.view.status !== "idle") setSteer((on) => !on)
@@ -322,13 +346,37 @@ const App = (props: { view: View; actions: Actions }) => {
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={color.background}>
       <Header view={props.view} />
-      <Show when={props.view.entries.length > 0 || props.view.live.text !== ""} fallback={<Splash />}>
-        <Transcript view={props.view} />
+      <Show
+        when={props.setup.picker}
+        fallback={
+          <Show
+            when={props.view.entries.length > 0 || props.view.live.text !== ""}
+            fallback={<Splash providers={props.setup.providers} />}
+          >
+            <Transcript view={props.view} />
+          </Show>
+        }
+      >
+        {(picker) => <ModelPicker picker={picker()} />}
       </Show>
-      <Prompt view={props.view} actions={props.actions} steer={steer()} />
+      <Show when={props.setup.signIn}>{(state) => <SignInPanel state={state()} />}</Show>
+      <Prompt view={props.view} setup={props.setup} actions={props.actions} steer={steer()} />
       <StatusBar view={props.view} />
     </box>
   )
+}
+
+const remote = () => process.env.SSH_CONNECTION !== undefined || process.env.SSH_TTY !== undefined
+
+const openBrowser = (url: string) => {
+  if (remote()) return
+  try {
+    Bun.spawn([process.platform === "darwin" ? "open" : "xdg-open", url], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    }).unref()
+  } catch {}
 }
 
 const openRenderer = Effect.acquireRelease(
@@ -354,7 +402,122 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
     Effect.forkScoped,
   )
 
+  const [setup, setSetup] = createStore<SetupView>(emptySetup())
+  const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runFork(effect)
+  const refreshProviders = (refresh: boolean) =>
+    client["providers/list"]({ refresh }).pipe(
+      Effect.tap((providers) => Effect.sync(() => setSetup("providers", [...providers]))),
+      Effect.ignore,
+    )
+  yield* Effect.forkScoped(refreshProviders(false))
+
+  let renderer: CliRenderer | undefined
+  const signInTerminal = (state: AuthState, command: ReadonlyArray<string>, env: Readonly<Record<string, string>>) =>
+    Effect.acquireUseRelease(
+      Effect.promise(async () => renderer?.suspend()),
+      () => runTerminal(command, env),
+      () => Effect.promise(async () => renderer?.resume()),
+    ).pipe(
+      Effect.flatMap((success) =>
+        client["auth/respond"]({
+          provider: state.provider,
+          flow: state.flow,
+          response: { _tag: "terminal_exited", success },
+        }),
+      ),
+      Effect.ignore,
+    )
+
+  const seen = new Map<string, AuthState>()
+  const acted = new Set<string>()
+  const terminals = new Map<string, Fiber.Fiber<void>>()
+  const scope = yield* Effect.scope
+  let mine: string | undefined
+  const act = (state: AuthState) =>
+    Effect.gen(function* () {
+      if (authEnded(state.phase)) {
+        mine = undefined
+        setSetup("signIn", state.phase === "failed" ? state : undefined)
+        const terminal = terminals.get(state.flow)
+        terminals.delete(state.flow)
+        if (terminal) yield* Fiber.interrupt(terminal)
+        yield* refreshProviders(false)
+        return
+      }
+      setSetup("signIn", state)
+      const interaction = state.interaction
+      if (state.phase !== "waiting" || !interaction || acted.has(state.flow)) return
+      acted.add(state.flow)
+      if (interaction._tag === "browser") openBrowser(interaction.url)
+      if (interaction._tag === "terminal")
+        terminals.set(
+          state.flow,
+          yield* Effect.forkIn(signInTerminal(state, interaction.command, interaction.env), scope),
+        )
+    })
+  const onAuth = (state: AuthState) =>
+    Effect.suspend(() => {
+      seen.set(state.flow, state)
+      if (state.flow === mine) return act(state)
+      return authEnded(state.phase) ? refreshProviders(false) : Effect.void
+    })
+  yield* client["auth/watch"]().pipe(Stream.runForEach(onAuth), Effect.ignore, Effect.forkScoped)
+
   const actions: Actions = {
+    openPicker: () =>
+      run(
+        client["models/list"]({}).pipe(
+          Effect.tap((lists) =>
+            Effect.sync(() => setSetup("picker", pickerAt(choicesOf(lists), view.conversation?.model))),
+          ),
+          Effect.ignore,
+        ),
+      ),
+    movePicker: (rows, efforts) =>
+      setSetup(
+        "picker",
+        produce((picker) => {
+          if (!picker) return
+          const row = Math.min(picker.choices.length - 1, Math.max(0, picker.row + rows))
+          const choices = picker.choices[row]?.efforts.length ?? 0
+          picker.effort = rows === 0 ? (picker.effort + efforts + choices + 1) % (choices + 1) : 0
+          picker.row = row
+        }),
+      ),
+    closePicker: (selection) => {
+      setSetup("picker", undefined)
+      if (selection) run(client["conversation/select_model"]({ conversation, author: userName(), selection }))
+    },
+    signIn: () => {
+      if (setup.signIn && setup.signIn.phase !== "failed") return
+      const current = view.conversation?.model.provider
+      const signedOut = setup.providers.filter((provider) => provider.health.status === "signed_out")
+      const target = signedOut.find((provider) => provider.id === current) ?? signedOut[0]
+      if (!target) return
+      const method = remote() && target.signIn.includes("device_code") ? "device_code" : undefined
+      run(
+        client["auth/start"]({ provider: target.id, ...(method ? { method } : {}) }).pipe(
+          Effect.flatMap((started) =>
+            Effect.suspend(() => {
+              mine = started.flow
+              return act(seen.get(started.flow) ?? started)
+            }),
+          ),
+          Effect.ignore,
+        ),
+      )
+    },
+    cancelSignIn: () => {
+      const state = setup.signIn
+      if (state?.phase === "failed") setSetup("signIn", undefined)
+      else if (state) run(client["auth/cancel"]({ provider: state.provider, flow: state.flow }))
+    },
+    pasteCallback: (url) => {
+      const state = setup.signIn
+      if (state) {
+        run(client["auth/respond"]({ provider: state.provider, flow: state.flow, response: { _tag: "callback", url } }))
+      }
+    },
     submit: (text, steer) =>
       Effect.runFork(
         client["conversation/submit"]({
@@ -373,9 +536,10 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
 
   const outcome = yield* Effect.scoped(
     Effect.gen(function* () {
-      const renderer = yield* openRenderer
-      yield* Effect.promise(() => render(() => <App view={view} actions={actions} />, renderer))
-      const closedByTerminal = Effect.promise(() => renderer.closed)
+      const opened = yield* openRenderer
+      renderer = opened
+      yield* Effect.promise(() => render(() => <App view={view} setup={setup} actions={actions} />, opened))
+      const closedByTerminal = Effect.promise(() => opened.closed)
       return yield* Effect.result(Effect.raceFirst(Deferred.await(done), closedByTerminal))
     }),
   )

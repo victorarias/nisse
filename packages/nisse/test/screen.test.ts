@@ -1,6 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
-import { rmSync } from "node:fs"
-import { deadline } from "./support/raw.ts"
+import { readFileSync, rmSync, watch } from "node:fs"
+import { join } from "node:path"
+import type { AuthState } from "@nisse/protocol"
+import { deadline, RawClient } from "./support/raw.ts"
 import { tempHome } from "./support/server.ts"
 import { nisseEnv, screenSession, stopServer } from "./support/terminal.ts"
 
@@ -135,3 +137,128 @@ test("tab switches a prompt sent mid-run from queueing to steering the run", asy
   session.type("\x03")
   await session.exited
 })
+
+test("the splash lists every provider and how it is signed in", async () => {
+  const session = screenSession([], nisseEnv(home()))
+  const screen = await session.waitFor(
+    (screen) => screen.includes("person@example.com · Claude Max") && screen.includes("signed out"),
+  )
+  expect(screen).toMatch(/● claude +person@example\.com · Claude Max/)
+  expect(screen).toMatch(/○ openai +signed out/)
+  expect(screen).toContain("^L  sign in")
+  session.type("\x03")
+  await session.exited
+})
+
+test("/model lists every provider's models, and enter switches the conversation's model for everyone", async () => {
+  const session = screenSession([], nisseEnv(home()))
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("/model\r")
+  await session.waitFor((screen) => screen.includes("claude · Sonnet") && screen.includes("openai · GPT-5.5"))
+  session.type("\x1b[B")
+  session.type("\x1b[B")
+  session.type("\x1b[C")
+  await session.waitFor((screen) => screen.includes("claude · Sonnet ‹ low ›"))
+  session.type("\r")
+  const screen = await session.waitFor((screen) => screen.includes("◆ ada switched to claude · sonnet · low"))
+  expect(screen).not.toContain("claude · Sonnet ‹")
+  expect(screen).toContain("claude · sonnet · low  nisse")
+  session.type("\x03")
+  await session.exited
+}, 20_000)
+
+test("^L signs in to a signed-out Claude by running its own sign-in in the terminal", async () => {
+  const nisseHome = home()
+  const session = screenSession(
+    [],
+    nisseEnv(nisseHome, {
+      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
+    }),
+  )
+  await session.waitFor((screen) => /○ claude +signed out/.test(screen))
+  session.type("\x0c")
+  const screen = await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen), 30_000)
+  expect(session.output()).toContain("fake claude auth login done")
+  expect(screen).not.toContain("SIGN IN")
+  session.type("\x03")
+  await session.exited
+}, 40_000)
+
+test("a sign-in cancelled from another connection stops Claude's sign-in in the terminal", async () => {
+  const nisseHome = home()
+  const session = screenSession(
+    [],
+    nisseEnv(nisseHome, {
+      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
+      FAKE_CLAUDE_AUTH_WAITS: "1",
+    }),
+  )
+  await session.waitFor((screen) => /○ claude +signed out/.test(screen))
+  session.type("\x0c")
+  await session.waitFor((screen) => screen.includes("fake claude auth login waiting"))
+  const other = await RawClient.connect(nisseHome.socket)
+  const auth = other.watch<AuthState>("auth/watch")
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  const waiting = auth.items.find((state) => state.phase === "waiting")!
+  await other.call("auth/cancel", { provider: "claude", flow: waiting.flow })
+  other.close()
+
+  const screen = await session.waitFor((screen) => /○ claude +signed out/.test(screen) && !screen.includes("SIGN IN"))
+  expect(screen).toContain("READY")
+  const fakeDir = join(nisseHome.dir, "fake-claude")
+  const ended = () => readFileSync(join(fakeDir, "log.ndjson"), "utf8").includes('"authEnded":"SIGTERM"')
+  const watcher = watch(fakeDir)
+  await deadline(
+    new Promise<void>((resolve) => {
+      const check = () => ended() && resolve()
+      watcher.on("change", check)
+      check()
+    }),
+    5000,
+    "the sign-in in the terminal ended",
+  ).finally(() => watcher.close())
+  session.type("\x03")
+  await session.exited
+}, 40_000)
+
+test("an open TUI shows a sign-in another connection finished", async () => {
+  const nisseHome = home()
+  const session = screenSession(
+    [],
+    nisseEnv(nisseHome, {
+      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
+    }),
+  )
+  await session.waitFor((screen) => /○ claude +signed out/.test(screen))
+  const other = await RawClient.connect(nisseHome.socket)
+  const auth = other.watch<AuthState>("auth/watch")
+  const started = (await other.call("auth/start", { provider: "claude" })).result as AuthState
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  await other.call("auth/respond", {
+    provider: "claude",
+    flow: started.flow,
+    response: { _tag: "terminal_exited", success: true },
+  })
+  await auth.until((states) => states.at(-1)?.phase === "succeeded", 30_000)
+  other.close()
+
+  await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen))
+  session.type("\x03")
+  await session.exited
+}, 40_000)
+
+test("nisse login hands what the person types to Claude's own sign-in", async () => {
+  const nisseHome = home()
+  const session = screenSession(
+    ["login", "claude"],
+    nisseEnv(nisseHome, {
+      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
+      FAKE_CLAUDE_AUTH_ASKS: "1",
+    }),
+  )
+  await session.waitFor((screen) => screen.includes("fake claude asks for a code"))
+  session.type("the-code\r")
+  await session.waitFor((screen) => screen.includes("signed in to claude"), 30_000)
+  expect(await session.exited).toBe(0)
+  expect(readFileSync(join(nisseHome.dir, "fake-claude", "log.ndjson"), "utf8")).toContain('"authAnswer":"the-code"')
+}, 40_000)

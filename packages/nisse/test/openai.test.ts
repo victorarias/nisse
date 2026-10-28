@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test"
-import type { Delivery } from "@nisse/protocol"
-import { readFileSync } from "node:fs"
+import type { AuthState, Delivery, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
+import { readFileSync, rmSync, statSync } from "node:fs"
 import { join } from "node:path"
-import { accessToken, ACCOUNT, FakeOpenAi, matches, signIn } from "./support/openai.ts"
+import { accessToken, ACCOUNT, EMAIL, FakeOpenAi, matches, signIn } from "./support/openai.ts"
 import { bodies, deadline, RawClient } from "./support/raw.ts"
-import { runningServer } from "./support/server.ts"
+import { runningServer, tempHome } from "./support/server.ts"
 
 const settled = (count: number) => (deliveries: ReadonlyArray<Delivery>) =>
   bodies(deliveries).filter((body) => body._tag === "run_end").length >= count && deliveries.at(-1)?.status === "idle"
@@ -239,4 +239,248 @@ test("an answer whose CRLF event separators arrive split across reads is read wh
     { _tag: "message", text: "Split but whole" },
     { _tag: "run_end", outcome: "answered" },
   ])
+})
+
+const setupWith = async (fake: FakeOpenAi) => {
+  const server = await runningServer([], { openai: fake.options() })
+  const client = await RawClient.connect(server.home.socket)
+  const auth = client.watch<AuthState>("auth/watch")
+  const openai = async () =>
+    ((await client.call("providers/list", {})).result as Array<ProviderSnapshot>).find((p) => p.id === "openai")!
+  const settledSignIn = async () => {
+    await auth.until((states) => states.some((state) => ["succeeded", "failed", "cancelled"].includes(state.phase)))
+    return auth.items.at(-1)!
+  }
+  const waiting = async () => {
+    await auth.until((states) => states.some((state) => state.phase === "waiting"))
+    return auth.items.find((state) => state.phase === "waiting")!
+  }
+  return {
+    server,
+    client,
+    auth,
+    openai,
+    waiting,
+    settledSignIn,
+    [Symbol.asyncDispose]: async () => {
+      client.close()
+      await server[Symbol.asyncDispose]()
+    },
+  }
+}
+
+const browserUrl = (state: AuthState) => {
+  if (state.interaction?._tag !== "browser") throw new Error(`not a browser sign-in: ${JSON.stringify(state)}`)
+  return new URL(state.interaction.url)
+}
+
+const redirectOf = (asked: URL) => {
+  const redirect = new URL(asked.searchParams.get("redirect_uri")!)
+  redirect.hostname = "127.0.0.1"
+  return redirect
+}
+
+const callbackFor = (state: AuthState, code: string) => {
+  const asked = browserUrl(state)
+  const answer = redirectOf(asked)
+  answer.searchParams.set("code", code)
+  answer.searchParams.set("state", asked.searchParams.get("state")!)
+  return answer
+}
+
+test("signing in through a browser saves the tokens for this user only and names the account", async () => {
+  await using fake = new FakeOpenAi()
+  fake.issueTokens("first", 3600)
+  await using setup = await setupWith(fake)
+  const before = await setup.openai()
+
+  await setup.client.call("auth/start", { provider: "openai" })
+  const waiting = await setup.waiting()
+  const asked = browserUrl(waiting)
+  const stranger = await fetch(`${redirectOf(asked)}?code=forged&state=not-the-state`)
+  const browser = await fetch(callbackFor(waiting, "the-code"))
+  const settled = await setup.settledSignIn()
+
+  expect(before.health.status).toBe("signed_out")
+  expect(before.signIn).toEqual(["browser", "device_code"])
+  expect(asked.searchParams.get("code_challenge_method")).toBe("S256")
+  expect(asked.searchParams.get("originator")).toBe("nisse")
+  expect(stranger.status).toBe(400)
+  expect(browser.status).toBe(200)
+  expect(settled).toMatchObject({ phase: "succeeded", message: `${EMAIL} · ChatGPT Plus` })
+  const exchange = new URLSearchParams(fake.received.find((request) => request.path === "/oauth/token")!.body)
+  expect(exchange.get("code")).toBe("the-code")
+  expect(new Bun.CryptoHasher("sha256").update(exchange.get("code_verifier")!).digest("base64url")).toBe(
+    asked.searchParams.get("code_challenge")!,
+  )
+  expect(statSync(join(setup.server.home.dir, "auth", "openai.json")).mode & 0o777).toBe(0o600)
+  expect((await setup.openai()).health).toMatchObject({ status: "ready", account: `${EMAIL} · ChatGPT Plus` })
+})
+
+test("the address a browser on another machine ends on, pasted back, finishes the sign-in", async () => {
+  await using fake = new FakeOpenAi()
+  fake.issueTokens("first", 3600)
+  await using setup = await setupWith(fake)
+  const started = (await setup.client.call("auth/start", { provider: "openai", method: "browser" })).result as AuthState
+  const waiting = await setup.waiting()
+
+  const answered = await setup.client.call("auth/respond", {
+    provider: "openai",
+    flow: started.flow,
+    response: { _tag: "callback", url: callbackFor(waiting, "pasted-code").toString() },
+  })
+
+  expect(answered.result).toEqual({ accepted: true })
+  expect(await setup.settledSignIn()).toMatchObject({ phase: "succeeded" })
+  const exchange = new URLSearchParams(fake.received.find((request) => request.path === "/oauth/token")!.body)
+  expect(exchange.get("code")).toBe("pasted-code")
+})
+
+const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+
+test("a device code sign-in shows the code to enter, then finishes once someone enters it", async () => {
+  await using fake = new FakeOpenAi()
+  fake.issueTokens("first", 3600)
+  await using setup = await setupWith(fake)
+  await setup.client.call("auth/start", { provider: "openai", method: "device_code" })
+
+  const waiting = await setup.waiting()
+  const settled = await setup.settledSignIn()
+
+  expect(waiting.interaction).toEqual({ _tag: "device_code", url: `${fake.base}/codex/device`, code: "ABCD-1234" })
+  expect(settled).toMatchObject({ phase: "succeeded", message: `${EMAIL} · ChatGPT Plus` })
+  const sent = (path: string) => fake.received.filter((request) => request.path === path).map((request) => request.body)
+  expect(sent("/api/accounts/deviceauth/usercode").map((body) => JSON.parse(body))).toEqual([
+    { client_id: CODEX_CLIENT_ID },
+  ])
+  expect(new Set(sent("/api/accounts/deviceauth/token"))).toEqual(
+    new Set([JSON.stringify({ device_auth_id: "device-1", user_code: "ABCD-1234" })]),
+  )
+  const exchange = new URLSearchParams(sent("/oauth/token")[0])
+  expect(exchange.get("client_id")).toBe(CODEX_CLIENT_ID)
+  expect(exchange.get("redirect_uri")).toBe(`${fake.base}/deviceauth/callback`)
+  expect(exchange.get("code")).toBe("device-code")
+  expect(exchange.get("code_verifier")).toBe("device-verifier")
+}, 10_000)
+
+test("a cancelled sign-in ends for every connection and frees the callback port", async () => {
+  await using fake = new FakeOpenAi()
+  await using setup = await setupWith(fake)
+  const started = (await setup.client.call("auth/start", { provider: "openai" })).result as AuthState
+  const waiting = await setup.waiting()
+
+  const cancelled = await setup.client.call("auth/cancel", { provider: "openai", flow: started.flow })
+  const settled = await setup.settledSignIn()
+
+  expect(cancelled.result).toEqual({ accepted: true })
+  expect(settled).toMatchObject({ phase: "cancelled" })
+  expect(await fetch(callbackFor(waiting, "late")).catch(() => "refused")).toBe("refused")
+})
+
+test("a connection that starts watching after a sign-in ended still learns how it ended", async () => {
+  await using fake = new FakeOpenAi()
+  await using setup = await setupWith(fake)
+  const started = (await setup.client.call("auth/start", { provider: "openai", method: "device_code" }))
+    .result as AuthState
+  expect(await setup.settledSignIn()).toMatchObject({ phase: "failed" })
+
+  const late = await RawClient.connect(setup.server.home.socket)
+  const auth = late.watch<AuthState>("auth/watch")
+  await auth.until((states) => states.length > 0)
+  late.close()
+
+  expect(auth.items[0]).toMatchObject({ provider: "openai", flow: started.flow, phase: "failed" })
+})
+
+test("signing out leaves the provider signed out and tells every connection", async () => {
+  await using fake = new FakeOpenAi()
+  await using setup = await setupWith(fake)
+  await signIn(setup.server.home)
+  expect((await setup.openai()).health.status).toBe("ready")
+
+  const other = await RawClient.connect(setup.server.home.socket)
+  const after = (await other.call("auth/logout", { provider: "openai" })).result as ProviderSnapshot
+  other.close()
+  await setup.auth.until((states) => states.some((state) => state.phase === "signed_out"))
+
+  expect(after.health.status).toBe("signed_out")
+  expect((await setup.openai()).health.status).toBe("signed_out")
+  expect(setup.auth.items.at(-1)).toMatchObject({ provider: "openai", phase: "signed_out" })
+})
+
+const modelList = (slug: string) => ({
+  models: [
+    {
+      slug,
+      display_name: slug.toUpperCase(),
+      visibility: "list",
+      priority: 1,
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }],
+      context_window: 272000,
+    },
+    { slug: "hidden", visibility: "hide", priority: 0 },
+    { slug: "code-mode-only", visibility: "list", priority: 2, tool_mode: "code_mode_only" },
+  ],
+})
+
+const openAiModels = async (client: RawClient) =>
+  ((await client.call("models/list", {})).result as Array<ProviderModels>).find((list) => list.provider === "openai")!
+
+test("OpenAI's models come from ChatGPT, leave out those nisse can't run, and the saved list answers when ChatGPT can't", async () => {
+  await using fake = new FakeOpenAi()
+  fake.modelList = modelList("gpt-test")
+  const home = tempHome()
+  try {
+    {
+      await using server = await runningServer([], { home, openai: fake.options() })
+      await signIn(server.home)
+      const client = await RawClient.connect(server.home.socket)
+      const listed = await openAiModels(client)
+      client.close()
+      expect(listed).toEqual({
+        provider: "openai",
+        defaultModel: "gpt-5.5",
+        models: [
+          {
+            id: "gpt-test",
+            name: "GPT-TEST",
+            efforts: ["low", "medium", "high"],
+            defaultEffort: "medium",
+            contextWindow: 272000,
+          },
+        ],
+      })
+    }
+    fake.modelList = undefined
+    await using server = await runningServer([], { home, openai: fake.options() })
+    const client = await RawClient.connect(server.home.socket)
+    expect((await openAiModels(client)).models.map((model) => model.id)).toEqual(["gpt-test"])
+    client.close()
+  } finally {
+    rmSync(home.dir, { recursive: true, force: true })
+  }
+})
+
+test("a switched model and effort reach ChatGPT from the next run on", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  fake.play("text_answer")
+  await using session = await conversationWith(fake)
+  await session.submit("hello")
+  await session.view.until(settled(1))
+
+  const switched = await session.client.call("conversation/select_model", {
+    conversation: session.conversation,
+    author: "ada",
+    selection: { provider: "openai", model: "gpt-test", effort: "high" },
+  })
+  await session.submit("again")
+  await session.view.until(settled(2))
+
+  expect(switched.error).toBeUndefined()
+  const [first, second] = fake.responses().map((request) => JSON.parse(request.body))
+  expect(first.model).toBe("gpt-5.5")
+  expect(first.reasoning).toBeUndefined()
+  expect(second).toMatchObject({ model: "gpt-test", reasoning: { effort: "high" } })
 })

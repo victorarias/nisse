@@ -6,11 +6,15 @@ export interface Reply {
   readonly error?: { readonly message: string; readonly data: Array<{ _tag: string; error?: { _tag: string } }> }
 }
 
-export interface Subscription {
+export interface Watch<A> {
   readonly id: number
-  readonly deliveries: Array<Delivery>
+  readonly items: Array<A>
   readonly ended: Promise<Reply>
-  readonly until: (predicate: (deliveries: ReadonlyArray<Delivery>) => boolean, ms?: number) => Promise<void>
+  readonly until: (predicate: (items: ReadonlyArray<A>) => boolean, ms?: number) => Promise<void>
+}
+
+export interface Subscription extends Omit<Watch<Delivery>, "items"> {
+  readonly deliveries: Array<Delivery>
 }
 
 const DEADLINE = 5000
@@ -27,7 +31,7 @@ export class RawClient {
   private buffer = ""
   private nextId = 1
   private readonly pending = new Map<number, (reply: Reply) => void>()
-  private readonly chunks = new Map<number, (values: Array<Delivery>) => void>()
+  private readonly chunks = new Map<number, (values: Array<any>) => void>()
 
   private constructor(
     private readonly socket: Net.Socket,
@@ -76,21 +80,21 @@ export class RawClient {
     return deadline(reply, DEADLINE, method)
   }
 
-  subscribe(params: unknown): Subscription {
+  watch<A>(method: string, params?: unknown): Watch<A> {
     const id = this.nextId++
-    const deliveries: Array<Delivery> = []
+    const items: Array<A> = []
     const waiters = new Set<() => void>()
     this.chunks.set(id, (values) => {
-      deliveries.push(...values)
+      items.push(...values)
       for (const waiter of waiters) waiter()
     })
     const ended = new Promise<Reply>((resolve) => this.pending.set(id, resolve))
-    this.send({ jsonrpc: "2.0", id, method: "conversation/subscribe", params })
-    const until = (predicate: (deliveries: ReadonlyArray<Delivery>) => boolean, ms = DEADLINE) =>
+    this.send({ jsonrpc: "2.0", id, method, params })
+    const until = (predicate: (items: ReadonlyArray<A>) => boolean, ms = DEADLINE) =>
       deadline(
         new Promise<void>((resolve) => {
           const check = () => {
-            if (!predicate(deliveries)) return
+            if (!predicate(items)) return
             waiters.delete(check)
             resolve()
           }
@@ -98,9 +102,14 @@ export class RawClient {
           check()
         }),
         ms,
-        "subscription condition",
+        `${method} condition`,
       )
-    return { id, deliveries, ended, until }
+    return { id, items, ended, until }
+  }
+
+  subscribe(params: unknown): Subscription {
+    const { items, ...watch } = this.watch<Delivery>("conversation/subscribe", params)
+    return { ...watch, deliveries: items }
   }
 
   resumeAcks(requestId: number) {

@@ -30,7 +30,7 @@ export class FakeClaude {
 
   spawns(): Array<Record<string, string | true>> {
     return this.log()
-      .filter((entry) => entry.argv)
+      .filter((entry) => entry.argv && entry.probe === undefined)
       .map((entry) =>
         Object.fromEntries(
           (entry.argv as Array<string>).map((arg) => {
@@ -41,9 +41,18 @@ export class FakeClaude {
       )
   }
 
+  probes() {
+    return this.log().filter((entry) => entry.argv && entry.probe !== undefined).length
+  }
+
   userTexts(spawn?: number) {
     return this.log()
-      .filter((entry) => entry.received?.type === "user" && (spawn === undefined || entry.spawn === spawn))
+      .filter(
+        (entry) =>
+          entry.received?.type === "user" &&
+          entry.probe === undefined &&
+          (spawn === undefined || entry.spawn === spawn),
+      )
       .map((entry) => entry.received.message.content.map((block: { text: string }) => block.text))
   }
 

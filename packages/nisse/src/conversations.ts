@@ -8,12 +8,14 @@ import {
   type ConversationId,
   type Entry,
   type LiveChange,
+  type ModelSelection,
   type NoSuchApproval,
   type NoSuchConversation,
   type Outcome,
   type SubmissionId,
 } from "@nisse/protocol"
 import { Cause, Context, Deferred, Effect, Fiber, FiberSet, Layer, Option, Ref } from "effect"
+import { projectDefaultModel } from "./config.ts"
 import { newId } from "./ids.ts"
 import { Lifetime } from "./lifetime.ts"
 import { Providers, type Call, type Driver, type Saved, type Turn } from "./provider.ts"
@@ -57,14 +59,22 @@ const danglingIn = (transcript: ReadonlyArray<Entry>) => {
   return { calls, approvals }
 }
 
+export interface StartOptions {
+  readonly provider?: string
+  readonly model?: string
+  readonly effort?: string
+  readonly approvals?: Approvals
+}
+
 export class Conversations extends Context.Service<
   Conversations,
   {
-    readonly start: (
-      cwd: string,
-      provider: string | undefined,
-      approvals: Approvals | undefined,
-    ) => Effect.Effect<Conversation, UnknownProvider>
+    readonly start: (cwd: string, options: StartOptions) => Effect.Effect<Conversation, UnknownProvider>
+    readonly selectModel: (
+      conversation: ConversationId,
+      author: string,
+      selection: ModelSelection,
+    ) => Effect.Effect<void, NoSuchConversation | UnknownProvider>
     readonly submit: (
       conversation: ConversationId,
       requestId: string,
@@ -287,8 +297,8 @@ export class Conversations extends Context.Service<
         if (attempts >= RESTART_LIMIT) {
           return [runEnd("restart_limit", `the server stopped during this run ${attempts} times in a row`)]
         }
-        const driver = providers.drivers.get(conversation.provider)
-        if (!driver) return [runEnd("failed", `no provider named ${conversation.provider}`)]
+        const driver = providers.drivers.get(conversation.model.provider)
+        if (!driver) return [runEnd("failed", `no provider named ${conversation.model.provider}`)]
         return yield* Effect.scoped(drive(conversation, { state: providerState, seq: providerSeq }, driver))
       })
 
@@ -352,16 +362,42 @@ export class Conversations extends Context.Service<
           }).pipe(Effect.asVoid)
         })
 
+      const chosenModel = (cwd: string, options: StartOptions): ModelSelection => {
+        const given = {
+          ...(options.model === undefined ? {} : { model: options.model }),
+          ...(options.effort === undefined ? {} : { effort: options.effort }),
+        }
+        if (options.provider !== undefined) return { provider: options.provider, ...given }
+        const fallback = [projectDefaultModel(cwd), providers.defaultModel, store.lastModel()].find(
+          (candidate) => candidate !== undefined && providers.drivers.has(candidate.provider),
+        ) ?? { provider: providers.preferred }
+        if (options.model === undefined) return { ...fallback, ...given }
+        return { provider: fallback.provider, ...given }
+      }
+
       for (const conversation of new Set([...store.openRuns(), ...store.pending()])) {
         yield* wake(conversation)
       }
 
       return Conversations.of({
-        start: (cwd, provider, approvals) =>
+        start: (cwd, options) =>
           Effect.suspend(() => {
-            const chosen = provider ?? providers.preferred
-            if (!providers.drivers.has(chosen)) return Effect.fail(new UnknownProvider({ provider: chosen }))
-            return Effect.succeed(store.start(cwd, chosen, approvals ?? "ask"))
+            const model = chosenModel(cwd, options)
+            if (!providers.drivers.has(model.provider)) {
+              return Effect.fail(new UnknownProvider({ provider: model.provider }))
+            }
+            return Effect.succeed(store.start(cwd, model, options.approvals ?? "ask"))
+          }),
+        selectModel: (conversation, author, selection) =>
+          Effect.gen(function* () {
+            yield* store.state(conversation)
+            if (!providers.drivers.has(selection.provider)) {
+              return yield* new UnknownProvider({ provider: selection.provider })
+            }
+            store.commit(conversation, {
+              entries: [{ author: { _tag: "person", name: author }, body: { _tag: "model", selection } }],
+              model: selection,
+            })
           }),
         submit: (conversation, requestId, author, text, steer) =>
           Effect.gen(function* () {

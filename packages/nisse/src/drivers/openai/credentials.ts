@@ -58,7 +58,7 @@ export const saveCredentials = (path: string, credentials: Credentials) =>
     catch: (error) => failure(`could not write ${path}: ${String(error)}`),
   })
 
-const errorReason = (text: string) => {
+export const errorReason = (text: string) => {
   try {
     const body = JSON.parse(text)
     const message = body?.error_description ?? body?.error?.message ?? body?.error
@@ -68,37 +68,55 @@ const errorReason = (text: string) => {
   }
 }
 
-export const refreshed = (credentials: Credentials, authBase: string) =>
+const PROFILE_CLAIM = "https://api.openai.com/profile"
+
+const capitalized = (word: string) => word.charAt(0).toUpperCase() + word.slice(1)
+
+export const accountOf = (credentials: Credentials) => {
+  const found = claims(credentials.access_token)
+  const email = found?.[PROFILE_CLAIM]?.email
+  const plan = found?.[ACCOUNT_CLAIM]?.chatgpt_plan_type
+  const parts = [
+    ...(typeof email === "string" ? [email] : []),
+    ...(typeof plan === "string" ? [`ChatGPT ${capitalized(plan)}`] : []),
+  ]
+  return parts.length === 0 ? undefined : parts.join(" · ")
+}
+
+export const requestTokens = (authBase: string, form: Record<string, string>, operation: string) =>
   Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
-      try: (signal) =>
-        fetch(`${authBase}/oauth/token`, {
-          method: "POST",
-          signal,
-          body: new URLSearchParams({
-            grant_type: "refresh_token",
-            refresh_token: credentials.refresh_token,
-            client_id: CLIENT_ID,
-          }),
-        }),
-      catch: (error) => failure(`could not refresh the ChatGPT sign-in: ${String(error)}`),
+      try: (signal) => fetch(`${authBase}/oauth/token`, { method: "POST", signal, body: new URLSearchParams(form) }),
+      catch: (error) => failure(`could not reach ChatGPT's sign-in: ${String(error)}`),
     })
     const text = yield* Effect.promise(() => response.text())
-    if (!response.ok) {
-      return yield* failure(
-        `the ChatGPT sign-in expired; sign in again (refresh: ${response.status}${errorReason(text)})`,
-      )
-    }
-    const tokens = yield* Effect.try({ try: () => JSON.parse(text), catch: () => undefined }).pipe(
+    if (!response.ok) return yield* failure(`token ${operation} failed (${response.status}${errorReason(text)})`)
+    return yield* Effect.try({ try: () => JSON.parse(text), catch: () => undefined }).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Tokens)),
-      Effect.mapError(() => failure("the ChatGPT token refresh answered without the expected fields")),
+      Effect.mapError(() => failure(`token ${operation} answered without the expected fields`)),
     )
+  })
+
+export const fromTokens = (tokens: typeof Tokens.Type, previousRefreshToken?: string) =>
+  Effect.gen(function* () {
     const account = accountId(tokens.access_token)
     if (!account) return yield* failure("the ChatGPT access token names no account")
+    const refreshToken = tokens.refresh_token ?? previousRefreshToken
+    if (!refreshToken) return yield* failure("the token response carried no refresh token")
     return {
       access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token ?? credentials.refresh_token,
+      refresh_token: refreshToken,
       expires_at_ms: Date.now() + tokens.expires_in * 1000,
       account_id: account,
     } satisfies Credentials
   })
+
+export const refreshed = (credentials: Credentials, authBase: string) =>
+  requestTokens(
+    authBase,
+    { grant_type: "refresh_token", refresh_token: credentials.refresh_token, client_id: CLIENT_ID },
+    "refresh",
+  ).pipe(
+    Effect.mapError((error) => failure(`the ChatGPT sign-in expired; sign in again (${error.message})`)),
+    Effect.flatMap((tokens) => fromTokens(tokens, credentials.refresh_token)),
+  )

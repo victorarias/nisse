@@ -38,6 +38,12 @@ const tryLock = (home: Home) => {
   }
 }
 
+export const homeHeld = (home: Home) => {
+  const lock = tryLock(home)
+  lock?.close()
+  return lock === undefined
+}
+
 export const claimHome = (home: Home) =>
   Effect.acquireRelease(
     Effect.suspend(() => {

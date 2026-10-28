@@ -1,14 +1,14 @@
 import { BunSocket } from "@effect/platform-bun"
 import { NisseRpcs, type Approvals, type ConversationId, type Delivery, type NoSuchConversation } from "@nisse/protocol"
 import { spawn } from "node:child_process"
-import { mkdirSync, openSync } from "node:fs"
+import { fstatSync, mkdirSync, openSync, readFileSync } from "node:fs"
 import * as Net from "node:net"
-import { Context, Duration, Effect, Layer, Schedule, Stream } from "effect"
+import { Context, Data, Duration, Effect, Layer, Schedule, Stream } from "effect"
 import * as RpcClient from "effect/rpc/RpcClient"
 import type { RpcClientError } from "effect/rpc/RpcClientError"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as Socket from "effect/socket/Socket"
-import type { Home } from "./home.ts"
+import { homeHeld, type Home } from "./home.ts"
 
 export class Client extends Context.Service<Client, RpcClient.FromGroup<typeof NisseRpcs, RpcClientError>>()(
   "nisse/Client",
@@ -16,6 +16,8 @@ export class Client extends Context.Service<Client, RpcClient.FromGroup<typeof N
 
 export interface StartOptions {
   readonly provider?: string
+  readonly model?: string
+  readonly effort?: string
   readonly approvals?: Approvals
 }
 
@@ -59,25 +61,55 @@ export const serveCommand = (): Array<string> => {
     : [process.execPath, "serve"]
 }
 
+export class ServerFailed extends Data.TaggedError("ServerFailed")<{ readonly output: string }> {}
+
 const startServer = (home: Home) =>
   Effect.sync(() => {
     mkdirSync(home.dir, { recursive: true, mode: 0o700 })
     const log = openSync(home.log, "a")
+    const written = fstatSync(log).size
     const [command, ...args] = serveCommand()
-    spawn(command!, args, {
+    const server = spawn(command!, args, {
       detached: true,
       stdio: ["ignore", log, log],
       env: { ...process.env, ...WITHOUT_BUN_GC_TIMER },
-    }).unref()
+    })
+    server.unref()
+    return Effect.callback<string>((resume) => {
+      const exited = () => resume(Effect.sync(() => readFileSync(home.log).subarray(written).toString().trim()))
+      server.once("exit", exited)
+      return Effect.sync(() => server.off("exit", exited))
+    })
   })
+
+const openSoon = (home: Home) =>
+  open(home.socket).pipe(Effect.retry({ schedule: Schedule.spaced("20 millis"), times: 500 }))
 
 const openOrStart = (home: Home) =>
   open(home.socket).pipe(
     Effect.catch(() =>
-      Effect.andThen(
-        startServer(home),
-        open(home.socket).pipe(Effect.retry({ schedule: Schedule.spaced("20 millis"), times: 500 })),
+      Effect.flatMap(startServer(home), (exited) =>
+        Effect.raceFirst(
+          openSoon(home),
+          Effect.flatMap(exited, (output) =>
+            homeHeld(home) ? Effect.never : Effect.fail(new ServerFailed({ output })),
+          ),
+        ),
       ),
+    ),
+  )
+
+const serverReady = (home: Home) =>
+  Effect.scoped(openOrStart(home)).pipe(
+    Effect.catchTag("SocketError", () =>
+      Effect.fail(new ServerFailed({ output: `nisse's server did not start; see ${home.log}` })),
+    ),
+  )
+
+const openSocket = (home: Home) =>
+  openOrStart(home).pipe(
+    Effect.catchTag("ServerFailed", (cause) =>
+      Effect.fail(new Socket.SocketError({ reason: new Socket.SocketOpenError({ kind: "Unknown", cause }) })),
     ),
   )
 
@@ -90,7 +122,8 @@ export const clientLayer = (home: Home) =>
       }),
     ),
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
-    Layer.provide(Layer.effect(Socket.Socket, BunSocket.fromDuplex(openOrStart(home)))),
+    Layer.provide(Layer.effect(Socket.Socket, BunSocket.fromDuplex(openSocket(home)))),
+    Layer.provide(Layer.effectDiscard(serverReady(home))),
   )
 
 export const follow = (

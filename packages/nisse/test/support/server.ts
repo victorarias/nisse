@@ -5,6 +5,7 @@ import { openAiOptions, providersLayer } from "../../src/drivers/index.ts"
 import type { ClaudeOptions } from "../../src/drivers/claude/index.ts"
 import type { OpenAiOptions } from "../../src/drivers/openai/index.ts"
 import type { Script } from "../../src/drivers/script.ts"
+import type { HomeConfig } from "../../src/config.ts"
 import { Lifetime } from "../../src/lifetime.ts"
 import { serverLayer } from "../../src/server.ts"
 
@@ -12,8 +13,9 @@ export const tempHome = () => homeAt(mkdtempSync("/tmp/nisse-"))
 
 export interface ServerOptions {
   readonly home?: Home
-  readonly openai?: (home: Home) => OpenAiOptions
+  readonly openai?: (home: Home) => (id: string) => OpenAiOptions
   readonly claude?: ClaudeOptions
+  readonly config?: HomeConfig
 }
 
 export const runningServer = async (script: Script = [], options: ServerOptions = {}) => {
@@ -23,6 +25,7 @@ export const runningServer = async (script: Script = [], options: ServerOptions 
     openai: (options.openai ?? openAiOptions)(home),
     claude: options.claude ?? {},
     preferred: "script",
+    config: options.config ?? {},
   })
   const scope = Effect.runSync(Scope.make())
   await Effect.runPromise(
@@ -48,7 +51,9 @@ export const servingUntilIdle = async (home: ReturnType<typeof tempHome>, idleGr
     }).pipe(
       Effect.provide(
         serverLayer(home, { idleGrace }).pipe(
-          Layer.provide(providersLayer({ script: [], openai: openAiOptions(home), claude: {}, preferred: "script" })),
+          Layer.provide(
+            providersLayer({ script: [], openai: openAiOptions(home), claude: {}, preferred: "script", config: {} }),
+          ),
         ),
       ),
       Effect.scoped,
