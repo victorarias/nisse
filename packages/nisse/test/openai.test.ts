@@ -555,6 +555,32 @@ test("a skill named in a message comes with it, for the model and for everyone w
   expect(sent).toContain("<name>ship</name>")
 })
 
+test("a skill named in a steer comes with it for the model the run is using, even after a switch", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("tool_denied")
+  await using session = await conversationWith(fake, { cwd: project, approvals: "ask" })
+  await session.submit("what does echo say?")
+  await session.view.until((deliveries) => deliveries.at(-1)?.status === "waiting")
+  await session.client.call("conversation/select_model", {
+    conversation: session.conversation,
+    author: "ada",
+    selection: { provider: "claude" },
+  })
+  await session.submit("/review it", true)
+  const approval = bodies(session.view.deliveries).find((body) => body._tag === "approval") as { approval: string }
+  await session.client.call("approval/resolve", {
+    conversation: session.conversation,
+    approval: approval.approval,
+    author: "ada",
+    allow: false,
+  })
+  await session.view.until(settled(1))
+
+  const steer = bodies(session.view.deliveries).find((body) => body._tag === "user" && body.text === "/review it")
+  expect(steer).toMatchObject({ skills: [{ name: "review", text: expect.stringContaining("Look nearer.") }] })
+  expect(JSON.stringify(JSON.parse(fake.responses()[1]!.body).input)).toContain("<name>review</name>")
+})
+
 test("every client can list the skills a conversation's model can use", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, { cwd: project })
@@ -791,6 +817,42 @@ withCodeModeHost(
     expect(note.content[0].text).toContain("The calls it made that finished:\n- Read (done):")
     expect(note.content[0].text).toContain("[package]")
     expectRequests(fake, expected)
+  },
+)
+
+withCodeModeHost(
+  "a yielded script cut off by a server stop still tells the resumed model what its calls finished",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_yielded_server_stopped")
+    const first = await conversationWith(fake, inCodeMode)
+    const home = first.server.home
+    try {
+      writeFileSync(join(home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+      await first.submit("read the manifest in the background")
+      await first.view.until((deliveries) =>
+        resultsOf(deliveries).some(
+          (result) => result.call.startsWith("call_1/") && result.output.includes("[package]"),
+        ),
+      )
+      first.client.close()
+      await first.server.stop()
+
+      await using second = await runningServer([], { home, openai: fake.options(undefined, codeModeHost) })
+      const client = await RawClient.connect(home.socket)
+      const view = client.subscribe({ conversation: first.conversation })
+      await view.until(settled(1))
+      client.close()
+      const note = JSON.parse(fake.responses()[2]!.body).input.find(
+        (item: { role?: string }) => item.role === "developer",
+      )
+      expect(note.content[0].text).toStartWith("Cell call_1 was stopped when the server stopped")
+      expect(note.content[0].text).toContain("The calls it made that finished:\n- Read (done):")
+      expect(note.content[0].text).toContain("[package]")
+      expectRequests(fake, expected)
+    } finally {
+      rmSync(home.dir, { recursive: true, force: true })
+    }
   },
 )
 

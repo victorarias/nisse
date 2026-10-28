@@ -61,14 +61,30 @@ const instructionsFor = (options: OpenAiOptions, cwd: string) => {
   return text
 }
 
-const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
+const stoppedCellNote = (script: CallId, when: string, finished: ReadonlyArray<string>) => ({
+  type: "message",
+  role: "developer",
+  content: [
+    {
+      type: "input_text",
+      text: withFinishedCalls(`Cell ${script} was stopped ${when}, before its script finished.`, finished),
+    },
+  ],
+})
+
+const inputItems = (transcript: ReadonlyArray<Entry>, runStartedAt: number): Array<unknown> => {
   const nested = new Map<CallId, { tool: string; script: CallId }>()
   const custom = new Set<CallId>()
   const waitedScript = new Map<CallId, CallId>()
   const finishedIn = new Map<CallId, Array<string>>()
   const scriptOf = (call: CallId) => (custom.has(call) ? call : waitedScript.get(call))
   const yielded = new Set<CallId>()
-  return transcript.flatMap(({ body }): Array<unknown> => {
+  const stopYielded = (when: string) => {
+    const notes = [...yielded].map((script) => stoppedCellNote(script, when, finishedIn.get(script) ?? []))
+    yielded.clear()
+    return notes
+  }
+  const itemsOf = (body: Entry["body"]): Array<unknown> => {
     switch (body._tag) {
       case "user":
         return [
@@ -126,27 +142,17 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
           },
         ]
       }
-      case "run_end": {
-        const stopped = [...yielded].map((script) => ({
-          type: "message",
-          role: "developer",
-          content: [
-            {
-              type: "input_text",
-              text: withFinishedCalls(
-                `Cell ${script} was stopped when the run ended, before its script finished.`,
-                finishedIn.get(script) ?? [],
-              ),
-            },
-          ],
-        }))
-        yielded.clear()
-        return stopped
-      }
+      case "run_end":
+        return stopYielded("when the run ended")
       default:
         return []
     }
-  })
+  }
+  const serverStopped = () => stopYielded("when the server stopped")
+  return [
+    ...transcript.flatMap(({ body }, index) => [...(index === runStartedAt ? serverStopped() : []), ...itemsOf(body)]),
+    ...(runStartedAt === transcript.length ? serverStopped() : []),
+  ]
 }
 
 const messageText = (item: any): string =>
@@ -415,13 +421,14 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
           tools = codeModeTools()
           runTool = yield* codeModeRun(host, program, turn)
         }
+        const runStartedAt = (yield* turn.transcript).length
         while (true) {
           const transcript = yield* turn.transcript
           const calls = yield* respond(turn, {
             model,
             ...(effort ? { reasoning: { effort } } : {}),
             instructions,
-            input: inputItems(transcript),
+            input: inputItems(transcript, runStartedAt),
             tools,
             tool_choice: "auto",
             parallel_tool_calls: true,

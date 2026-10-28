@@ -109,8 +109,7 @@ export class Conversations extends Context.Service<
       const waiting = new Map<ApprovalId, Deferred.Deferred<boolean>>()
       let settling = false
 
-      const placed = (id: ConversationId, queued: Queued): NewEntry => {
-        const { conversation } = Effect.runSync(Effect.orDie(store.state(id)))
+      const placed = (conversation: Conversation, queued: Queued): NewEntry => {
         const driver = providers.drivers.get(conversation.model.provider)
         const skills = driver ? attachedSkills(queued.text, driver.skills(conversation.cwd)) : []
         return {
@@ -288,7 +287,7 @@ export class Conversations extends Context.Service<
               if (steers.length === 0) return []
               store.commit(id, {
                 place: steers.map((steer) => steer.submission),
-                entries: steers.map((steer) => placed(id, steer)),
+                entries: steers.map((steer) => placed(conversation, steer)),
               })
               return steers.map((steer) => steer.text)
             }),
@@ -347,7 +346,7 @@ export class Conversations extends Context.Service<
         return queued
           ? {
               place: [queued.submission],
-              entries: [placed(conversation, queued)],
+              entries: [placed(Effect.runSync(Effect.orDie(store.state(conversation))).conversation, queued)],
               status: "working",
             }
           : { status: "idle" }
