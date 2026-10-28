@@ -2,6 +2,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option, Schedule } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
+import type { UnknownProvider } from "@nisse/protocol"
 import { Client, clientLayer, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, type Home } from "./home.ts"
@@ -35,6 +36,16 @@ const startWith = (auto: boolean, provider: Option.Option<string>): StartOptions
 })
 
 const withClient = (home: Home) => Effect.provide(clientLayer(home))
+
+const refuse = (reason: string) =>
+  Effect.andThen(
+    Console.error(reason),
+    Effect.sync(() => {
+      process.exitCode = 1
+    }),
+  )
+
+const unknownProvider = (error: UnknownProvider) => refuse(`nisse has no provider named ${error.provider}`)
 
 const stopRunningServer = (home: Home) =>
   Effect.gen(function* () {
@@ -73,16 +84,7 @@ const serveCommand = Command.make(
           ),
         ),
       ),
-    ).pipe(
-      Effect.catchTag("HomeTaken", () =>
-        Effect.andThen(
-          Console.error(`another server already serves ${home.dir}`),
-          Effect.sync(() => {
-            process.exitCode = 1
-          }),
-        ),
-      ),
-    )
+    ).pipe(Effect.catchTag("HomeTaken", () => refuse(`another server already serves ${home.dir}`)))
   }),
 ).pipe(Command.withDescription("Run this home's server in the foreground"))
 
@@ -94,8 +96,9 @@ const execCommand = Command.make(
     const ok = yield* exec(prompt, Option.getOrUndefined(conversation), startWith(auto, provider)).pipe(
       withClient(home),
       Effect.scoped,
+      Effect.catchTag("UnknownProvider", unknownProvider),
     )
-    if (!ok) process.exitCode = 1
+    if (ok === false) process.exitCode = 1
   }),
 ).pipe(Command.withDescription("Send one prompt, print the answer, and exit"))
 
@@ -116,7 +119,11 @@ const nisse = Command.make(
       await import("@opentui/solid/preload")
       return import("./tui/main.tsx")
     })
-    yield* tui(Option.getOrUndefined(conversation), startWith(auto, provider)).pipe(withClient(home), Effect.scoped)
+    yield* tui(Option.getOrUndefined(conversation), startWith(auto, provider)).pipe(
+      withClient(home),
+      Effect.scoped,
+      Effect.catchTag("UnknownProvider", unknownProvider),
+    )
   }),
 ).pipe(
   Command.withDescription("A durable, multiplayer coding agent"),

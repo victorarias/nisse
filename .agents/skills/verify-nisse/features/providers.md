@@ -12,7 +12,7 @@ failed with a message saying why, in every client.
   TUI or `exec`, or `provider` on `conversation/start`.
 - `provider-default` starts with the home's preferred provider when none is
   named: Claude, or the scripted provider when `NISSE_MODEL_SCRIPT` is set.
-- `provider-unknown` refuses an unknown provider: `UnknownProvider`, exit 1.
+- `provider-unknown` refuses an unknown provider by name, exit 1.
 - `provider-signed-out` ends a run failed with the provider's sign-in error.
 - `provider-claude` and `provider-openai` are the real journeys, in
   [Claude](./claude.md) and [OpenAI](./openai.md).
@@ -41,10 +41,10 @@ Preconditions:
   `{"_tag": "UnknownProvider", "provider": "nope"}`, and
   `rpc conversation/list` shows no new conversation.
 - **Unknown from the CLI.** Run `drive.ts r nisse exec --provider nope hi`:
-  exit 1 and the output names `UnknownProvider`. Run
+  exit 1, empty stdout, stderr `nisse has no provider named nope`. Run
   `drive.ts r tui start --provider nope`, then `drive.ts r doctor` until it
   shows `tui      exited with 1`, then `drive.ts r tui stop`: what the TUI
-  left names `UnknownProvider`.
+  left is `nisse has no provider named nope`.
 - **Signed out, exec.** Run `drive.ts r nisse exec --provider openai hi`.
   Exit 1, empty stdout, stderr
   `not signed in to ChatGPT: could not read /tmp/nisse-verify/r/home/auth/openai.json: ...`.

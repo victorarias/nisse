@@ -72,5 +72,6 @@ export const screenSession = (args: Array<string>, env: Record<string, string | 
     type: (text: string) => process.terminal!.write(text),
     exited: process.exited,
     kill: () => process.kill(),
+    hangUp: () => process.kill("SIGHUP"),
   }
 }

@@ -375,7 +375,8 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
     Effect.gen(function* () {
       const renderer = yield* openRenderer
       yield* Effect.promise(() => render(() => <App view={view} actions={actions} />, renderer))
-      return yield* Effect.result(Deferred.await(done))
+      const closedByTerminal = Effect.promise(() => renderer.closed)
+      return yield* Effect.result(Effect.raceFirst(Deferred.await(done), closedByTerminal))
     }),
   )
   if (outcome._tag === "Failure") {
