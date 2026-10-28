@@ -838,8 +838,8 @@ withCodeModeHost(
       first.client.close()
       await first.server.stop()
 
-      await using second = await runningServer([], { home, openai: fake.options(undefined, codeModeHost) })
-      const client = await RawClient.connect(home.socket)
+      await using resumed = await runningServer([], { home, openai: fake.options(undefined, codeModeHost) })
+      const client = await RawClient.connect(resumed.home.socket)
       const view = client.subscribe({ conversation: first.conversation })
       await view.until(settled(1))
       client.close()
