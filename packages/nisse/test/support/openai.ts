@@ -9,7 +9,7 @@ const ANY = "<any>"
 
 type Reply =
   | { readonly http: { status: number; body: unknown } }
-  | { readonly events: Array<unknown>; readonly hold?: boolean }
+  | { readonly events: Array<unknown>; readonly hold?: boolean; readonly crlfSplit?: boolean }
 
 export interface Received {
   readonly path: string
@@ -109,6 +109,18 @@ export class FakeOpenAi {
     if (!reply) return Response.json({ error: { message: "no reply scripted" } }, { status: 500 })
     if ("http" in reply) return Response.json(reply.http.body, { status: reply.http.status })
     const encoder = new TextEncoder()
+    if (reply.crlfSplit) {
+      const pieces = reply.events.flatMap((event) => [`data: ${JSON.stringify(event)}\r\n\r`, "\n"])
+      const split = new ReadableStream<Uint8Array>({
+        pull: async (controller) => {
+          await Bun.sleep(5)
+          const piece = pieces.shift()
+          if (piece === undefined) controller.close()
+          else controller.enqueue(encoder.encode(piece))
+        },
+      })
+      return new Response(split, { headers: { "content-type": "text/event-stream" } })
+    }
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         for (const event of reply.events) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))

@@ -189,3 +189,19 @@ test("a run cut off by a server stop resumes, and Claude Code is told which call
   ])
   client.close()
 }, 20_000)
+
+test("the calls a Claude subagent makes show in the conversation with their results", async () => {
+  using claude = new FakeClaude("subagent")
+  await using session = await conversationWith(claude)
+  await session.submit("go")
+  await session.view.until(settled(1))
+  const entries = said(session.view.deliveries) as Array<{ _tag: string } & Record<string, unknown>>
+  expect(entries.map((entry) => [entry._tag, entry.tool ?? entry.call])).toEqual([
+    ["tool_call", "Agent"],
+    ["tool_call", "Read"],
+    ["tool_result", "toolu_014CZioACz8p6vaiRZxtSoto"],
+    ["tool_result", "toolu_01DxmcUXKnbFWBQecJLTs1n3"],
+    ["message", undefined],
+    ["run_end", undefined],
+  ])
+})

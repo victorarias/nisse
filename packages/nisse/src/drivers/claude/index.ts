@@ -115,17 +115,25 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
         awaitingReplay.add(message.uuid!)
         inbox.push(message)
       }
-      const saved = (at: string): Saved => ({ state: { session: start.session, at } satisfies ClaudeState })
+      const saved = (at: string): Saved | undefined =>
+        awaitingReplay.size === 0 ? { state: { session: start.session, at } satisfies ClaudeState } : undefined
       const record = (call: Call, at: string) =>
         Effect.suspend(() => {
           known.add(call.call)
           return Effect.andThen(turn.recordCall(call, saved(at)), Deferred.succeed(recording(call.call), undefined))
         })
+      const recordSubagentCall = (call: Call) =>
+        Effect.suspend(() => {
+          if (known.has(call.call)) return Effect.void
+          known.add(call.call)
+          return turn.recordCall(call)
+        })
 
       const canUseTool: NonNullable<Options["canUseTool"]> = async (tool, input, { signal, toolUseID, agentID }) => {
         const call: Call = { call: toolUseID as CallId, tool, input }
         if (turn.conversation.approvals === "auto") return { behavior: "allow", updatedInput: input, toolUseID }
-        const asked = agentID === undefined ? Deferred.await(recording(toolUseID)) : Effect.void
+        const asked =
+          agentID === undefined ? Deferred.await(recording(toolUseID)) : serial.withPermits(1)(recordSubagentCall(call))
         const allowed = await Effect.runPromise(Effect.andThen(asked, turn.approve(call)), { signal })
         return allowed
           ? { behavior: "allow", updatedInput: input, toolUseID }
@@ -166,8 +174,14 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
               return "next"
             }
             case "assistant": {
-              if (message.parent_tool_use_id !== null) return "next"
               const content = message.message.content
+              if (message.parent_tool_use_id !== null) {
+                for (const block of content) {
+                  if (block.type === "tool_use")
+                    yield* recordSubagentCall({ call: block.id as CallId, tool: block.name, input: block.input })
+                }
+                return "next"
+              }
               if (message.error) {
                 return yield* failure(resultText(content) || `Claude Code failed: ${message.error}`)
               }
@@ -185,7 +199,8 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
                 awaitingReplay.delete(message.uuid)
                 return "next"
               }
-              if (message.parent_tool_use_id !== null || !Array.isArray(message.message.content)) return "next"
+              if (!Array.isArray(message.message.content)) return "next"
+              const bySubagent = message.parent_tool_use_id !== null
               let answered = false
               for (const block of message.message.content) {
                 if (block.type !== "tool_result" || !known.has(block.tool_use_id)) continue
@@ -193,10 +208,10 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
                 yield* turn.recordResult(
                   block.tool_use_id as CallId,
                   { output: resultText(block.content), error: block.is_error === true },
-                  message.uuid ? saved(message.uuid) : undefined,
+                  message.uuid && !bySubagent ? saved(message.uuid) : undefined,
                 )
               }
-              if (answered) {
+              if (answered && !bySubagent) {
                 const steers = yield* turn.steers
                 if (steers.length > 0) send(steers, "next")
               }

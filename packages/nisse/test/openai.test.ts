@@ -218,3 +218,25 @@ test("an answer streams live, and interrupting it closes the request and keeps w
     { _tag: "run_end", outcome: "interrupted" },
   ])
 })
+
+test("an answer whose CRLF event separators arrive split across reads is read whole", async () => {
+  await using fake = new FakeOpenAi()
+  fake.reply({
+    events: [
+      { type: "response.created", response: { id: "resp_1" } },
+      {
+        type: "response.output_item.done",
+        item: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Split but whole" }] },
+      },
+      { type: "response.completed", response: { id: "resp_1" } },
+    ],
+    crlfSplit: true,
+  })
+  await using session = await conversationWith(fake)
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  expect(said(session.view.deliveries)).toEqual([
+    { _tag: "message", text: "Split but whole" },
+    { _tag: "run_end", outcome: "answered" },
+  ])
+})

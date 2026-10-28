@@ -8,13 +8,13 @@ export async function* events(body: ReadableStream<Uint8Array>, signal: AbortSig
     while (true) {
       const { value, done } = await reader.read()
       if (done) return
-      buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n")
-      let boundary: number
-      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-        const block = buffer.slice(0, boundary)
-        buffer = buffer.slice(boundary + 2)
+      buffer += decoder.decode(value, { stream: true })
+      let boundary: RegExpExecArray | null
+      while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+        const block = buffer.slice(0, boundary.index)
+        buffer = buffer.slice(boundary.index + boundary[0].length)
         const data = block
-          .split("\n")
+          .split(/\r?\n/)
           .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice(5).replace(/^ /, ""))
           .join("\n")
