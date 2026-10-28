@@ -802,6 +802,72 @@ withCodeModeHost("a host that dies ends the calls its script was waiting on", as
   }
 })
 
+withCodeModeHost(
+  "a waited script stopped after another script finished still tells what its calls finished",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_two_scripts_interrupted")
+    await using session = await conversationWith(fake, inCodeMode)
+    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+    await session.submit("read slowly while doing something else")
+    await session.view.until((deliveries) =>
+      bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_3"),
+    )
+    await session.client.call("conversation/interrupt", { conversation: session.conversation })
+    await session.view.until(settled(1))
+    await session.submit("what did the first script read?")
+    await session.view.until(settled(2))
+    const waited = JSON.parse(fake.responses()[3]!.body).input.find(
+      (item: { type: string; call_id: string }) => item.type === "function_call_output" && item.call_id === "call_3",
+    )
+    expect(waited.output).toStartWith("interrupted; it may or may not have taken effect")
+    expect(waited.output).toContain("The calls it made that finished:\n- Read (done):")
+    expect(waited.output).toContain("[package]")
+    expectRequests(fake, expected)
+  },
+)
+
+withCodeModeHost("a host that dies ends the calls of every script it ran", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_host_dies_two_scripts")
+  const launcher = mkdtempSync("/tmp/nisse-host-")
+  const pidFile = join(launcher, "host.pid")
+  const host = join(launcher, "host")
+  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
+  chmodSync(host, 0o755)
+  try {
+    await using session = await conversationWith(fake, {
+      model: CODE_MODE_MODEL,
+      codeModeHost: host,
+      approvals: "ask",
+    })
+    await session.submit("start two scripts")
+    await session.view.until((deliveries) =>
+      bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_3"),
+    )
+    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
+    await session.view.until(settled(1))
+    const entries = bodies(session.view.deliveries)
+    const bash = entries.find((body) => body._tag === "tool_call" && body.tool === "Bash") as { call: string }
+    const ended = entries.findIndex((body) => body._tag === "tool_result" && body.call === bash.call)
+    const waited = entries.findIndex((body) => body._tag === "tool_result" && body.call === "call_3")
+    expect(entries[ended]).toMatchObject({ output: "interrupted; it may or may not have taken effect", error: true })
+    expect(ended).toBeLessThan(waited)
+    const approval = entries.find((body) => body._tag === "approval") as { approval: string }
+    const late = await session.client.call("approval/resolve", {
+      conversation: session.conversation,
+      approval: approval.approval,
+      author: "ada",
+      allow: true,
+    })
+    expect(late.result).toEqual({ accepted: false })
+    expect(existsSync(join(session.server.home.dir, "late.txt"))).toBe(false)
+    expectRequests(fake, expected)
+  } finally {
+    rmSync(launcher, { recursive: true, force: true })
+  }
+})
+
 test("a code-mode model without the code-mode host says how to install it", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, {

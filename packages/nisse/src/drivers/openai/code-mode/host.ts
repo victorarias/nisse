@@ -54,6 +54,10 @@ class Connection {
   private stderr = ""
   private stopped = false
 
+  get alive() {
+    return !this.stopped
+  }
+
   private constructor(
     private readonly child: Subprocess<"pipe", "pipe", "pipe">,
     private readonly route: Route,
@@ -277,17 +281,22 @@ class Connection {
   }
 }
 
-export type HostConnection = Pick<Connection, "execute" | "wait" | "terminate">
+export type HostConnection = Pick<Connection, "execute" | "wait" | "terminate" | "alive">
+
+interface RunRoute {
+  readonly delegated: (call: Delegated) => void
+  readonly hostStopped: () => void
+}
 
 export class Host {
   private connection: Promise<Connection> | undefined
-  private readonly routes = new Map<string, (call: Delegated) => void>()
+  private readonly routes = new Map<string, RunRoute>()
   private active = 0
   private idleTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(private readonly idleMs: number) {}
 
-  beginRun(conversation: string, route: (call: Delegated) => void) {
+  beginRun(conversation: string, route: RunRoute) {
     this.active += 1
     clearTimeout(this.idleTimer)
     this.routes.set(conversation, route)
@@ -306,8 +315,11 @@ export class Host {
       let starting: Promise<Connection> | undefined
       starting = Connection.start(
         program,
-        (session) => this.routes.get(session),
-        () => this.forget(starting),
+        (session) => this.routes.get(session)?.delegated,
+        () => {
+          this.forget(starting)
+          for (const run of this.routes.values()) run.hostStopped()
+        },
       )
       this.connection = starting
       starting.catch(() => this.forget(starting))

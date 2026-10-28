@@ -134,11 +134,16 @@ const withinBudget = (text: string, maxTokens: number) => {
   return `Warning: truncated output (original token count: ${Math.floor(bytes.length / BYTES_PER_TOKEN)})\n${head}…${cut} tokens truncated…${tail}`
 }
 
+const YIELDED = "Script running with cell ID "
+
+export const yieldedCell = (output: string) =>
+  output.startsWith(YIELDED) ? output.slice(YIELDED.length).split("\n", 1)[0] : undefined
+
 const answered = (runtime: Runtime, startedAt: number, maxTokens: number | undefined): ToolOutcome => {
   const error = runtime.state === "Result" ? (runtime.error_text ?? undefined) : undefined
   const status =
     runtime.state === "Yielded"
-      ? `Script running with cell ID ${runtime.cell_id}`
+      ? `${YIELDED}${runtime.cell_id}`
       : runtime.state === "Terminated"
         ? "Script terminated"
         : error === undefined
@@ -181,8 +186,14 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
   let starting: CallId | undefined
 
   const delegated = yield* Queue.unbounded<Delegated>()
+  const nested = yield* FiberSet.make()
   yield* Effect.acquireRelease(
-    Effect.sync(() => host.beginRun(conversation, (call) => void Queue.offerUnsafe(delegated, call))),
+    Effect.sync(() =>
+      host.beginRun(conversation, {
+        delegated: (call) => void Queue.offerUnsafe(delegated, call),
+        hostStopped: () => void Effect.runFork(FiberSet.clear(nested)),
+      }),
+    ),
     () => Effect.sync(() => host.endRun(conversation)),
   )
 
@@ -206,7 +217,6 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       Effect.onInterrupt(() => Effect.sync(() => call.answer({ error: "the run that started this script has ended" }))),
     )
 
-  const nested = yield* FiberSet.make()
   const nestedByCell = new Map<string, Set<Fiber.Fiber<unknown, unknown>>>()
   const answeredInCell = (call: Delegated) =>
     Effect.withFiber((fiber) => {
@@ -259,7 +269,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
         if (runtime.success.state !== "Yielded") yield* stopNested([runtime.success.cell_id])
         return answered(runtime.success, startedAt, maxTokens)
       }
-      yield* stopNested(cellsOf(script))
+      yield* connection.success.alive ? stopNested(cellsOf(script)) : FiberSet.clear(nested)
       const interrupted = `interrupted: ${errorText(runtime.failure.cause)}; the script may or may not have taken effect`
       return failed(withNestedResults(interrupted, script, yield* turn.transcript))
     })
