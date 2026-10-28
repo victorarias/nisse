@@ -93,11 +93,16 @@ const toV2 = (db: Database) => {
   }
 }
 
+const toV3 = (db: Database) => {
+  db.run("ALTER TABLE conversations ADD COLUMN provider_seq INTEGER NOT NULL DEFAULT 0")
+}
+
 const migrations: Array<(db: Database) => void> = [
   (db) => {
     for (const statement of v1) db.run(statement)
   },
   toV2,
+  toV3,
 ]
 
 export const migrate = (db: Database) => {

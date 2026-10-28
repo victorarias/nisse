@@ -116,3 +116,6 @@ export class RawClient {
 export const entriesOf = (deliveries: ReadonlyArray<Delivery>) => deliveries.flatMap((delivery) => delivery.entries)
 
 export const bodies = (deliveries: ReadonlyArray<Delivery>) => entriesOf(deliveries).map((entry) => entry.body)
+
+export const statusOf = (deliveries: ReadonlyArray<Delivery>) =>
+  deliveries.findLast((delivery) => delivery.status)?.status

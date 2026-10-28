@@ -26,13 +26,18 @@ const nisse = { _tag: "nisse" } as const
 
 const interruptedResult = (call: CallId): NewEntry => ({
   author: nisse,
-  body: { _tag: "tool_result", call, output: "interrupted: this call did not finish", error: true },
+  body: { _tag: "tool_result", call, output: "interrupted; it may or may not have taken effect", error: true },
 })
 
 const withChange = (changes: ReadonlyArray<LiveChange>, change: LiveChange): Array<LiveChange> => {
   const last = changes.at(-1)
   if (change._tag !== "output" || last?._tag !== "output" || last.call !== change.call) return [...changes, change]
   return [...changes.slice(0, -1), { ...change, append: (last.append + change.append).slice(-LIVE_OUTPUT_TAIL) }]
+}
+
+interface ProviderState {
+  readonly state: unknown
+  readonly seq: number
 }
 
 const runEnd = (outcome: Outcome, message?: string): NewEntry => ({
@@ -94,7 +99,7 @@ export class Conversations extends Context.Service<
           Effect.ignore(store.resolveApproval(conversation, approval, nisse, false)),
         )
 
-      const makeTurn = Effect.fnUntraced(function* (conversation: Conversation, providerState: unknown) {
+      const makeTurn = Effect.fnUntraced(function* (conversation: Conversation, provider: ProviderState) {
         const id = conversation.id
         const spoken = yield* Ref.make("")
         const pending = yield* Ref.make<Array<LiveChange>>([])
@@ -190,7 +195,8 @@ export class Conversations extends Context.Service<
         const turn: Turn = {
           conversation,
           transcript: Effect.sync(() => store.transcript(id)),
-          providerState,
+          providerState: provider.state,
+          providerSeq: provider.seq,
           tools: builtinTools.map((tool) => tool.spec),
           say: (text) =>
             text === ""
@@ -267,7 +273,7 @@ export class Conversations extends Context.Service<
       })
 
       const run = Effect.fnUntraced(function* (id: ConversationId, resumed: boolean) {
-        const { conversation, attempts, providerState } = yield* Effect.orDie(store.state(id))
+        const { conversation, attempts, providerState, providerSeq } = yield* Effect.orDie(store.state(id))
         if (resumed) {
           const dangling = danglingIn(store.transcript(id))
           yield* expire(id, dangling.approvals)
@@ -283,11 +289,11 @@ export class Conversations extends Context.Service<
         }
         const driver = providers.drivers.get(conversation.provider)
         if (!driver) return [runEnd("failed", `no provider named ${conversation.provider}`)]
-        return yield* Effect.scoped(drive(conversation, providerState, driver))
+        return yield* Effect.scoped(drive(conversation, { state: providerState, seq: providerSeq }, driver))
       })
 
-      const drive = Effect.fnUntraced(function* (conversation: Conversation, providerState: unknown, driver: Driver) {
-        const { turn, close } = yield* makeTurn(conversation, providerState)
+      const drive = Effect.fnUntraced(function* (conversation: Conversation, provider: ProviderState, driver: Driver) {
+        const { turn, close } = yield* makeTurn(conversation, provider)
         const fiber = yield* Effect.forkChild(driver.run(turn), { startImmediately: true })
         runs.set(conversation.id, fiber)
         const exit = yield* Fiber.await(fiber)

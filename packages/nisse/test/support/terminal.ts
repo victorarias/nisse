@@ -17,7 +17,7 @@ export const nisseEnv = (home: ReturnType<typeof tempHome>, extra: Record<string
 })
 
 export const nisse = (args: Array<string>, env: Record<string, string | undefined>) =>
-  Bun.spawn(["bun", MAIN, ...args], { env, stdout: "pipe", stderr: "pipe" })
+  Bun.spawn(["bun", MAIN, ...args], { env, cwd: env.NISSE_HOME!, stdout: "pipe", stderr: "pipe" })
 
 export const stopServer = async (home: ReturnType<typeof tempHome>) => {
   const client = await RawClient.connect(home.socket).catch(() => undefined)
@@ -32,6 +32,7 @@ export const screenSession = (args: Array<string>, env: Record<string, string | 
   const changed = new Set<() => void>()
   const process = Bun.spawn(["bun", MAIN, ...args], {
     env,
+    cwd: env.NISSE_HOME!,
     terminal: {
       cols: COLS,
       rows: ROWS,

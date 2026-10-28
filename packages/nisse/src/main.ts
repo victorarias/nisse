@@ -9,7 +9,6 @@ import { openAiOptions, providersLayer } from "./drivers/index.ts"
 import { readScript } from "./drivers/script.ts"
 import { protocolSchema } from "./schema.ts"
 import { serve } from "./server.ts"
-import { tui } from "./tui/main.tsx"
 import { VERSION } from "./version.ts"
 
 const IDLE_GRACE = "30 seconds"
@@ -63,7 +62,12 @@ const serveCommand = Command.make(
           Effect.provide(
             Layer.unwrap(
               Effect.map(readScript(process.env.NISSE_MODEL_SCRIPT || undefined), (script) =>
-                providersLayer({ script, openai: openAiOptions(home) }),
+                providersLayer({
+                  script,
+                  openai: openAiOptions(home),
+                  claude: {},
+                  preferred: process.env.NISSE_MODEL_SCRIPT === undefined ? "claude" : "script",
+                }),
               ),
             ),
           ),
@@ -99,6 +103,10 @@ const nisse = Command.make(
   { conversation: conversationFlag, auto: autoFlag, provider: providerFlag },
   Effect.fn(function* ({ conversation, auto, provider }) {
     const home = defaultHome()
+    const { tui } = yield* Effect.promise(async () => {
+      await import("@opentui/solid/preload")
+      return import("./tui/main.tsx")
+    })
     yield* tui(Option.getOrUndefined(conversation), startWith(auto, provider)).pipe(withClient(home), Effect.scoped)
   }),
 ).pipe(

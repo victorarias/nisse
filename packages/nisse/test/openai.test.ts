@@ -15,7 +15,7 @@ const said = (deliveries: ReadonlyArray<Delivery>): Array<unknown> =>
   )
 
 const conversationWith = async (fake: FakeOpenAi, options: { approvals?: string; signedIn?: boolean } = {}) => {
-  const server = await runningServer([], fake.options())
+  const server = await runningServer([], { openai: fake.options() })
   if (options.signedIn ?? true) await signIn(server.home)
   const client = await RawClient.connect(server.home.socket)
   const conversation = (

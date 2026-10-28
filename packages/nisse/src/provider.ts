@@ -18,6 +18,7 @@ export interface Turn {
   readonly conversation: Conversation
   readonly transcript: Effect.Effect<ReadonlyArray<Entry>>
   readonly providerState: unknown
+  readonly providerSeq: number
   readonly tools: ReadonlyArray<ToolSpec>
   readonly say: (text: string) => Effect.Effect<void>
   readonly message: (text: string, saved?: Saved) => Effect.Effect<void>
