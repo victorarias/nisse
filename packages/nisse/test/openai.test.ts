@@ -769,6 +769,31 @@ withCodeModeHost("a wait on a script whose host stopped never reaches a script t
   }
 })
 
+withCodeModeHost(
+  "a yielded script cut off by the run's end still tells the model what its calls finished",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_yielded_run_stopped")
+    await using session = await conversationWith(fake, inCodeMode)
+    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+    await session.submit("read the manifest in the background")
+    await session.view.until((deliveries) =>
+      resultsOf(deliveries).some((result) => result.call.startsWith("call_1/") && result.output.includes("[package]")),
+    )
+    await session.client.call("conversation/interrupt", { conversation: session.conversation })
+    await session.view.until(settled(1))
+    await session.submit("what did it read?")
+    await session.view.until(settled(2))
+    const note = JSON.parse(fake.responses()[2]!.body).input.find(
+      (item: { role?: string }) => item.role === "developer",
+    )
+    expect(note.content[0].text).toStartWith("Cell call_1 was stopped when the run ended")
+    expect(note.content[0].text).toContain("The calls it made that finished:\n- Read (done):")
+    expect(note.content[0].text).toContain("[package]")
+    expectRequests(fake, expected)
+  },
+)
+
 withCodeModeHost("a script stopped mid-run still tells the model what its calls finished", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("code_mode_interrupted")

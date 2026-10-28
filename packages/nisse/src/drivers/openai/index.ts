@@ -13,6 +13,7 @@ import {
   Host,
   HOST_IDLE_MS,
   installedHost,
+  isYielded,
   missingHost,
   withFinishedCalls,
 } from "./code-mode/index.ts"
@@ -66,6 +67,7 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
   const waitedScript = new Map<CallId, CallId>()
   const finishedIn = new Map<CallId, Array<string>>()
   const scriptOf = (call: CallId) => (custom.has(call) ? call : waitedScript.get(call))
+  const yielded = new Set<CallId>()
   return transcript.flatMap(({ body }): Array<unknown> => {
     switch (body._tag) {
       case "user":
@@ -110,6 +112,10 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
           return []
         }
         const script = scriptOf(body.call)
+        if (script !== undefined) {
+          if (isYielded(body.output)) yielded.add(script)
+          else yielded.delete(script)
+        }
         const finished = script === undefined ? [] : (finishedIn.get(script) ?? [])
         const output = body.output === interrupted.output ? withFinishedCalls(body.output, finished) : body.output
         return [
@@ -119,6 +125,23 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
             output,
           },
         ]
+      }
+      case "run_end": {
+        const stopped = [...yielded].map((script) => ({
+          type: "message",
+          role: "developer",
+          content: [
+            {
+              type: "input_text",
+              text: withFinishedCalls(
+                `Cell ${script} was stopped when the run ended, before its script finished.`,
+                finishedIn.get(script) ?? [],
+              ),
+            },
+          ],
+        }))
+        yielded.clear()
+        return stopped
       }
       default:
         return []

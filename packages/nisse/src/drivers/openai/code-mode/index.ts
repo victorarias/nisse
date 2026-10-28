@@ -136,6 +136,8 @@ const withinBudget = (text: string, maxTokens: number) => {
 
 const YIELDED = "Script running with cell ID "
 
+export const isYielded = (output: string) => output.startsWith(YIELDED)
+
 const answered = (runtime: Runtime, startedAt: number, maxTokens: number | undefined): ToolOutcome => {
   const error = runtime.state === "Result" ? (runtime.error_text ?? undefined) : undefined
   const status =

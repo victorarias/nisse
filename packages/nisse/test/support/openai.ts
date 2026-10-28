@@ -78,6 +78,7 @@ export class FakeOpenAi {
   play(fixture: string) {
     const expected: Array<unknown> = []
     const replies: Array<Array<any>> = []
+    const held = new Set<number>()
     for (const line of readFileSync(join(FIXTURES, `${fixture}.ndjson`), "utf8").split("\n")) {
       if (line.trim() === "") continue
       const parsed = JSON.parse(line)
@@ -85,10 +86,11 @@ export class FakeOpenAi {
         expected.push(parsed.frame)
         replies.push([])
       } else if (parsed.type === "emit_inbound") replies.at(-1)!.push(parsed.frame)
+      else if (parsed.type === "hold_open") held.add(replies.length - 1)
     }
-    for (const frames of replies) {
-      this.replies.push(frames[0]?.http ? { http: frames[0].http } : { events: frames })
-    }
+    replies.forEach((frames, index) =>
+      this.replies.push(frames[0]?.http ? { http: frames[0].http } : { events: frames, hold: held.has(index) }),
+    )
     return expected
   }
 
