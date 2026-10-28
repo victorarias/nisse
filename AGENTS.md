@@ -48,7 +48,8 @@ against its `expect_outbound` frame, where `"<any>"` matches anything; a
 process per spawn, and one recorded probe per probe (a spawn with
 `--no-session-persistence`), and logs what nisse sent it; tests judge Claude by
 that log. Screen and stack tests point `NISSE_CLAUDE` at it, so no test reaches
-a real Claude.
+a real Claude, and a stack test that needs ChatGPT points `NISSE_OPENAI_URL` at
+the fake OpenAI server.
 
 - The model is the seam. Tests script it (the `script` provider, `NISSE_MODEL_SCRIPT`)
   or replay a provider's recorded exchange; nothing else is faked.

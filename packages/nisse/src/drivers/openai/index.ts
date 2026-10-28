@@ -98,45 +98,43 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
   const nested = new Map<CallId, { tool: string; script: CallId }>()
   const finishedIn = new Map<CallId, Array<string>>()
   const scripts = new Set<CallId>()
-  const awaiting = new Set<CallId>()
-  const items: Array<unknown> = []
-  let notes: Array<unknown> = []
+  const items: Array<() => unknown> = []
+  let stopped: Array<CallId> = []
   const finished = (script: CallId) => finishedIn.get(script) ?? []
+  const notes = () => stopped.map((script) => () => stoppedCellNote(script, finished(script)))
+  const said = (item: unknown) => {
+    items.push(...notes(), () => item)
+    stopped = []
+  }
   for (const { body } of transcript) {
-    if (body._tag === "user") items.push(userItem(body))
+    if (body._tag === "user") said(userItem(body))
     else if (body._tag === "message")
-      items.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] })
+      said({ type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] })
     else if (body._tag === "tool_call") {
       if (body.parent !== undefined) nested.set(body.call, { tool: body.tool, script: body.parent })
       else {
         const item = callItem(body)
         if (item.type === "custom_tool_call") scripts.add(body.call)
-        awaiting.add(body.call)
-        items.push(item)
+        said(item)
       }
     } else if (body._tag === "tool_result") {
       const inner = nested.get(body.call)
       const ended = !isScriptReport(body.output)
       if (inner?.tool === CELL) {
-        if (ended) notes.push(stoppedCellNote(inner.script, finished(inner.script)))
+        if (ended) stopped.push(inner.script)
       } else if (inner !== undefined)
         finishedIn.set(inner.script, [...finished(inner.script), finishedCall(inner.tool, body)])
       else {
         const script = scripts.has(body.call)
-        awaiting.delete(body.call)
-        items.push({
+        items.push(() => ({
           type: script ? "custom_tool_call_output" : "function_call_output",
           call_id: body.call,
           output: script && ended ? withFinishedCalls(body.output, finished(body.call)) : body.output,
-        })
-      }
-      if (awaiting.size === 0) {
-        items.push(...notes)
-        notes = []
+        }))
       }
     }
   }
-  return [...items, ...notes]
+  return [...items, ...notes()].map((item) => item())
 }
 
 const messageText = (item: any): string =>
