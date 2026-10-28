@@ -22,6 +22,10 @@ Checks before a PR:
 bun run check   # tsc, prettier and bun test
 ```
 
+Before reporting a change done, drive it with the `verify-nisse` skill
+(`.agents/skills/verify-nisse`) and show its evidence. A change to a
+user-facing behavior updates that skill's feature map in the same PR.
+
 ## Testing
 
 Every test defends one promise that a person, a client, an extension or a later

@@ -1,3 +1,5 @@
 fixtures
 schema
 docs
+.agents/skills/create-verification-skill
+.agents/skills/maintain-verification-skill
