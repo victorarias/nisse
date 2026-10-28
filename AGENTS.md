@@ -44,7 +44,10 @@ Provider tests replay recorded exchanges from `fixtures/`. The fake OpenAI
 server serves each `emit_inbound` frame and the test checks every request
 against its `expect_outbound` frame, where `"<any>"` matches anything. The fake
 `claude` executable (`test/support/fake-claude`) plays one recorded Claude Code
-process per spawn and logs what nisse sent it; tests judge Claude by that log.
+process per spawn, and one recorded probe per probe (a spawn with
+`--no-session-persistence`), and logs what nisse sent it; tests judge Claude by
+that log. Screen and stack tests point `NISSE_CLAUDE` at it, so no test reaches
+a real Claude.
 
 - The model is the seam. Tests script it (the `script` provider, `NISSE_MODEL_SCRIPT`)
   or replay a provider's recorded exchange; nothing else is faked.

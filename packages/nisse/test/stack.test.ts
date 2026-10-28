@@ -78,8 +78,7 @@ test("a second server for the same home refuses to start", async () => {
   const env = nisseEnv(nisseHome)
   await finished(nisse(["exec", "start one"], env))
   const second = await finished(nisse(["serve"], env))
-  expect(second.stderr).toContain(`another server already serves ${nisseHome.dir}`)
-  expect(second.code).toBe(1)
+  expect(second).toMatchObject({ code: 1, stderr: `another server already serves ${nisseHome.dir}\n` })
 })
 
 test("a run cut off by a crashed server finishes after the server comes back", async () => {

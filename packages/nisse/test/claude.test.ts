@@ -179,7 +179,7 @@ test("a run cut off by a server stop resumes, and Claude Code is told which call
     "Run the bash command `echo started > started.fifo && python3 -c 'import time; time.sleep(120)'` with the Bash tool. If the call is cut off or interrupted, do not run anything again; reply with exactly: resumed ok"
   await first.submit(prompt)
   await first.answer(true)
-  await first.view.until(() => claude.permissionAnswers().length === 1)
+  await claude.logged((fake) => fake.permissionAnswers().length === 1)
   first.client.close()
   await first.server.stop()
 

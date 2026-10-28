@@ -94,7 +94,7 @@ const serveCommand = Command.make(
         return providersLayer({
           ...(scriptPath === undefined ? {} : { script: yield* readScript(scriptPath || undefined) }),
           openai: openAiOptions(home),
-          claude: {},
+          claude: process.env.NISSE_CLAUDE ? { executable: process.env.NISSE_CLAUDE } : {},
           preferred: scriptPath === undefined ? "claude" : "script",
           config,
         })

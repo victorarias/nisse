@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
+import { join } from "node:path"
 import { deadline } from "./support/raw.ts"
 import { tempHome } from "./support/server.ts"
 import { nisseEnv, screenSession, stopServer } from "./support/terminal.ts"
@@ -135,3 +136,49 @@ test("tab switches a prompt sent mid-run from queueing to steering the run", asy
   session.type("\x03")
   await session.exited
 })
+
+test("the splash lists every provider and how it is signed in", async () => {
+  const session = screenSession([], nisseEnv(home()))
+  const screen = await session.waitFor(
+    (screen) => screen.includes("person@example.com · Claude Max") && screen.includes("signed out"),
+  )
+  expect(screen).toMatch(/● claude +person@example\.com · Claude Max/)
+  expect(screen).toMatch(/○ openai +signed out/)
+  expect(screen).toContain("^L  sign in")
+  session.type("\x03")
+  await session.exited
+})
+
+test("/model lists every provider's models, and enter switches the conversation's model for everyone", async () => {
+  const session = screenSession([], nisseEnv(home()))
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("/model\r")
+  await session.waitFor((screen) => screen.includes("claude · Sonnet") && screen.includes("openai · GPT-5.5"))
+  session.type("\x1b[B")
+  session.type("\x1b[B")
+  session.type("\x1b[C")
+  await session.waitFor((screen) => screen.includes("claude · Sonnet ‹ low ›"))
+  session.type("\r")
+  const screen = await session.waitFor((screen) => screen.includes("◆ ada switched to claude · sonnet · low"))
+  expect(screen).not.toContain("claude · Sonnet ‹")
+  expect(screen).toContain("claude · sonnet · low  nisse")
+  session.type("\x03")
+  await session.exited
+}, 20_000)
+
+test("^L signs in to a signed-out Claude by running its own sign-in in the terminal", async () => {
+  const nisseHome = home()
+  const session = screenSession(
+    [],
+    nisseEnv(nisseHome, {
+      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
+    }),
+  )
+  await session.waitFor((screen) => /○ claude +signed out/.test(screen))
+  session.type("\x0c")
+  const screen = await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen), 30_000)
+  expect(session.output()).toContain("fake claude auth login done")
+  expect(screen).not.toContain("SIGN IN")
+  session.type("\x03")
+  await session.exited
+}, 40_000)

@@ -52,7 +52,9 @@ const setStatus = (view: View, status: Status, now: number) => {
 const index = (view: View, entries: ReadonlyArray<Entry>) => {
   for (const entry of entries) {
     const body = entry.body
-    if (body._tag === "tool_result") view.results[body.call] = entry
+    if (body._tag === "model" && view.conversation) {
+      view.conversation = { ...view.conversation, model: body.selection }
+    } else if (body._tag === "tool_result") view.results[body.call] = entry
     else if (body._tag === "approval") {
       view.asked[body.approval] = body.call
       view.pendingApprovals.push({ approval: body.approval, call: body.call })

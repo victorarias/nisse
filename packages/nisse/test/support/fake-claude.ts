@@ -1,9 +1,16 @@
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 const fixture = process.env.FAKE_CLAUDE_FIXTURE!
 const dir = process.env.FAKE_CLAUDE_DIR!
 const argv = process.argv.slice(2)
+mkdirSync(dir, { recursive: true })
+
+if (argv[0] === "auth") {
+  appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ auth: argv.slice(1) })}\n`)
+  process.stdout.write(`fake claude ${argv.join(" ")} done\n`)
+  process.exit(0)
+}
 
 const isProbe = (args: ReadonlyArray<string>) => args.includes("--no-session-persistence")
 const probe = isProbe(argv)
