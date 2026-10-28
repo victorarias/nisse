@@ -627,3 +627,31 @@ test("a tree runs at most as many subagents at once as config.toml allows", asyn
   expect(await childrenOf(client, conversation)).toHaveLength(1)
   client.close()
 })
+
+test("a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows", async () => {
+  await using server = await runningServer(
+    [
+      spawnStep("a"),
+      { ...spawnStep("b"), text: "letting a finish", delayMs: 300 },
+      { tool: { name: "followup_task", input: { target: "a", message: "again" } } },
+      { text: "tried" },
+      { agent: "/root/a", text: "done" },
+      { agent: "/root/b", text: "a b c d e f g h", delayMs: 300 },
+    ],
+    { config: { agents: { max_threads: 1 } } },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "spawn, then follow up")
+  await view.until(ended(1))
+
+  const followup = bodies(view.deliveries).findLast((body) => body._tag === "tool_result")
+  expect(followup).toMatchObject({ error: true, output: expect.stringContaining("the most it may run at once") })
+  const listed = (await client.call("conversation/list")).result as Array<{ id: string; lineage?: { task: string } }>
+  const a = listed.find((member) => member.lineage?.task === "/root/a")!
+  const aView = client.subscribe({ conversation: a.id })
+  await aView.until((deliveries) => deliveries.length > 0)
+  expect(bodies(aView.deliveries).filter((body) => body._tag === "run_end")).toHaveLength(1)
+  client.close()
+})

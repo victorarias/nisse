@@ -44,8 +44,8 @@ export interface AgentContext {
   readonly family: () => ReadonlyArray<ConversationState>
   readonly hasWork: (conversation: ConversationId) => boolean
   readonly transcript: (conversation: ConversationId) => ReadonlyArray<Entry>
-  readonly spawn: (child: Child, message: string) => Effect.Effect<void>
-  readonly deliver: (to: ConversationId, text: string, mail: Mail) => Effect.Effect<void>
+  readonly spawn: (child: Child, message: string) => Effect.Effect<string | undefined>
+  readonly deliver: (to: ConversationId, text: string, mail: Mail) => Effect.Effect<string | undefined>
   readonly interrupt: (conversation: ConversationId) => Effect.Effect<void>
   readonly nextInput: (timeoutMs: number) => Effect.Effect<Woken>
 }
@@ -142,13 +142,11 @@ const spawnAgent = (context: AgentContext) =>
         if (!["", "all", "none"].includes(fork) && !/^\d+$/.test(fork)) {
           return failed("fork_turns must be `none` or `all`")
         }
-        const refused = mayNotSpawn(context)
-        if (refused) return failed(refused)
         const caller = context.caller
-        const task = `${taskOf(caller)}/${name}`
-        if (context.family().some((member) => taskOf(member.conversation) === task)) {
-          return failed(`an agent named ${task} already exists`)
+        if (depthOf(taskOf(caller)) >= context.limits.maxDepth) {
+          return failed(`agents may nest ${context.limits.maxDepth} deep; this one can't start another`)
         }
+        const task = `${taskOf(caller)}/${name}`
         const wanted = input.agent_type?.trim()
         const agentType = wanted ? context.types.find((type) => type.name === wanted) : undefined
         if (wanted && !agentType) {
@@ -163,7 +161,7 @@ const spawnAgent = (context: AgentContext) =>
         const model = input.model ?? (listed(agentType?.model) ? agentType!.model : undefined) ?? caller.model.model
         const effort = input.reasoning_effort ?? (model === caller.model.model ? caller.model.effort : undefined)
         const forkedAt = fork === "none" ? undefined : launchedAt(context.transcript(caller.id), parent ?? call)
-        yield* context.spawn(
+        const refused = yield* context.spawn(
           {
             call,
             task,
@@ -178,26 +176,9 @@ const spawnAgent = (context: AgentContext) =>
           },
           input.message,
         )
-        return json({ task_name: task, nickname: null })
+        return refused === undefined ? json({ task_name: task, nickname: null }) : failed(refused)
       }),
   })
-
-const mayNotSpawn = (context: AgentContext): string | undefined => {
-  if (depthOf(taskOf(context.caller)) >= context.limits.maxDepth) {
-    return `agents may nest ${context.limits.maxDepth} deep; this one can't start another`
-  }
-  const running = context
-    .family()
-    .filter(
-      (member) =>
-        member.conversation.lineage !== undefined &&
-        (member.status !== "idle" || context.hasWork(member.conversation.id)),
-    ).length
-  if (running >= context.limits.maxThreads) {
-    return `this tree already runs ${running} subagents, the most it may run at once; wait for one to finish`
-  }
-  return undefined
-}
 
 const sendTo = (context: AgentContext, target: string, message: string, kind: MailKind) =>
   Effect.gen(function* () {
@@ -207,12 +188,12 @@ const sendTo = (context: AgentContext, target: string, message: string, kind: Ma
     if (kind === "new_task" && to.conversation.lineage === undefined) {
       return failed("followup_task takes a subagent; send_message reaches the root")
     }
-    yield* context.deliver(to.conversation.id, message, {
+    const refused = yield* context.deliver(to.conversation.id, message, {
       kind,
       task: taskOf(to.conversation),
       sender: taskOf(context.caller),
     })
-    return ok("")
+    return refused === undefined ? ok("") : failed(refused)
   })
 
 const MessageInput = (target: string, message: string) =>

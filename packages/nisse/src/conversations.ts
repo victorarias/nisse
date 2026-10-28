@@ -479,24 +479,50 @@ export class Conversations extends Context.Service<
           })
         })
 
-      const deliver = (from: ConversationId, to: ConversationId, text: string, mail: Mail): Effect.Effect<void> =>
-        Effect.suspend(() => {
-          const author = agentAuthor(from)
-          if (mail.kind !== "new_task" && !active.has(to)) {
-            store.commit(to, {
-              entries: [{ author, body: { _tag: "user", submission: newId() as SubmissionId, text, mail } }],
-            })
-            return Effect.void
-          }
+      const post = (from: ConversationId, to: ConversationId, text: string, mail: Mail) => {
+        const author = agentAuthor(from)
+        if (mail.kind !== "new_task" && !active.has(to)) {
           store.commit(to, {
-            submit: { id: newId() as SubmissionId, requestId: newId(), author, text, steer: true, mail },
+            entries: [{ author, body: { _tag: "user", submission: newId() as SubmissionId, text, mail } }],
           })
-          nudge(to)
-          return mail.kind === "new_task" ? wake(to) : Effect.void
+          return Effect.void
+        }
+        store.commit(to, {
+          submit: { id: newId() as SubmissionId, requestId: newId(), author, text, steer: true, mail },
+        })
+        nudge(to)
+        return mail.kind === "new_task" ? wake(to) : Effect.void
+      }
+
+      const deliver = (from: ConversationId, to: ConversationId, text: string, mail: Mail): Effect.Effect<void> =>
+        Effect.suspend(() => post(from, to, text, mail))
+
+      const crowded = (conversation: Conversation) => {
+        const running = familyOf(conversation).filter(
+          (member) =>
+            member.conversation.lineage !== undefined &&
+            (member.status !== "idle" ||
+              active.has(member.conversation.id) ||
+              store.nextQueued(member.conversation.id) !== undefined),
+        ).length
+        return running < providers.agents.maxThreads
+          ? undefined
+          : `this tree already runs ${running} subagents, the most it may run at once; wait for one to finish`
+      }
+
+      const assign = (caller: Conversation, to: ConversationId, text: string, mail: Mail) =>
+        Effect.suspend(() => {
+          const refused = mail.kind === "new_task" && !active.has(to) ? crowded(caller) : undefined
+          return refused === undefined ? Effect.as(post(caller.id, to, text, mail), undefined) : Effect.succeed(refused)
         })
 
       const spawn = (parent: Conversation, child: Child, message: string) =>
         Effect.suspend(() => {
+          if (familyOf(parent).some((member) => member.conversation.lineage?.task === child.task)) {
+            return Effect.succeed(`an agent named ${child.task} already exists`)
+          }
+          const refused = crowded(parent)
+          if (refused !== undefined) return Effect.succeed(refused)
           const lineage = {
             parent: parent.id,
             root: parent.lineage?.root ?? parent.id,
@@ -521,11 +547,10 @@ export class Conversations extends Context.Service<
               },
             ],
           })
-          return deliver(parent.id, started.id, message, {
-            kind: "new_task",
-            task: child.task,
-            sender: taskOf(parent),
-          })
+          return Effect.as(
+            post(parent.id, started.id, message, { kind: "new_task", task: child.task, sender: taskOf(parent) }),
+            undefined,
+          )
         })
 
       const familyOf = (conversation: Conversation) => store.family(conversation.lineage?.root ?? conversation.id)
@@ -575,7 +600,7 @@ export class Conversations extends Context.Service<
         hasWork: (id) => store.nextQueued(id) !== undefined,
         transcript: (id) => store.transcript(id),
         spawn: (child, message) => spawn(caller, child, message),
-        deliver: (to, text, mail) => deliver(caller.id, to, text, mail),
+        deliver: (to, text, mail) => assign(caller, to, text, mail),
         interrupt: (id) =>
           Effect.flatMap(Effect.orDie(store.state(id)), ({ conversation }) => interruptTree(conversation)),
         nextInput: (timeoutMs) => nextInput(caller.id, timeoutMs),
