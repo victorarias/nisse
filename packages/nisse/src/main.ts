@@ -5,7 +5,7 @@ import { Argument, Command, Flag } from "effect/cli"
 import { Client, clientLayer } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, type Home } from "./home.ts"
-import { modelFromScript } from "./model.ts"
+import { providersFromScript } from "./drivers/script.ts"
 import { protocolSchema } from "./schema.ts"
 import { serve } from "./server.ts"
 import { tui } from "./tui/main.tsx"
@@ -18,6 +18,13 @@ const conversationFlag = Flag.String("conversation").pipe(
   Flag.withDescription("Open this conversation instead of starting a new one"),
   Flag.optional,
 )
+
+const autoFlag = Flag.Boolean("auto").pipe(
+  Flag.withDescription("Start the conversation without asking before calls that change things"),
+  Flag.withDefault(false),
+)
+
+const approvalsFrom = (auto: boolean) => (auto ? ("auto" as const) : undefined)
 
 const withClient = (home: Home) => Effect.provide(clientLayer(home))
 
@@ -44,7 +51,7 @@ const serveCommand = Command.make(
       Effect.andThen(
         claimed,
         serve(home, { idleGrace: IDLE_GRACE }).pipe(
-          Effect.provide(modelFromScript(process.env.NISSE_MODEL_SCRIPT || undefined)),
+          Effect.provide(providersFromScript(process.env.NISSE_MODEL_SCRIPT || undefined)),
         ),
       ),
     ).pipe(Effect.catchTag("HomeTaken", () => Console.error(`another server already serves ${home.dir}`)))
@@ -53,10 +60,13 @@ const serveCommand = Command.make(
 
 const execCommand = Command.make(
   "exec",
-  { prompt: Argument.String("prompt"), conversation: conversationFlag },
-  Effect.fn(function* ({ prompt, conversation }) {
+  { prompt: Argument.String("prompt"), conversation: conversationFlag, auto: autoFlag },
+  Effect.fn(function* ({ prompt, conversation, auto }) {
     const home = defaultHome()
-    const ok = yield* exec(prompt, Option.getOrUndefined(conversation)).pipe(withClient(home), Effect.scoped)
+    const ok = yield* exec(prompt, Option.getOrUndefined(conversation), approvalsFrom(auto)).pipe(
+      withClient(home),
+      Effect.scoped,
+    )
     if (!ok) process.exitCode = 1
   }),
 ).pipe(Command.withDescription("Send one prompt, print the answer, and exit"))
@@ -71,10 +81,10 @@ const schemaCommand = Command.make(
 
 const nisse = Command.make(
   "nisse",
-  { conversation: conversationFlag },
-  Effect.fn(function* ({ conversation }) {
+  { conversation: conversationFlag, auto: autoFlag },
+  Effect.fn(function* ({ conversation, auto }) {
     const home = defaultHome()
-    yield* tui(Option.getOrUndefined(conversation)).pipe(withClient(home), Effect.scoped)
+    yield* tui(Option.getOrUndefined(conversation), approvalsFrom(auto)).pipe(withClient(home), Effect.scoped)
   }),
 ).pipe(
   Command.withDescription("A durable, multiplayer coding agent"),

@@ -76,3 +76,54 @@ test("a prompt sent while nisse works waits in the queue, then runs", async () =
   session.type("\x03")
   await session.exited
 })
+
+const scripted = async (nisseHome: ReturnType<typeof tempHome>, steps: unknown) => {
+  const script = `${nisseHome.dir}/script.json`
+  await Bun.write(script, JSON.stringify(steps))
+  return nisseEnv(nisseHome, { NISSE_MODEL_SCRIPT: script })
+}
+
+test("nisse asks before a command runs, ctrl+y allows it and its output shows under the call", async () => {
+  const nisseHome = home()
+  const env = await scripted(nisseHome, [
+    { tool: { name: "Bash", input: { command: "echo hello-from-bash" } } },
+    { text: "all done" },
+  ])
+  const session = screenSession([], env)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("run it\r")
+  await session.waitFor(
+    (screen) =>
+      screen.includes("▸ Bash(echo hello-from-bash)") &&
+      screen.includes("allow this call?") &&
+      screen.includes("WAITING"),
+  )
+  session.type("\x19")
+  const screen = await session.waitFor((screen) => screen.includes("all done") && screen.includes("READY"))
+  expect(screen.indexOf("✓ allowed by ada")).toBeGreaterThan(screen.indexOf("▸ Bash(echo hello-from-bash)"))
+  expect(screen.indexOf("     hello-from-bash")).toBeGreaterThan(screen.indexOf("✓ allowed by ada"))
+  expect(screen).not.toContain("allow this call?")
+  session.type("\x03")
+  await session.exited
+})
+
+test("tab switches a prompt sent mid-run from queueing to steering the run", async () => {
+  const nisseHome = home()
+  const env = await scripted(nisseHome, [
+    { tool: { name: "Bash", input: { command: "sleep 1" } } },
+    { text: "turning left now" },
+  ])
+  const session = screenSession(["--auto"], env)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("drive\r")
+  await session.waitFor((screen) => screen.includes("▸ Bash(sleep 1)") && screen.includes("QUEUE · tab"))
+  session.type("\t")
+  await session.waitFor((screen) => screen.includes("STEER · tab"))
+  session.type("turn left\r")
+  await session.waitFor((screen) => screen.includes("steering · turn left"))
+  const screen = await session.waitFor((screen) => screen.includes("turning left now") && screen.includes("READY"))
+  expect(screen.indexOf("turn left")).toBeLessThan(screen.indexOf("turning left now"))
+  expect(screen).not.toContain("steering ·")
+  session.type("\x03")
+  await session.exited
+})

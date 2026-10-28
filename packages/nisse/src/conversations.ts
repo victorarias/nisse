@@ -1,23 +1,79 @@
-import type { ConversationId, NoSuchConversation, SubmissionId } from "@nisse/protocol"
-import { Cause, Context, Effect, Fiber, FiberSet, Layer, Option, Stream } from "effect"
+import {
+  LIVE_OUTPUT_TAIL,
+  UnknownProvider,
+  type ApprovalId,
+  type Approvals,
+  type CallId,
+  type Conversation,
+  type ConversationId,
+  type Entry,
+  type LiveChange,
+  type NoSuchApproval,
+  type NoSuchConversation,
+  type Outcome,
+  type SubmissionId,
+} from "@nisse/protocol"
+import { Cause, Context, Deferred, Effect, Fiber, FiberSet, Layer, Option, Ref } from "effect"
 import { newId } from "./ids.ts"
 import { Lifetime } from "./lifetime.ts"
-import { Model } from "./model.ts"
-import { Store, type Change } from "./store.ts"
+import { Providers, type Call, type Driver, type Saved, type Turn } from "./provider.ts"
+import { Store, type Change, type NewEntry } from "./store.ts"
+import { builtinTools, toolNamed, type ToolOutcome } from "./tools/index.ts"
 
 const LIVE_WINDOW = "100 millis"
+export const RESTART_LIMIT = 3
 const nisse = { _tag: "nisse" } as const
+
+const interruptedResult = (call: CallId): NewEntry => ({
+  author: nisse,
+  body: { _tag: "tool_result", call, output: "interrupted: this call did not finish", error: true },
+})
+
+const withChange = (changes: ReadonlyArray<LiveChange>, change: LiveChange): Array<LiveChange> => {
+  const last = changes.at(-1)
+  if (change._tag !== "output" || last?._tag !== "output" || last.call !== change.call) return [...changes, change]
+  return [...changes.slice(0, -1), { ...change, append: (last.append + change.append).slice(-LIVE_OUTPUT_TAIL) }]
+}
+
+const runEnd = (outcome: Outcome, message?: string): NewEntry => ({
+  author: nisse,
+  body: message === undefined ? { _tag: "run_end", outcome } : { _tag: "run_end", outcome, message },
+})
+
+const danglingIn = (transcript: ReadonlyArray<Entry>) => {
+  const calls = new Set<CallId>()
+  const approvals = new Set<ApprovalId>()
+  for (const { body } of transcript) {
+    if (body._tag === "tool_call") calls.add(body.call)
+    else if (body._tag === "tool_result") calls.delete(body.call)
+    else if (body._tag === "approval") approvals.add(body.approval)
+    else if (body._tag === "approval_answer") approvals.delete(body.approval)
+  }
+  return { calls, approvals }
+}
 
 export class Conversations extends Context.Service<
   Conversations,
   {
+    readonly start: (
+      cwd: string,
+      provider: string | undefined,
+      approvals: Approvals | undefined,
+    ) => Effect.Effect<Conversation, UnknownProvider>
     readonly submit: (
       conversation: ConversationId,
       requestId: string,
       author: string,
       text: string,
+      steer: boolean,
     ) => Effect.Effect<SubmissionId, NoSuchConversation>
     readonly interrupt: (conversation: ConversationId) => Effect.Effect<void, NoSuchConversation>
+    readonly resolve: (
+      conversation: ConversationId,
+      approval: ApprovalId,
+      author: string,
+      allow: boolean,
+    ) => Effect.Effect<boolean, NoSuchConversation | NoSuchApproval>
     readonly settle: Effect.Effect<void>
   }
 >()("nisse/Conversations") {
@@ -25,47 +81,229 @@ export class Conversations extends Context.Service<
     Conversations,
     Effect.gen(function* () {
       const store = yield* Store
-      const model = yield* Model
+      const providers = yield* Providers
       const lifetime = yield* Lifetime
       const runners = yield* FiberSet.make<void>()
       const active = new Set<ConversationId>()
       const runs = new Map<ConversationId, Fiber.Fiber<void, unknown>>()
+      const waiting = new Map<ApprovalId, Deferred.Deferred<boolean>>()
       let settling = false
 
-      const respond = (conversation: ConversationId, said: Array<string>) =>
-        model.respond(store.transcript(conversation)).pipe(
-          Stream.tap((text) => Effect.sync(() => said.push(text))),
-          Stream.groupedWithin(Number.MAX_SAFE_INTEGER, LIVE_WINDOW),
-          Stream.runForEach((parts) =>
-            Effect.sync(() => {
-              const text = parts.join("")
-              if (text !== "") store.commit(conversation, { live: { _tag: "append", text } })
-            }),
-          ),
+      const expire = (conversation: ConversationId, approvals: Iterable<ApprovalId>) =>
+        Effect.forEach(approvals, (approval) =>
+          Effect.ignore(store.resolveApproval(conversation, approval, nisse, false)),
         )
 
-      const run = Effect.fnUntraced(function* (conversation: ConversationId) {
-        const said: Array<string> = []
-        const answer = (interrupted: boolean) => ({
-          author: nisse,
-          body: { _tag: "answer" as const, text: said.join(""), interrupted },
-        })
-        const fiber = yield* Effect.forkChild(respond(conversation, said), { startImmediately: true })
-        runs.set(conversation, fiber)
+      const makeTurn = Effect.fnUntraced(function* (conversation: Conversation, providerState: unknown) {
+        const id = conversation.id
+        const spoken = yield* Ref.make("")
+        const pending = yield* Ref.make<Array<LiveChange>>([])
+        const openCalls = new Set<CallId>()
+        const openApprovals = new Set<ApprovalId>()
+
+        const flush = Effect.flatMap(Ref.getAndSet(pending, []), (changes) =>
+          Effect.sync(() => (changes.length > 0 ? void store.commit(id, { live: changes }) : undefined)),
+        )
+        const scope = yield* Effect.scope
+        const flushSoon = Effect.forkIn(Effect.andThen(Effect.sleep(LIVE_WINDOW), flush), scope)
+
+        const live = (change: LiveChange) =>
+          Effect.flatMap(
+            Ref.modify(pending, (changes) => [changes.length === 0, withChange(changes, change)]),
+            (first) => (first ? Effect.asVoid(flushSoon) : Effect.void),
+          )
+        const withState = (change: Change, saved: Saved | undefined): Change =>
+          saved?.state === undefined ? change : { ...change, providerState: saved.state }
+        const dropPendingText = Ref.update(pending, (changes) => changes.filter((c) => c._tag !== "text"))
+
+        const recordCall = (call: Call, saved?: Saved) =>
+          Effect.andThen(
+            flush,
+            Effect.sync(() => {
+              openCalls.add(call.call)
+              store.commit(
+                id,
+                withState(
+                  {
+                    entries: [
+                      {
+                        author: nisse,
+                        body: { _tag: "tool_call", call: call.call, tool: call.tool, input: call.input },
+                      },
+                    ],
+                  },
+                  saved,
+                ),
+              )
+            }),
+          )
+
+        const recordResult = (call: CallId, outcome: ToolOutcome, saved?: Saved) =>
+          Effect.andThen(
+            flush,
+            Effect.sync(() => {
+              openCalls.delete(call)
+              store.commit(
+                id,
+                withState(
+                  {
+                    entries: [
+                      {
+                        author: nisse,
+                        body: { _tag: "tool_result", call, output: outcome.output, error: outcome.error },
+                      },
+                    ],
+                    live: [{ _tag: "output_end", call }],
+                  },
+                  saved,
+                ),
+              )
+            }),
+          )
+
+        const approve = (call: Call) =>
+          Effect.gen(function* () {
+            if (conversation.approvals === "auto") return true
+            const approval = newId() as ApprovalId
+            const answered = yield* Deferred.make<boolean>()
+            waiting.set(approval, answered)
+            openApprovals.add(approval)
+            yield* flush
+            store.commit(id, {
+              entries: [
+                {
+                  author: nisse,
+                  body: { _tag: "approval", approval, call: call.call, tool: call.tool, input: call.input },
+                },
+              ],
+              approval: { id: approval, call: call.call },
+              status: "waiting",
+            })
+            const allow = yield* Deferred.await(answered).pipe(
+              Effect.ensuring(Effect.sync(() => waiting.delete(approval))),
+            )
+            openApprovals.delete(approval)
+            if (openApprovals.size === 0) store.commit(id, { status: "working" })
+            return allow
+          })
+
+        const turn: Turn = {
+          conversation,
+          transcript: store.transcript(id),
+          providerState,
+          tools: builtinTools.map((tool) => tool.spec),
+          say: (text) =>
+            text === ""
+              ? Effect.void
+              : Effect.andThen(
+                  Ref.update(spoken, (s) => s + text),
+                  live({ _tag: "text", append: text }),
+                ),
+          message: (text, saved) =>
+            Effect.gen(function* () {
+              yield* dropPendingText
+              yield* flush
+              yield* Ref.set(spoken, "")
+              store.commit(
+                id,
+                withState(
+                  {
+                    entries: text === "" ? [] : [{ author: nisse, body: { _tag: "message", text } }],
+                    live: [{ _tag: "text_end" }],
+                  },
+                  saved,
+                ),
+              )
+            }),
+          recordCall,
+          recordResult,
+          approve,
+          toolOutput: (call, text) => (text === "" ? Effect.void : live({ _tag: "output", call, append: text })),
+          runTool: (call, saved) =>
+            Effect.gen(function* () {
+              yield* recordCall(call, saved)
+              const tool = toolNamed(call.tool)
+              const outcome: ToolOutcome = !tool
+                ? { output: `no tool named ${call.tool}`, error: true }
+                : !tool.readOnly && !(yield* approve(call))
+                  ? { output: "denied: the person did not allow this call", error: true }
+                  : yield* tool.run(call.input, {
+                      cwd: conversation.cwd,
+                      output: (text) =>
+                        text === "" ? Effect.void : live({ _tag: "output", call: call.call, append: text }),
+                    })
+              yield* recordResult(call.call, outcome)
+              return outcome
+            }),
+          steers: Effect.andThen(
+            flush,
+            Effect.sync(() => {
+              const steers = store.queuedSteers(id)
+              if (steers.length === 0) return []
+              store.commit(id, {
+                place: steers.map((steer) => steer.submission),
+                entries: steers.map((steer) => ({
+                  author: steer.author,
+                  body: { _tag: "user" as const, submission: steer.submission, text: steer.text },
+                })),
+              })
+              return steers.map((steer) => steer.text)
+            }),
+          ),
+        }
+
+        const close = (outcome: Outcome, message?: string) =>
+          Effect.gen(function* () {
+            yield* expire(id, openApprovals)
+            const said = yield* Ref.get(spoken)
+            return [
+              ...(said === "" ? [] : [{ author: nisse, body: { _tag: "message" as const, text: said } }]),
+              ...[...openCalls].map(interruptedResult),
+              runEnd(outcome, message),
+            ]
+          })
+
+        return { turn, close }
+      })
+
+      const run = Effect.fnUntraced(function* (id: ConversationId, resumed: boolean) {
+        const { conversation, attempts, providerState } = yield* Effect.orDie(store.state(id))
+        if (resumed) {
+          const dangling = danglingIn(store.transcript(id))
+          yield* expire(id, dangling.approvals)
+          store.commit(id, {
+            entries: [...dangling.calls].map(interruptedResult),
+            live: [{ _tag: "clear" }],
+            status: "working",
+            attempts: attempts + 1,
+          })
+        }
+        if (attempts >= RESTART_LIMIT) {
+          return [runEnd("restart_limit", `the server stopped during this run ${attempts} times in a row`)]
+        }
+        const driver = providers.drivers.get(conversation.provider)
+        if (!driver) return [runEnd("failed", `no provider named ${conversation.provider}`)]
+        return yield* Effect.scoped(drive(conversation, providerState, driver))
+      })
+
+      const drive = Effect.fnUntraced(function* (conversation: Conversation, providerState: unknown, driver: Driver) {
+        const { turn, close } = yield* makeTurn(conversation, providerState)
+        const fiber = yield* Effect.forkChild(driver.run(turn), { startImmediately: true })
+        runs.set(conversation.id, fiber)
         const exit = yield* Fiber.await(fiber)
-        runs.delete(conversation)
-        if (exit._tag === "Success") return [answer(false)]
+        runs.delete(conversation.id)
+        if (exit._tag === "Success") return yield* close("answered")
         const error = Cause.findErrorOption(exit.cause)
-        if (Option.isNone(error)) return [answer(true)]
-        const failed = { author: nisse, body: { _tag: "run_failed" as const, message: error.value.message } }
-        return said.length > 0 ? [answer(false), failed] : [failed]
+        if (Option.isSome(error)) return yield* close("failed", error.value.message)
+        if (Cause.hasInterruptsOnly(exit.cause)) return yield* close("interrupted")
+        return yield* close("failed", Cause.pretty(exit.cause))
       })
 
       const next = (conversation: ConversationId): Change => {
         const queued = settling ? undefined : store.nextQueued(conversation)
         return queued
           ? {
-              place: queued.submission,
+              place: [queued.submission],
               entries: [
                 { author: queued.author, body: { _tag: "user", submission: queued.submission, text: queued.text } },
               ],
@@ -74,14 +312,15 @@ export class Conversations extends Context.Service<
           : { status: "idle" }
       }
 
-      const proceed = (conversation: ConversationId, ended: Change["entries"] = []) =>
+      const proceed = (conversation: ConversationId, ended: ReadonlyArray<NewEntry> = []) =>
         Effect.sync(() => {
           const after = next(conversation)
           if (ended.length > 0 || after.status === "working") {
             store.commit(conversation, {
               ...after,
               entries: [...ended, ...(after.entries ?? [])],
-              live: { _tag: "clear" },
+              ...(ended.length > 0 ? { live: [{ _tag: "clear" as const }] } : {}),
+              attempts: after.status === "working" ? 1 : 0,
             })
           }
           if (after.status === "idle") active.delete(conversation)
@@ -89,11 +328,14 @@ export class Conversations extends Context.Service<
         })
 
       const runner = Effect.fnUntraced(function* (conversation: ConversationId) {
-        const resumed = store.status(conversation) === "working"
-        if (resumed) store.commit(conversation, { live: { _tag: "clear" } })
+        const state = yield* Effect.orDie(store.state(conversation))
+        let resumed = state.status !== "idle"
         let working = resumed || (yield* proceed(conversation))
-        while (working) working = yield* proceed(conversation, yield* run(conversation))
-      }, Effect.scoped)
+        while (working) {
+          working = yield* proceed(conversation, yield* run(conversation, resumed))
+          resumed = false
+        }
+      })
 
       const wake = (conversation: ConversationId) =>
         Effect.suspend(() => {
@@ -109,24 +351,42 @@ export class Conversations extends Context.Service<
       }
 
       return Conversations.of({
-        submit: (conversation, requestId, author, text) =>
+        start: (cwd, provider, approvals) =>
+          Effect.suspend(() => {
+            const chosen = provider ?? providers.preferred
+            if (!providers.drivers.has(chosen)) return Effect.fail(new UnknownProvider({ provider: chosen }))
+            return Effect.succeed(store.start(cwd, chosen, approvals ?? "ask"))
+          }),
+        submit: (conversation, requestId, author, text, steer) =>
           Effect.gen(function* () {
-            yield* store.exists(conversation)
+            yield* store.state(conversation)
             const existing = store.submissionFor(conversation, requestId)
             if (existing) return existing
             const id = newId() as SubmissionId
             store.commit(conversation, {
-              submit: { id, requestId, author: { _tag: "person", name: author }, text },
+              submit: { id, requestId, author: { _tag: "person", name: author }, text, steer },
             })
             yield* wake(conversation)
             return id
           }),
         interrupt: (conversation) =>
           Effect.gen(function* () {
-            yield* store.exists(conversation)
+            yield* store.state(conversation)
             const fiber = runs.get(conversation)
-            if (!fiber) return
-            yield* Fiber.interrupt(fiber)
+            if (fiber) yield* Fiber.interrupt(fiber)
+          }),
+        resolve: (conversation, approval, author, allow) =>
+          Effect.gen(function* () {
+            yield* store.state(conversation)
+            const accepted = yield* store.resolveApproval(
+              conversation,
+              approval,
+              { _tag: "person", name: author },
+              allow,
+            )
+            const answered = waiting.get(approval)
+            if (accepted && answered) yield* Deferred.succeed(answered, allow)
+            return accepted
           }),
         settle: Effect.suspend(() => {
           settling = true

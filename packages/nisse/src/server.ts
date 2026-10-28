@@ -1,12 +1,12 @@
 import { BunSocketServer } from "@effect/platform-bun"
 import { NisseRpcs, PROTOCOL_VERSION } from "@nisse/protocol"
-import { Duration, Effect, Layer, Stream } from "effect"
+import { Console, Duration, Effect, Layer, Stream } from "effect"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as RpcServer from "effect/rpc/RpcServer"
 import { Conversations } from "./conversations.ts"
 import type { Home } from "./home.ts"
 import { Lifetime } from "./lifetime.ts"
-import { Model } from "./model.ts"
+import type { Providers } from "./provider.ts"
 import { Store } from "./store.ts"
 import { VERSION } from "./version.ts"
 
@@ -17,13 +17,17 @@ const Handlers = NisseRpcs.toLayer(
     const lifetime = yield* Lifetime
     return NisseRpcs.of({
       initialize: () => Effect.succeed({ version: VERSION, protocol: PROTOCOL_VERSION }),
-      "conversation/start": ({ cwd }) => Effect.sync(() => store.start(cwd)),
+      "conversation/start": ({ cwd, provider, approvals }) => conversations.start(cwd, provider, approvals),
       "conversation/list": () => Effect.sync(() => store.list()),
       "conversation/subscribe": ({ conversation, sinceSeq }) =>
         Stream.unwrap(Effect.as(lifetime.hold, store.subscribe(conversation, sinceSeq))),
-      "conversation/submit": ({ conversation, requestId, author, text }) =>
-        Effect.map(conversations.submit(conversation, requestId, author, text), (submission) => ({ submission })),
+      "conversation/submit": ({ conversation, requestId, author, text, steer }) =>
+        Effect.map(conversations.submit(conversation, requestId, author, text, steer ?? false), (submission) => ({
+          submission,
+        })),
       "conversation/interrupt": ({ conversation }) => conversations.interrupt(conversation),
+      "approval/resolve": ({ conversation, approval, author, allow }) =>
+        Effect.map(conversations.resolve(conversation, approval, author, allow), (accepted) => ({ accepted })),
       "server/stop": () => Effect.andThen(conversations.settle, lifetime.stop),
     })
   }),
@@ -46,5 +50,6 @@ export const serverLayer = (home: Home, options: { readonly idleGrace: Duration.
 export const serve = (home: Home, options: { readonly idleGrace: Duration.Input }) =>
   Effect.gen(function* () {
     const lifetime = yield* Lifetime
+    yield* Console.error(`nisse ${VERSION} serving ${home.dir}`)
     yield* lifetime.ended
-  }).pipe(Effect.provide(serverLayer(home, options)), Effect.scoped) satisfies Effect.Effect<void, unknown, Model>
+  }).pipe(Effect.provide(serverLayer(home, options)), Effect.scoped) satisfies Effect.Effect<void, unknown, Providers>

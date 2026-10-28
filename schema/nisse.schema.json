@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nisse protocol",
-  "protocol": 1,
+  "protocol": 2,
   "methods": {
     "initialize": {
       "params": {
@@ -55,6 +55,16 @@
         "properties": {
           "cwd": {
             "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "approvals": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "auto"
+            ]
           }
         },
         "required": [
@@ -75,17 +85,29 @@
             "type": "integer",
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
+          },
+          "provider": {
+            "type": "string"
+          },
+          "approvals": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "auto"
+            ]
           }
         },
         "required": [
           "id",
           "cwd",
-          "createdAt"
+          "createdAt",
+          "provider",
+          "approvals"
         ],
         "additionalProperties": true
       },
       "error": {
-        "not": {}
+        "$ref": "#/$defs/UnknownProviderEncoded"
       },
       "stream": false
     },
@@ -108,12 +130,24 @@
               "type": "integer",
               "minimum": -9007199254740991,
               "maximum": 9007199254740991
+            },
+            "provider": {
+              "type": "string"
+            },
+            "approvals": {
+              "type": "string",
+              "enum": [
+                "ask",
+                "auto"
+              ]
             }
           },
           "required": [
             "id",
             "cwd",
-            "createdAt"
+            "createdAt",
+            "provider",
+            "approvals"
           ],
           "additionalProperties": true
         }
@@ -165,12 +199,24 @@
                     "type": "integer",
                     "minimum": -9007199254740991,
                     "maximum": 9007199254740991
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "approvals": {
+                    "type": "string",
+                    "enum": [
+                      "ask",
+                      "auto"
+                    ]
                   }
                 },
                 "required": [
                   "id",
                   "cwd",
-                  "createdAt"
+                  "createdAt",
+                  "provider",
+                  "approvals"
                 ],
                 "additionalProperties": true
               },
@@ -266,20 +312,16 @@
                             "_tag": {
                               "type": "string",
                               "enum": [
-                                "answer"
+                                "message"
                               ]
                             },
                             "text": {
                               "type": "string"
-                            },
-                            "interrupted": {
-                              "type": "boolean"
                             }
                           },
                           "required": [
                             "_tag",
-                            "text",
-                            "interrupted"
+                            "text"
                           ],
                           "additionalProperties": true
                         },
@@ -289,7 +331,120 @@
                             "_tag": {
                               "type": "string",
                               "enum": [
-                                "run_failed"
+                                "tool_call"
+                              ]
+                            },
+                            "call": {
+                              "type": "string"
+                            },
+                            "tool": {
+                              "type": "string"
+                            },
+                            "input": {}
+                          },
+                          "required": [
+                            "_tag",
+                            "call",
+                            "tool",
+                            "input"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "tool_result"
+                              ]
+                            },
+                            "call": {
+                              "type": "string"
+                            },
+                            "output": {
+                              "type": "string"
+                            },
+                            "error": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "call",
+                            "output",
+                            "error"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "approval"
+                              ]
+                            },
+                            "approval": {
+                              "type": "string"
+                            },
+                            "call": {
+                              "type": "string"
+                            },
+                            "tool": {
+                              "type": "string"
+                            },
+                            "input": {}
+                          },
+                          "required": [
+                            "_tag",
+                            "approval",
+                            "call",
+                            "tool",
+                            "input"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "approval_answer"
+                              ]
+                            },
+                            "approval": {
+                              "type": "string"
+                            },
+                            "allow": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "approval",
+                            "allow"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "run_end"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "answered",
+                                "interrupted",
+                                "failed",
+                                "restart_limit"
                               ]
                             },
                             "message": {
@@ -298,7 +453,7 @@
                           },
                           "required": [
                             "_tag",
-                            "message"
+                            "outcome"
                           ],
                           "additionalProperties": true
                         }
@@ -316,7 +471,23 @@
                 }
               },
               "live": {
-                "type": "string"
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "output": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "text",
+                  "output"
+                ],
+                "additionalProperties": true
               },
               "queued": {
                 "type": "array",
@@ -366,12 +537,16 @@
                     },
                     "text": {
                       "type": "string"
+                    },
+                    "steer": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
                     "submission",
                     "author",
-                    "text"
+                    "text",
+                    "steer"
                   ],
                   "additionalProperties": true
                 }
@@ -380,7 +555,8 @@
                 "type": "string",
                 "enum": [
                   "idle",
-                  "working"
+                  "working",
+                  "waiting"
                 ]
               }
             },
@@ -504,20 +680,16 @@
                             "_tag": {
                               "type": "string",
                               "enum": [
-                                "answer"
+                                "message"
                               ]
                             },
                             "text": {
                               "type": "string"
-                            },
-                            "interrupted": {
-                              "type": "boolean"
                             }
                           },
                           "required": [
                             "_tag",
-                            "text",
-                            "interrupted"
+                            "text"
                           ],
                           "additionalProperties": true
                         },
@@ -527,7 +699,120 @@
                             "_tag": {
                               "type": "string",
                               "enum": [
-                                "run_failed"
+                                "tool_call"
+                              ]
+                            },
+                            "call": {
+                              "type": "string"
+                            },
+                            "tool": {
+                              "type": "string"
+                            },
+                            "input": {}
+                          },
+                          "required": [
+                            "_tag",
+                            "call",
+                            "tool",
+                            "input"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "tool_result"
+                              ]
+                            },
+                            "call": {
+                              "type": "string"
+                            },
+                            "output": {
+                              "type": "string"
+                            },
+                            "error": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "call",
+                            "output",
+                            "error"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "approval"
+                              ]
+                            },
+                            "approval": {
+                              "type": "string"
+                            },
+                            "call": {
+                              "type": "string"
+                            },
+                            "tool": {
+                              "type": "string"
+                            },
+                            "input": {}
+                          },
+                          "required": [
+                            "_tag",
+                            "approval",
+                            "call",
+                            "tool",
+                            "input"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "approval_answer"
+                              ]
+                            },
+                            "approval": {
+                              "type": "string"
+                            },
+                            "allow": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "approval",
+                            "allow"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "run_end"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "answered",
+                                "interrupted",
+                                "failed",
+                                "restart_limit"
                               ]
                             },
                             "message": {
@@ -536,7 +821,7 @@
                           },
                           "required": [
                             "_tag",
-                            "message"
+                            "outcome"
                           ],
                           "additionalProperties": true
                         }
@@ -554,42 +839,103 @@
                 }
               },
               "live": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "_tag": {
-                        "type": "string",
-                        "enum": [
-                          "append"
-                        ]
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "text"
+                          ]
+                        },
+                        "append": {
+                          "type": "string"
+                        }
                       },
-                      "text": {
-                        "type": "string"
-                      }
+                      "required": [
+                        "_tag",
+                        "append"
+                      ],
+                      "additionalProperties": true
                     },
-                    "required": [
-                      "_tag",
-                      "text"
-                    ],
-                    "additionalProperties": true
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "_tag": {
-                        "type": "string",
-                        "enum": [
-                          "clear"
-                        ]
-                      }
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "text_end"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "_tag"
+                      ],
+                      "additionalProperties": true
                     },
-                    "required": [
-                      "_tag"
-                    ],
-                    "additionalProperties": true
-                  }
-                ]
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "output"
+                          ]
+                        },
+                        "call": {
+                          "type": "string"
+                        },
+                        "append": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "call",
+                        "append"
+                      ],
+                      "additionalProperties": true,
+                      "description": "Output appended to a running call. Live output keeps only the last 4096 characters of each call; the tool_result holds what the call returned."
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "output_end"
+                          ]
+                        },
+                        "call": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "call"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "clear"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "_tag"
+                      ],
+                      "additionalProperties": true
+                    }
+                  ]
+                }
               },
               "enqueued": {
                 "type": "object",
@@ -637,12 +983,16 @@
                   },
                   "text": {
                     "type": "string"
+                  },
+                  "steer": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
                   "submission",
                   "author",
-                  "text"
+                  "text",
+                  "steer"
                 ],
                 "additionalProperties": true
               },
@@ -650,7 +1000,8 @@
                 "type": "string",
                 "enum": [
                   "idle",
-                  "working"
+                  "working",
+                  "waiting"
                 ]
               }
             },
@@ -692,6 +1043,9 @@
           },
           "text": {
             "type": "string"
+          },
+          "steer": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -740,6 +1094,55 @@
       },
       "stream": false
     },
+    "approval/resolve": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string"
+          },
+          "approval": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "allow": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "conversation",
+          "approval",
+          "author",
+          "allow"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchApprovalEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
     "server/stop": {
       "params": {
         "type": "null"
@@ -754,6 +1157,25 @@
     }
   },
   "$defs": {
+    "UnknownProviderEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "UnknownProvider"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "provider"
+      ],
+      "additionalProperties": true
+    },
     "NoSuchConversationEncoded": {
       "type": "object",
       "properties": {
@@ -791,6 +1213,25 @@
       "required": [
         "_tag",
         "seq"
+      ],
+      "additionalProperties": true
+    },
+    "NoSuchApprovalEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "NoSuchApproval"
+          ]
+        },
+        "approval": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "approval"
       ],
       "additionalProperties": true
     }
