@@ -121,9 +121,9 @@ for (const step of segments[spawn] ?? []) {
       const request = await receive((f) => f.type === "control_request" && f.request?.subtype === "initialize")
       bind(request.request_id)
     } else if (frame.type === "control_request") {
-      log({
-        received: await receive((f) => f.type === "control_request" && f.request?.subtype === frame.request.subtype),
-      })
+      const request = await receive((f) => f.type === "control_request" && f.request?.subtype === frame.request.subtype)
+      bind(request.request_id)
+      log({ received: request })
     } else if (frame.type === "user") {
       const message = await receive((f) => f.type === "user")
       bind(message.uuid)

@@ -125,7 +125,12 @@ export const Lineage = Schema.Struct({
   parent: ConversationId,
   root: ConversationId.annotate({ description: "The conversation people started, at the top of the tree." }),
   call: CallId.annotate({ description: "The parent's call that started it." }),
-  task: Schema.String.annotate({ description: "Its task name, such as /root/explore, which agents address it by." }),
+  task: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does.",
+    }),
+  ),
   title: Schema.String,
   agentType: Schema.optionalKey(Schema.String),
   forkedAt: Schema.optionalKey(
@@ -212,6 +217,10 @@ export class CannotSignIn extends Schema.TaggedError<CannotSignIn>()("CannotSign
   message: Schema.String,
 }) {}
 
+export class TakesNoInput extends Schema.TaggedError<TakesNoInput>()("TakesNoInput", {
+  conversation: Schema.String,
+}) {}
+
 export class FellBehind extends Schema.TaggedError<FellBehind>()("FellBehind", {
   seq: Schema.Int,
 }) {}
@@ -253,7 +262,7 @@ export const Submit = Rpc.make("conversation/submit", {
     steer: Schema.optionalKey(Schema.Boolean),
   },
   success: Schema.Struct({ submission: SubmissionId }),
-  error: NoSuchConversation,
+  error: Schema.Union([NoSuchConversation, TakesNoInput]),
 })
 
 export const Interrupt = Rpc.make("conversation/interrupt", {
@@ -271,7 +280,7 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
 
 export const SelectModel = Rpc.make("conversation/select_model", {
   payload: { conversation: ConversationId, author: Schema.String, selection: ModelSelection },
-  error: Schema.Union([NoSuchConversation, UnknownProvider]),
+  error: Schema.Union([NoSuchConversation, UnknownProvider, TakesNoInput]),
 })
 
 export const StopServer = Rpc.make("server/stop")

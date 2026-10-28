@@ -16,14 +16,15 @@ import {
   type NoSuchConversation,
   type Outcome,
   type SubmissionId,
+  TakesNoInput,
 } from "@nisse/protocol"
-import { Cause, Context, Deferred, Effect, Fiber, FiberSet, Layer, Option, Ref } from "effect"
+import { Cause, Context, Deferred, Effect, Fiber, FiberSet, Layer, Option, Ref, type Scope } from "effect"
 import { agentTools, errored, taskOf, type AgentContext, type Child, type Woken } from "./agents.ts"
 import { projectDefaultModel } from "./config.ts"
 import { newId } from "./ids.ts"
 import { attachedSkills } from "./workspace.ts"
 import { Lifetime } from "./lifetime.ts"
-import { Providers, type Call, type Driver, type Saved, type Turn } from "./provider.ts"
+import { Providers, type Call, type Driver, type Hosted, type HostedChild, type Saved, type Turn } from "./provider.ts"
 import { Store, type Change, type NewEntry } from "./store.ts"
 import { builtinTools, type ToolOutcome } from "./tools/index.ts"
 import { interrupted } from "./tools/tool.ts"
@@ -57,6 +58,30 @@ const runEnd = (outcome: Outcome, message?: string): NewEntry => ({
 
 const agentAuthor = (conversation: ConversationId) => ({ _tag: "agent" as const, conversation })
 
+const isHosted = (conversation: Conversation) =>
+  conversation.lineage !== undefined && conversation.lineage.task === undefined
+
+const subagentEntry = (
+  call: CallId,
+  conversation: ConversationId,
+  title: string,
+  agentType: string | undefined,
+): NewEntry => ({
+  author: nisse,
+  body: {
+    _tag: "subagent",
+    call,
+    conversation,
+    title,
+    ...(agentType === undefined ? {} : { agentType }),
+  },
+})
+
+interface Made {
+  readonly turn: Turn
+  readonly close: (outcome: Outcome, message?: string) => Effect.Effect<Ended>
+}
+
 interface Ended {
   readonly entries: ReadonlyArray<NewEntry>
   readonly answer?: string
@@ -89,14 +114,14 @@ export class Conversations extends Context.Service<
       conversation: ConversationId,
       author: string,
       selection: ModelSelection,
-    ) => Effect.Effect<void, NoSuchConversation | UnknownProvider>
+    ) => Effect.Effect<void, NoSuchConversation | UnknownProvider | TakesNoInput>
     readonly submit: (
       conversation: ConversationId,
       requestId: string,
       author: string,
       text: string,
       steer: boolean,
-    ) => Effect.Effect<SubmissionId, NoSuchConversation>
+    ) => Effect.Effect<SubmissionId, NoSuchConversation | TakesNoInput>
     readonly interrupt: (conversation: ConversationId) => Effect.Effect<void, NoSuchConversation>
     readonly resolve: (
       conversation: ConversationId,
@@ -117,6 +142,7 @@ export class Conversations extends Context.Service<
       const runners = yield* FiberSet.make<void>()
       const active = new Set<ConversationId>()
       const runs = new Map<ConversationId, Fiber.Fiber<void, unknown>>()
+      const hostedStops = new Map<ConversationId, Effect.Effect<void>>()
       const waiting = new Map<ApprovalId, Deferred.Deferred<boolean>>()
       let settling = false
 
@@ -148,7 +174,7 @@ export class Conversations extends Context.Service<
         conversation: Conversation,
         provider: ProviderState,
         driver: Driver,
-      ) {
+      ): Effect.fn.Return<Made, never, Scope.Scope> {
         const id = conversation.id
         const spoken = yield* Ref.make("")
         const lastSaid = yield* Ref.make("")
@@ -253,6 +279,50 @@ export class Conversations extends Context.Service<
 
         const tools = [...builtinTools, ...agentTools(agentContext(conversation, driver))]
 
+        const host = (child: HostedChild) =>
+          Effect.gen(function* () {
+            yield* flush
+            const { effort: _, ...model } = conversation.model
+            const started = store.start(conversation.cwd, model, conversation.approvals, {
+              parent: id,
+              root: conversation.lineage?.root ?? id,
+              call: child.call,
+              title: child.title,
+              ...(child.agentType === undefined ? {} : { agentType: child.agentType }),
+            })
+            store.commit(id, { entries: [subagentEntry(child.call, started.id, child.title, child.agentType)] })
+            store.commit(started.id, {
+              entries: [
+                {
+                  author: agentAuthor(id),
+                  body: { _tag: "user", submission: newId() as SubmissionId, text: child.prompt },
+                },
+              ],
+              status: "working",
+            })
+            const made = yield* makeTurn(started, { state: undefined, seq: 0 }, driver)
+            hostedStops.set(started.id, child.stop)
+            let ended = false
+            const end = (outcome: Outcome, text: string) =>
+              Effect.gen(function* () {
+                if (ended) return
+                ended = true
+                hostedStops.delete(started.id)
+                const lastSaid = store.transcript(started.id).findLast((entry) => entry.body._tag === "message")?.body
+                if (
+                  outcome === "answered" &&
+                  text !== "" &&
+                  !(lastSaid?._tag === "message" && lastSaid.text === text)
+                ) {
+                  yield* made.turn.message(text)
+                }
+                const { entries } = yield* made.close(outcome, outcome === "failed" ? text : undefined)
+                store.commit(started.id, { entries, live: [{ _tag: "clear" }], status: "idle" })
+              })
+            yield* Effect.addFinalizer(() => end("interrupted", ""))
+            return { turn: made.turn, end } satisfies Hosted
+          })
+
         const turn: Turn = {
           conversation,
           transcript: Effect.sync(() => providerTranscript(conversation)),
@@ -286,6 +356,7 @@ export class Conversations extends Context.Service<
           recordCall,
           recordResult,
           approve,
+          host,
           toolOutput: (call, text) => (text === "" ? Effect.void : live({ _tag: "output", call, append: text })),
           runTool: (call, tool = tools.find((known) => known.spec.name === call.tool)) =>
             Effect.gen(function* () {
@@ -415,7 +486,7 @@ export class Conversations extends Context.Service<
           if (answer === undefined) return
           const { conversation } = yield* Effect.orDie(store.state(id))
           const lineage = conversation.lineage
-          if (!lineage) return
+          if (lineage?.task === undefined) return
           const parent = yield* Effect.orDie(store.state(lineage.parent))
           yield* deliver(id, lineage.parent, answer, {
             kind: "final_answer",
@@ -536,18 +607,7 @@ export class Conversations extends Context.Service<
           }
           const started = store.start(parent.cwd, child.model, parent.approvals, lineage)
           store.commit(parent.id, {
-            entries: [
-              {
-                author: nisse,
-                body: {
-                  _tag: "subagent",
-                  call: child.call,
-                  conversation: started.id,
-                  title: child.title,
-                  ...(child.agentType === undefined ? {} : { agentType: child.agentType }),
-                },
-              },
-            ],
+            entries: [subagentEntry(child.call, started.id, child.title, child.agentType)],
           })
           return Effect.as(
             post(parent.id, started.id, message, { kind: "new_task", task: child.task, sender: taskOf(parent) }),
@@ -577,7 +637,8 @@ export class Conversations extends Context.Service<
           [conversation.id, ...descendants(conversation)],
           (id) => {
             const fiber = runs.get(id)
-            return fiber ? Fiber.interrupt(fiber) : Effect.void
+            if (fiber) return Fiber.interrupt(fiber)
+            return id === conversation.id ? (hostedStops.get(id) ?? Effect.void) : Effect.void
           },
           { concurrency: "unbounded", discard: true },
         )
@@ -598,7 +659,7 @@ export class Conversations extends Context.Service<
         limits: providers.agents,
         types: driver.agentTypes(caller.cwd),
         models: driver.models(false),
-        family: () => familyOf(caller),
+        family: () => familyOf(caller).filter((member) => !isHosted(member.conversation)),
         hasWork: (id) => store.nextQueued(id) !== undefined,
         transcript: (id) => store.transcript(id),
         spawn: (child, message) => spawn(caller, child, message),
@@ -621,8 +682,20 @@ export class Conversations extends Context.Service<
         return { provider: fallback.provider, ...given }
       }
 
+      const strand = (id: ConversationId) =>
+        Effect.gen(function* () {
+          const dangling = danglingIn(store.transcript(id))
+          yield* expire(id, dangling.approvals)
+          store.commit(id, {
+            entries: [...[...dangling.calls].map(interruptedResult), runEnd("interrupted")],
+            live: [{ _tag: "clear" }],
+            status: "idle",
+          })
+        })
+
       for (const conversation of new Set([...store.openRuns(), ...store.pending()])) {
-        yield* wake(conversation)
+        const { conversation: found } = yield* Effect.orDie(store.state(conversation))
+        yield* isHosted(found) ? strand(conversation) : wake(conversation)
       }
 
       return Conversations.of({
@@ -636,7 +709,8 @@ export class Conversations extends Context.Service<
           }),
         selectModel: (conversation, author, selection) =>
           Effect.gen(function* () {
-            yield* store.state(conversation)
+            const found = yield* store.state(conversation)
+            if (isHosted(found.conversation)) return yield* new TakesNoInput({ conversation })
             if (!providers.drivers.has(selection.provider)) {
               return yield* new UnknownProvider({ provider: selection.provider })
             }
@@ -647,7 +721,8 @@ export class Conversations extends Context.Service<
           }),
         submit: (conversation, requestId, author, text, steer) =>
           Effect.gen(function* () {
-            yield* store.state(conversation)
+            const found = yield* store.state(conversation)
+            if (isHosted(found.conversation)) return yield* new TakesNoInput({ conversation })
             const existing = store.submissionFor(conversation, requestId)
             if (existing) return existing
             const id = newId() as SubmissionId

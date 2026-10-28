@@ -7,10 +7,11 @@ import type {
   Entry,
   ModelInfo,
   ModelSelection,
+  Outcome,
   ProviderHealth,
   Skill,
 } from "@nisse/protocol"
-import { Context, Effect, Schema } from "effect"
+import { Context, Effect, Schema, type Scope } from "effect"
 import type { AgentLimits } from "./agents.ts"
 import type { Tool, ToolOutcome } from "./tools/index.ts"
 import type { AgentType } from "./workspace.ts"
@@ -28,6 +29,19 @@ export interface Saved {
   readonly state?: unknown
 }
 
+export interface HostedChild {
+  readonly call: CallId
+  readonly title: string
+  readonly agentType?: string
+  readonly prompt: string
+  readonly stop: Effect.Effect<void>
+}
+
+export interface Hosted {
+  readonly turn: Turn
+  readonly end: (outcome: Outcome, text: string) => Effect.Effect<void>
+}
+
 export interface Turn {
   readonly conversation: Conversation
   readonly transcript: Effect.Effect<ReadonlyArray<Entry>>
@@ -42,6 +56,7 @@ export interface Turn {
   readonly recordResult: (call: CallId, outcome: ToolOutcome, saved?: Saved) => Effect.Effect<void>
   readonly toolOutput: (call: CallId, text: string) => Effect.Effect<void>
   readonly steers: Effect.Effect<ReadonlyArray<string>>
+  readonly host: (child: HostedChild) => Effect.Effect<Hosted, never, Scope.Scope>
 }
 
 export interface SignInFlow {

@@ -314,3 +314,32 @@ test("a call a subagent's subagent asks about shows on the card above it, and ct
   session.type("\x03")
   await session.exited
 }, 30_000)
+
+test("a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent", async () => {
+  const nisseHome = home()
+  const env = nisseEnv(nisseHome, {
+    FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/subagent.ndjson"),
+  })
+  const parent = screenSession(["--provider", "claude"], env)
+  await parent.waitFor((screen) => screen.includes("READY"))
+  parent.type("go\r")
+  const screen = await parent.waitFor(
+    (screen) =>
+      /⧉ Find gnome location in notes \(general-purpose\) +done/.test(screen) &&
+      screen.includes("Under the floor.") &&
+      screen.includes("READY"),
+  )
+  expect(screen).not.toContain("Subagent hand-back")
+  parent.type("\x03")
+  await parent.exited
+
+  const client = await RawClient.connect(nisseHome.socket)
+  const listed = (await client.call("conversation/list")).result as Array<{ id: string; lineage?: unknown }>
+  client.close()
+  const child = listed.find((conversation) => conversation.lineage !== undefined)!
+  const own = screenSession(["--conversation", child.id], env)
+  const opened = await own.waitFor((screen) => screen.includes("INPUT GOES THROUGH ITS PARENT"))
+  expect(opened).toContain("the gnome lives under the floor")
+  own.type("\x03")
+  await own.exited
+}, 40_000)
