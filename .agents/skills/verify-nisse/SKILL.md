@@ -89,8 +89,9 @@ to settle and stops it, and the next client starts one on the new code.
   `WAITING`, the prompt panel's titles `PROMPT`, `QUEUE · tab` and
   `STEER · tab`, the speaker bars `ADA` and `NISSE`, `queued · <text>` and
   `steering · <text>`, a call's `▸ Tool(subject)`, `allow this call?`,
-  `✓ allowed by <name>` and `✗ denied by <name>`, a run's end `◆ interrupted`
-  or `✗ <message>`, and the exit line `resume with: nisse --conversation <id>`.
+  `✓ allowed by <name>` and `✗ denied by <name>`, `with <skill>, <skill>`
+  under a message that named skills, a run's end `◆ interrupted` or
+  `✗ <message>`, and the exit line `resume with: nisse --conversation <id>`.
   The splash lists each provider as `● <id> <account>` or `○ <id> signed out`
   over `^L  sign in`; a sign-in shows in the `SIGN IN · <provider>` panel over
   `esc  cancel`; the model list is the `MODEL` panel, whose chosen row ends in
@@ -103,8 +104,9 @@ to settle and stops it, and the next client starts one on the new code.
 - **Wire.** `drive.ts r1 rpc <method> '<params json>'` makes one call, for
   `initialize`, `conversation/start`, `conversation/list`,
   `conversation/submit`, `conversation/interrupt`, `approval/resolve`,
-  `conversation/select_model`, `providers/list`, `models/list`, `auth/start`,
-  `auth/respond`, `auth/cancel`, `auth/logout` and `server/stop`.
+  `conversation/select_model`, `skills/list`, `providers/list`,
+  `models/list`, `auth/start`, `auth/respond`, `auth/cancel`, `auth/logout`
+  and `server/stop`.
   `drive.ts r1 watch <conversation>` subscribes as a second client and prints
   each delivery as one JSON line: the snapshot first, then each commit.
   `--submit <text>` submits as `ada` once the snapshot is in, so nothing races;

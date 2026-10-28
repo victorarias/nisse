@@ -64,6 +64,11 @@ paths, handles, state, commands and proof.
   cut-off calls; needs a signed-in Claude Code.
 - [OpenAI](./openai.md): ChatGPT's answers and tools, token refresh and
   sign-in failures; the real journeys need a ChatGPT sign-in.
+- [Instructions and skills](./skills.md): `skills/list`, `/name` and `$name`
+  carry a skill's `SKILL.md` with a message; OpenAI is told the `AGENTS.md`
+  files and skills.
+- [Code mode](./code-mode.md): OpenAI's code-mode models run nisse's tools
+  from scripts in `codex-code-mode-host`; a missing host fails the run.
 - [Sign-in](./sign-in.md): the splash, `^L`, `nisse login` and `logout`, and
   `auth/*` show, start, answer and cancel a sign-in by browser, device code
   or Claude Code's terminal.

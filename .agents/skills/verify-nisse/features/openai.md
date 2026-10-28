@@ -31,6 +31,11 @@ provider signed out with that message. A provider `config.toml` names with
   one from the next run.
 - `openai-sign-in` signs in through a browser or a device code, in
   [Sign-in](./sign-in.md).
+- `openai-instructions` tells ChatGPT the `AGENTS.md` files and skills, and
+  sends the skills a message names, in
+  [Instructions and skills](./skills.md).
+- `openai-code-mode` runs code-mode models' scripts, in
+  [Code mode](./code-mode.md).
 
 ## How to get to it (user POV)
 
