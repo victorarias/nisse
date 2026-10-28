@@ -71,6 +71,7 @@ export class FakeOpenAi {
         callbackPort: 0,
         instructions,
         home: home.dir,
+        claudeConfig: join(home.dir, "claude"),
         ...(codeModeHost === undefined ? {} : { codeModeHost }),
       })
   }

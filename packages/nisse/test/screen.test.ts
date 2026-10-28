@@ -263,3 +263,31 @@ test("nisse login hands what the person types to Claude's own sign-in", async ()
   expect(await session.exited).toBe(0)
   expect(readFileSync(join(nisseHome.dir, "fake-claude", "log.ndjson"), "utf8")).toContain('"authAnswer":"the-code"')
 }, 40_000)
+
+test("a subagent shows as a card under its parent, and ctrl+y answers the call it asks about", async () => {
+  const nisseHome = home()
+  const env = await scripted(nisseHome, [
+    { tool: { name: "spawn_agent", input: { task_name: "scribe", message: "write it down" } } },
+    { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
+    { text: "the scribe is done" },
+    { agent: "/root/scribe", tool: { name: "Bash", input: { command: "echo scribbled" } } },
+    { agent: "/root/scribe", text: "wrote it" },
+  ])
+  const session = screenSession([], env)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("delegate\r")
+  await session.waitFor(
+    (screen) =>
+      screen.includes("⧉ scribe") &&
+      screen.includes("waiting on you") &&
+      screen.includes("allow Bash(echo scribbled)?"),
+  )
+  session.type("\x19")
+  const screen = await session.waitFor(
+    (screen) => screen.includes("the scribe is done") && screen.includes("READY") && /⧉ scribe +done/.test(screen),
+  )
+  expect(screen).toContain("/root/scribe")
+  expect(screen).toContain("wrote it")
+  session.type("\x03")
+  await session.exited
+})

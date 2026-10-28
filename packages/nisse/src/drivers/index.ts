@@ -1,9 +1,11 @@
 import type { ModelSelection } from "@nisse/protocol"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, type Scope } from "effect"
 import { expandHome, type HomeConfig, type Instance } from "../config.ts"
 import type { Home } from "../home.ts"
 import instructions from "../instructions.md" with { type: "text" }
+import { defaultLimits } from "../agents.ts"
 import { Providers, type Driver } from "../provider.ts"
 import { claudeDriver, type ClaudeOptions } from "./claude/index.ts"
 import { AUTH_BASE, BASE_URL, CALLBACK_PORT, openAiDriver, type OpenAiOptions } from "./openai/index.ts"
@@ -27,6 +29,7 @@ export const openAiOptions =
     callbackPort: CALLBACK_PORT,
     instructions,
     home: home.dir,
+    claudeConfig: process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
     ...(process.env.NISSE_CODE_MODE_HOST ? { codeModeHost: process.env.NISSE_CODE_MODE_HOST } : {}),
   })
 
@@ -67,9 +70,14 @@ export const providersLayer = (options: ProviderOptions) =>
       for (const [id, instance] of Object.entries(instances))
         drivers.set(id, yield* instanceDriver(options, id, instance))
       const defaultModel: ModelSelection | undefined = options.config.default_model
+      const agents = options.config.agents
       return Providers.of({
         drivers,
         preferred: options.preferred,
+        agents: {
+          maxDepth: agents?.max_depth ?? defaultLimits.maxDepth,
+          maxThreads: agents?.max_threads ?? defaultLimits.maxThreads,
+        },
         ...(defaultModel ? { defaultModel } : {}),
       })
     }),

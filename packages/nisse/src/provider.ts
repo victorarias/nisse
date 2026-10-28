@@ -11,7 +11,9 @@ import type {
   Skill,
 } from "@nisse/protocol"
 import { Context, Effect, Schema } from "effect"
-import type { Tool, ToolOutcome, ToolSpec } from "./tools/index.ts"
+import type { AgentLimits } from "./agents.ts"
+import type { Tool, ToolOutcome } from "./tools/index.ts"
+import type { AgentType } from "./workspace.ts"
 
 export class ProviderError extends Schema.TaggedError<ProviderError>()("ProviderError", { message: Schema.String }) {}
 
@@ -31,7 +33,7 @@ export interface Turn {
   readonly transcript: Effect.Effect<ReadonlyArray<Entry>>
   readonly providerState: unknown
   readonly providerSeq: number
-  readonly tools: ReadonlyArray<ToolSpec>
+  readonly tools: ReadonlyArray<Tool>
   readonly say: (text: string) => Effect.Effect<void>
   readonly message: (text: string, saved?: Saved) => Effect.Effect<void>
   readonly runTool: (call: Call, tool?: Tool) => Effect.Effect<ToolOutcome>
@@ -59,9 +61,10 @@ export interface Driver {
   readonly signIn: (method: AuthMethod, flow: SignInFlow) => Effect.Effect<void, ProviderError>
   readonly signOut: Effect.Effect<void, ProviderError>
   readonly skills: (cwd: string) => ReadonlyArray<Skill>
+  readonly agentTypes: (cwd: string) => ReadonlyArray<AgentType>
 }
 
-export const noSkills = { skills: () => [] } satisfies Pick<Driver, "skills">
+export const noSkills = { skills: () => [], agentTypes: () => [] } satisfies Pick<Driver, "skills" | "agentTypes">
 
 export const nothingToSignIn = {
   signInMethods: [],
@@ -75,5 +78,6 @@ export class Providers extends Context.Service<
     readonly drivers: ReadonlyMap<string, Driver>
     readonly preferred: string
     readonly defaultModel?: ModelSelection
+    readonly agents: AgentLimits
   }
 >()("nisse/Providers") {}

@@ -1,4 +1,4 @@
-import type { CallId, Entry } from "@nisse/protocol"
+import type { CallId, Conversation, Entry } from "@nisse/protocol"
 import { Effect, Semaphore } from "effect"
 import { rmSync } from "node:fs"
 import { ProviderError, type Call, type Driver, type Health, type Turn } from "../../provider.ts"
@@ -17,7 +17,8 @@ import {
 import { accountOf, isExpired, loadCredentials, refreshed, saveCredentials, type Credentials } from "./credentials.ts"
 import { CALLBACK_PORT, signIn } from "./signin.ts"
 import { events } from "./sse.ts"
-import { agentsMd, skillsFor } from "../../workspace.ts"
+import { mailText } from "../../agents.ts"
+import { agentsMd, agentTypes, skillsFor } from "../../workspace.ts"
 
 export const BASE_URL = "https://chatgpt.com/backend-api"
 export const AUTH_BASE = "https://auth.openai.com"
@@ -35,6 +36,7 @@ export interface OpenAiOptions {
   readonly callbackPort: number
   readonly instructions: string
   readonly home: string
+  readonly claudeConfig: string
   readonly codeModeHost?: string
 }
 
@@ -46,7 +48,8 @@ A skill is a folder of instructions for one kind of task, in a \`SKILL.md\` file
 
 `
 
-const instructionsFor = (options: OpenAiOptions, cwd: string) => {
+const instructionsFor = (options: OpenAiOptions, conversation: Conversation) => {
+  const cwd = conversation.cwd
   let text = `${options.instructions}\nThe working directory is ${cwd}.\n`
   for (const file of agentsMd(cwd, options.home)) {
     text += `\n# AGENTS.md instructions from ${file.path}\n\n${file.text.trimEnd()}\n`
@@ -55,6 +58,9 @@ const instructionsFor = (options: OpenAiOptions, cwd: string) => {
   if (skills.length > 0) {
     text += `\n${SKILLS}${skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.path})\n`).join("")}`
   }
+  const wanted = conversation.lineage?.agentType
+  const agentType = wanted ? agentTypes(cwd, options.claudeConfig).find((type) => type.name === wanted) : undefined
+  if (agentType) text += `\n# You are a ${agentType.name} agent\n\n${agentType.instructions}\n`
   return text
 }
 
@@ -107,7 +113,16 @@ const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
     stopped = []
   }
   for (const { body } of transcript) {
-    if (body._tag === "user") said(userItem(body))
+    if (body._tag === "user")
+      said(
+        body.mail
+          ? {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: mailText(body.mail, body.text) }],
+            }
+          : userItem(body),
+      )
     else if (body._tag === "message")
       said({ type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] })
     else if (body._tag === "tool_call") {
@@ -368,6 +383,7 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
       }),
     signInMethods: ["browser", "device_code"],
     skills: (cwd) => skillsFor(cwd, options.home),
+    agentTypes: (cwd) => agentTypes(cwd, options.claudeConfig),
     signIn: (method, flow) =>
       Effect.gen(function* () {
         const credentials = yield* signIn(
@@ -387,20 +403,20 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
     ),
     run: (turn) =>
       Effect.gen(function* () {
-        const instructions = instructionsFor(options, turn.conversation.cwd)
+        const instructions = instructionsFor(options, turn.conversation)
         const { model = MODEL, effort } = turn.conversation.model
-        let tools: ReadonlyArray<unknown> = turn.tools.map((tool) => ({
+        let tools: ReadonlyArray<unknown> = turn.tools.map(({ spec }) => ({
           type: "function",
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
+          name: spec.name,
+          description: spec.description,
+          parameters: spec.parameters,
           strict: false,
         }))
         let runTool = (call: Call) => turn.runTool(call)
         if (models.wantsCodeMode(model)) {
           const program = installedHost(options.codeModeHost, options.home)
           if (program === undefined) return yield* failure(missingHost)
-          tools = codeModeTools()
+          tools = codeModeTools(turn.tools)
           runTool = yield* codeModeRun(host, program, turn)
         }
         while (true) {

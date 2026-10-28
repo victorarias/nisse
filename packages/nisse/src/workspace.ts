@@ -77,6 +77,13 @@ const frontmatter = (text: string): Map<string, string> => {
   return fields
 }
 
+const afterFrontmatter = (text: string) => {
+  const lines = text.split(/\r?\n/)
+  if (lines[0]?.trimEnd() !== "---") return text
+  const end = lines.findIndex((line, index) => index > 0 && line.trimEnd() === "---")
+  return end < 0 ? "" : lines.slice(end + 1).join("\n")
+}
+
 const readSkill = (folder: string): Skill | undefined => {
   const path = join(folder, "SKILL.md")
   const text = read(path)
@@ -124,4 +131,43 @@ export const attachedSkills = (text: string, skills: ReadonlyArray<Skill>): Arra
     if (skillText !== undefined) attached.push({ name: skill.name, path: skill.path, text: skillText })
   }
   return attached
+}
+
+export interface AgentType {
+  readonly name: string
+  readonly description: string
+  readonly model?: string
+  readonly instructions: string
+}
+
+const readAgentType = (path: string): AgentType | undefined => {
+  const text = read(path)
+  if (text === undefined) return undefined
+  const fields = frontmatter(text)
+  const model = fields.get("model")
+  return {
+    name: fields.get("name") || basename(path, ".md"),
+    description: fields.get("description") ?? "",
+    ...(model ? { model } : {}),
+    instructions: afterFrontmatter(text).trim(),
+  }
+}
+
+export const agentTypes = (cwd: string, claudeConfig: string): Array<AgentType> => {
+  const roots = [
+    ...projectDirs(cwd)
+      .reverse()
+      .map((dir) => join(dir, ".claude", "agents")),
+    join(claudeConfig, "agents"),
+  ]
+  const types = new Map<string, AgentType>()
+  for (const root of roots) {
+    for (const path of folders(root)
+      .filter((path) => path.endsWith(".md"))
+      .sort()) {
+      const type = readAgentType(path)
+      if (type && !types.has(type.name)) types.set(type.name, type)
+    }
+  }
+  return [...types.values()].sort((a, b) => a.name.localeCompare(b.name))
 }

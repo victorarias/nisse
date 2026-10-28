@@ -12,7 +12,7 @@ the `rust` branch.
 
 ## Status
 
-R4, skills and code mode. What runs today:
+R5, subagents. What runs today:
 
 - One server per home, shared by every client. The TUI or `exec` starts it
   when none runs, and it exits 30 seconds after the last client leaves and the
@@ -63,6 +63,8 @@ R4, skills and code mode. What runs today:
   `NISSE_HOME/skills`; the nearest skill of a name wins. A message that starts
   with `/name` or holds `$name` carries that skill's `SKILL.md` with it, and
   every client sees which skills it carried.
+- Subagents on OpenAI, each a conversation of its own under the one that
+  started it, with Codex's agent tools.
 - The neon TUI, in OpenTUI with Solid.
 
 ## Try it
@@ -128,7 +130,7 @@ the one the Claude Agent SDK bundles.
 
 Most of OpenAI's models work in code mode: they get two tools, `exec` and
 `wait`, and write JavaScript that calls nisse's tools (`Read`, `Write`, `Edit`,
-`Bash`, `Grep`, `Glob`, and Codex's `apply_patch`). Each call a script makes is
+`Bash`, `Grep`, `Glob`, the agent tools, and Codex's `apply_patch`). Each call a script makes is
 an ordinary nisse tool call under the script's own, committed and asked about
 like any other; the model sees only the script and what it printed. Scripts run
 in Codex's `codex-code-mode-host`, which nisse starts on the first script and
@@ -141,12 +143,41 @@ scripts/code-mode-host.sh   # into NISSE_HOME/bin
 nisse looks for the host at `NISSE_CODE_MODE_HOST`, then in `NISSE_HOME/bin`,
 then on `PATH`. `gpt-5.5` keeps direct tools and needs no host.
 
+### Subagents
+
+On OpenAI, nisse runs Codex's agent tools: `spawn_agent`, `send_message`,
+`followup_task`, `wait_agent`, `list_agents` and `interrupt_agent`. A spawned
+agent works in a conversation of its own, on its parent's provider and in its
+directory, and is addressed by a task name such as `/root/explore`. It starts
+from its parent's history unless told `fork_turns: "none"`, may name another
+model of the same provider, and hands its last message of each run to its
+parent. A new task starts a run; other messages join the recipient's run at its
+next step, or its transcript when it has none.
+
+The parent's transcript shows a card for each subagent: what it last did, and
+whether it works, waits on a person or ended. A call a subagent asks about shows
+on its card, and `^Y` or `^N` answers it from the parent. `Esc` stops the run
+and every subagent's under it.
+
+Agent types come from `.claude/agents/*.md`, from the directory up to the
+repository root, then from Claude Code's config directory's `agents/`; a type's
+`model` applies when it names an OpenAI model. How deep subagents nest and how
+many run at once in one tree are set in `NISSE_HOME/config.toml`, with Codex's
+defaults:
+
+```toml
+[agents]
+max_depth = 1
+max_threads = 6
+```
+
 When `NISSE_MODEL_SCRIPT` is set, a server this starts adds the scripted
 provider and uses it by default; the variable names a JSON file of scripted
 steps (or is empty), such as
 `[{"tool": {"name": "Bash", "input": {"command": "ls"}}}, {"text": "hello", "delayMs": 50}, {"text": "half", "fail": "provider went away"}]`.
 A step with a tool calls it and moves on to the next step; a step without one
-ends the run.
+ends the run. A step with `"agent": "/root/explore"` is played only by that
+subagent; the others are the root's.
 
 ## Protocol
 

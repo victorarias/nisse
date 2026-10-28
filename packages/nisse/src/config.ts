@@ -13,8 +13,14 @@ const Instance = Schema.Struct({
 })
 export type Instance = typeof Instance.Type
 
+const AgentsConfig = Schema.Struct({
+  max_depth: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  max_threads: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+})
+
 const HomeConfig = Schema.Struct({
   default_model: Schema.optionalKey(ModelSelection),
+  agents: Schema.optionalKey(AgentsConfig),
   providers: Schema.optionalKey(Schema.Record(Schema.String, Instance)),
 })
 export type HomeConfig = typeof HomeConfig.Type

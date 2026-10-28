@@ -1,3 +1,4 @@
+import type { CallId } from "@nisse/protocol"
 import { Effect, Schema } from "effect"
 
 export interface ToolOutcome {
@@ -6,6 +7,8 @@ export interface ToolOutcome {
 }
 
 export interface ToolContext {
+  readonly call: CallId
+  readonly parent?: CallId
   readonly cwd: string
   readonly output: (text: string) => Effect.Effect<void>
 }

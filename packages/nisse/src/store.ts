@@ -16,7 +16,9 @@ import {
   type EntryBody,
   type EntryId,
   type Live,
+  type Lineage,
   type LiveChange,
+  type Mail,
   type ModelSelection,
   type Queued,
   type Snapshot,
@@ -42,6 +44,7 @@ export interface Change {
     readonly author: Author
     readonly text: string
     readonly steer: boolean
+    readonly mail?: Mail
   }
   readonly place?: ReadonlyArray<SubmissionId>
   readonly attempts?: number
@@ -71,6 +74,7 @@ interface ConversationRow {
   attempts: number
   provider_state: string | null
   provider_seq: number
+  lineage: string | null
 }
 
 interface SubmissionRow {
@@ -78,6 +82,7 @@ interface SubmissionRow {
   author: string
   text: string
   steer: number
+  mail: string | null
 }
 
 const toConversation = (row: ConversationRow): Conversation => ({
@@ -86,6 +91,7 @@ const toConversation = (row: ConversationRow): Conversation => ({
   createdAt: row.created_at,
   model: JSON.parse(row.model) as ModelSelection,
   approvals: row.approvals,
+  ...(row.lineage === null ? {} : { lineage: JSON.parse(row.lineage) as Lineage }),
 })
 
 const toQueued = (row: SubmissionRow): Queued => ({
@@ -93,7 +99,10 @@ const toQueued = (row: SubmissionRow): Queued => ({
   author: JSON.parse(row.author) as Author,
   text: row.text,
   steer: row.steer === 1,
+  ...(row.mail === null ? {} : { mail: JSON.parse(row.mail) as Mail }),
 })
+
+const STARTS_A_RUN = "(mail IS NULL OR mail ->> '$.kind' = 'new_task')"
 
 const applyLive = (live: Live, changes: ReadonlyArray<LiveChange>): Live => {
   let text = live.text
@@ -123,7 +132,8 @@ const applyLive = (live: Live, changes: ReadonlyArray<LiveChange>): Live => {
 export class Store extends Context.Service<
   Store,
   {
-    readonly start: (cwd: string, model: ModelSelection, approvals: Approvals) => Conversation
+    readonly start: (cwd: string, model: ModelSelection, approvals: Approvals, lineage?: Lineage) => Conversation
+    readonly family: (root: ConversationId) => ReadonlyArray<ConversationState>
     readonly lastModel: () => ModelSelection | undefined
     readonly list: () => ReadonlyArray<Conversation>
     readonly state: (conversation: ConversationId) => Effect.Effect<ConversationState, NoSuchConversation>
@@ -131,6 +141,7 @@ export class Store extends Context.Service<
     readonly submissionFor: (conversation: ConversationId, requestId: string) => SubmissionId | undefined
     readonly nextQueued: (conversation: ConversationId) => Queued | undefined
     readonly queuedSteers: (conversation: ConversationId) => ReadonlyArray<Queued>
+    readonly queuedMail: (conversation: ConversationId) => ReadonlyArray<Queued>
     readonly transcript: (conversation: ConversationId) => ReadonlyArray<Entry>
     readonly resolveApproval: (
       conversation: ConversationId,
@@ -161,13 +172,19 @@ export class Store extends Context.Service<
           "SELECT max(seq) AS seq FROM commits WHERE conversation = ?",
         )
         const queuedRows = db.query<SubmissionRow, [string]>(
-          "SELECT id, author, text, steer FROM submissions WHERE conversation = ? AND placed_seq IS NULL ORDER BY rowid",
+          "SELECT id, author, text, steer, mail FROM submissions WHERE conversation = ? AND placed_seq IS NULL ORDER BY rowid",
         )
         const nextQueuedRow = db.query<SubmissionRow, [string]>(
-          "SELECT id, author, text, steer FROM submissions WHERE conversation = ? AND placed_seq IS NULL ORDER BY rowid LIMIT 1",
+          `SELECT id, author, text, steer, mail FROM submissions WHERE conversation = ? AND placed_seq IS NULL AND ${STARTS_A_RUN} ORDER BY rowid LIMIT 1`,
         )
         const steerRows = db.query<SubmissionRow, [string]>(
-          "SELECT id, author, text, steer FROM submissions WHERE conversation = ? AND placed_seq IS NULL AND steer = 1 ORDER BY rowid",
+          "SELECT id, author, text, steer, mail FROM submissions WHERE conversation = ? AND placed_seq IS NULL AND steer = 1 ORDER BY rowid",
+        )
+        const mailRows = db.query<SubmissionRow, [string]>(
+          `SELECT id, author, text, steer, mail FROM submissions WHERE conversation = ? AND placed_seq IS NULL AND NOT ${STARTS_A_RUN} ORDER BY rowid`,
+        )
+        const familyRows = db.query<ConversationRow, [string, string]>(
+          "SELECT * FROM conversations WHERE id = ? OR root = ? ORDER BY created_at, rowid",
         )
         const entryRows = db.query<{ body: string }, [string]>(
           "SELECT body FROM entries WHERE conversation = ? ORDER BY seq, rowid",
@@ -211,8 +228,16 @@ export class Store extends Context.Service<
           if (change.submit) {
             const s = change.submit
             db.run(
-              "INSERT INTO submissions (id, conversation, request_id, author, text, steer) VALUES (?, ?, ?, ?, ?, ?)",
-              [s.id, conversation, s.requestId, JSON.stringify(s.author), s.text, s.steer ? 1 : 0],
+              "INSERT INTO submissions (id, conversation, request_id, author, text, steer, mail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+              [
+                s.id,
+                conversation,
+                s.requestId,
+                JSON.stringify(s.author),
+                s.text,
+                s.steer ? 1 : 0,
+                s.mail === undefined ? null : JSON.stringify(s.mail),
+              ],
             )
           }
           for (const submission of change.place ?? []) {
@@ -272,6 +297,7 @@ export class Store extends Context.Service<
                     author: change.submit.author,
                     text: change.submit.text,
                     steer: change.submit.steer,
+                    ...(change.submit.mail === undefined ? {} : { mail: change.submit.mail }),
                   },
                 }
               : {}),
@@ -303,6 +329,14 @@ export class Store extends Context.Service<
           return committed
         }
 
+        const stateOf = (row: ConversationRow): ConversationState => ({
+          conversation: toConversation(row),
+          status: row.status,
+          attempts: row.attempts,
+          providerState: row.provider_state === null ? undefined : JSON.parse(row.provider_state),
+          providerSeq: row.provider_seq,
+        })
+
         const findConversation = (conversation: ConversationId) =>
           Effect.suspend(() => {
             const row = conversationRow.get(conversation)
@@ -310,15 +344,26 @@ export class Store extends Context.Service<
           })
 
         return Store.of({
-          start: (cwd, model, approvals) => {
+          start: (cwd, model, approvals, lineage) => {
             const id = newId()
             const now = Date.now()
             db.run(
-              "INSERT INTO conversations (id, cwd, created_at, model, model_at, approvals, live) VALUES (?, ?, ?, ?, ?, ?, ?)",
-              [id, cwd, now, JSON.stringify(model), now, approvals, JSON.stringify({ text: "", output: {} })],
+              "INSERT INTO conversations (id, cwd, created_at, model, model_at, approvals, live, lineage, root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              [
+                id,
+                cwd,
+                now,
+                JSON.stringify(model),
+                now,
+                approvals,
+                JSON.stringify({ text: "", output: {} }),
+                lineage === undefined ? null : JSON.stringify(lineage),
+                lineage?.root ?? null,
+              ],
             )
             return toConversation(conversationRow.get(id)!)
           },
+          family: (root) => familyRows.all(root, root).map(stateOf),
           lastModel: () => {
             const row = db
               .query<
@@ -333,14 +378,7 @@ export class Store extends Context.Service<
               .query<ConversationRow, []>("SELECT * FROM conversations ORDER BY created_at DESC, rowid DESC")
               .all()
               .map(toConversation),
-          state: (conversation) =>
-            Effect.map(findConversation(conversation), (row) => ({
-              conversation: toConversation(row),
-              status: row.status,
-              attempts: row.attempts,
-              providerState: row.provider_state === null ? undefined : JSON.parse(row.provider_state),
-              providerSeq: row.provider_seq,
-            })),
+          state: (conversation) => Effect.map(findConversation(conversation), stateOf),
           commit,
           submissionFor: (conversation, requestId) =>
             db
@@ -354,6 +392,7 @@ export class Store extends Context.Service<
             return row ? toQueued(row) : undefined
           },
           queuedSteers: (conversation) => steerRows.all(conversation).map(toQueued),
+          queuedMail: (conversation) => mailRows.all(conversation).map(toQueued),
           transcript: (conversation) => entryRows.all(conversation).map((r) => JSON.parse(r.body) as Entry),
           resolveApproval: (conversation, approval, author, allow) =>
             Effect.suspend(() => {

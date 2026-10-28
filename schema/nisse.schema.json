@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nisse protocol",
-  "protocol": 3,
+  "protocol": 4,
   "methods": {
     "initialize": {
       "params": {
@@ -118,6 +118,47 @@
               "ask",
               "auto"
             ]
+          },
+          "lineage": {
+            "type": "object",
+            "properties": {
+              "parent": {
+                "type": "string"
+              },
+              "root": {
+                "type": "string",
+                "description": "The conversation people started, at the top of the tree."
+              },
+              "call": {
+                "type": "string",
+                "description": "The parent's call that started it."
+              },
+              "task": {
+                "type": "string",
+                "description": "Its task name, such as /root/explore, which agents address it by."
+              },
+              "title": {
+                "type": "string"
+              },
+              "agentType": {
+                "type": "string"
+              },
+              "forkedAt": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "It starts from its parent's transcript before this seq."
+              }
+            },
+            "required": [
+              "parent",
+              "root",
+              "call",
+              "task",
+              "title"
+            ],
+            "additionalProperties": true,
+            "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
           }
         },
         "required": [
@@ -180,6 +221,47 @@
                 "ask",
                 "auto"
               ]
+            },
+            "lineage": {
+              "type": "object",
+              "properties": {
+                "parent": {
+                  "type": "string"
+                },
+                "root": {
+                  "type": "string",
+                  "description": "The conversation people started, at the top of the tree."
+                },
+                "call": {
+                  "type": "string",
+                  "description": "The parent's call that started it."
+                },
+                "task": {
+                  "type": "string",
+                  "description": "Its task name, such as /root/explore, which agents address it by."
+                },
+                "title": {
+                  "type": "string"
+                },
+                "agentType": {
+                  "type": "string"
+                },
+                "forkedAt": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "It starts from its parent's transcript before this seq."
+                }
+              },
+              "required": [
+                "parent",
+                "root",
+                "call",
+                "task",
+                "title"
+              ],
+              "additionalProperties": true,
+              "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
             }
           },
           "required": [
@@ -266,6 +348,47 @@
                       "ask",
                       "auto"
                     ]
+                  },
+                  "lineage": {
+                    "type": "object",
+                    "properties": {
+                      "parent": {
+                        "type": "string"
+                      },
+                      "root": {
+                        "type": "string",
+                        "description": "The conversation people started, at the top of the tree."
+                      },
+                      "call": {
+                        "type": "string",
+                        "description": "The parent's call that started it."
+                      },
+                      "task": {
+                        "type": "string",
+                        "description": "Its task name, such as /root/explore, which agents address it by."
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agentType": {
+                        "type": "string"
+                      },
+                      "forkedAt": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991,
+                        "description": "It starts from its parent's transcript before this seq."
+                      }
+                    },
+                    "required": [
+                      "parent",
+                      "root",
+                      "call",
+                      "task",
+                      "title"
+                    ],
+                    "additionalProperties": true,
+                    "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
                   }
                 },
                 "required": [
@@ -335,6 +458,26 @@
                             "_tag"
                           ],
                           "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "agent"
+                              ]
+                            },
+                            "conversation": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "conversation"
+                          ],
+                          "additionalProperties": true,
+                          "description": "The model of another conversation in the same tree, such as a subagent's parent."
                         }
                       ]
                     },
@@ -378,6 +521,35 @@
                                 "additionalProperties": true,
                                 "description": "A skill's SKILL.md as it was when the input named it."
                               }
+                            },
+                            "mail": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "new_task",
+                                    "message",
+                                    "final_answer"
+                                  ],
+                                  "description": "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent."
+                                },
+                                "task": {
+                                  "type": "string",
+                                  "description": "The recipient's task name, such as /root/explore."
+                                },
+                                "sender": {
+                                  "type": "string",
+                                  "description": "The sender's task name."
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "task",
+                                "sender"
+                              ],
+                              "additionalProperties": true,
+                              "description": "What one agent sent another."
                             }
                           },
                           "required": [
@@ -578,6 +750,37 @@
                           ],
                           "additionalProperties": true,
                           "description": "Someone switched the conversation's model; it answers with it from the next run on."
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "subagent"
+                              ]
+                            },
+                            "call": {
+                              "type": "string"
+                            },
+                            "conversation": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "agentType": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "call",
+                            "conversation",
+                            "title"
+                          ],
+                          "additionalProperties": true,
+                          "description": "The call started a subagent, which works in a conversation of its own."
                         }
                       ]
                     }
@@ -654,6 +857,26 @@
                             "_tag"
                           ],
                           "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "agent"
+                              ]
+                            },
+                            "conversation": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "conversation"
+                          ],
+                          "additionalProperties": true,
+                          "description": "The model of another conversation in the same tree, such as a subagent's parent."
                         }
                       ]
                     },
@@ -662,6 +885,35 @@
                     },
                     "steer": {
                       "type": "boolean"
+                    },
+                    "mail": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "new_task",
+                            "message",
+                            "final_answer"
+                          ],
+                          "description": "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent."
+                        },
+                        "task": {
+                          "type": "string",
+                          "description": "The recipient's task name, such as /root/explore."
+                        },
+                        "sender": {
+                          "type": "string",
+                          "description": "The sender's task name."
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "task",
+                        "sender"
+                      ],
+                      "additionalProperties": true,
+                      "description": "What one agent sent another."
                     }
                   },
                   "required": [
@@ -768,6 +1020,26 @@
                             "_tag"
                           ],
                           "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "agent"
+                              ]
+                            },
+                            "conversation": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "conversation"
+                          ],
+                          "additionalProperties": true,
+                          "description": "The model of another conversation in the same tree, such as a subagent's parent."
                         }
                       ]
                     },
@@ -811,6 +1083,35 @@
                                 "additionalProperties": true,
                                 "description": "A skill's SKILL.md as it was when the input named it."
                               }
+                            },
+                            "mail": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "new_task",
+                                    "message",
+                                    "final_answer"
+                                  ],
+                                  "description": "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent."
+                                },
+                                "task": {
+                                  "type": "string",
+                                  "description": "The recipient's task name, such as /root/explore."
+                                },
+                                "sender": {
+                                  "type": "string",
+                                  "description": "The sender's task name."
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "task",
+                                "sender"
+                              ],
+                              "additionalProperties": true,
+                              "description": "What one agent sent another."
                             }
                           },
                           "required": [
@@ -1011,6 +1312,37 @@
                           ],
                           "additionalProperties": true,
                           "description": "Someone switched the conversation's model; it answers with it from the next run on."
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "subagent"
+                              ]
+                            },
+                            "call": {
+                              "type": "string"
+                            },
+                            "conversation": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "agentType": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "call",
+                            "conversation",
+                            "title"
+                          ],
+                          "additionalProperties": true,
+                          "description": "The call started a subagent, which works in a conversation of its own."
                         }
                       ]
                     }
@@ -1165,6 +1497,26 @@
                           "_tag"
                         ],
                         "additionalProperties": true
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "_tag": {
+                            "type": "string",
+                            "enum": [
+                              "agent"
+                            ]
+                          },
+                          "conversation": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "_tag",
+                          "conversation"
+                        ],
+                        "additionalProperties": true,
+                        "description": "The model of another conversation in the same tree, such as a subagent's parent."
                       }
                     ]
                   },
@@ -1173,6 +1525,35 @@
                   },
                   "steer": {
                     "type": "boolean"
+                  },
+                  "mail": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "new_task",
+                          "message",
+                          "final_answer"
+                        ],
+                        "description": "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent."
+                      },
+                      "task": {
+                        "type": "string",
+                        "description": "The recipient's task name, such as /root/explore."
+                      },
+                      "sender": {
+                        "type": "string",
+                        "description": "The sender's task name."
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "task",
+                      "sender"
+                    ],
+                    "additionalProperties": true,
+                    "description": "What one agent sent another."
                   }
                 },
                 "required": [
@@ -1265,7 +1646,8 @@
         "type": "object",
         "properties": {
           "conversation": {
-            "type": "string"
+            "type": "string",
+            "description": "Stops its run and the runs of every subagent under it."
           }
         },
         "required": [

@@ -1,7 +1,17 @@
 import { createCliRenderer, type CliRenderer, type KeyBinding, type TextareaRenderable } from "@opentui/core"
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { authEnded } from "@nisse/protocol"
-import type { ApprovalId, AuthState, CallId, Entry, ModelSelection, Outcome, ProviderSnapshot } from "@nisse/protocol"
+import type {
+  ApprovalId,
+  AuthState,
+  CallId,
+  ConversationId,
+  Delivery,
+  Entry,
+  ModelSelection,
+  Outcome,
+  ProviderSnapshot,
+} from "@nisse/protocol"
 import { Deferred, Effect, Fiber, Stream } from "effect"
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore, produce } from "solid-js/store"
@@ -43,9 +53,11 @@ const promptKeys: Array<KeyBinding> = [
   { name: "j", ctrl: true, action: "newline" },
 ]
 
+type Children = Record<ConversationId, View>
+
 interface Actions {
   readonly submit: (text: string, steer: boolean) => void
-  readonly answer: (approval: ApprovalId, allow: boolean) => void
+  readonly answer: (conversation: ConversationId, approval: ApprovalId, allow: boolean) => void
   readonly interrupt: () => void
   readonly quit: () => void
   readonly openPicker: () => void
@@ -69,7 +81,68 @@ const Tag = (props: { label: string; color: string }) => {
   )
 }
 
-const authorLabel = (entry: Entry) => (entry.author._tag === "person" ? entry.author.name.toUpperCase() : "NISSE")
+const authorLabel = (entry: Entry) => {
+  const author = entry.author
+  if (author._tag === "person") return author.name.toUpperCase()
+  if (author._tag === "agent" && entry.body._tag === "user" && entry.body.mail) return entry.body.mail.sender
+  return "NISSE"
+}
+
+const lastLine = (text: string) => text.trimEnd().split("\n").at(-1) ?? ""
+
+const lastActivity = (child: View) => {
+  if (child.live.text !== "") return lastLine(child.live.text)
+  for (const entry of child.entries.toReversed()) {
+    const body = entry.body
+    if (body._tag === "message") return lastLine(body.text)
+    if (body._tag === "tool_call") return describeCall(body.tool, body.input)
+    if (body._tag === "user") return lastLine(body.text)
+  }
+  return ""
+}
+
+const childState = (child: View | undefined): { label: string; tone: string } => {
+  if (!child || child.status === "working") return { label: "working", tone: color.cyan }
+  if (child.status === "waiting") return { label: "waiting on you", tone: color.yellow }
+  const end = child.entries.findLast((entry) => entry.body._tag === "run_end")?.body
+  if (end?._tag !== "run_end" || end.outcome === "answered") return { label: "done", tone: color.dim }
+  return { label: end.outcome === "interrupted" ? "interrupted" : "failed", tone: color.yellow }
+}
+
+const SubagentCard = (props: { title: string; agentType: string | undefined; child: View | undefined }) => {
+  const state = () => childState(props.child)
+  const asking = () => {
+    const child = props.child
+    const pending = child?.pendingApprovals[0]
+    const call =
+      pending && child.entries.find((entry) => entry.body._tag === "tool_call" && entry.body.call === pending.call)
+    return call?.body._tag === "tool_call" ? describeCall(call.body.tool, call.body.input) : undefined
+  }
+  return (
+    <box flexDirection="column" marginLeft={2}>
+      <box flexDirection="row" gap={1}>
+        <text fg={color.violet}>{`⧉ ${props.title}${props.agentType ? ` (${props.agentType})` : ""}`}</text>
+        <text fg={state().tone}>{state().label}</text>
+      </box>
+      <Show when={props.child && lastActivity(props.child)}>
+        {(activity) => (
+          <text fg={color.dim} marginLeft={2}>
+            {activity()}
+          </text>
+        )}
+      </Show>
+      <Show when={asking()}>
+        {(call) => (
+          <box flexDirection="row" marginLeft={2} gap={1}>
+            <text fg={color.yellow}>{`allow ${call()}?`}</text>
+            <KeyCap cap="^Y" what="allow" />
+            <KeyCap cap="^N" what="deny" />
+          </box>
+        )}
+      </Show>
+    </box>
+  )
+}
 
 const RESULT_LINES = 6
 
@@ -146,13 +219,13 @@ const RunEndView = (props: { outcome: Outcome; message: string | undefined }) =>
   }
 }
 
-const EntryView = (props: { view: View; entry: Entry; previous: Entry | undefined }) => {
+const EntryView = (props: { view: View; subagents: Children; entry: Entry; previous: Entry | undefined }) => {
   const body = props.entry.body
   switch (body._tag) {
     case "user":
       return (
         <box flexDirection="column" marginTop={1}>
-          <Tag label={authorLabel(props.entry)} color={color.magenta} />
+          <Tag label={authorLabel(props.entry)} color={body.mail ? color.violet : color.magenta} />
           <text fg={color.ink} marginLeft={2}>
             {body.text}
           </text>
@@ -181,6 +254,12 @@ const EntryView = (props: { view: View; entry: Entry; previous: Entry | undefine
       )
     case "run_end":
       return <RunEndView outcome={body.outcome} message={body.message} />
+    case "subagent":
+      return (
+        <box flexDirection="column" marginTop={1}>
+          <SubagentCard title={body.title} agentType={body.agentType} child={props.subagents[body.conversation]} />
+        </box>
+      )
     case "model":
       return (
         <text fg={color.dim} marginTop={1} marginLeft={2}>
@@ -209,10 +288,17 @@ const Splash = (props: { providers: ReadonlyArray<ProviderSnapshot> }) => (
   </box>
 )
 
-const Transcript = (props: { view: View }) => (
+const Transcript = (props: { view: View; subagents: Children }) => (
   <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1}>
     <For each={props.view.entries}>
-      {(entry, index) => <EntryView view={props.view} entry={entry} previous={props.view.entries[index() - 1]} />}
+      {(entry, index) => (
+        <EntryView
+          view={props.view}
+          subagents={props.subagents}
+          entry={entry}
+          previous={props.view.entries[index() - 1]}
+        />
+      )}
     </For>
     <Show when={props.view.live.text !== ""}>
       <box flexDirection="column" marginTop={1}>
@@ -239,7 +325,7 @@ const elapsed = (since: number | undefined, now: number) => {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`
 }
 
-const StatusBar = (props: { view: View }) => {
+const StatusBar = (props: { view: View; subagentAsks: boolean }) => {
   const [now, setNow] = createSignal(Date.now())
   createEffect(() => {
     if (props.view.status === "idle") return
@@ -247,6 +333,7 @@ const StatusBar = (props: { view: View }) => {
     onCleanup(() => clearInterval(timer))
   })
   const working = () => props.view.status !== "idle"
+  const waiting = () => props.view.status === "waiting" || props.subagentAsks
   const spinner = () => SPINNER[Math.floor(now() / SPINNER_INTERVAL) % SPINNER.length]
   return (
     <box flexDirection="row" height={1} backgroundColor={color.panel}>
@@ -258,8 +345,8 @@ const StatusBar = (props: { view: View }) => {
           </text>
         }
       >
-        <text fg={color.background} bg={props.view.status === "waiting" ? color.yellow : color.cyan}>
-          {` ${props.view.status === "waiting" ? "◆ WAITING" : `${spinner()} WORKING`} ${elapsed(props.view.workingSince, now())} `}
+        <text fg={color.background} bg={waiting() ? color.yellow : color.cyan}>
+          {` ${waiting() ? "◆ WAITING" : `${spinner()} WORKING`} ${elapsed(props.view.workingSince, now())} `}
         </text>
       </Show>
       <box flexGrow={1} />
@@ -325,11 +412,12 @@ const Prompt = (props: { view: View; setup: SetupView; actions: Actions; steer: 
   )
 }
 
-const App = (props: { view: View; setup: SetupView; actions: Actions }) => {
+const App = (props: { view: View; subagents: Children; setup: SetupView; actions: Actions }) => {
   const [steer, setSteer] = createSignal(false)
   const answer = (allow: boolean) => {
-    const pending = props.view.pendingApprovals[0]
-    if (pending) props.actions.answer(pending.approval, allow)
+    const asking = [props.view, ...Object.values(props.subagents)].find((view) => view.pendingApprovals.length > 0)
+    const pending = asking?.pendingApprovals[0]
+    if (asking && pending) props.actions.answer(asking.id, pending.approval, allow)
   }
   useKeyboard((key) => {
     const picker = props.setup.picker
@@ -358,7 +446,7 @@ const App = (props: { view: View; setup: SetupView; actions: Actions }) => {
             when={props.view.entries.length > 0 || props.view.live.text !== ""}
             fallback={<Splash providers={props.setup.providers} />}
           >
-            <Transcript view={props.view} />
+            <Transcript view={props.view} subagents={props.subagents} />
           </Show>
         }
       >
@@ -366,7 +454,10 @@ const App = (props: { view: View; setup: SetupView; actions: Actions }) => {
       </Show>
       <Show when={props.setup.signIn}>{(state) => <SignInPanel state={state()} />}</Show>
       <Prompt view={props.view} setup={props.setup} actions={props.actions} steer={steer()} />
-      <StatusBar view={props.view} />
+      <StatusBar
+        view={props.view}
+        subagentAsks={Object.values(props.subagents).some((subagent) => subagent.pendingApprovals.length > 0)}
+      />
     </box>
   )
 }
@@ -401,8 +492,39 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
   const [view, setView] = createStore(emptyView(conversation))
   const done = yield* Deferred.make<void, string>()
 
+  const [children, setChildren] = createStore<Children>({})
+  const scope = yield* Effect.scope
+  const followChildren = (delivery: Delivery) =>
+    Effect.forEach(
+      delivery.entries.flatMap((entry) => (entry.body._tag === "subagent" ? [entry.body.conversation] : [])),
+      (child) =>
+        child in children
+          ? Effect.void
+          : Effect.andThen(
+              Effect.sync(() => setChildren(child, emptyView(child))),
+              follow(client, child).pipe(
+                Stream.runForEach((update) =>
+                  Effect.sync(() =>
+                    setChildren(
+                      child,
+                      produce((draft) => apply(draft, update, Date.now())),
+                    ),
+                  ),
+                ),
+                Effect.ignore,
+                Effect.forkIn(scope),
+              ),
+            ),
+      { discard: true },
+    )
+
   yield* follow(client, conversation).pipe(
-    Stream.runForEach((delivery) => Effect.sync(() => setView(produce((draft) => apply(draft, delivery, Date.now()))))),
+    Stream.runForEach((delivery) =>
+      Effect.andThen(
+        Effect.sync(() => setView(produce((draft) => apply(draft, delivery, Date.now())))),
+        followChildren(delivery),
+      ),
+    ),
     Effect.catchTag("NoSuchConversation", () => Deferred.fail(done, `no conversation ${conversation}`)),
     Effect.forkScoped,
   )
@@ -436,7 +558,6 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
   const seen = new Map<string, AuthState>()
   const acted = new Set<string>()
   const terminals = new Map<string, Fiber.Fiber<void>>()
-  const scope = yield* Effect.scope
   let mine: string | undefined
   const act = (state: AuthState) =>
     Effect.gen(function* () {
@@ -533,8 +654,8 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
           steer,
         }),
       ),
-    answer: (approval, allow) =>
-      Effect.runFork(client["approval/resolve"]({ conversation, approval, author: userName(), allow })),
+    answer: (asked, approval, allow) =>
+      Effect.runFork(client["approval/resolve"]({ conversation: asked, approval, author: userName(), allow })),
     interrupt: () => Effect.runFork(client["conversation/interrupt"]({ conversation })),
     quit: () => Effect.runFork(Deferred.succeed(done, undefined)),
   }
@@ -543,7 +664,9 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
     Effect.gen(function* () {
       const opened = yield* openRenderer
       renderer = opened
-      yield* Effect.promise(() => render(() => <App view={view} setup={setup} actions={actions} />, opened))
+      yield* Effect.promise(() =>
+        render(() => <App view={view} subagents={children} setup={setup} actions={actions} />, opened),
+      )
       const closedByTerminal = Effect.promise(() => opened.closed)
       return yield* Effect.result(Effect.raceFirst(Deferred.await(done), closedByTerminal))
     }),

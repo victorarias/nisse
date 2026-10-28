@@ -110,7 +110,20 @@ test("nisse offers its tools, runs the call the model asks for and sends back th
   ])
   expectRequests(fake, expected)
   const tools = JSON.parse(fake.responses()[0]!.body).tools.map((tool: { name: string }) => tool.name)
-  expect(tools).toEqual(["Read", "Write", "Edit", "Bash", "Grep", "Glob"])
+  expect(tools).toEqual([
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Grep",
+    "Glob",
+    "spawn_agent",
+    "send_message",
+    "followup_task",
+    "wait_agent",
+    "list_agents",
+    "interrupt_agent",
+  ])
 })
 
 test("a call the person denies reaches the model as denied", async () => {
@@ -1004,4 +1017,69 @@ test("a code-mode model without the code-mode host says how to install it", asyn
     { _tag: "run_end", outcome: "failed", message: expect.stringContaining("scripts/code-mode-host.sh") },
   ])
   expect(fake.responses()).toHaveLength(0)
+})
+
+const childOf = async (session: Awaited<ReturnType<typeof conversationWith>>) => {
+  const listed = (await session.client.call("conversation/list")).result as Array<{
+    id: string
+    lineage?: { parent: string; task: string; title: string; agentType?: string; forkedAt?: number }
+  }>
+  return listed.find((conversation) => conversation.lineage?.parent === session.conversation)!
+}
+
+test("a spawned agent starts from its parent's history, and its last answer reaches the parent", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("subagent")
+  await using session = await conversationWith(fake)
+  await session.submit("Ask a scout where the gnome lives.")
+  await session.view.until(settled(1))
+
+  const [, child, parentAgain] = fake.responses().map((request) => JSON.parse(request.body))
+  expect(child.input[0].content[0].text).toBe("Ask a scout where the gnome lives.")
+  expect(child.input.at(-1)).toEqual({
+    type: "message",
+    role: "assistant",
+    content: [
+      {
+        type: "output_text",
+        text: "Message Type: NEW_TASK\nTask name: /root/scout\nSender: /root\nPayload:\nFind the gnome.",
+      },
+    ],
+  })
+  expect(child.tools.map((tool: { name: string }) => tool.name)).not.toContain("spawn_agent")
+  expect(JSON.stringify(parentAgain.input)).toContain(
+    "Message Type: FINAL_ANSWER\\nTask name: /root\\nSender: /root/scout\\nPayload:\\nUnder the floor.",
+  )
+
+  const scout = await childOf(session)
+  expect(scout.lineage).toMatchObject({ task: "/root/scout", title: "scout" })
+  expect(scout.lineage!.forkedAt).toBeNumber()
+  const parentSaw: Array<unknown> = bodies(session.view.deliveries)
+  expect(parentSaw).toContainEqual({ _tag: "subagent", call: "call_1", conversation: scout.id, title: "scout" })
+  expect(parentSaw.at(-2)).toEqual({ _tag: "message", text: "The scout says: under the floor." })
+})
+
+test("an agent of a type gets its instructions, and fork_turns none leaves the parent's history out", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("subagent_of_a_type")
+  await using session = await conversationWith(fake, {
+    cwd: (home) => {
+      write(
+        join(home, "claude", "agents", "reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews diffs\n---\nBe strict about tests.",
+      )
+      return home
+    },
+  })
+  await session.submit("Get the diff reviewed.")
+  await session.view.until(settled(1))
+
+  const [parent, child] = fake.responses().map((request) => JSON.parse(request.body))
+  const spawn = parent.tools.find((tool: { name: string }) => tool.name === "spawn_agent")
+  expect(spawn.parameters.properties.agent_type.description).toContain("- reviewer: Reviews diffs")
+  expect(child.instructions).toContain("# You are a reviewer agent\n\nBe strict about tests.")
+  expect(child.input).toHaveLength(1)
+  const reviewer = await childOf(session)
+  expect(reviewer.lineage).toMatchObject({ task: "/root/review", agentType: "reviewer" })
+  expect(reviewer.lineage!.forkedAt).toBeUndefined()
 })
