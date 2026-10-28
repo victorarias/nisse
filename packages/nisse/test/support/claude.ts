@@ -1,6 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, watch } from "node:fs"
 import { join } from "node:path"
 import type { ClaudeOptions } from "../../src/drivers/claude/index.ts"
+import { deadline } from "./raw.ts"
 
 const FIXTURES = join(import.meta.dir, "../../../../fixtures/claude")
 
@@ -44,6 +45,19 @@ export class FakeClaude {
     return this.log()
       .filter((entry) => entry.received?.type === "user" && (spawn === undefined || entry.spawn === spawn))
       .map((entry) => entry.received.message.content.map((block: { text: string }) => block.text))
+  }
+
+  logged(predicate: (fake: FakeClaude) => boolean, ms = 10_000) {
+    const watcher = watch(this.dir)
+    return deadline(
+      new Promise<void>((resolve) => {
+        const check = () => predicate(this) && resolve()
+        watcher.on("change", check)
+        check()
+      }),
+      ms,
+      "fake claude log condition",
+    ).finally(() => watcher.close())
   }
 
   permissionAnswers() {
