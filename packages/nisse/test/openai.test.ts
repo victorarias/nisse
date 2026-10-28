@@ -753,13 +753,15 @@ withCodeModeHost("a wait on a script whose host stopped never reaches a script t
   chmodSync(host, 0o755)
   try {
     await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
-    await session.submit("start a slow script")
-    await session.view.until(settled(1))
+    await session.submit("start a slow script, then another once its host stops")
+    await session.view.until((deliveries) =>
+      bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_2"),
+    )
     process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
-    await session.submit("start another, then check the first")
-    await session.view.until(settled(2))
-    const [, started, checked] = resultsOf(session.view.deliveries).map((result) => result.output)
-    expect(started).toStartWith("Script running with cell ID call_2\n")
+    await session.view.until(settled(1))
+    const [, stopped, started, checked] = resultsOf(session.view.deliveries).map((result) => result.output)
+    expect(stopped).toStartWith("interrupted: the code-mode host stopped")
+    expect(started).toStartWith("Script running with cell ID call_3\n")
     expect(checked).toStartWith("no running cell call_1")
     expectRequests(fake, expected)
   } finally {
