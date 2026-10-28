@@ -54,7 +54,7 @@ export const catalog = (savedPath: string) => {
     },
     listed: (): ReadonlyArray<ModelInfo> =>
       current()
-        .models.filter((model) => (model.visibility ?? "list") === "list")
+        .models.filter((model) => (model.visibility ?? "list") === "list" && model.tool_mode !== "code_mode_only")
         .toSorted((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
         .map(info),
   }

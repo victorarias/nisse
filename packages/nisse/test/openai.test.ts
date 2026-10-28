@@ -336,6 +336,8 @@ test("the address a browser on another machine ends on, pasted back, finishes th
   expect(exchange.get("code")).toBe("pasted-code")
 })
 
+const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+
 test("a device code sign-in shows the code to enter, then finishes once someone enters it", async () => {
   await using fake = new FakeOpenAi()
   fake.issueTokens("first", 3600)
@@ -347,7 +349,16 @@ test("a device code sign-in shows the code to enter, then finishes once someone 
 
   expect(waiting.interaction).toEqual({ _tag: "device_code", url: `${fake.base}/codex/device`, code: "ABCD-1234" })
   expect(settled).toMatchObject({ phase: "succeeded", message: `${EMAIL} · ChatGPT Plus` })
-  const exchange = new URLSearchParams(fake.received.find((request) => request.path === "/oauth/token")!.body)
+  const sent = (path: string) => fake.received.filter((request) => request.path === path).map((request) => request.body)
+  expect(sent("/api/accounts/deviceauth/usercode").map((body) => JSON.parse(body))).toEqual([
+    { client_id: CODEX_CLIENT_ID },
+  ])
+  expect(new Set(sent("/api/accounts/deviceauth/token"))).toEqual(
+    new Set([JSON.stringify({ device_auth_id: "device-1", user_code: "ABCD-1234" })]),
+  )
+  const exchange = new URLSearchParams(sent("/oauth/token")[0])
+  expect(exchange.get("client_id")).toBe(CODEX_CLIENT_ID)
+  expect(exchange.get("redirect_uri")).toBe(`${fake.base}/deviceauth/callback`)
   expect(exchange.get("code")).toBe("device-code")
   expect(exchange.get("code_verifier")).toBe("device-verifier")
 }, 10_000)
@@ -405,13 +416,14 @@ const modelList = (slug: string) => ({
       context_window: 272000,
     },
     { slug: "hidden", visibility: "hide", priority: 0 },
+    { slug: "code-mode-only", visibility: "list", priority: 2, tool_mode: "code_mode_only" },
   ],
 })
 
 const openAiModels = async (client: RawClient) =>
   ((await client.call("models/list", {})).result as Array<ProviderModels>).find((list) => list.provider === "openai")!
 
-test("OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't", async () => {
+test("OpenAI's models come from ChatGPT, leave out those nisse can't run, and the saved list answers when ChatGPT can't", async () => {
   await using fake = new FakeOpenAi()
   fake.modelList = modelList("gpt-test")
   const home = tempHome()
