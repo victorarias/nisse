@@ -1,7 +1,7 @@
 import type { CallId, Entry } from "@nisse/protocol"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { newId } from "../ids.ts"
-import { ProviderError, Providers, type Driver, type Turn } from "../provider.ts"
+import { ProviderError, type Driver, type Turn } from "../provider.ts"
 
 const Step = Schema.Struct({
   text: Schema.optionalKey(Schema.String),
@@ -34,7 +34,7 @@ export const scriptDriver = (steps: ReadonlyArray<Step>): Driver => {
     run: (turn) =>
       Effect.gen(function* () {
         while (true) {
-          const step = steps[next++] ?? { text: `You said: ${lastUserText(turn.transcript)}`, delayMs: 30 }
+          const step = steps[next++] ?? { text: `You said: ${lastUserText(yield* turn.transcript)}`, delayMs: 30 }
           const text = yield* speak(turn, step)
           if (step.fail !== undefined) return yield* new ProviderError({ message: step.fail })
           yield* turn.message(text)
@@ -48,18 +48,10 @@ export const scriptDriver = (steps: ReadonlyArray<Step>): Driver => {
 
 export type Script = ReadonlyArray<Step>
 
-export const scriptedProviders = (steps: Script) =>
-  Layer.sync(Providers, () =>
-    Providers.of({ drivers: new Map([["script", scriptDriver(steps)]]), preferred: "script" }),
-  )
-
-export const providersFromScript = (path: string | undefined) =>
+export const readScript = (path: string | undefined): Effect.Effect<Script> =>
   path === undefined
-    ? scriptedProviders([])
-    : Layer.unwrap(
-        Effect.promise(() => Bun.file(path).json()).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Step))),
-          Effect.orDie,
-          Effect.map(scriptedProviders),
-        ),
+    ? Effect.succeed([])
+    : Effect.promise(() => Bun.file(path).json()).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Step))),
+        Effect.orDie,
       )

@@ -29,16 +29,18 @@ Every test defends one promise that a person, a client, an extension or a later
 version relies on, and its name says what they would see if it broke. Tests
 enter where those consumers enter:
 
-| Kind   | Enters through                                                                          | Lives in                             |
-| ------ | --------------------------------------------------------------------------------------- | ------------------------------------ |
-| Wire   | a real server in process, driven as a raw JSON-RPC client over its socket               | `packages/nisse/test/wire.test.ts`   |
-| Screen | the real TUI in a PTY on an `@xterm/headless` screen, typed into, against a real server | `packages/nisse/test/screen.test.ts` |
-| Stack  | the `nisse` binary over its socket: kill, restart, reconnect                            | `packages/nisse/test/stack.test.ts`  |
+| Kind     | Enters through                                                                             | Lives in                             |
+| -------- | ------------------------------------------------------------------------------------------ | ------------------------------------ |
+| Wire     | a real server in process, driven as a raw JSON-RPC client over its socket                  | `packages/nisse/test/wire.test.ts`   |
+| Screen   | the real TUI in a PTY on an `@xterm/headless` screen, typed into, against a real server    | `packages/nisse/test/screen.test.ts` |
+| Stack    | the `nisse` binary over its socket: kill, restart, reconnect                               | `packages/nisse/test/stack.test.ts`  |
+| Provider | a wire test whose provider is a fake server replaying a recorded exchange from `fixtures/` | `packages/nisse/test/openai.test.ts` |
 
-Recorded provider exchanges from the Rust version wait in `fixtures/` for the
-provider tests.
+Provider tests replay recorded exchanges from `fixtures/`: the fake serves each
+`emit_inbound` frame and the test checks every request against its
+`expect_outbound` frame, where `"<any>"` matches anything.
 
-- The model is the seam. Tests script it (`scriptedProviders`, `NISSE_MODEL_SCRIPT`)
+- The model is the seam. Tests script it (the `script` provider, `NISSE_MODEL_SCRIPT`)
   or replay a provider's recorded exchange; nothing else is faked.
 - Judge the TUI by its screen.
 - The committed `schema/nisse.schema.json` is what clients build from. After a

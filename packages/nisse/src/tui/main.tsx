@@ -1,11 +1,11 @@
 import { createCliRenderer, type CliRenderer, type KeyBinding, type TextareaRenderable } from "@opentui/core"
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import type { ApprovalId, Approvals, CallId, ConversationId, Entry, Outcome } from "@nisse/protocol"
+import type { ApprovalId, CallId, Entry, Outcome } from "@nisse/protocol"
 import { Deferred, Effect, Stream } from "effect"
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { userName } from "../author.ts"
-import { Client, follow } from "../client.ts"
+import { Client, follow, startConversation, type StartOptions } from "../client.ts"
 import { VERSION } from "../version.ts"
 import { describeCall } from "./calls.ts"
 import { apply, emptyView, type View } from "./view.ts"
@@ -342,11 +342,9 @@ const openRenderer = Effect.acquireRelease(
     }),
 )
 
-export const tui = Effect.fnUntraced(function* (existing: string | undefined, approvals: Approvals | undefined) {
+export const tui = Effect.fnUntraced(function* (existing: string | undefined, options: StartOptions) {
   const client = yield* Client
-  const conversation =
-    (existing as ConversationId | undefined) ??
-    (yield* client["conversation/start"]({ cwd: process.cwd(), ...(approvals ? { approvals } : {}) })).id
+  const conversation = yield* startConversation(client, existing, options)
   const [view, setView] = createStore(emptyView(conversation))
   const done = yield* Deferred.make<void, string>()
 

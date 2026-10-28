@@ -189,7 +189,7 @@ export class Conversations extends Context.Service<
 
         const turn: Turn = {
           conversation,
-          transcript: store.transcript(id),
+          transcript: Effect.sync(() => store.transcript(id)),
           providerState,
           tools: builtinTools.map((tool) => tool.spec),
           say: (text) =>

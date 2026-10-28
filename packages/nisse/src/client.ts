@@ -1,5 +1,5 @@
 import { BunSocket } from "@effect/platform-bun"
-import { NisseRpcs, type ConversationId, type Delivery, type NoSuchConversation } from "@nisse/protocol"
+import { NisseRpcs, type Approvals, type ConversationId, type Delivery, type NoSuchConversation } from "@nisse/protocol"
 import { spawn } from "node:child_process"
 import { mkdirSync, openSync } from "node:fs"
 import * as Net from "node:net"
@@ -13,6 +13,16 @@ import type { Home } from "./home.ts"
 export class Client extends Context.Service<Client, RpcClient.FromGroup<typeof NisseRpcs, RpcClientError>>()(
   "nisse/Client",
 ) {}
+
+export interface StartOptions {
+  readonly provider?: string
+  readonly approvals?: Approvals
+}
+
+export const startConversation = (client: Client["Service"], existing: string | undefined, options: StartOptions) =>
+  existing === undefined
+    ? Effect.map(client["conversation/start"]({ cwd: process.cwd(), ...options }), (conversation) => conversation.id)
+    : Effect.succeed(existing as ConversationId)
 
 const CLOSE_GRACE = "1 second"
 

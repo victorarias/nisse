@@ -2,10 +2,11 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option, Schedule } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
-import { Client, clientLayer } from "./client.ts"
+import { Client, clientLayer, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, type Home } from "./home.ts"
-import { providersFromScript } from "./drivers/script.ts"
+import { openAiOptions, providersLayer } from "./drivers/index.ts"
+import { readScript } from "./drivers/script.ts"
 import { protocolSchema } from "./schema.ts"
 import { serve } from "./server.ts"
 import { tui } from "./tui/main.tsx"
@@ -24,7 +25,15 @@ const autoFlag = Flag.Boolean("auto").pipe(
   Flag.withDefault(false),
 )
 
-const approvalsFrom = (auto: boolean) => (auto ? ("auto" as const) : undefined)
+const providerFlag = Flag.String("provider").pipe(
+  Flag.withDescription("Start the conversation with this provider, such as openai"),
+  Flag.optional,
+)
+
+const startWith = (auto: boolean, provider: Option.Option<string>): StartOptions => ({
+  ...(auto ? { approvals: "auto" as const } : {}),
+  ...Option.match(provider, { onNone: () => ({}), onSome: (provider) => ({ provider }) }),
+})
 
 const withClient = (home: Home) => Effect.provide(clientLayer(home))
 
@@ -51,7 +60,13 @@ const serveCommand = Command.make(
       Effect.andThen(
         claimed,
         serve(home, { idleGrace: IDLE_GRACE }).pipe(
-          Effect.provide(providersFromScript(process.env.NISSE_MODEL_SCRIPT || undefined)),
+          Effect.provide(
+            Layer.unwrap(
+              Effect.map(readScript(process.env.NISSE_MODEL_SCRIPT || undefined), (script) =>
+                providersLayer({ script, openai: openAiOptions(home) }),
+              ),
+            ),
+          ),
         ),
       ),
     ).pipe(Effect.catchTag("HomeTaken", () => Console.error(`another server already serves ${home.dir}`)))
@@ -60,10 +75,10 @@ const serveCommand = Command.make(
 
 const execCommand = Command.make(
   "exec",
-  { prompt: Argument.String("prompt"), conversation: conversationFlag, auto: autoFlag },
-  Effect.fn(function* ({ prompt, conversation, auto }) {
+  { prompt: Argument.String("prompt"), conversation: conversationFlag, auto: autoFlag, provider: providerFlag },
+  Effect.fn(function* ({ prompt, conversation, auto, provider }) {
     const home = defaultHome()
-    const ok = yield* exec(prompt, Option.getOrUndefined(conversation), approvalsFrom(auto)).pipe(
+    const ok = yield* exec(prompt, Option.getOrUndefined(conversation), startWith(auto, provider)).pipe(
       withClient(home),
       Effect.scoped,
     )
@@ -81,10 +96,10 @@ const schemaCommand = Command.make(
 
 const nisse = Command.make(
   "nisse",
-  { conversation: conversationFlag, auto: autoFlag },
-  Effect.fn(function* ({ conversation, auto }) {
+  { conversation: conversationFlag, auto: autoFlag, provider: providerFlag },
+  Effect.fn(function* ({ conversation, auto, provider }) {
     const home = defaultHome()
-    yield* tui(Option.getOrUndefined(conversation), approvalsFrom(auto)).pipe(withClient(home), Effect.scoped)
+    yield* tui(Option.getOrUndefined(conversation), startWith(auto, provider)).pipe(withClient(home), Effect.scoped)
   }),
 ).pipe(
   Command.withDescription("A durable, multiplayer coding agent"),

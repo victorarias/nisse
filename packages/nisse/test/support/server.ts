@@ -1,20 +1,20 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { Duration, Effect, Exit, Layer, Scope } from "effect"
-import { homeAt } from "../../src/home.ts"
-import { scriptedProviders, type Script } from "../../src/drivers/script.ts"
+import { homeAt, type Home } from "../../src/home.ts"
+import { openAiOptions, providersLayer } from "../../src/drivers/index.ts"
+import type { OpenAiOptions } from "../../src/drivers/openai/index.ts"
+import type { Script } from "../../src/drivers/script.ts"
 import { Lifetime } from "../../src/lifetime.ts"
 import { serverLayer } from "../../src/server.ts"
 
 export const tempHome = () => homeAt(mkdtempSync("/tmp/nisse-"))
 
-export const runningServer = async (steps: Script = []) => {
+export const runningServer = async (script: Script = [], openai?: (home: Home) => OpenAiOptions) => {
   const home = tempHome()
+  const providers = providersLayer({ script, openai: (openai ?? openAiOptions)(home) })
   const scope = Effect.runSync(Scope.make())
   await Effect.runPromise(
-    Layer.buildWithScope(
-      serverLayer(home, { idleGrace: "1 hour" }).pipe(Layer.provide(scriptedProviders(steps))),
-      scope,
-    ),
+    Layer.buildWithScope(serverLayer(home, { idleGrace: "1 hour" }).pipe(Layer.provide(providers)), scope),
   )
   return {
     home,
@@ -32,7 +32,14 @@ export const servingUntilIdle = async (home: ReturnType<typeof tempHome>, idleGr
       const lifetime = yield* Lifetime
       listening.resolve()
       yield* lifetime.ended
-    }).pipe(Effect.provide(serverLayer(home, { idleGrace }).pipe(Layer.provide(scriptedProviders([])))), Effect.scoped),
+    }).pipe(
+      Effect.provide(
+        serverLayer(home, { idleGrace }).pipe(
+          Layer.provide(providersLayer({ script: [], openai: openAiOptions(home) })),
+        ),
+      ),
+      Effect.scoped,
+    ),
   )
   await Promise.race([listening.promise, exited])
   return { exited }

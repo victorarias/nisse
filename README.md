@@ -12,7 +12,7 @@ the `rust` branch.
 
 ## Status
 
-R2a, the agent core. What runs today:
+R2, a real agent. What runs today:
 
 - One server per home, shared by every client. The TUI or `exec` starts it
   when none runs, and it exits 30 seconds after the last client leaves and the
@@ -38,7 +38,9 @@ R2a, the agent core. What runs today:
   words. `Esc` interrupts and keeps what was said.
 - Clients resume from the last `seq` they saw. A client that falls 4096 commits
   behind is dropped and resubscribes; it never slows the server.
-- A scripted provider. OpenAI and Claude come next.
+- Providers: OpenAI through a ChatGPT sign-in (the Codex Responses endpoint),
+  and a scripted one for tests. Nisse runs the loop and the tools; an expired
+  token is refreshed once and saved. Claude comes next.
 - The neon TUI, in OpenTUI with Solid.
 
 ## Try it
@@ -47,6 +49,7 @@ R2a, the agent core. What runs today:
 bun install
 bun packages/nisse/src/main.ts                       # the TUI, in this directory
 bun packages/nisse/src/main.ts --auto                # a conversation that runs calls without asking
+bun packages/nisse/src/main.ts --provider openai     # a conversation with ChatGPT
 bun packages/nisse/src/main.ts --conversation <id>   # reopen a conversation
 bun packages/nisse/src/main.ts exec 'hello'          # one prompt, headless; exits 1 if the run fails
 bun packages/nisse/src/main.ts exec --auto 'fix it'  # exec denies calls that change things unless --auto
@@ -61,7 +64,9 @@ switches the prompt between queueing and steering. `^Y` allows the call nisse
 is asking about and `^N` denies it.
 
 `NISSE_HOME` (default `~/.nisse`) holds `store.sqlite`, `nisse.sock`,
-`nisse.lock` and the background server's `nisse.log`. One server serves a home
+`nisse.lock`, the background server's `nisse.log`, and sign-ins under `auth/`.
+Signing in from Nisse comes with R3; until then `auth/openai.json` is the one
+the Rust version saved. One server serves a home
 at a time. `NISSE_MODEL_SCRIPT` names a JSON file of scripted steps for a
 server this starts, such as
 `[{"tool": {"name": "Bash", "input": {"command": "ls"}}}, {"text": "hello", "delayMs": 50}, {"text": "half", "fail": "provider went away"}]`.
