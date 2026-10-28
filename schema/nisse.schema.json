@@ -897,7 +897,8 @@
                         "call",
                         "append"
                       ],
-                      "additionalProperties": true
+                      "additionalProperties": true,
+                      "description": "Output appended to a running call. Live output keeps only the last 4096 characters of each call; the tool_result holds what the call returned."
                     },
                     {
                       "type": "object",

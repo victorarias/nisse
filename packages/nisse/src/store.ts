@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite"
 import {
   FellBehind,
+  LIVE_OUTPUT_TAIL,
   NoSuchApproval,
   NoSuchConversation,
   type ApprovalId,
@@ -106,7 +107,7 @@ const applyLive = (live: Live, changes: ReadonlyArray<LiveChange>): Live => {
         text = ""
         break
       case "output":
-        output[change.call] = (output[change.call] ?? "") + change.append
+        output[change.call] = ((output[change.call] ?? "") + change.append).slice(-LIVE_OUTPUT_TAIL)
         break
       case "output_end":
         delete output[change.call]

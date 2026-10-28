@@ -90,7 +90,11 @@ export type Live = typeof Live.Type
 
 export const LiveText = Schema.TaggedStruct("text", { append: Schema.String })
 export const LiveTextEnd = Schema.TaggedStruct("text_end", {})
-export const LiveOutput = Schema.TaggedStruct("output", { call: CallId, append: Schema.String })
+export const LIVE_OUTPUT_TAIL = 4096
+
+export const LiveOutput = Schema.TaggedStruct("output", { call: CallId, append: Schema.String }).annotate({
+  description: `Output appended to a running call. Live output keeps only the last ${LIVE_OUTPUT_TAIL} characters of each call; the tool_result holds what the call returned.`,
+})
 export const LiveOutputEnd = Schema.TaggedStruct("output_end", { call: CallId })
 export const LiveClear = Schema.TaggedStruct("clear", {})
 export const LiveChange = Schema.Union([LiveText, LiveTextEnd, LiveOutput, LiveOutputEnd, LiveClear])

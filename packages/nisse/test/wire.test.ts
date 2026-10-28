@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Delivery } from "@nisse/protocol"
+import { LIVE_OUTPUT_TAIL, type Delivery } from "@nisse/protocol"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { bodies, deadline, entriesOf, errorTag, RawClient } from "./support/raw.ts"
 import { runningServer, servingUntilIdle, tempHome } from "./support/server.ts"
@@ -342,4 +342,66 @@ test("starting a conversation with a provider nisse does not have says so", asyn
   const reply = await client.call("conversation/start", { cwd: "/work", provider: "nope" })
   expect(errorTag(reply)).toBe("UnknownProvider")
   client.close()
+})
+
+const outputChanges = (deliveries: ReadonlyArray<Delivery>) =>
+  deliveries.flatMap((delivery) =>
+    delivery._tag === "commit"
+      ? (delivery.live ?? []).flatMap((change) => (change._tag === "output" ? [change] : []))
+      : [],
+  )
+
+test("a command's output keeps characters split across reads and between streams whole", async () => {
+  const cwd = workdir()
+  await using server = await runningServer([
+    {
+      tool: {
+        name: "Bash",
+        input: { command: "printf '\\342'; sleep 0.1; printf 'err\\n' >&2; sleep 0.1; printf '\\202\\254\\n'" },
+      },
+    },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, { cwd, approvals: "auto" })
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "euro")
+  await view.until(settled)
+  expect(bodies(view.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({ output: "err\n€\n" })
+  client.close()
+  rmSync(cwd, { recursive: true })
+})
+
+test("a verbose command's live output stays a bounded tail", async () => {
+  const cwd = workdir()
+  await using server = await runningServer([
+    { tool: { name: "Bash", input: { command: "head -c 2000000 /dev/zero | tr '\\0' x; sleep 0.3" } } },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, { cwd, approvals: "auto" })
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "flood")
+  await view.until(settled)
+  const appended = outputChanges(view.deliveries).map((change) => change.append.length)
+  expect(appended.length).toBeGreaterThan(0)
+  expect(Math.max(...appended)).toBeLessThanOrEqual(LIVE_OUTPUT_TAIL)
+  expect(appended.reduce((sum, length) => sum + length, 0)).toBeLessThan(200_000)
+  client.close()
+  rmSync(cwd, { recursive: true })
+})
+
+test("output a background process writes after its call ends never reaches the conversation", async () => {
+  const cwd = workdir()
+  await using server = await runningServer([
+    { tool: { name: "Bash", input: { command: "(sleep 1.5; echo late) & echo now" } } },
+    { tool: { name: "Bash", input: { command: "sleep 1" } } },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, { cwd, approvals: "auto" })
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "background")
+  await view.until(settled)
+  expect(bodies(view.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({ output: "now\n" })
+  expect(outputChanges(view.deliveries).some((change) => change.append.includes("late"))).toBe(false)
+  client.close()
+  rmSync(cwd, { recursive: true })
 })

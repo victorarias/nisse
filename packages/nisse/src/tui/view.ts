@@ -1,4 +1,14 @@
-import type { ApprovalId, CallId, Conversation, ConversationId, Delivery, Entry, Queued, Status } from "@nisse/protocol"
+import {
+  LIVE_OUTPUT_TAIL,
+  type ApprovalId,
+  type CallId,
+  type Conversation,
+  type ConversationId,
+  type Delivery,
+  type Entry,
+  type Queued,
+  type Status,
+} from "@nisse/protocol"
 
 export interface PendingApproval {
   readonly approval: ApprovalId
@@ -85,7 +95,7 @@ export const apply = (view: View, delivery: Delivery, now: number) => {
         view.live.text = ""
         break
       case "output":
-        view.live.output[change.call] = (view.live.output[change.call] ?? "") + change.append
+        view.live.output[change.call] = ((view.live.output[change.call] ?? "") + change.append).slice(-LIVE_OUTPUT_TAIL)
         break
       case "output_end":
         delete view.live.output[change.call]

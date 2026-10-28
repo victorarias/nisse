@@ -1,4 +1,5 @@
 import {
+  LIVE_OUTPUT_TAIL,
   UnknownProvider,
   type ApprovalId,
   type Approvals,
@@ -27,6 +28,12 @@ const interruptedResult = (call: CallId): NewEntry => ({
   author: nisse,
   body: { _tag: "tool_result", call, output: "interrupted: this call did not finish", error: true },
 })
+
+const withChange = (changes: ReadonlyArray<LiveChange>, change: LiveChange): Array<LiveChange> => {
+  const last = changes.at(-1)
+  if (change._tag !== "output" || last?._tag !== "output" || last.call !== change.call) return [...changes, change]
+  return [...changes.slice(0, -1), { ...change, append: (last.append + change.append).slice(-LIVE_OUTPUT_TAIL) }]
+}
 
 const runEnd = (outcome: Outcome, message?: string): NewEntry => ({
   author: nisse,
@@ -102,7 +109,7 @@ export class Conversations extends Context.Service<
 
         const live = (change: LiveChange) =>
           Effect.flatMap(
-            Ref.modify(pending, (changes) => [changes.length === 0, [...changes, change]]),
+            Ref.modify(pending, (changes) => [changes.length === 0, withChange(changes, change)]),
             (first) => (first ? Effect.asVoid(flushSoon) : Effect.void),
           )
         const withState = (change: Change, saved: Saved | undefined): Change =>
