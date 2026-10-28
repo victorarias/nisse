@@ -1,12 +1,13 @@
 import { createCliRenderer, type CliRenderer, type KeyBinding, type TextareaRenderable } from "@opentui/core"
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import type { ConversationId, Entry } from "@nisse/protocol"
+import type { ApprovalId, Approvals, CallId, ConversationId, Entry, Outcome } from "@nisse/protocol"
 import { Deferred, Effect, Stream } from "effect"
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { userName } from "../author.ts"
 import { Client, follow } from "../client.ts"
 import { VERSION } from "../version.ts"
+import { describeCall } from "./calls.ts"
 import { apply, emptyView, type View } from "./view.ts"
 
 const color = {
@@ -41,7 +42,8 @@ const promptKeys: Array<KeyBinding> = [
 ]
 
 interface Actions {
-  readonly submit: (text: string) => void
+  readonly submit: (text: string, steer: boolean) => void
+  readonly answer: (approval: ApprovalId, allow: boolean) => void
   readonly interrupt: () => void
   readonly quit: () => void
 }
@@ -61,7 +63,82 @@ const Tag = (props: { label: string; color: string }) => {
 
 const authorLabel = (entry: Entry) => (entry.author._tag === "person" ? entry.author.name.toUpperCase() : "NISSE")
 
-const EntryView = (props: { entry: Entry }) => {
+const RESULT_LINES = 6
+
+const tail = (text: string, lines: number) => text.trimEnd().split("\n").slice(-lines).join("\n")
+const head = (text: string, lines: number) => {
+  const all = text.trimEnd().split("\n")
+  return all.length <= lines ? all.join("\n") : `${all.slice(0, lines).join("\n")}\n… ${all.length - lines} more lines`
+}
+
+const startsTurn = (previous: Entry | undefined) =>
+  previous === undefined || previous.body._tag === "user" || previous.body._tag === "run_end"
+
+const ToolCallView = (props: { view: View; call: CallId; tool: string; input: unknown }) => {
+  const result = () => props.view.results[props.call]?.body
+  const output = () => props.view.live.output[props.call] ?? ""
+  const asking = () => props.view.pendingApprovals.some((pending) => pending.call === props.call)
+  const answer = () => props.view.answers[props.call]
+  return (
+    <box flexDirection="column" marginLeft={2}>
+      <text fg={color.violet}>{`▸ ${describeCall(props.tool, props.input)}`}</text>
+      <Show when={asking()}>
+        <box flexDirection="row" marginLeft={2} gap={1}>
+          <text fg={color.yellow}>allow this call?</text>
+          <KeyCap cap="^Y" what="allow" />
+          <KeyCap cap="^N" what="deny" />
+        </box>
+      </Show>
+      <Show when={answer()}>
+        {(entry) => {
+          const body = entry().body
+          return (
+            <text fg={color.dim} marginLeft={2}>
+              {`${body._tag === "approval_answer" && body.allow ? "✓ allowed" : "✗ denied"} by ${authorLabel(entry()).toLowerCase()}`}
+            </text>
+          )
+        }}
+      </Show>
+      <Show when={result()?._tag !== "tool_result" && output() !== ""}>
+        <text fg={color.dim} marginLeft={2}>
+          {tail(output(), RESULT_LINES)}
+        </text>
+      </Show>
+      <Show when={result()}>
+        {(body) => {
+          const outcome = body()
+          if (outcome._tag !== "tool_result" || outcome.output.trim() === "") return null
+          return (
+            <text fg={outcome.error ? color.yellow : color.dim} marginLeft={2}>
+              {head(outcome.output, RESULT_LINES)}
+            </text>
+          )
+        }}
+      </Show>
+    </box>
+  )
+}
+
+const RunEndView = (props: { outcome: Outcome; message: string | undefined }) => {
+  switch (props.outcome) {
+    case "answered":
+      return null
+    case "interrupted":
+      return (
+        <text fg={color.dim} marginLeft={2}>
+          ◆ interrupted
+        </text>
+      )
+    default:
+      return (
+        <text fg={color.yellow} marginLeft={2}>
+          {`✗ ${props.message ?? props.outcome}`}
+        </text>
+      )
+  }
+}
+
+const EntryView = (props: { view: View; entry: Entry; previous: Entry | undefined }) => {
   const body = props.entry.body
   switch (body._tag) {
     case "user":
@@ -73,26 +150,26 @@ const EntryView = (props: { entry: Entry }) => {
           </text>
         </box>
       )
-    case "answer":
+    case "message":
+    case "tool_call":
       return (
         <box flexDirection="column" marginTop={1}>
-          <Tag label="NISSE" color={color.cyan} />
-          <text fg={color.ink} marginLeft={2}>
-            {body.text}
-          </text>
-          <Show when={body.interrupted}>
-            <text fg={color.dim} marginLeft={2}>
-              ◆ interrupted
-            </text>
+          <Show when={startsTurn(props.previous)}>
+            <Tag label="NISSE" color={color.cyan} />
           </Show>
+          {body._tag === "message" ? (
+            <text fg={color.ink} marginLeft={2}>
+              {body.text}
+            </text>
+          ) : (
+            <ToolCallView view={props.view} call={body.call} tool={body.tool} input={body.input} />
+          )}
         </box>
       )
-    case "run_failed":
-      return (
-        <text fg={color.yellow} marginLeft={2}>
-          {`✗ ${body.message}`}
-        </text>
-      )
+    case "run_end":
+      return <RunEndView outcome={body.outcome} message={body.message} />
+    default:
+      return null
   }
 }
 
@@ -120,19 +197,23 @@ const KeyCap = (props: { cap: string; what: string }) => (
 
 const Transcript = (props: { view: View }) => (
   <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1}>
-    <For each={props.view.entries}>{(entry) => <EntryView entry={entry} />}</For>
-    <Show when={props.view.live !== ""}>
+    <For each={props.view.entries}>
+      {(entry, index) => <EntryView view={props.view} entry={entry} previous={props.view.entries[index() - 1]} />}
+    </For>
+    <Show when={props.view.live.text !== ""}>
       <box flexDirection="column" marginTop={1}>
-        <Tag label="NISSE" color={color.cyan} />
+        <Show when={startsTurn(props.view.entries.at(-1))}>
+          <Tag label="NISSE" color={color.cyan} />
+        </Show>
         <text fg={color.ink} marginLeft={2}>
-          {props.view.live}
+          {props.view.live.text}
         </text>
       </box>
     </Show>
     <For each={props.view.queued}>
       {(queued) => (
         <text fg={color.dim} marginLeft={2}>
-          {`queued · ${queued.text}`}
+          {`${queued.steer ? "steering" : "queued"} · ${queued.text}`}
         </text>
       )}
     </For>
@@ -147,11 +228,11 @@ const elapsed = (since: number | undefined, now: number) => {
 const StatusBar = (props: { view: View }) => {
   const [now, setNow] = createSignal(Date.now())
   createEffect(() => {
-    if (props.view.status !== "working") return
+    if (props.view.status === "idle") return
     const timer = setInterval(() => setNow(Date.now()), SPINNER_INTERVAL)
     onCleanup(() => clearInterval(timer))
   })
-  const working = () => props.view.status === "working"
+  const working = () => props.view.status !== "idle"
   const spinner = () => SPINNER[Math.floor(now() / SPINNER_INTERVAL) % SPINNER.length]
   return (
     <box flexDirection="row" height={1} backgroundColor={color.panel}>
@@ -163,8 +244,8 @@ const StatusBar = (props: { view: View }) => {
           </text>
         }
       >
-        <text fg={color.background} bg={color.cyan}>
-          {` ${spinner()} WORKING ${elapsed(props.view.workingSince, now())} `}
+        <text fg={color.background} bg={props.view.status === "waiting" ? color.yellow : color.cyan}>
+          {` ${props.view.status === "waiting" ? "◆ WAITING" : `${spinner()} WORKING`} ${elapsed(props.view.workingSince, now())} `}
         </text>
       </Show>
       <box flexGrow={1} />
@@ -187,13 +268,13 @@ const Header = (props: { view: View }) => (
   </box>
 )
 
-const Prompt = (props: { view: View; actions: Actions }) => {
+const Prompt = (props: { view: View; actions: Actions; steer: boolean }) => {
   let input: TextareaRenderable | undefined
   const submit = () => {
     if (!input) return
     const text = input.plainText
     if (text.trim() === "") return
-    props.actions.submit(text)
+    props.actions.submit(text, props.steer && props.view.status !== "idle")
     input.clear()
   }
   return (
@@ -201,7 +282,7 @@ const Prompt = (props: { view: View; actions: Actions }) => {
       border
       borderStyle="rounded"
       borderColor={color.violet}
-      title={props.view.status === "working" ? " QUEUE " : " PROMPT "}
+      title={props.view.status === "idle" ? " PROMPT " : props.steer ? " STEER · tab " : " QUEUE · tab "}
       titleColor={color.magenta}
       flexDirection="row"
       paddingLeft={1}
@@ -226,17 +307,25 @@ const Prompt = (props: { view: View; actions: Actions }) => {
 }
 
 const App = (props: { view: View; actions: Actions }) => {
+  const [steer, setSteer] = createSignal(false)
+  const answer = (allow: boolean) => {
+    const pending = props.view.pendingApprovals[0]
+    if (pending) props.actions.answer(pending.approval, allow)
+  }
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") props.actions.quit()
+    else if (key.ctrl && key.name === "y") answer(true)
+    else if (key.ctrl && key.name === "n") answer(false)
+    else if (key.name === "tab" && props.view.status !== "idle") setSteer((on) => !on)
     else if (key.name === "escape") props.actions.interrupt()
   })
   return (
     <box flexDirection="column" flexGrow={1} backgroundColor={color.background}>
       <Header view={props.view} />
-      <Show when={props.view.entries.length > 0 || props.view.live !== ""} fallback={<Splash />}>
+      <Show when={props.view.entries.length > 0 || props.view.live.text !== ""} fallback={<Splash />}>
         <Transcript view={props.view} />
       </Show>
-      <Prompt view={props.view} actions={props.actions} />
+      <Prompt view={props.view} actions={props.actions} steer={steer()} />
       <StatusBar view={props.view} />
     </box>
   )
@@ -253,10 +342,11 @@ const openRenderer = Effect.acquireRelease(
     }),
 )
 
-export const tui = Effect.fnUntraced(function* (existing: string | undefined) {
+export const tui = Effect.fnUntraced(function* (existing: string | undefined, approvals: Approvals | undefined) {
   const client = yield* Client
   const conversation =
-    (existing as ConversationId | undefined) ?? (yield* client["conversation/start"]({ cwd: process.cwd() })).id
+    (existing as ConversationId | undefined) ??
+    (yield* client["conversation/start"]({ cwd: process.cwd(), ...(approvals ? { approvals } : {}) })).id
   const [view, setView] = createStore(emptyView(conversation))
   const done = yield* Deferred.make<void, string>()
 
@@ -267,10 +357,18 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined) {
   )
 
   const actions: Actions = {
-    submit: (text) =>
+    submit: (text, steer) =>
       Effect.runFork(
-        client["conversation/submit"]({ conversation, requestId: crypto.randomUUID(), author: userName(), text }),
+        client["conversation/submit"]({
+          conversation,
+          requestId: crypto.randomUUID(),
+          author: userName(),
+          text,
+          steer,
+        }),
       ),
+    answer: (approval, allow) =>
+      Effect.runFork(client["approval/resolve"]({ conversation, approval, author: userName(), allow })),
     interrupt: () => Effect.runFork(client["conversation/interrupt"]({ conversation })),
     quit: () => Effect.runFork(Deferred.succeed(done, undefined)),
   }

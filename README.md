@@ -12,7 +12,7 @@ the `rust` branch.
 
 ## Status
 
-R1, the foundations. What runs today:
+R2a, the agent core. What runs today:
 
 - One server per home, shared by every client. The TUI or `exec` starts it
   when none runs, and it exits 30 seconds after the last client leaves and the
@@ -20,14 +20,25 @@ R1, the foundations. What runs today:
 - A SQLite commit log of conversations, entries and submissions. Every change
   is one commit with a `seq`, published only after it is stored. Submissions
   are idempotent by request id, queue while a run is working, and show in the
-  queue to everyone. A run a crash cut off answers again when the server comes
-  back.
+  queue to everyone.
+- A run is a sequence of entries: messages, tool calls, their results,
+  approvals and their answers, and a `run_end` that says how it ended
+  (`answered`, `interrupted`, `failed` or `restart_limit`).
+- Built-in tools: `Read`, `Write`, `Edit`, `Bash`, `Grep` and `Glob`. Calls
+  that change things wait for a person to allow them, unless the conversation
+  was started with `--auto`. Any client can answer; the first answer counts.
+  A command's output streams live while it runs.
+- Steering: a prompt sent mid-run with `steer` reaches the model at its next
+  step instead of waiting for the run to end.
+- Crash recovery. A run the server's crash cut off resumes when the server
+  comes back: calls that were running are recorded as interrupted and the
+  model carries on. A run that crashes the server three times in a row ends
+  with `restart_limit` instead of looping.
 - Streaming text, committed at most every 100 ms so every client sees the same
   words. `Esc` interrupts and keeps what was said.
 - Clients resume from the last `seq` they saw. A client that falls 4096 commits
   behind is dropped and resubscribes; it never slows the server.
-- A scripted model that echoes. Real providers come next: Claude through Claude
-  Code, then OpenAI.
+- A scripted provider. OpenAI and Claude come next.
 - The neon TUI, in OpenTUI with Solid.
 
 ## Try it
@@ -35,21 +46,27 @@ R1, the foundations. What runs today:
 ```sh
 bun install
 bun packages/nisse/src/main.ts                       # the TUI, in this directory
+bun packages/nisse/src/main.ts --auto                # a conversation that runs calls without asking
 bun packages/nisse/src/main.ts --conversation <id>   # reopen a conversation
 bun packages/nisse/src/main.ts exec 'hello'          # one prompt, headless; exits 1 if the run fails
+bun packages/nisse/src/main.ts exec --auto 'fix it'  # exec denies calls that change things unless --auto
 bun packages/nisse/src/main.ts serve                 # the home's server in the foreground
 bun packages/nisse/src/main.ts serve --restart       # replace the running server once its runs settle
 bun packages/nisse/src/main.ts schema                # the protocol's JSON Schema
 ```
 
 In the TUI, `⏎` sends, `⇧⏎` or `^J` adds a line, `Esc` stops the run, and `^C`
-quits and prints how to reopen the conversation.
+quits and prints how to reopen the conversation. While a run works, `Tab`
+switches the prompt between queueing and steering. `^Y` allows the call nisse
+is asking about and `^N` denies it.
 
 `NISSE_HOME` (default `~/.nisse`) holds `store.sqlite`, `nisse.sock`,
 `nisse.lock` and the background server's `nisse.log`. One server serves a home
-at a time. `NISSE_MODEL_SCRIPT` names a JSON file of scripted answers, such as
-`[{"text": "hello", "delayMs": 50}, {"text": "half", "fail": "provider went away"}]`,
-for a server this starts.
+at a time. `NISSE_MODEL_SCRIPT` names a JSON file of scripted steps for a
+server this starts, such as
+`[{"tool": {"name": "Bash", "input": {"command": "ls"}}}, {"text": "hello", "delayMs": 50}, {"text": "half", "fail": "provider went away"}]`.
+A step with a tool calls it and moves on to the next step; a step without one
+ends the run.
 
 ## Protocol
 

@@ -1,8 +1,12 @@
 import { Database } from "bun:sqlite"
 import {
   FellBehind,
+  NoSuchApproval,
   NoSuchConversation,
+  type ApprovalId,
+  type Approvals,
   type Author,
+  type CallId,
   type Commit,
   type Conversation,
   type ConversationId,
@@ -10,6 +14,7 @@ import {
   type Entry,
   type EntryBody,
   type EntryId,
+  type Live,
   type LiveChange,
   type Queued,
   type Snapshot,
@@ -18,77 +23,115 @@ import {
 } from "@nisse/protocol"
 import { Cause, Context, Effect, Layer, Queue, Stream } from "effect"
 import { newId } from "./ids.ts"
+import { migrate } from "./migrations.ts"
+
+export interface NewEntry {
+  readonly author: Author
+  readonly body: EntryBody
+}
 
 export interface Change {
-  readonly entries?: ReadonlyArray<{ readonly author: Author; readonly body: EntryBody }>
-  readonly live?: LiveChange
+  readonly entries?: ReadonlyArray<NewEntry>
+  readonly live?: ReadonlyArray<LiveChange>
   readonly status?: Status
   readonly submit?: {
     readonly id: SubmissionId
     readonly requestId: string
     readonly author: Author
     readonly text: string
+    readonly steer: boolean
   }
-  readonly place?: SubmissionId
+  readonly place?: ReadonlyArray<SubmissionId>
+  readonly attempts?: number
+  readonly providerState?: unknown
+  readonly approval?: { readonly id: ApprovalId; readonly call: CallId }
+}
+
+export interface ConversationState {
+  readonly conversation: Conversation
+  readonly status: Status
+  readonly attempts: number
+  readonly providerState: unknown
 }
 
 const SUBSCRIBER_QUEUE = 4096
-
-const schema = [
-  `CREATE TABLE conversations (
-    id TEXT PRIMARY KEY,
-    cwd TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'idle',
-    live TEXT NOT NULL DEFAULT ''
-  )`,
-  `CREATE TABLE commits (seq INTEGER PRIMARY KEY, conversation TEXT NOT NULL, body TEXT NOT NULL)`,
-  `CREATE INDEX commits_by_conversation ON commits (conversation, seq)`,
-  `CREATE TABLE entries (id TEXT PRIMARY KEY, conversation TEXT NOT NULL, seq INTEGER NOT NULL, body TEXT NOT NULL)`,
-  `CREATE INDEX entries_by_conversation ON entries (conversation, seq)`,
-  `CREATE TABLE submissions (
-    id TEXT PRIMARY KEY,
-    conversation TEXT NOT NULL,
-    request_id TEXT NOT NULL,
-    author TEXT NOT NULL,
-    text TEXT NOT NULL,
-    placed_seq INTEGER,
-    UNIQUE (conversation, request_id)
-  )`,
-  `CREATE INDEX submissions_waiting ON submissions (conversation) WHERE placed_seq IS NULL`,
-]
 
 interface ConversationRow {
   id: string
   cwd: string
   created_at: number
+  provider: string
+  approvals: Approvals
   status: Status
   live: string
+  attempts: number
+  provider_state: string | null
 }
 
 interface SubmissionRow {
   id: string
   author: string
   text: string
+  steer: number
 }
 
 const toConversation = (row: ConversationRow): Conversation => ({
   id: row.id as ConversationId,
   cwd: row.cwd,
   createdAt: row.created_at,
+  provider: row.provider,
+  approvals: row.approvals,
 })
+
+const toQueued = (row: SubmissionRow): Queued => ({
+  submission: row.id as SubmissionId,
+  author: JSON.parse(row.author) as Author,
+  text: row.text,
+  steer: row.steer === 1,
+})
+
+const applyLive = (live: Live, changes: ReadonlyArray<LiveChange>): Live => {
+  let text = live.text
+  const output = { ...live.output }
+  for (const change of changes) {
+    switch (change._tag) {
+      case "clear":
+        text = ""
+        for (const call of Object.keys(output)) delete output[call]
+        break
+      case "text":
+        text += change.append
+        break
+      case "text_end":
+        text = ""
+        break
+      case "output":
+        output[change.call] = (output[change.call] ?? "") + change.append
+        break
+      case "output_end":
+        delete output[change.call]
+    }
+  }
+  return { text, output }
+}
 
 export class Store extends Context.Service<
   Store,
   {
-    readonly start: (cwd: string) => Conversation
+    readonly start: (cwd: string, provider: string, approvals: Approvals) => Conversation
     readonly list: () => ReadonlyArray<Conversation>
-    readonly exists: (conversation: ConversationId) => Effect.Effect<void, NoSuchConversation>
-    readonly status: (conversation: ConversationId) => Status
+    readonly state: (conversation: ConversationId) => Effect.Effect<ConversationState, NoSuchConversation>
     readonly commit: (conversation: ConversationId, change: Change) => Commit
     readonly submissionFor: (conversation: ConversationId, requestId: string) => SubmissionId | undefined
     readonly nextQueued: (conversation: ConversationId) => Queued | undefined
+    readonly queuedSteers: (conversation: ConversationId) => ReadonlyArray<Queued>
     readonly transcript: (conversation: ConversationId) => ReadonlyArray<Entry>
+    readonly resolveApproval: (
+      conversation: ConversationId,
+      approval: ApprovalId,
+      author: Author,
+      allow: boolean,
+    ) => Effect.Effect<boolean, NoSuchApproval>
     readonly openRuns: () => ReadonlyArray<ConversationId>
     readonly pending: () => ReadonlyArray<ConversationId>
     readonly subscribe: (
@@ -112,10 +155,13 @@ export class Store extends Context.Service<
           "SELECT max(seq) AS seq FROM commits WHERE conversation = ?",
         )
         const queuedRows = db.query<SubmissionRow, [string]>(
-          "SELECT id, author, text FROM submissions WHERE conversation = ? AND placed_seq IS NULL ORDER BY rowid",
+          "SELECT id, author, text, steer FROM submissions WHERE conversation = ? AND placed_seq IS NULL ORDER BY rowid",
         )
         const nextQueuedRow = db.query<SubmissionRow, [string]>(
-          "SELECT id, author, text FROM submissions WHERE conversation = ? AND placed_seq IS NULL ORDER BY rowid LIMIT 1",
+          "SELECT id, author, text, steer FROM submissions WHERE conversation = ? AND placed_seq IS NULL ORDER BY rowid LIMIT 1",
+        )
+        const steerRows = db.query<SubmissionRow, [string]>(
+          "SELECT id, author, text, steer FROM submissions WHERE conversation = ? AND placed_seq IS NULL AND steer = 1 ORDER BY rowid",
         )
         const entryRows = db.query<{ body: string }, [string]>(
           "SELECT body FROM entries WHERE conversation = ? ORDER BY seq, rowid",
@@ -123,24 +169,21 @@ export class Store extends Context.Service<
         const commitsSince = db.query<{ body: string }, [string, number]>(
           "SELECT body FROM commits WHERE conversation = ? AND seq > ? ORDER BY seq",
         )
-
-        const toQueued = (row: SubmissionRow): Queued => ({
-          submission: row.id as SubmissionId,
-          author: JSON.parse(row.author) as Author,
-          text: row.text,
-        })
+        const approvalRow = db.query<{ answered_seq: number | null }, [string, string]>(
+          "SELECT answered_seq FROM approvals WHERE id = ? AND conversation = ?",
+        )
 
         const snapshot = (row: ConversationRow): Snapshot => ({
           _tag: "snapshot",
           conversation: toConversation(row),
           seq: lastSeq.get(row.id)?.seq ?? 0,
           entries: entryRows.all(row.id).map((r) => JSON.parse(r.body) as Entry),
-          live: row.live,
+          live: JSON.parse(row.live) as Live,
           queued: queuedRows.all(row.id).map(toQueued),
           status: row.status,
         })
 
-        const write = db.transaction((conversation: ConversationId, change: Change): Commit => {
+        const write = (conversation: ConversationId, change: Change): Commit => {
           const at = Date.now()
           const seq = (db.query<{ seq: number }, []>("SELECT coalesce(max(seq), 0) + 1 AS seq FROM commits").get()
             ?.seq ?? 1) as number
@@ -161,24 +204,37 @@ export class Store extends Context.Service<
           }
           if (change.submit) {
             const s = change.submit
-            db.run("INSERT INTO submissions (id, conversation, request_id, author, text) VALUES (?, ?, ?, ?, ?)", [
-              s.id,
+            db.run(
+              "INSERT INTO submissions (id, conversation, request_id, author, text, steer) VALUES (?, ?, ?, ?, ?, ?)",
+              [s.id, conversation, s.requestId, JSON.stringify(s.author), s.text, s.steer ? 1 : 0],
+            )
+          }
+          for (const submission of change.place ?? []) {
+            db.run("UPDATE submissions SET placed_seq = ? WHERE id = ?", [seq, submission])
+          }
+          if (change.approval) {
+            db.run("INSERT INTO approvals (id, conversation, call) VALUES (?, ?, ?)", [
+              change.approval.id,
               conversation,
-              s.requestId,
-              JSON.stringify(s.author),
-              s.text,
+              change.approval.call,
             ])
           }
-          if (change.place) {
-            db.run("UPDATE submissions SET placed_seq = ? WHERE id = ?", [seq, change.place])
-          }
-          if (change.live?._tag === "append") {
-            db.run("UPDATE conversations SET live = live || ? WHERE id = ?", [change.live.text, conversation])
-          } else if (change.live?._tag === "clear") {
-            db.run("UPDATE conversations SET live = '' WHERE id = ?", [conversation])
+          if (change.live && change.live.length > 0) {
+            const row = conversationRow.get(conversation)!
+            const live = applyLive(JSON.parse(row.live) as Live, change.live)
+            db.run("UPDATE conversations SET live = ? WHERE id = ?", [JSON.stringify(live), conversation])
           }
           if (change.status) {
             db.run("UPDATE conversations SET status = ? WHERE id = ?", [change.status, conversation])
+          }
+          if (change.attempts !== undefined) {
+            db.run("UPDATE conversations SET attempts = ? WHERE id = ?", [change.attempts, conversation])
+          }
+          if (change.providerState !== undefined) {
+            db.run("UPDATE conversations SET provider_state = ? WHERE id = ?", [
+              JSON.stringify(change.providerState),
+              conversation,
+            ])
           }
           const commit: Commit = {
             _tag: "commit",
@@ -186,9 +242,16 @@ export class Store extends Context.Service<
             at,
             conversation,
             entries,
-            ...(change.live ? { live: change.live } : {}),
+            ...(change.live && change.live.length > 0 ? { live: change.live } : {}),
             ...(change.submit
-              ? { enqueued: { submission: change.submit.id, author: change.submit.author, text: change.submit.text } }
+              ? {
+                  enqueued: {
+                    submission: change.submit.id,
+                    author: change.submit.author,
+                    text: change.submit.text,
+                    steer: change.submit.steer,
+                  },
+                }
               : {}),
             ...(change.status ? { status: change.status } : {}),
           }
@@ -198,7 +261,7 @@ export class Store extends Context.Service<
             JSON.stringify(commit),
           ])
           return commit
-        })
+        }
 
         const publish = (commit: Commit) => {
           const queues = subscribers.get(commit.conversation)
@@ -212,6 +275,12 @@ export class Store extends Context.Service<
           }
         }
 
+        const commit = (conversation: ConversationId, change: Change) => {
+          const committed = db.transaction(write)(conversation, change)
+          publish(committed)
+          return committed
+        }
+
         const findConversation = (conversation: ConversationId) =>
           Effect.suspend(() => {
             const row = conversationRow.get(conversation)
@@ -219,27 +288,27 @@ export class Store extends Context.Service<
           })
 
         return Store.of({
-          start: (cwd) => {
-            const row: ConversationRow = { id: newId(), cwd, created_at: Date.now(), status: "idle", live: "" }
-            db.run("INSERT INTO conversations (id, cwd, created_at) VALUES (?, ?, ?)", [
-              row.id,
-              row.cwd,
-              row.created_at,
-            ])
-            return toConversation(row)
+          start: (cwd, provider, approvals) => {
+            const id = newId()
+            db.run(
+              "INSERT INTO conversations (id, cwd, created_at, provider, approvals, live) VALUES (?, ?, ?, ?, ?, ?)",
+              [id, cwd, Date.now(), provider, approvals, JSON.stringify({ text: "", output: {} })],
+            )
+            return toConversation(conversationRow.get(id)!)
           },
           list: () =>
             db
               .query<ConversationRow, []>("SELECT * FROM conversations ORDER BY created_at DESC, rowid DESC")
               .all()
               .map(toConversation),
-          exists: (conversation) => Effect.asVoid(findConversation(conversation)),
-          status: (conversation) => conversationRow.get(conversation)?.status ?? "idle",
-          commit: (conversation, change) => {
-            const commit = write(conversation, change)
-            publish(commit)
-            return commit
-          },
+          state: (conversation) =>
+            Effect.map(findConversation(conversation), (row) => ({
+              conversation: toConversation(row),
+              status: row.status,
+              attempts: row.attempts,
+              providerState: row.provider_state === null ? undefined : JSON.parse(row.provider_state),
+            })),
+          commit,
           submissionFor: (conversation, requestId) =>
             db
               .query<
@@ -251,10 +320,28 @@ export class Store extends Context.Service<
             const row = nextQueuedRow.get(conversation)
             return row ? toQueued(row) : undefined
           },
+          queuedSteers: (conversation) => steerRows.all(conversation).map(toQueued),
           transcript: (conversation) => entryRows.all(conversation).map((r) => JSON.parse(r.body) as Entry),
+          resolveApproval: (conversation, approval, author, allow) =>
+            Effect.suspend(() => {
+              const outcome = db.transaction(() => {
+                const row = approvalRow.get(approval, conversation)
+                if (!row) return "missing" as const
+                if (row.answered_seq !== null) return "answered" as const
+                const committed = write(conversation, {
+                  entries: [{ author, body: { _tag: "approval_answer", approval, allow } }],
+                })
+                db.run("UPDATE approvals SET answered_seq = ? WHERE id = ?", [committed.seq, approval])
+                return committed
+              })()
+              if (outcome === "missing") return Effect.fail(new NoSuchApproval({ approval }))
+              if (outcome === "answered") return Effect.succeed(false)
+              publish(outcome)
+              return Effect.succeed(true)
+            }),
           openRuns: () =>
             db
-              .query<{ id: string }, []>("SELECT id FROM conversations WHERE status = 'working'")
+              .query<{ id: string }, []>("SELECT id FROM conversations WHERE status != 'idle'")
               .all()
               .map((row) => row.id as ConversationId),
           pending: () =>
@@ -294,12 +381,6 @@ const open = (path: string) => {
   const db = new Database(path, { create: true, strict: true })
   db.run("PRAGMA journal_mode = WAL")
   db.run("PRAGMA synchronous = NORMAL")
-  const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0
-  if (version === 0) {
-    db.transaction(() => {
-      for (const statement of schema) db.run(statement)
-      db.run("PRAGMA user_version = 1")
-    })()
-  }
+  migrate(db)
   return db
 }

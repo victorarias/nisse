@@ -3,7 +3,8 @@
 Read the README, then the plan and design docs it links. Nisse's vocabulary: a
 **conversation** is a transcript; an **entry** is one immutable record in it; a
 **commit** is one atomic write with a `seq`; a **submission** is input handed to
-a conversation; a **run** goes from an input to its answer.
+a conversation; a **run** goes from an input to its `run_end`; a **turn** is what a provider
+driver gets to do the run's work.
 
 Rules that keep it what it is:
 
@@ -37,7 +38,7 @@ enter where those consumers enter:
 Recorded provider exchanges from the Rust version wait in `fixtures/` for the
 provider tests.
 
-- The model is the seam. Tests script it (`scriptedModel`, `NISSE_MODEL_SCRIPT`)
+- The model is the seam. Tests script it (`scriptedProviders`, `NISSE_MODEL_SCRIPT`)
   or replay a provider's recorded exchange; nothing else is faked.
 - Judge the TUI by its screen.
 - The committed `schema/nisse.schema.json` is what clients build from. After a

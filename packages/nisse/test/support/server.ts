@@ -1,19 +1,20 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { Duration, Effect, Exit, Layer, Scope } from "effect"
 import { homeAt } from "../../src/home.ts"
-import { scriptedModel } from "../../src/model.ts"
+import { scriptedProviders, type Script } from "../../src/drivers/script.ts"
 import { Lifetime } from "../../src/lifetime.ts"
 import { serverLayer } from "../../src/server.ts"
 
-type Steps = Parameters<typeof scriptedModel>[0]
-
 export const tempHome = () => homeAt(mkdtempSync("/tmp/nisse-"))
 
-export const runningServer = async (steps: Steps = []) => {
+export const runningServer = async (steps: Script = []) => {
   const home = tempHome()
   const scope = Effect.runSync(Scope.make())
   await Effect.runPromise(
-    Layer.buildWithScope(serverLayer(home, { idleGrace: "1 hour" }).pipe(Layer.provide(scriptedModel(steps))), scope),
+    Layer.buildWithScope(
+      serverLayer(home, { idleGrace: "1 hour" }).pipe(Layer.provide(scriptedProviders(steps))),
+      scope,
+    ),
   )
   return {
     home,
@@ -31,7 +32,7 @@ export const servingUntilIdle = async (home: ReturnType<typeof tempHome>, idleGr
       const lifetime = yield* Lifetime
       listening.resolve()
       yield* lifetime.ended
-    }).pipe(Effect.provide(serverLayer(home, { idleGrace }).pipe(Layer.provide(scriptedModel([])))), Effect.scoped),
+    }).pipe(Effect.provide(serverLayer(home, { idleGrace }).pipe(Layer.provide(scriptedProviders([])))), Effect.scoped),
   )
   await Promise.race([listening.promise, exited])
   return { exited }
