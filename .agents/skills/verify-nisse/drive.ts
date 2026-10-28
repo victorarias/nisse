@@ -238,7 +238,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     requireUp()
     const line = `nisse ${args.join(" ")}`
     record(line)
-    const child = Bun.spawn(["bun", MAIN, ...args], { env: env(), stdout: "pipe", stderr: "pipe", cwd: REPO })
+    const child = Bun.spawn([MAIN, ...args], { env: env(), stdout: "pipe", stderr: "pipe", cwd: REPO })
     process.stdout.write(`$ ${line}\n--- stdout\n`)
     let stdout = ""
     const decoder = new TextDecoder()
@@ -279,7 +279,7 @@ const commands: Record<string, () => Promise<void> | void> = {
   serve: async () => {
     requireUp()
     if (lockOwner()) fail(`a server already holds ${lock}`)
-    openWindow("serve", ["bun", MAIN, "serve"])
+    openWindow("serve", [MAIN, "serve"])
     record("serve")
     if (!(await until(() => existsSync(socket) && lockOwner() !== undefined, 10_000)))
       fail(`the server did not take ${lock} in 10s:\n${tmux("capture-pane", "-p", "-t", "serve").stdout}`)
@@ -379,7 +379,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     switch (sub) {
       case "start": {
         if (tuiOpen()) fail("a TUI is already open in this run: tui stop first")
-        openWindow("tui", ["bun", MAIN, ...rest])
+        openWindow("tui", [MAIN, ...rest])
         record(`tui start ${rest.join(" ")}`)
         console.log("opened; wait for READY with: tui wait READY")
         return

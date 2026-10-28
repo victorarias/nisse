@@ -10,6 +10,13 @@ import type { Providers } from "./provider.ts"
 import { Store } from "./store.ts"
 import { VERSION } from "./version.ts"
 
+const afterReply = (effect: Effect.Effect<void>) =>
+  Effect.withFiber((handler) =>
+    Effect.sync(() => {
+      handler.addObserver(() => Effect.runFork(effect))
+    }),
+  )
+
 const Handlers = NisseRpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* Store
@@ -28,7 +35,7 @@ const Handlers = NisseRpcs.toLayer(
       "conversation/interrupt": ({ conversation }) => conversations.interrupt(conversation),
       "approval/resolve": ({ conversation, approval, author, allow }) =>
         Effect.map(conversations.resolve(conversation, approval, author, allow), (accepted) => ({ accepted })),
-      "server/stop": () => Effect.andThen(conversations.settle, lifetime.stop),
+      "server/stop": () => Effect.andThen(conversations.settle, afterReply(lifetime.stop)),
     })
   }),
 )

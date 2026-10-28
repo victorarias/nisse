@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S BUN_GC_TIMER_DISABLE=1 bun
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option, Schedule } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
@@ -73,7 +73,16 @@ const serveCommand = Command.make(
           ),
         ),
       ),
-    ).pipe(Effect.catchTag("HomeTaken", () => Console.error(`another server already serves ${home.dir}`)))
+    ).pipe(
+      Effect.catchTag("HomeTaken", () =>
+        Effect.andThen(
+          Console.error(`another server already serves ${home.dir}`),
+          Effect.sync(() => {
+            process.exitCode = 1
+          }),
+        ),
+      ),
+    )
   }),
 ).pipe(Command.withDescription("Run this home's server in the foreground"))
 

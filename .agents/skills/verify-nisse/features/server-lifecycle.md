@@ -30,7 +30,7 @@ Preconditions:
   `drive.ts r nisse exec hi`, then `drive.ts r doctor`: a server pid running
   this checkout's `main.ts serve`.
 - **Refuse.** Run `drive.ts r nisse serve`. It exits at once, with exit code
-  0, and stderr says `another server already serves /tmp/nisse-verify/r/home`.
+  1, and stderr says `another server already serves /tmp/nisse-verify/r/home`.
 - **Shared.** In a fresh run, start four at once:
   `for i in 1 2 3 4; do drive.ts r nisse exec "client $i" & done; wait`. Each
   prints its own `You said: client <i>`, and `doctor` shows one server.
@@ -38,8 +38,7 @@ Preconditions:
   `none running`; it takes about 30 s. With a TUI open, the server stays.
 - **Stop.** Run `drive.ts r serve`, then
   `drive.ts r rpc server/stop`, then `drive.ts r doctor`: `none running`.
-  The call itself answers with an `Interrupt` error, because the server ends
-  as it answers.
+  The call answers with a `null` result before the server ends.
 
 ## Gotchas
 
