@@ -573,7 +573,7 @@ export class Conversations extends Context.Service<
       const crowded = (conversation: Conversation) => {
         const running = familyOf(conversation).filter(
           (member) =>
-            member.conversation.lineage !== undefined &&
+            member.conversation.lineage?.task !== undefined &&
             (member.status !== "idle" ||
               active.has(member.conversation.id) ||
               store.nextQueued(member.conversation.id) !== undefined),
