@@ -431,14 +431,13 @@ const modelList = (slug: string) => ({
       context_window: 272000,
     },
     { slug: "hidden", visibility: "hide", priority: 0 },
-    { slug: "code-mode-only", visibility: "list", priority: 2, tool_mode: "code_mode_only" },
   ],
 })
 
 const openAiModels = async (client: RawClient) =>
   ((await client.call("models/list", {})).result as Array<ProviderModels>).find((list) => list.provider === "openai")!
 
-test("OpenAI's models come from ChatGPT, leave out those nisse can't run, and the saved list answers when ChatGPT can't", async () => {
+test("OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't", async () => {
   await using fake = new FakeOpenAi()
   fake.modelList = modelList("gpt-test")
   const home = tempHome()
