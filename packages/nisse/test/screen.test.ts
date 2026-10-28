@@ -220,3 +220,29 @@ test("a sign-in cancelled from another connection stops Claude's sign-in in the 
   session.type("\x03")
   await session.exited
 }, 40_000)
+
+test("an open TUI shows a sign-in another connection finished", async () => {
+  const nisseHome = home()
+  const session = screenSession(
+    [],
+    nisseEnv(nisseHome, {
+      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
+    }),
+  )
+  await session.waitFor((screen) => /○ claude +signed out/.test(screen))
+  const other = await RawClient.connect(nisseHome.socket)
+  const auth = other.watch<AuthState>("auth/watch")
+  const started = (await other.call("auth/start", { provider: "claude" })).result as AuthState
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  await other.call("auth/respond", {
+    provider: "claude",
+    flow: started.flow,
+    response: { _tag: "terminal_exited", success: true },
+  })
+  await auth.until((states) => states.at(-1)?.phase === "succeeded", 30_000)
+  other.close()
+
+  await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen))
+  session.type("\x03")
+  await session.exited
+}, 40_000)

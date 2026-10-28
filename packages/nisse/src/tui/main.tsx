@@ -457,7 +457,10 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
   const onAuth = (state: AuthState) =>
     Effect.suspend(() => {
       seen.set(state.flow, state)
-      return state.flow === mine ? act(state) : Effect.void
+      if (state.flow === mine) return act(state)
+      return state.phase === "succeeded" || state.phase === "failed" || state.phase === "cancelled"
+        ? refreshProviders(false)
+        : Effect.void
     })
   yield* client["auth/watch"]().pipe(Stream.runForEach(onAuth), Effect.ignore, Effect.forkScoped)
 

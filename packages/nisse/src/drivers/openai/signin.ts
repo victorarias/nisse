@@ -1,7 +1,7 @@
 import type { AuthMethod } from "@nisse/protocol"
 import { Deferred, Effect } from "effect"
 import { ProviderError, type SignInFlow } from "../../provider.ts"
-import { CLIENT_ID, errorReason, fromTokens, requestTokens, saveCredentials } from "./credentials.ts"
+import { CLIENT_ID, errorReason, fromTokens, requestTokens } from "./credentials.ts"
 
 export const CALLBACK_PORT = 1455
 const CALLBACK_PATH = "/auth/callback"
@@ -197,7 +197,7 @@ const deviceCode = (server: SignInServer, flow: SignInFlow) =>
     return yield* failure("the device code expired before anyone entered it")
   })
 
-export const signIn = (server: SignInServer, authPath: string, method: AuthMethod, flow: SignInFlow) =>
+export const signIn = (server: SignInServer, method: AuthMethod, flow: SignInFlow) =>
   Effect.gen(function* () {
     const tokens =
       method === "browser"
@@ -205,5 +205,5 @@ export const signIn = (server: SignInServer, authPath: string, method: AuthMetho
         : method === "device_code"
           ? yield* deviceCode(server, flow)
           : yield* failure("ChatGPT has no sign-in command to run")
-    yield* saveCredentials(authPath, yield* fromTokens(tokens))
+    return yield* fromTokens(tokens)
   })

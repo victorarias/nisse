@@ -266,12 +266,12 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
     signInMethods: ["browser", "device_code"],
     signIn: (method, flow) =>
       Effect.gen(function* () {
-        yield* signIn(
+        const credentials = yield* signIn(
           { authBase: options.authBase, callbackPort: options.callbackPort, originator: ORIGINATOR },
-          options.authPath,
           method,
           flow,
         )
+        yield* signingIn.withPermits(1)(saveCredentials(options.authPath, credentials))
         rejected = undefined
         askedForModels = false
       }),
