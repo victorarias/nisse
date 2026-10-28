@@ -17,5 +17,5 @@
     "verbatimModuleSyntax": true,
     "noEmit": true
   },
-  "include": ["packages/*/src", "packages/*/test", "packages/*/scripts"]
+  "include": ["packages/*/src", "packages/*/test", "packages/*/scripts", ".agents/skills/*/*.ts"]
 }
