@@ -1,8 +1,8 @@
 import {
+  authEnded,
   CannotSignIn,
   UnknownProvider,
   type AuthMethod,
-  type AuthPhase,
   type AuthResponse,
   type AuthState,
   type ProviderModels,
@@ -19,8 +19,6 @@ interface Flow {
   readonly responses: Queue.Queue<AuthResponse>
   fiber?: Fiber.Fiber<void>
 }
-
-const over = (phase: AuthPhase) => phase === "succeeded" || phase === "failed" || phase === "cancelled"
 
 export class Setup extends Context.Service<
   Setup,
@@ -74,7 +72,7 @@ export class Setup extends Context.Service<
       const update = (provider: string, flow: string, change: Partial<AuthState>) =>
         Effect.sync(() => {
           const running = flows.get(provider)
-          if (!running || running.state.flow !== flow || over(running.state.phase)) return false
+          if (!running || running.state.flow !== flow || authEnded(running.state.phase)) return false
           const { interaction: _, ...rest } = running.state
           running.state = { ...rest, ...change }
           publish(running.state)
@@ -103,6 +101,14 @@ export class Setup extends Context.Service<
               ? { phase: "succeeded", ...(health.account ? { message: health.account } : {}) }
               : { phase: "failed", message: health.message ?? "still signed out" },
           )
+        })
+
+      const cancel = (provider: string, flow: string) =>
+        Effect.gen(function* () {
+          const fiber = flows.get(provider)?.fiber
+          const cancelled = yield* update(provider, flow, { phase: "cancelled" })
+          if (cancelled && fiber) yield* Fiber.interrupt(fiber)
+          return cancelled
         })
 
       return Setup.of({
@@ -136,7 +142,7 @@ export class Setup extends Context.Service<
               })
             }
             const running = flows.get(provider)
-            if (running && !over(running.state.phase)) return running.state
+            if (running && !authEnded(running.state.phase)) return running.state
             const flow: Flow = {
               state: { provider, flow: newId(), phase: "starting" },
               responses: yield* Queue.unbounded<AuthResponse>(),
@@ -152,18 +158,18 @@ export class Setup extends Context.Service<
             if (!running || running.state.flow !== flow || running.state.phase !== "waiting") return false
             return Queue.offerUnsafe(running.responses, response)
           }),
-        cancel: (provider, flow) =>
-          Effect.gen(function* () {
-            const fiber = flows.get(provider)?.fiber
-            const cancelled = yield* update(provider, flow, { phase: "cancelled" })
-            if (cancelled && fiber) yield* Fiber.interrupt(fiber)
-            return cancelled
-          }),
+        cancel,
         logout: (provider) =>
           Effect.gen(function* () {
             const driver = yield* driverOf(provider)
+            const running = flows.get(provider)
+            if (running && !authEnded(running.state.phase)) yield* cancel(provider, running.state.flow)
             yield* Effect.mapError(driver.signOut, (error) => new CannotSignIn({ provider, message: error.message }))
-            return yield* snapshot(provider, driver, true)
+            const signedOut = yield* snapshot(provider, driver, true)
+            const state: AuthState = { provider, flow: newId(), phase: "signed_out" }
+            flows.set(provider, { state, responses: yield* Queue.unbounded<AuthResponse>() })
+            publish(state)
+            return signedOut
           }),
         watch: Stream.unwrap(
           Effect.gen(function* () {

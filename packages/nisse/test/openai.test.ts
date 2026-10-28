@@ -392,16 +392,20 @@ test("a connection that starts watching after a sign-in ended still learns how i
   expect(auth.items[0]).toMatchObject({ provider: "openai", flow: started.flow, phase: "failed" })
 })
 
-test("signing out leaves the provider signed out", async () => {
+test("signing out leaves the provider signed out and tells every connection", async () => {
   await using fake = new FakeOpenAi()
   await using setup = await setupWith(fake)
   await signIn(setup.server.home)
   expect((await setup.openai()).health.status).toBe("ready")
 
-  const after = (await setup.client.call("auth/logout", { provider: "openai" })).result as ProviderSnapshot
+  const other = await RawClient.connect(setup.server.home.socket)
+  const after = (await other.call("auth/logout", { provider: "openai" })).result as ProviderSnapshot
+  other.close()
+  await setup.auth.until((states) => states.some((state) => state.phase === "signed_out"))
 
   expect(after.health.status).toBe("signed_out")
   expect((await setup.openai()).health.status).toBe("signed_out")
+  expect(setup.auth.items.at(-1)).toMatchObject({ provider: "openai", phase: "signed_out" })
 })
 
 const modelList = (slug: string) => ({

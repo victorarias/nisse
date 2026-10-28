@@ -261,8 +261,18 @@ export const ProviderModels = Schema.Struct({
 })
 export type ProviderModels = typeof ProviderModels.Type
 
-export const AuthPhase = Schema.Literals(["starting", "waiting", "verifying", "succeeded", "failed", "cancelled"])
+export const AuthPhase = Schema.Literals([
+  "starting",
+  "waiting",
+  "verifying",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "signed_out",
+])
 export type AuthPhase = typeof AuthPhase.Type
+
+export const authEnded = (phase: AuthPhase) => phase !== "starting" && phase !== "waiting" && phase !== "verifying"
 
 export const BrowserInteraction = Schema.TaggedStruct("browser", { url: Schema.String }).annotate({
   description:
@@ -282,7 +292,9 @@ export const AuthState = Schema.Struct({
   phase: AuthPhase,
   interaction: Schema.optionalKey(AuthInteraction.annotate({ description: "What a person must do while it waits." })),
   message: Schema.optionalKey(Schema.String.annotate({ description: "Who it signed in as, or why it failed." })),
-}).annotate({ description: "One sign-in, as every connection sees it. A provider has at most one at a time." })
+}).annotate({
+  description: "One sign-in, or a sign-out, as every connection sees it. A provider has at most one sign-in at a time.",
+})
 export type AuthState = typeof AuthState.Type
 
 export const CallbackResponse = Schema.TaggedStruct("callback", { url: Schema.String })

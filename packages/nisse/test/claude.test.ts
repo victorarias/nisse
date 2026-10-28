@@ -242,7 +242,7 @@ test("Claude Code says once how it is signed in and which models it offers, with
   expect(claude.spawns()).toHaveLength(0)
 })
 
-test("signing in to Claude runs Claude Code's own sign-in in a terminal, then names the account", async () => {
+test("signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account", async () => {
   using claude = new FakeClaude("terminal_sign_in")
   await using server = await runningServer([], { claude: claude.options })
   const client = await RawClient.connect(server.home.socket)
@@ -266,7 +266,7 @@ test("signing in to Claude runs Claude Code's own sign-in in a terminal, then na
   expect(waiting.interaction).toEqual({
     _tag: "terminal",
     command: [claude.options.executable!, "auth", "login"],
-    env: {},
+    env: claude.options.env!,
   })
   expect(auth.items.at(-1)?.message).toBe("person@example.com · Claude Max")
 }, 40_000)

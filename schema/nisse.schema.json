@@ -1535,7 +1535,8 @@
               "verifying",
               "succeeded",
               "failed",
-              "cancelled"
+              "cancelled",
+              "signed_out"
             ]
           },
           "interaction": {
@@ -1627,7 +1628,7 @@
           "phase"
         ],
         "additionalProperties": true,
-        "description": "One sign-in, as every connection sees it. A provider has at most one at a time."
+        "description": "One sign-in, or a sign-out, as every connection sees it. A provider has at most one sign-in at a time."
       },
       "error": {
         "anyOf": [
@@ -1863,7 +1864,8 @@
               "verifying",
               "succeeded",
               "failed",
-              "cancelled"
+              "cancelled",
+              "signed_out"
             ]
           },
           "interaction": {
@@ -1955,7 +1957,7 @@
           "phase"
         ],
         "additionalProperties": true,
-        "description": "One sign-in, as every connection sees it. A provider has at most one at a time."
+        "description": "One sign-in, or a sign-out, as every connection sees it. A provider has at most one sign-in at a time."
       },
       "error": {
         "not": {}

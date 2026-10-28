@@ -1,5 +1,6 @@
 import { createCliRenderer, type CliRenderer, type KeyBinding, type TextareaRenderable } from "@opentui/core"
 import { render, useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { authEnded } from "@nisse/protocol"
 import type { ApprovalId, AuthState, CallId, Entry, ModelSelection, Outcome, ProviderSnapshot } from "@nisse/protocol"
 import { Deferred, Effect, Fiber, Stream } from "effect"
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
@@ -434,7 +435,7 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
   let mine: string | undefined
   const act = (state: AuthState) =>
     Effect.gen(function* () {
-      if (state.phase === "succeeded" || state.phase === "failed" || state.phase === "cancelled") {
+      if (authEnded(state.phase)) {
         mine = undefined
         setSetup("signIn", state.phase === "failed" ? state : undefined)
         const terminal = terminals.get(state.flow)
@@ -458,9 +459,7 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
     Effect.suspend(() => {
       seen.set(state.flow, state)
       if (state.flow === mine) return act(state)
-      return state.phase === "succeeded" || state.phase === "failed" || state.phase === "cancelled"
-        ? refreshProviders(false)
-        : Effect.void
+      return authEnded(state.phase) ? refreshProviders(false) : Effect.void
     })
   yield* client["auth/watch"]().pipe(Stream.runForEach(onAuth), Effect.ignore, Effect.forkScoped)
 

@@ -155,8 +155,6 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
           : Effect.tap(probe({ executable, env }), (found) => Effect.sync(() => (probed = found))),
       ),
     )
-  const configDirEnv = (): Record<string, string> =>
-    env.CLAUDE_CONFIG_DIR === undefined ? {} : { CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR }
 
   const converse = (turn: Turn, start: Start, opening: ReadonlyArray<string>) =>
     Effect.gen(function* () {
@@ -340,7 +338,7 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
     signInMethods: ["terminal"],
     signIn: (_method, flow) =>
       Effect.gen(function* () {
-        yield* flow.show({ _tag: "terminal", command: [executable, "auth", "login"], env: configDirEnv() })
+        yield* flow.show({ _tag: "terminal", command: [executable, "auth", "login"], env })
         while (true) {
           const response = yield* flow.response
           if (response._tag !== "terminal_exited") continue

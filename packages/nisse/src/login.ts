@@ -1,4 +1,4 @@
-import type { AuthMethod, AuthState } from "@nisse/protocol"
+import { authEnded, type AuthMethod, type AuthState } from "@nisse/protocol"
 import { createInterface } from "node:readline"
 import { Deferred, Effect, Fiber, Stream } from "effect"
 import { Client } from "./client.ts"
@@ -68,7 +68,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
       if (state.phase === "succeeded") say(`signed in to ${provider}${state.message ? ` as ${state.message}` : ""}`)
       else if (state.phase === "failed") say(`signing in to ${provider} failed: ${state.message ?? "no reason given"}`)
       else if (state.phase === "cancelled") say(`signing in to ${provider} was cancelled`)
-      if (over(state)) {
+      if (authEnded(state.phase)) {
         outcome = state
         if (terminal) yield* Fiber.interrupt(terminal)
         return
@@ -98,7 +98,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
   const watching = client["auth/watch"]().pipe(
     Stream.filterEffect((state) => Effect.map(Deferred.await(startedFlow), (started) => state.flow === started)),
     Stream.tap(shown),
-    Stream.takeUntil(over),
+    Stream.takeUntil((state) => authEnded(state.phase)),
     Stream.runDrain,
   )
   const watcher = yield* Effect.forkScoped(watching)
@@ -120,9 +120,6 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
   )
   return outcome?.phase === "succeeded"
 })
-
-const over = (state: AuthState) =>
-  state.phase === "succeeded" || state.phase === "failed" || state.phase === "cancelled"
 
 export const logout = Effect.fnUntraced(function* (provider: string) {
   const client = yield* Client

@@ -29,7 +29,9 @@ time, and every connection sees it end as `succeeded`, `failed` or
   or `auth/cancel`, and frees the callback port.
 - `signin-shared` gives a second `auth/start` the sign-in already running, and
   shows every sign-in to every `auth/watch`.
-- `signout` signs out with `nisse logout <provider>` or `auth/logout`.
+- `signout` signs out with `nisse logout <provider>` or `auth/logout`, cancels
+  a sign-in still running for that provider, and tells every `auth/watch` with
+  `"phase": "signed_out"`, so open TUIs show the provider signed out.
 - `signin-cannot` refuses an unknown provider, one with nothing to sign in to,
   and a method the provider does not offer.
 - `signin-real` finishes a ChatGPT or Claude sign-in and names the account.
@@ -144,6 +146,10 @@ Preconditions:
   `signed out of openai: signed out`, and the file is gone.
   `drive.ts r rpc auth/logout '{"provider": "openai"}'` answers the provider
   with `"status": "signed_out"`.
+  Write the file again, `drive.ts r tui start` and wait for `● openai`, then
+  `drive.ts r nisse logout openai`: the TUI's splash turns to
+  `○ openai  signed out`, and `drive.ts r watch-auth` shows
+  `"phase": "signed_out"` for `openai`.
 - **Cannot.** `drive.ts r nisse login nope`: exit 1, stderr
   `no provider named nope; there are script, claude, openai`.
   `drive.ts r nisse login script`: exit 1, `script has nothing to sign in to`.
