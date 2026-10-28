@@ -246,3 +246,19 @@ test("an open TUI shows a sign-in another connection finished", async () => {
   session.type("\x03")
   await session.exited
 }, 40_000)
+
+test("nisse login hands what the person types to Claude's own sign-in", async () => {
+  const nisseHome = home()
+  const session = screenSession(
+    ["login", "claude"],
+    nisseEnv(nisseHome, {
+      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
+      FAKE_CLAUDE_AUTH_ASKS: "1",
+    }),
+  )
+  await session.waitFor((screen) => screen.includes("fake claude asks for a code"))
+  session.type("the-code\r")
+  await session.waitFor((screen) => screen.includes("signed in to claude"), 30_000)
+  expect(await session.exited).toBe(0)
+  expect(readFileSync(join(nisseHome.dir, "fake-claude", "log.ndjson"), "utf8")).toContain('"authAnswer":"the-code"')
+}, 40_000)

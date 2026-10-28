@@ -79,6 +79,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
           say(`Open this address to sign in:\n\n  ${interaction.url}\n`)
           say("A browser on another machine can't reach this one: paste the address it ends on here.")
           openBrowser(interaction.url)
+          yield* pastedLines(respond)
           return
         case "device_code":
           say(`Open ${interaction.url} on any device and enter the code ${interaction.code}`)
@@ -94,7 +95,6 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
       }
     })
 
-  yield* pastedLines(respond)
   const watching = client["auth/watch"]().pipe(
     Stream.filterEffect((state) => Effect.map(Deferred.await(startedFlow), (started) => state.flow === started)),
     Stream.tap(shown),

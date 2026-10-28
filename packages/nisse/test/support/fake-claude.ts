@@ -8,7 +8,13 @@ mkdirSync(dir, { recursive: true })
 
 if (argv[0] === "auth") {
   appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ auth: argv.slice(1) })}\n`)
-  if (process.env.FAKE_CLAUDE_AUTH_WAITS) {
+  if (process.env.FAKE_CLAUDE_AUTH_ASKS) {
+    process.stdout.write("fake claude asks for a code: ")
+    for await (const line of console) {
+      appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ authAnswer: line })}\n`)
+      process.exit(0)
+    }
+  } else if (process.env.FAKE_CLAUDE_AUTH_WAITS) {
     process.stdout.write(`fake claude ${argv.join(" ")} waiting\n`)
     process.on("SIGTERM", () => {
       appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ authEnded: "SIGTERM" })}\n`)
