@@ -406,9 +406,10 @@ test("output a background process writes after its call ends never reaches the c
   rmSync(cwd, { recursive: true })
 })
 
-test("Grep reports only the lines a file has", async () => {
+test("Grep reports only the lines a file has, whatever its line endings", async () => {
   const cwd = workdir()
   await Bun.write(`${cwd}/notes.txt`, "alpha\n\nbeta\n")
+  await Bun.write(`${cwd}/windows.txt`, "alpha\r\n\r\nbeta\r\n")
   await using server = await runningServer([{ tool: { name: "Grep", input: { pattern: "^$" } } }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, { cwd })
@@ -416,7 +417,7 @@ test("Grep reports only the lines a file has", async () => {
   await submit(client, conversation, "blank lines")
   await view.until(settled)
   expect(bodies(view.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({
-    output: "notes.txt:2:",
+    output: expect.stringMatching(/^(notes\.txt:2:\nwindows\.txt:2:|windows\.txt:2:\nnotes\.txt:2:)$/),
     error: false,
   })
   client.close()

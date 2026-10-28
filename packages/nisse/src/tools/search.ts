@@ -79,11 +79,11 @@ export const Grep = tool({
           .then((buffer) => new Uint8Array(buffer))
           .catch(() => undefined)
         if (!bytes || bytes.subarray(0, BINARY_PROBE).includes(0)) continue
-        const lines = new TextDecoder().decode(bytes).split("\n")
+        const lines = new TextDecoder().decode(bytes).split(/\r?\n/)
         if (lines.at(-1) === "") lines.pop()
         for (let i = 0; i < lines.length; i++) {
-          if (!regex.test(lines[i]!)) continue
-          const line = lines[i]!.replace(/\r$/, "")
+          const line = lines[i]!
+          if (!regex.test(line)) continue
           matches.push(
             `${shown}:${i + 1}:${line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS)} [line cut]` : line}`,
           )
