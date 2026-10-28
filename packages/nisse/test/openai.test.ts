@@ -599,6 +599,14 @@ const inCodeMode = { model: CODE_MODE_MODEL, codeModeHost: codeModeHost ?? "" }
 const resultsOf = (deliveries: ReadonlyArray<Delivery>) =>
   bodies(deliveries).flatMap((body) => (body._tag === "tool_result" ? [body] : []))
 
+const resultOf = (deliveries: ReadonlyArray<Delivery>, call: string) =>
+  resultsOf(deliveries).find((result) => result.call === call)!
+
+const sent = (fake: FakeOpenAi, request: number): Array<any> => JSON.parse(fake.responses()[request]!.body).input
+
+const notesIn = (input: Array<any>): Array<string> =>
+  input.flatMap((item) => (item.role === "developer" ? [item.content[0].text] : []))
+
 const allowEach = async (session: Awaited<ReturnType<typeof conversationWith>>, count: number) => {
   for (let answered = 0; answered < count; answered++) {
     await session.view.until(
@@ -664,17 +672,23 @@ withCodeModeHost(
   },
 )
 
-withCodeModeHost("a script that yields is resumed by wait", async () => {
+withCodeModeHost("a script that yields is resumed by wait, and its cell ends when it does", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("code_mode_wait")
   await using session = await conversationWith(fake, inCodeMode)
   await session.submit("count slowly")
   await session.view.until(settled(1))
-  const [yielded, finished] = resultsOf(session.view.deliveries).map((result) => result.output)
+  const [yielded, finished] = ["call_1", "call_2"].map((call) => resultOf(session.view.deliveries, call).output)
   expect(yielded).toStartWith("Script running with cell ID call_1\n")
   expect(yielded).toEndWith("started")
   expect(finished).toStartWith("Script completed\n")
   expect(finished).toEndWith("finished")
+  const cell = bodies(session.view.deliveries).find((body) => body._tag === "tool_call" && body.tool === "cell")
+  expect(cell).toMatchObject({ parent: "call_1", input: { cell_id: "call_1" } })
+  expect(resultOf(session.view.deliveries, (cell as { call: string }).call)).toMatchObject({
+    output: "Script completed",
+    error: false,
+  })
   expectRequests(fake, expected)
 })
 
@@ -732,7 +746,7 @@ withCodeModeHost("a host that dies mid-script interrupts the script with the nes
     expect(resultsOf(session.view.deliveries)[0]!.output).toContain("[package]")
     process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
     await session.view.until(settled(1))
-    const script = resultsOf(session.view.deliveries).find((result) => result.call === "call_1")!
+    const script = sent(fake, 1).find((item) => item.type === "custom_tool_call_output")
     expect(script.output).toStartWith("interrupted: the code-mode host stopped")
     expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
     expect(script.output).toContain("[package]")
@@ -759,10 +773,11 @@ withCodeModeHost("a host that dies while the model waits tells the wait what the
     )
     process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
     await session.view.until(settled(1))
-    const waited = resultsOf(session.view.deliveries).find((result) => result.call === "call_2")!
-    expect(waited.output).toStartWith("interrupted: the code-mode host stopped")
-    expect(waited.output).toContain("The calls it made that finished:\n- Read (done):")
-    expect(waited.output).toContain("[package]")
+    expect(resultOf(session.view.deliveries, "call_2").output).toStartWith("interrupted: the code-mode host stopped")
+    const [note] = notesIn(sent(fake, 2))
+    expect(note).toStartWith("Cell call_1 stopped before its script finished.")
+    expect(note).toContain("The calls it made that finished:\n- Read (done):")
+    expect(note).toContain("[package]")
     expectRequests(fake, expected)
   } finally {
     rmSync(launcher, { recursive: true, force: true })
@@ -785,7 +800,9 @@ withCodeModeHost("a wait on a script whose host stopped never reaches a script t
     )
     process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
     await session.view.until(settled(1))
-    const [, stopped, started, checked] = resultsOf(session.view.deliveries).map((result) => result.output)
+    const [stopped, started, checked] = ["call_2", "call_3", "call_4"].map(
+      (call) => resultOf(session.view.deliveries, call).output,
+    )
     expect(stopped).toStartWith("interrupted: the code-mode host stopped")
     expect(started).toStartWith("Script running with cell ID call_3\n")
     expect(checked).toStartWith("no running cell call_1")
@@ -810,12 +827,10 @@ withCodeModeHost(
     await session.view.until(settled(1))
     await session.submit("what did it read?")
     await session.view.until(settled(2))
-    const note = JSON.parse(fake.responses()[2]!.body).input.find(
-      (item: { role?: string }) => item.role === "developer",
-    )
-    expect(note.content[0].text).toStartWith("Cell call_1 was stopped when the run ended")
-    expect(note.content[0].text).toContain("The calls it made that finished:\n- Read (done):")
-    expect(note.content[0].text).toContain("[package]")
+    const [note] = notesIn(sent(fake, 2))
+    expect(note).toStartWith("Cell call_1 stopped before its script finished.")
+    expect(note).toContain("The calls it made that finished:\n- Read (done):")
+    expect(note).toContain("[package]")
     expectRequests(fake, expected)
   },
 )
@@ -843,12 +858,10 @@ withCodeModeHost(
       const view = client.subscribe({ conversation: first.conversation })
       await view.until(settled(1))
       client.close()
-      const note = JSON.parse(fake.responses()[2]!.body).input.find(
-        (item: { role?: string }) => item.role === "developer",
-      )
-      expect(note.content[0].text).toStartWith("Cell call_1 was stopped when the server stopped")
-      expect(note.content[0].text).toContain("The calls it made that finished:\n- Read (done):")
-      expect(note.content[0].text).toContain("[package]")
+      const [note] = notesIn(sent(fake, 2))
+      expect(note).toStartWith("Cell call_1 stopped before its script finished.")
+      expect(note).toContain("The calls it made that finished:\n- Read (done):")
+      expect(note).toContain("[package]")
       expectRequests(fake, expected)
     } finally {
       rmSync(home.dir, { recursive: true, force: true })
@@ -867,9 +880,7 @@ withCodeModeHost("a script stopped mid-run still tells the model what its calls 
   await session.view.until(settled(1))
   await session.submit("what did it read?")
   await session.view.until(settled(2))
-  const script = JSON.parse(fake.responses()[1]!.body).input.find(
-    (item: { type: string }) => item.type === "custom_tool_call_output",
-  )
+  const script = sent(fake, 1).find((item) => item.type === "custom_tool_call_output")
   expect(script.output).toStartWith("interrupted; it may or may not have taken effect")
   expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
   expect(script.output).toContain("[package]")
@@ -930,12 +941,12 @@ withCodeModeHost(
     await session.view.until(settled(1))
     await session.submit("what did the first script read?")
     await session.view.until(settled(2))
-    const waited = JSON.parse(fake.responses()[3]!.body).input.find(
-      (item: { type: string; call_id: string }) => item.type === "function_call_output" && item.call_id === "call_3",
-    )
-    expect(waited.output).toStartWith("interrupted; it may or may not have taken effect")
-    expect(waited.output).toContain("The calls it made that finished:\n- Read (done):")
-    expect(waited.output).toContain("[package]")
+    const waited = sent(fake, 3).find((item) => item.call_id === "call_3" && item.type === "function_call_output")
+    expect(waited.output).toBe("interrupted; it may or may not have taken effect")
+    const [note] = notesIn(sent(fake, 3))
+    expect(note).toStartWith("Cell call_1 stopped before its script finished.")
+    expect(note).toContain("The calls it made that finished:\n- Read (done):")
+    expect(note).toContain("[package]")
     expectRequests(fake, expected)
   },
 )

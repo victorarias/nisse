@@ -3,19 +3,16 @@ import { Effect, Semaphore } from "effect"
 import { rmSync } from "node:fs"
 import { ProviderError, type Call, type Driver, type Health, type Turn } from "../../provider.ts"
 import { catalog, CLIENT_VERSION } from "./catalog.ts"
-import { interrupted } from "../../tools/tool.ts"
 import {
+  CELL,
   codeModeRun,
   codeModeTools,
   EXEC,
-  finishedCall,
-  WAIT,
   Host,
   HOST_IDLE_MS,
   installedHost,
-  isYielded,
+  isScriptReport,
   missingHost,
-  withFinishedCalls,
 } from "./code-mode/index.ts"
 import { accountOf, isExpired, loadCredentials, refreshed, saveCredentials, type Credentials } from "./credentials.ts"
 import { CALLBACK_PORT, signIn } from "./signin.ts"
@@ -61,98 +58,85 @@ const instructionsFor = (options: OpenAiOptions, cwd: string) => {
   return text
 }
 
-const stoppedCellNote = (script: CallId, when: string, finished: ReadonlyArray<string>) => ({
+const finishedCall = (tool: string, result: { output: string; error: boolean }) =>
+  `- ${tool} (${result.error ? "failed" : "done"}): ${result.output.trimEnd()}`
+
+const withFinishedCalls = (text: string, finished: ReadonlyArray<string>) =>
+  finished.length === 0 ? text : `${text}\nThe calls it made that finished:\n${finished.join("\n")}`
+
+const userItem = (body: Extract<Entry["body"], { _tag: "user" }>) => ({
   type: "message",
-  role: "developer",
+  role: "user",
   content: [
-    {
+    { type: "input_text", text: body.text },
+    ...(body.skills ?? []).map((skill) => ({
       type: "input_text",
-      text: withFinishedCalls(`Cell ${script} was stopped ${when}, before its script finished.`, finished),
-    },
+      text: `<skill>\n<name>${skill.name}</name>\n<path>${skill.path}</path>\n${skill.text.trimEnd()}\n</skill>`,
+    })),
   ],
 })
 
-const inputItems = (transcript: ReadonlyArray<Entry>, runStartedAt: number): Array<unknown> => {
-  const nested = new Map<CallId, { tool: string; script: CallId }>()
-  const custom = new Set<CallId>()
-  const waitedScript = new Map<CallId, CallId>()
-  const finishedIn = new Map<CallId, Array<string>>()
-  const scriptOf = (call: CallId) => (custom.has(call) ? call : waitedScript.get(call))
-  const yielded = new Set<CallId>()
-  const stopYielded = (when: string) => {
-    const notes = [...yielded].map((script) => stoppedCellNote(script, when, finishedIn.get(script) ?? []))
-    yielded.clear()
-    return notes
-  }
-  const itemsOf = (body: Entry["body"]): Array<unknown> => {
-    switch (body._tag) {
-      case "user":
-        return [
-          {
-            type: "message",
-            role: "user",
-            content: [
-              { type: "input_text", text: body.text },
-              ...(body.skills ?? []).map((skill) => ({
-                type: "input_text",
-                text: `<skill>\n<name>${skill.name}</name>\n<path>${skill.path}</path>\n${skill.text.trimEnd()}\n</skill>`,
-              })),
-            ],
-          },
-        ]
-      case "message":
-        return [{ type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] }]
-      case "tool_call":
-        if (body.parent !== undefined) {
-          nested.set(body.call, { tool: body.tool, script: body.parent })
-          return []
-        }
-        if (body.tool === WAIT && typeof (body.input as { cell_id?: unknown })?.cell_id === "string")
-          waitedScript.set(body.call, (body.input as { cell_id: CallId }).cell_id)
-        if (body.tool === EXEC && typeof body.input === "string") {
-          custom.add(body.call)
-          return [{ type: "custom_tool_call", call_id: body.call, name: body.tool, input: body.input }]
-        }
-        return [
-          {
-            type: "function_call",
-            call_id: body.call,
-            name: body.tool,
-            arguments: typeof body.input === "string" ? body.input : JSON.stringify(body.input),
-          },
-        ]
-      case "tool_result": {
-        const inner = nested.get(body.call)
-        if (inner !== undefined) {
-          finishedIn.set(inner.script, [...(finishedIn.get(inner.script) ?? []), finishedCall(inner.tool, body)])
-          return []
-        }
-        const script = scriptOf(body.call)
-        if (script !== undefined) {
-          if (isYielded(body.output)) yielded.add(script)
-          else yielded.delete(script)
-        }
-        const finished = script === undefined ? [] : (finishedIn.get(script) ?? [])
-        const output = body.output === interrupted.output ? withFinishedCalls(body.output, finished) : body.output
-        return [
-          {
-            type: custom.has(body.call) ? "custom_tool_call_output" : "function_call_output",
-            call_id: body.call,
-            output,
-          },
-        ]
+const callItem = (body: Extract<Entry["body"], { _tag: "tool_call" }>) =>
+  body.tool === EXEC && typeof body.input === "string"
+    ? { type: "custom_tool_call", call_id: body.call, name: body.tool, input: body.input }
+    : {
+        type: "function_call",
+        call_id: body.call,
+        name: body.tool,
+        arguments: typeof body.input === "string" ? body.input : JSON.stringify(body.input),
       }
-      case "run_end":
-        return stopYielded("when the run ended")
-      default:
-        return []
+
+const stoppedCellNote = (script: CallId, finished: ReadonlyArray<string>) => ({
+  type: "message",
+  role: "developer",
+  content: [
+    { type: "input_text", text: withFinishedCalls(`Cell ${script} stopped before its script finished.`, finished) },
+  ],
+})
+
+const inputItems = (transcript: ReadonlyArray<Entry>): Array<unknown> => {
+  const nested = new Map<CallId, { tool: string; script: CallId }>()
+  const finishedIn = new Map<CallId, Array<string>>()
+  const scripts = new Set<CallId>()
+  const awaiting = new Set<CallId>()
+  const items: Array<unknown> = []
+  let notes: Array<unknown> = []
+  const finished = (script: CallId) => finishedIn.get(script) ?? []
+  for (const { body } of transcript) {
+    if (body._tag === "user") items.push(userItem(body))
+    else if (body._tag === "message")
+      items.push({ type: "message", role: "assistant", content: [{ type: "output_text", text: body.text }] })
+    else if (body._tag === "tool_call") {
+      if (body.parent !== undefined) nested.set(body.call, { tool: body.tool, script: body.parent })
+      else {
+        const item = callItem(body)
+        if (item.type === "custom_tool_call") scripts.add(body.call)
+        awaiting.add(body.call)
+        items.push(item)
+      }
+    } else if (body._tag === "tool_result") {
+      const inner = nested.get(body.call)
+      const ended = !isScriptReport(body.output)
+      if (inner?.tool === CELL) {
+        if (ended) notes.push(stoppedCellNote(inner.script, finished(inner.script)))
+      } else if (inner !== undefined)
+        finishedIn.set(inner.script, [...finished(inner.script), finishedCall(inner.tool, body)])
+      else {
+        const script = scripts.has(body.call)
+        awaiting.delete(body.call)
+        items.push({
+          type: script ? "custom_tool_call_output" : "function_call_output",
+          call_id: body.call,
+          output: script && ended ? withFinishedCalls(body.output, finished(body.call)) : body.output,
+        })
+      }
+      if (awaiting.size === 0) {
+        items.push(...notes)
+        notes = []
+      }
     }
   }
-  const serverStopped = () => stopYielded("when the server stopped")
-  return [
-    ...transcript.flatMap(({ body }, index) => [...(index === runStartedAt ? serverStopped() : []), ...itemsOf(body)]),
-    ...(runStartedAt === transcript.length ? serverStopped() : []),
-  ]
+  return [...items, ...notes]
 }
 
 const messageText = (item: any): string =>
@@ -421,14 +405,13 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
           tools = codeModeTools()
           runTool = yield* codeModeRun(host, program, turn)
         }
-        const runStartedAt = (yield* turn.transcript).length
         while (true) {
           const transcript = yield* turn.transcript
           const calls = yield* respond(turn, {
             model,
             ...(effort ? { reasoning: { effort } } : {}),
             instructions,
-            input: inputItems(transcript, runStartedAt),
+            input: inputItems(transcript),
             tools,
             tool_choice: "auto",
             parallel_tool_calls: true,
