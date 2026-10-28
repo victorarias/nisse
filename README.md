@@ -45,7 +45,7 @@ bun packages/nisse/src/main.ts schema                # the protocol's JSON Schem
 In the TUI, `⏎` sends, `⇧⏎` or `^J` adds a line, `Esc` stops the run, and `^C`
 quits and prints how to reopen the conversation.
 
-`NISSE_HOME` (default `~/.nisse`) holds `nisse.sqlite`, `nisse.sock`,
+`NISSE_HOME` (default `~/.nisse`) holds `store.sqlite`, `nisse.sock`,
 `nisse.lock` and the background server's `nisse.log`. One server serves a home
 at a time. `NISSE_MODEL_SCRIPT` names a JSON file of scripted answers, such as
 `[{"text": "hello", "delayMs": 50}, {"text": "half", "fail": "provider went away"}]`,

@@ -14,7 +14,7 @@ export interface Home {
 
 export const homeAt = (dir: string): Home => ({
   dir,
-  database: join(dir, "nisse.sqlite"),
+  database: join(dir, "store.sqlite"),
   socket: join(dir, "nisse.sock"),
   lock: join(dir, "nisse.lock"),
   log: join(dir, "nisse.log"),

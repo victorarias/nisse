@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { rmSync } from "node:fs"
 import { deadline, RawClient } from "./support/raw.ts"
 import { tempHome } from "./support/server.ts"
@@ -36,6 +37,19 @@ const withScript = async (nisseHome: ReturnType<typeof tempHome>, steps: unknown
 test("nisse exec starts a server when none runs, prints the answer and exits 0", async () => {
   const result = await finished(nisse(["exec", "hello there"], nisseEnv(home())))
   expect(result).toMatchObject({ code: 0, stdout: "You said: hello there\n" })
+})
+
+test("a home the Rust version used still works and keeps its database", async () => {
+  const nisseHome = home()
+  const rust = new Database(`${nisseHome.dir}/nisse.sqlite`)
+  rust.run("CREATE TABLE commits (seq INTEGER PRIMARY KEY, data TEXT)")
+  rust.run("PRAGMA user_version = 6")
+  rust.close()
+  const result = await finished(nisse(["exec", "still here"], nisseEnv(nisseHome)))
+  expect(result).toMatchObject({ code: 0, stdout: "You said: still here\n" })
+  const kept = new Database(`${nisseHome.dir}/nisse.sqlite`, { readonly: true })
+  expect(kept.query("PRAGMA user_version").get()).toEqual({ user_version: 6 })
+  kept.close()
 })
 
 test("nisse exec exits 1 and reports the failure when the run fails", async () => {
