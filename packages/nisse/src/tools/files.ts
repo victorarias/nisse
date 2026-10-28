@@ -127,7 +127,11 @@ export const Edit = tool({
       }
       const edited = replace(content, input.old_string, input.new_string, input.replace_all ?? false)
       if (typeof edited === "string") return failed(`${edited} in ${input.file_path}`)
-      await Bun.write(path, edited.content)
+      try {
+        await Bun.write(path, edited.content)
+      } catch (error) {
+        return failed(`could not write ${input.file_path}: ${errorText(error)}`)
+      }
       return ok(
         edited.count === 1
           ? `Replaced 1 occurrence in ${input.file_path}.`

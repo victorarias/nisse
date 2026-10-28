@@ -74,9 +74,13 @@ export const Grep = tool({
       for (const file of files) {
         const shown = relative(cwd, file) || file
         if (!wanted(shown)) continue
-        const bytes = new Uint8Array(await Bun.file(file).arrayBuffer())
-        if (bytes.subarray(0, BINARY_PROBE).includes(0)) continue
+        const bytes = await Bun.file(file)
+          .arrayBuffer()
+          .then((buffer) => new Uint8Array(buffer))
+          .catch(() => undefined)
+        if (!bytes || bytes.subarray(0, BINARY_PROBE).includes(0)) continue
         const lines = new TextDecoder().decode(bytes).split("\n")
+        if (lines.at(-1) === "") lines.pop()
         for (let i = 0; i < lines.length; i++) {
           if (!regex.test(lines[i]!)) continue
           const line = lines[i]!.replace(/\r$/, "")

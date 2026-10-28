@@ -44,5 +44,8 @@ export const tool = <S extends Schema.Top & { readonly DecodingServices: never }
         onFailure: (error) => Effect.succeed(failed(`bad arguments for ${options.name}: ${error.message}`)),
         onSuccess: (decoded) => options.run(decoded, context),
       }),
+      Effect.catchDefect((defect) =>
+        Effect.succeed(failed(`${options.name} failed: ${defect instanceof Error ? defect.message : String(defect)}`)),
+      ),
     ),
 })
