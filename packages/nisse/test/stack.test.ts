@@ -46,6 +46,12 @@ test("nisse exec exits 1 and reports the failure when the run fails", async () =
   expect(result.stderr).toContain("provider went away")
 })
 
+test("nisse exec finishes when nisse answers with nothing", async () => {
+  const env = await withScript(home(), [{ text: "" }])
+  const result = await finished(nisse(["exec", "say nothing"], env))
+  expect(result).toMatchObject({ code: 0, stdout: "" })
+})
+
 test("clients starting at the same moment share one server", async () => {
   const env = nisseEnv(home())
   const results = await Promise.all(Array.from({ length: 4 }, (_, i) => finished(nisse(["exec", `client ${i}`], env))))
@@ -79,7 +85,7 @@ test("a run cut off by a crashed server finishes after the server comes back", a
     printed += new TextDecoder().decode(value)
   }
   expect(await exec.exited).toBe(0)
-  expect(printed).toEndWith("ten\n")
+  expect(printed).toBe("one two three four five six seven eight nine ten\n")
 
   const client = await RawClient.connect(nisseHome.socket)
   const conversations = (await client.call("conversation/list")).result

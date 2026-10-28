@@ -1,9 +1,9 @@
 import type { ConversationId, NoSuchConversation, SubmissionId } from "@nisse/protocol"
-import { Context, Effect, Fiber, FiberSet, Layer, Stream } from "effect"
+import { Cause, Context, Effect, Fiber, FiberSet, Layer, Option, Stream } from "effect"
 import { newId } from "./ids.ts"
 import { Lifetime } from "./lifetime.ts"
 import { Model } from "./model.ts"
-import { Store } from "./store.ts"
+import { Store, type Change } from "./store.ts"
 
 const LIVE_WINDOW = "100 millis"
 const nisse = { _tag: "nisse" } as const
@@ -29,17 +29,11 @@ export class Conversations extends Context.Service<
       const lifetime = yield* Lifetime
       const runners = yield* FiberSet.make<void>()
       const active = new Set<ConversationId>()
-      const runs = new Map<ConversationId, Fiber.Fiber<void>>()
-      const interruptedByPerson = new Set<ConversationId>()
+      const runs = new Map<ConversationId, Fiber.Fiber<void, unknown>>()
       let settling = false
 
-      const run = (conversation: ConversationId) => {
-        const said: Array<string> = []
-        const answer = (interrupted: boolean) =>
-          said.join("") !== ""
-            ? [{ author: nisse, body: { _tag: "answer" as const, text: said.join(""), interrupted } }]
-            : []
-        return model.respond(store.transcript(conversation)).pipe(
+      const respond = (conversation: ConversationId, said: Array<string>) =>
+        model.respond(store.transcript(conversation)).pipe(
           Stream.tap((text) => Effect.sync(() => said.push(text))),
           Stream.groupedWithin(Number.MAX_SAFE_INTEGER, LIVE_WINDOW),
           Stream.runForEach((parts) =>
@@ -48,60 +42,57 @@ export class Conversations extends Context.Service<
               if (text !== "") store.commit(conversation, { live: { _tag: "append", text } })
             }),
           ),
-          Effect.matchEffect({
-            onSuccess: () =>
-              Effect.sync(() => store.commit(conversation, { entries: answer(false), live: { _tag: "clear" } })),
-            onFailure: (error) =>
-              Effect.sync(() =>
-                store.commit(conversation, {
-                  entries: [...answer(false), { author: nisse, body: { _tag: "run_failed", message: error.message } }],
-                  live: { _tag: "clear" },
-                }),
-              ),
-          }),
-          Effect.onInterrupt(() =>
-            Effect.sync(() => {
-              if (interruptedByPerson.delete(conversation)) {
-                store.commit(conversation, { entries: answer(true), live: { _tag: "clear" } })
-              }
-            }),
-          ),
-          Effect.asVoid,
         )
-      }
 
-      const runTracked = Effect.fnUntraced(function* (conversation: ConversationId) {
-        const fiber = yield* Effect.forkChild(run(conversation), { startImmediately: true })
+      const run = Effect.fnUntraced(function* (conversation: ConversationId) {
+        const said: Array<string> = []
+        const answer = (interrupted: boolean) => ({
+          author: nisse,
+          body: { _tag: "answer" as const, text: said.join(""), interrupted },
+        })
+        const fiber = yield* Effect.forkChild(respond(conversation, said), { startImmediately: true })
         runs.set(conversation, fiber)
-        yield* Fiber.await(fiber)
+        const exit = yield* Fiber.await(fiber)
         runs.delete(conversation)
+        if (exit._tag === "Success") return [answer(false)]
+        const error = Cause.findErrorOption(exit.cause)
+        if (Option.isNone(error)) return [answer(true)]
+        const failed = { author: nisse, body: { _tag: "run_failed" as const, message: error.value.message } }
+        return said.length > 0 ? [answer(false), failed] : [failed]
       })
 
-      const nextOrRelease = (conversation: ConversationId) =>
+      const next = (conversation: ConversationId): Change => {
+        const queued = settling ? undefined : store.nextQueued(conversation)
+        return queued
+          ? {
+              place: queued.submission,
+              entries: [
+                { author: queued.author, body: { _tag: "user", submission: queued.submission, text: queued.text } },
+              ],
+              status: "working",
+            }
+          : { status: "idle" }
+      }
+
+      const proceed = (conversation: ConversationId, ended: Change["entries"] = []) =>
         Effect.sync(() => {
-          const next = settling ? undefined : store.nextQueued(conversation)
-          if (!next) {
-            if (store.status(conversation) === "working") store.commit(conversation, { status: "idle" })
-            active.delete(conversation)
+          const after = next(conversation)
+          if (ended.length > 0 || after.status === "working") {
+            store.commit(conversation, {
+              ...after,
+              entries: [...ended, ...(after.entries ?? [])],
+              live: { _tag: "clear" },
+            })
           }
-          return next
+          if (after.status === "idle") active.delete(conversation)
+          return after.status === "working"
         })
 
       const runner = Effect.fnUntraced(function* (conversation: ConversationId) {
-        if (store.status(conversation) === "working") {
-          store.commit(conversation, { live: { _tag: "clear" } })
-          yield* runTracked(conversation)
-        }
-        while (true) {
-          const next = yield* nextOrRelease(conversation)
-          if (!next) return
-          store.commit(conversation, {
-            place: next.submission,
-            entries: [{ author: next.author, body: { _tag: "user", submission: next.submission, text: next.text } }],
-            status: "working",
-          })
-          yield* runTracked(conversation)
-        }
+        const resumed = store.status(conversation) === "working"
+        if (resumed) store.commit(conversation, { live: { _tag: "clear" } })
+        let working = resumed || (yield* proceed(conversation))
+        while (working) working = yield* proceed(conversation, yield* run(conversation))
       }, Effect.scoped)
 
       const wake = (conversation: ConversationId) =>
@@ -135,7 +126,6 @@ export class Conversations extends Context.Service<
             yield* store.exists(conversation)
             const fiber = runs.get(conversation)
             if (!fiber) return
-            interruptedByPerson.add(conversation)
             yield* Fiber.interrupt(fiber)
           }),
         settle: Effect.suspend(() => {

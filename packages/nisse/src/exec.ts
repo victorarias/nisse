@@ -5,11 +5,19 @@ import { Client, follow } from "./client.ts"
 
 interface Watch {
   placed: boolean
+  live: string
   printed: string
   outcome: "answered" | "failed" | undefined
 }
 
 const write = (text: string) => process.stdout.write(text)
+
+const show = (watch: Watch, text: string) => {
+  if (text.startsWith(watch.printed)) write(text.slice(watch.printed.length))
+  else if (watch.printed.startsWith(text)) return
+  else write(`\n${text}`)
+  watch.printed = text
+}
 
 const onEntries = (watch: Watch, submission: SubmissionId, entries: ReadonlyArray<Entry>) => {
   for (const entry of entries) {
@@ -18,7 +26,9 @@ const onEntries = (watch: Watch, submission: SubmissionId, entries: ReadonlyArra
     if (body._tag === "user" && body.submission === submission) watch.placed = true
     else if (!watch.placed) continue
     else if (body._tag === "answer") {
-      write(body.text.slice(watch.printed.length) + "\n")
+      show(watch, body.text)
+      if (watch.printed) write("\n")
+      if (body.interrupted) process.stderr.write("interrupted\n")
       watch.outcome = body.interrupted ? "failed" : "answered"
     } else if (body._tag === "run_failed") {
       if (watch.outcome === undefined && watch.printed) write("\n")
@@ -30,14 +40,10 @@ const onEntries = (watch: Watch, submission: SubmissionId, entries: ReadonlyArra
 
 const onDelivery = (watch: Watch, submission: SubmissionId) => (delivery: Delivery) =>
   Effect.sync(() => {
+    if (delivery._tag === "snapshot") watch.live = delivery.live
+    else if (delivery.live) watch.live = delivery.live._tag === "append" ? watch.live + delivery.live.text : ""
     onEntries(watch, submission, delivery.entries)
-    if (!watch.placed || watch.outcome) return
-    const live =
-      delivery._tag === "snapshot" ? delivery.live : delivery.live?._tag === "append" ? delivery.live.text : ""
-    if (live) {
-      write(live)
-      watch.printed += live
-    }
+    if (watch.placed && !watch.outcome) show(watch, watch.live)
   })
 
 export const exec = Effect.fnUntraced(function* (prompt: string, existing: string | undefined) {
@@ -50,7 +56,7 @@ export const exec = Effect.fnUntraced(function* (prompt: string, existing: strin
     author: userName(),
     text: prompt,
   })
-  const watch: Watch = { placed: false, printed: "", outcome: undefined }
+  const watch: Watch = { placed: false, live: "", printed: "", outcome: undefined }
   yield* follow(client, conversation).pipe(
     Stream.tap(onDelivery(watch, submission)),
     Stream.takeUntil(() => watch.outcome !== undefined),
