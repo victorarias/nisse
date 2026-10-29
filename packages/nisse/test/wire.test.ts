@@ -803,3 +803,22 @@ test("a conversation keeps the instructions it started with, and its subagents s
   expect(listed.find((conversation) => conversation.id === helper)?.instructions).toBeUndefined()
   client.close()
 })
+
+test("a conversation tells a client that was not watching how its last run ended", async () => {
+  await using server = await runningServer([{ text: "all done" }, { text: "partial", fail: "provider went away" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const endedOf = async () =>
+    ((await client.call("conversation/list")).result as Array<{ id: string; ended?: unknown }>).find(
+      (listed) => listed.id === conversation,
+    )?.ended
+  expect(await endedOf()).toBeUndefined()
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "go")
+  await view.until(settled)
+  expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
+  await submit(client, conversation, "again")
+  await view.until((deliveries) => ended(2)(deliveries) && deliveries.at(-1)?.status === "idle")
+  expect(await endedOf()).toEqual({ outcome: "failed", message: "provider went away", said: "partial" })
+  client.close()
+})
