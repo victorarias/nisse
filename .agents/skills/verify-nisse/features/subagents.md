@@ -29,7 +29,12 @@ Code ([Claude](./claude.md)).
 - `subagent-followup` wakes an idle subagent with `followup_task`, and each of
   its answers reaches the parent.
 - `subagent-interrupt` stops the parent's run and every run under it with
-  `Esc` or `conversation/interrupt`; the card shows `interrupted`.
+  `Esc` or `conversation/interrupt`; the card shows `interrupted`. Stopping
+  just a subagent, from its own conversation, tells its parent: a waiting
+  `wait_agent` returns `Wait completed.` and the parent hears
+  `A person interrupted this agent.`
+- `subagent-exec` makes `nisse exec` without `--auto` deny the calls its
+  subagents would ask about, as it does its own.
 - `subagent-limits` takes `[agents] max_depth` (default 1) and `max_threads`
   (default 6) from `NISSE_HOME/config.toml`: at the depth limit
   `spawn_agent` is not offered, and a tree runs at most `max_threads`

@@ -169,6 +169,20 @@ test("nisse exec shows the calls nisse makes and, without --auto, denies the one
   expect(results.map((entry) => entry.body)).toMatchObject([{ output: "ran\n", error: false }])
 }, 30_000)
 
+test("nisse exec without --auto denies the calls its subagents would ask about too", async () => {
+  const nisseHome = home()
+  const env = await withScript(nisseHome, [
+    { tool: { name: "spawn_agent", input: { task_name: "kid", message: "go" } } },
+    { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
+    { text: "the kid is done" },
+    { agent: "/root/kid", tool: { name: "Bash", input: { command: "echo ran" } } },
+    { agent: "/root/kid", text: "could not run it" },
+  ])
+  const result = await finished(nisse(["exec", "delegate"], env))
+  expect(result).toMatchObject({ code: 0, stdout: "the kid is done\n" })
+  expect(result.stderr).toContain("denied Bash(echo ran): exec cannot ask")
+})
+
 test("a call cut off by a crashed server is recorded as interrupted and the run carries on", async () => {
   const nisseHome = home()
   const script = `${nisseHome.dir}/script.json`

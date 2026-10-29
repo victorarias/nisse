@@ -30,6 +30,8 @@ import { interrupted } from "./tools/tool.ts"
 
 const LIVE_WINDOW = "100 millis"
 export const RESTART_LIMIT = 3
+const INTERRUPTED_BY_A_PERSON =
+  "A person interrupted this agent. If you still need it, use the available collaboration tools to give it another task."
 const nisse = { _tag: "nisse" } as const
 
 const interruptedResult = (call: CallId): NewEntry => ({
@@ -659,7 +661,16 @@ export class Conversations extends Context.Service<
         interrupt: (id) =>
           Effect.gen(function* () {
             const { conversation } = yield* store.state(id)
+            const running = runs.has(id)
             yield* interruptTree(conversation)
+            const lineage = conversation.lineage
+            if (!running || lineage === undefined) return
+            const parent = yield* Effect.orDie(store.state(lineage.parent))
+            yield* deliver(id, lineage.parent, INTERRUPTED_BY_A_PERSON, {
+              kind: "final_answer",
+              task: taskOf(parent.conversation),
+              sender: lineage.task,
+            })
           }),
         resolve: (conversation, approval, author, allow) =>
           Effect.gen(function* () {

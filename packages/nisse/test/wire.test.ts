@@ -546,6 +546,38 @@ test("interrupting a conversation stops the runs of its subagents too", async ()
   client.close()
 })
 
+test("a person interrupting a subagent wakes its parent's wait, which hears who stopped it", async () => {
+  await using server = await runningServer([
+    spawnStep("slow"),
+    waitStep,
+    { text: "heard" },
+    { agent: "/root/slow", text: "one two three four five six seven eight", delayMs: 400 },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "start a slow one")
+  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "subagent"))
+  const [slow] = await childrenOf(client, conversation)
+  const slowView = client.subscribe({ conversation: slow! })
+  await slowView.until(speaking)
+
+  await client.call("conversation/interrupt", { conversation: slow })
+  await view.until(ended(1))
+
+  const wait = bodies(view.deliveries).findLast((body) => body._tag === "tool_result") as { output: string }
+  expect(JSON.parse(wait.output)).toMatchObject({ message: "Wait completed.", timed_out: false })
+  expect(bodies(view.deliveries)).toContainEqual(
+    expect.objectContaining({
+      _tag: "user",
+      text: expect.stringContaining("A person interrupted this agent."),
+      mail: { kind: "final_answer", task: "/root", sender: "/root/slow" },
+    }),
+  )
+  expect(bodies(view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "answered" })
+  client.close()
+})
+
 test("a subagent's answer lands in its idle parent's transcript without starting a run", async () => {
   await using server = await runningServer([
     spawnStep("kid", "look around"),
