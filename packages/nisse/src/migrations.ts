@@ -104,6 +104,13 @@ const toV4 = (db: Database) => {
   db.run("ALTER TABLE conversations DROP COLUMN provider")
 }
 
+const toV5 = (db: Database) => {
+  db.run("ALTER TABLE conversations ADD COLUMN lineage TEXT")
+  db.run("ALTER TABLE conversations ADD COLUMN root TEXT")
+  db.run("CREATE INDEX conversations_by_root ON conversations (root) WHERE root IS NOT NULL")
+  db.run("ALTER TABLE submissions ADD COLUMN mail TEXT")
+}
+
 const migrations: Array<(db: Database) => void> = [
   (db) => {
     for (const statement of v1) db.run(statement)
@@ -111,6 +118,7 @@ const migrations: Array<(db: Database) => void> = [
   toV2,
   toV3,
   toV4,
+  toV5,
 ]
 
 export const migrate = (db: Database) => {

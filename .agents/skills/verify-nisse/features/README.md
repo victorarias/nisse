@@ -69,6 +69,9 @@ paths, handles, state, commands and proof.
   files and skills.
 - [Code mode](./code-mode.md): OpenAI's code-mode models run nisse's tools
   from scripts in `codex-code-mode-host`; a missing host fails the run.
+- [Subagents](./subagents.md): OpenAI and scripted models start subagents,
+  each a conversation under its parent, shown as cards whose calls `^Y` and
+  `^N` answer; `Esc` stops them all.
 - [Sign-in](./sign-in.md): the splash, `^L`, `nisse login` and `logout`, and
   `auth/*` show, start, answer and cancel a sign-in by browser, device code
   or Claude Code's terminal.

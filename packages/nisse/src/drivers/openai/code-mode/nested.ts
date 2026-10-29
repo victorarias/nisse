@@ -1,11 +1,11 @@
-import { builtinTools, type Tool } from "../../../tools/index.ts"
+import type { Tool } from "../../../tools/index.ts"
 import { ApplyPatch } from "./apply-patch.ts"
 
 const OUTCOME = "{ is_error: boolean; output: string; }"
 
 const freeform = new Set<Tool>([ApplyPatch])
 
-export const nestedTools: ReadonlyArray<Tool> = [...builtinTools, ApplyPatch]
+export const nestedTools = (tools: ReadonlyArray<Tool>): ReadonlyArray<Tool> => [...tools, ApplyPatch]
 
 const identifier = (name: string) =>
   [...name].map((ch, index) => (/[A-Za-z_$]/.test(ch) || (index > 0 && /[0-9]/.test(ch)) ? ch : "_")).join("") || "_"
@@ -68,8 +68,12 @@ export const section = (tool: Tool) => {
   return `${heading}\n${sample(tool)}`
 }
 
-export const nestedCall = (name: string, input: unknown): { tool: Tool; input: unknown } | { error: string } => {
-  const tool = nestedTools.find((candidate) => candidate.spec.name === name)
+export const nestedCall = (
+  tools: ReadonlyArray<Tool>,
+  name: string,
+  input: unknown,
+): { tool: Tool; input: unknown } | { error: string } => {
+  const tool = tools.find((candidate) => candidate.spec.name === name)
   if (!tool) return { error: `no tool named ${name}` }
   if (freeform.has(tool)) return typeof input === "string" ? { tool, input } : { error: `${name} takes a string` }
   if (input === null || input === undefined) return { tool, input: {} }

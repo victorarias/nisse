@@ -3,7 +3,7 @@ import { NisseRpcs, type Approvals, type ConversationId, type Delivery, type NoS
 import { spawn } from "node:child_process"
 import { fstatSync, mkdirSync, openSync, readFileSync } from "node:fs"
 import * as Net from "node:net"
-import { Context, Data, Duration, Effect, Layer, Schedule, Stream } from "effect"
+import { Context, Data, Duration, Effect, Layer, Queue, Schedule, type Scope, Stream } from "effect"
 import * as RpcClient from "effect/rpc/RpcClient"
 import type { RpcClientError } from "effect/rpc/RpcClientError"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
@@ -141,4 +141,39 @@ export const follow = (
         ),
       )
     return subscribe()
+  })
+
+export interface Followed {
+  readonly conversation: ConversationId
+  readonly delivery: Delivery
+}
+
+const subagentsIn = (delivery: Delivery) =>
+  delivery.entries.flatMap((entry) => (entry.body._tag === "subagent" ? [entry.body.conversation] : []))
+
+export const followTree = (
+  client: Client["Service"],
+  root: ConversationId,
+): Stream.Stream<Followed, NoSuchConversation> =>
+  Stream.callback<Followed, NoSuchConversation>((queue) => {
+    const followed = new Set<ConversationId>()
+    const track = (conversation: ConversationId): Effect.Effect<void, NoSuchConversation, Scope.Scope> =>
+      follow(client, conversation).pipe(
+        Stream.runForEach((delivery) =>
+          Effect.andThen(
+            Queue.offer(queue, { conversation, delivery }),
+            Effect.forEach(subagentsIn(delivery), (subagent) => trackOnce(subagent, Effect.ignore), { discard: true }),
+          ),
+        ),
+      )
+    const trackOnce = (
+      conversation: ConversationId,
+      ended: (tracked: Effect.Effect<void, NoSuchConversation, Scope.Scope>) => Effect.Effect<void, never, Scope.Scope>,
+    ) =>
+      Effect.suspend(() => {
+        if (followed.has(conversation)) return Effect.void
+        followed.add(conversation)
+        return Effect.asVoid(Effect.forkScoped(ended(track(conversation))))
+      })
+    return trackOnce(root, (tracked) => Effect.catch(tracked, (error) => Queue.fail(queue, error)))
   })

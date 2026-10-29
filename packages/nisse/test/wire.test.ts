@@ -511,3 +511,179 @@ test("the providers config.toml names can start conversations beside the built-i
   expect(work.result.model).toEqual({ provider: "openai-work" })
   expect(personal.result.model).toEqual({ provider: "claude-personal" })
 })
+
+const childrenOf = async (client: RawClient, parent: string) =>
+  ((await client.call("conversation/list")).result as Array<{ id: string; lineage?: { parent: string; task: string } }>)
+    .filter((conversation) => conversation.lineage?.parent === parent)
+    .map((conversation) => conversation.id)
+
+const spawnStep = (task_name: string, message = "go") => ({
+  tool: { name: "spawn_agent", input: { task_name, message } },
+})
+const waitStep = { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } }
+
+test("interrupting a conversation stops the runs of its subagents too", async () => {
+  await using server = await runningServer([
+    spawnStep("slow"),
+    waitStep,
+    { agent: "/root/slow", text: "one two three four five six seven eight", delayMs: 400 },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "start a slow one")
+  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "subagent"))
+  const [slow] = await childrenOf(client, conversation)
+  const slowView = client.subscribe({ conversation: slow! })
+  await slowView.until(speaking)
+
+  await client.call("conversation/interrupt", { conversation })
+  await view.until(ended(1))
+  await slowView.until(ended(1))
+
+  expect(bodies(view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "interrupted" })
+  expect(bodies(slowView.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "interrupted" })
+  client.close()
+})
+
+test("a person interrupting a subagent wakes its parent's wait, which hears who stopped it", async () => {
+  await using server = await runningServer([
+    spawnStep("slow"),
+    waitStep,
+    { text: "heard" },
+    { agent: "/root/slow", text: "one two three four five six seven eight", delayMs: 400 },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "start a slow one")
+  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "subagent"))
+  const [slow] = await childrenOf(client, conversation)
+  const slowView = client.subscribe({ conversation: slow! })
+  await slowView.until(speaking)
+
+  await client.call("conversation/interrupt", { conversation: slow })
+  await view.until(ended(1))
+
+  const wait = bodies(view.deliveries).findLast((body) => body._tag === "tool_result") as { output: string }
+  expect(JSON.parse(wait.output)).toMatchObject({ message: "Wait completed.", timed_out: false })
+  expect(bodies(view.deliveries)).toContainEqual(
+    expect.objectContaining({
+      _tag: "user",
+      text: expect.stringContaining("A person interrupted this agent."),
+      mail: { kind: "final_answer", task: "/root", sender: "/root/slow" },
+    }),
+  )
+  expect(bodies(view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "answered" })
+  client.close()
+})
+
+test("a subagent's answer lands in its idle parent's transcript without starting a run", async () => {
+  await using server = await runningServer([
+    spawnStep("kid", "look around"),
+    { text: "asked the kid" },
+    { agent: "/root/kid", text: "all quiet", delayMs: 200 },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "ask the kid")
+  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "user" && body.mail !== undefined))
+
+  const [kid] = await childrenOf(client, conversation)
+  const after = bodies(view.deliveries).slice(bodies(view.deliveries).findIndex((body) => body._tag === "run_end"))
+  expect(after).toEqual([
+    { _tag: "run_end", outcome: "answered" },
+    {
+      _tag: "user",
+      submission: expect.any(String),
+      text: "all quiet",
+      mail: { kind: "final_answer", task: "/root", sender: "/root/kid" },
+    },
+  ])
+  expect(entriesOf(view.deliveries).at(-1)!.author as unknown).toEqual({ _tag: "agent", conversation: kid })
+  expect(view.deliveries.at(-1)).not.toHaveProperty("status", "working")
+  client.close()
+})
+
+test("a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent", async () => {
+  await using server = await runningServer([
+    spawnStep("kid", "count"),
+    waitStep,
+    { tool: { name: "followup_task", input: { target: "kid", message: "again" } } },
+    waitStep,
+    { text: "heard both" },
+    { agent: "/root/kid", text: "first", delayMs: 100 },
+    { agent: "/root/kid", text: "second", delayMs: 100 },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "count twice")
+  await view.until(settled)
+
+  const heard = bodies(view.deliveries).flatMap((body) =>
+    body._tag === "user" && body.mail ? [[body.mail.kind, body.text]] : [],
+  )
+  expect(heard).toEqual([
+    ["final_answer", "first"],
+    ["final_answer", "second"],
+  ])
+  expect(bodies(view.deliveries).at(-2)).toEqual({ _tag: "message", text: "heard both" })
+  const [kid] = await childrenOf(client, conversation)
+  const kidView = client.subscribe({ conversation: kid! })
+  await kidView.until((deliveries) => deliveries.length > 0)
+  expect(
+    bodies(kidView.deliveries).flatMap((body) => (body._tag === "user" ? [[body.mail?.kind, body.text]] : [])),
+  ).toEqual([
+    ["new_task", "count"],
+    ["new_task", "again"],
+  ])
+  client.close()
+})
+
+test("a tree runs at most as many subagents at once as config.toml allows", async () => {
+  await using server = await runningServer(
+    [spawnStep("a"), spawnStep("b"), { text: "tried" }, { agent: "/root/a", text: "a b c d e f g h", delayMs: 300 }],
+    { config: { agents: { max_threads: 1 } } },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "spawn two")
+  await view.until(ended(1))
+
+  const results = bodies(view.deliveries).filter((body) => body._tag === "tool_result")
+  expect(results.map((result) => result.error)).toEqual([false, true])
+  expect(results[1]).toMatchObject({ output: expect.stringContaining("the most it may run at once") })
+  expect(await childrenOf(client, conversation)).toHaveLength(1)
+  client.close()
+})
+
+test("a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows", async () => {
+  await using server = await runningServer(
+    [
+      spawnStep("a"),
+      { ...spawnStep("b"), text: "letting a finish", delayMs: 300 },
+      { tool: { name: "followup_task", input: { target: "a", message: "again" } } },
+      { text: "tried" },
+      { agent: "/root/a", text: "done" },
+      { agent: "/root/b", text: "a b c d e f g h", delayMs: 300 },
+    ],
+    { config: { agents: { max_threads: 1 } } },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "spawn, then follow up")
+  await view.until(ended(1))
+
+  const followup = bodies(view.deliveries).findLast((body) => body._tag === "tool_result")
+  expect(followup).toMatchObject({ error: true, output: expect.stringContaining("the most it may run at once") })
+  const listed = (await client.call("conversation/list")).result as Array<{ id: string; lineage?: { task: string } }>
+  const a = listed.find((member) => member.lineage?.task === "/root/a")!
+  const aView = client.subscribe({ conversation: a.id })
+  await aView.until((deliveries) => deliveries.length > 0)
+  expect(bodies(aView.deliveries).filter((body) => body._tag === "run_end")).toHaveLength(1)
+  client.close()
+})

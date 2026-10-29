@@ -1,5 +1,6 @@
 import type { CallId, Entry } from "@nisse/protocol"
 import { Effect, Schema } from "effect"
+import { ROOT_TASK, taskOf } from "../agents.ts"
 import { newId } from "../ids.ts"
 import { noSkills, nothingToSignIn, ProviderError, type Driver, type Turn } from "../provider.ts"
 
@@ -8,6 +9,7 @@ const Step = Schema.Struct({
   tool: Schema.optionalKey(Schema.Struct({ name: Schema.String, input: Schema.Unknown })),
   fail: Schema.optionalKey(Schema.String),
   delayMs: Schema.optionalKey(Schema.Int),
+  agent: Schema.optionalKey(Schema.String),
 })
 type Step = typeof Step.Type
 
@@ -29,7 +31,13 @@ const speak = (turn: Turn, step: Step) =>
   })
 
 export const scriptDriver = (steps: ReadonlyArray<Step>): Driver => {
-  let next = 0
+  const taken = new Set<number>()
+  const nextFor = (agent: string) => {
+    const index = steps.findIndex((step, at) => !taken.has(at) && (step.agent ?? ROOT_TASK) === agent)
+    if (index < 0) return undefined
+    taken.add(index)
+    return steps[index]
+  }
   return {
     kind: "script",
     defaultModel: "script",
@@ -40,7 +48,10 @@ export const scriptDriver = (steps: ReadonlyArray<Step>): Driver => {
     run: (turn) =>
       Effect.gen(function* () {
         while (true) {
-          const step = steps[next++] ?? { text: `You said: ${lastUserText(yield* turn.transcript)}`, delayMs: 30 }
+          const step = nextFor(taskOf(turn.conversation)) ?? {
+            text: `You said: ${lastUserText(yield* turn.transcript)}`,
+            delayMs: 30,
+          }
           const text = yield* speak(turn, step)
           if (step.fail !== undefined) return yield* new ProviderError({ message: step.fail })
           yield* turn.message(text)

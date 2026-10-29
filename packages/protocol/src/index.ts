@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import * as Rpc from "effect/rpc/Rpc"
 import * as RpcGroup from "effect/rpc/RpcGroup"
 
-export const PROTOCOL_VERSION = 3
+export const PROTOCOL_VERSION = 4
 
 export const ConversationId = Schema.String.pipe(Schema.brand("ConversationId"))
 export type ConversationId = typeof ConversationId.Type
@@ -15,7 +15,10 @@ export type SubmissionId = typeof SubmissionId.Type
 
 export const Person = Schema.TaggedStruct("person", { name: Schema.String })
 export const Nisse = Schema.TaggedStruct("nisse", {})
-export const Author = Schema.Union([Person, Nisse])
+export const AgentAuthor = Schema.TaggedStruct("agent", { conversation: ConversationId }).annotate({
+  description: "The model of another conversation in the same tree, such as a subagent's parent.",
+})
+export const Author = Schema.Union([Person, Nisse, AgentAuthor])
 export type Author = typeof Author.Type
 
 export const CallId = Schema.String.pipe(Schema.brand("CallId"))
@@ -32,10 +35,24 @@ export const AttachedSkill = Schema.Struct({ name: Schema.String, path: Schema.S
 })
 export type AttachedSkill = typeof AttachedSkill.Type
 
+export const MailKind = Schema.Literals(["new_task", "message", "final_answer"]).annotate({
+  description:
+    "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent.",
+})
+export type MailKind = typeof MailKind.Type
+
+export const Mail = Schema.Struct({
+  kind: MailKind,
+  task: Schema.String.annotate({ description: "The recipient's task name, such as /root/explore." }),
+  sender: Schema.String.annotate({ description: "The sender's task name." }),
+}).annotate({ description: "What one agent sent another." })
+export type Mail = typeof Mail.Type
+
 export const UserText = Schema.TaggedStruct("user", {
   submission: SubmissionId,
   text: Schema.String,
   skills: Schema.optionalKey(Schema.Array(AttachedSkill)),
+  mail: Schema.optionalKey(Mail),
 })
 export const Message = Schema.TaggedStruct("message", { text: Schema.String })
 export const ToolCall = Schema.TaggedStruct("tool_call", {
@@ -69,6 +86,12 @@ export type ModelSelection = typeof ModelSelection.Type
 export const ModelSwitch = Schema.TaggedStruct("model", { selection: ModelSelection }).annotate({
   description: "Someone switched the conversation's model; it answers with it from the next run on.",
 })
+export const Subagent = Schema.TaggedStruct("subagent", {
+  call: CallId,
+  conversation: ConversationId,
+  title: Schema.String,
+  agentType: Schema.optionalKey(Schema.String),
+}).annotate({ description: "The call started a subagent, which works in a conversation of its own." })
 export const ApprovalAnswer = Schema.TaggedStruct("approval_answer", { approval: ApprovalId, allow: Schema.Boolean })
 export const Outcome = Schema.Literals(["answered", "interrupted", "failed", "restart_limit"])
 export type Outcome = typeof Outcome.Type
@@ -82,6 +105,7 @@ export const EntryBody = Schema.Union([
   ApprovalAnswer,
   RunEnd,
   ModelSwitch,
+  Subagent,
 ])
 export type EntryBody = typeof EntryBody.Type
 
@@ -97,12 +121,26 @@ export type Entry = typeof Entry.Type
 export const Approvals = Schema.Literals(["ask", "auto"])
 export type Approvals = typeof Approvals.Type
 
+export const Lineage = Schema.Struct({
+  parent: ConversationId,
+  root: ConversationId.annotate({ description: "The conversation people started, at the top of the tree." }),
+  call: CallId.annotate({ description: "The parent's call that started it." }),
+  task: Schema.String.annotate({ description: "Its task name, such as /root/explore, which agents address it by." }),
+  title: Schema.String,
+  agentType: Schema.optionalKey(Schema.String),
+  forkedAt: Schema.optionalKey(
+    Schema.Int.annotate({ description: "It starts from its parent's transcript before this seq." }),
+  ),
+}).annotate({ description: "Where a subagent comes from. It runs on its parent's provider, in its directory." })
+export type Lineage = typeof Lineage.Type
+
 export const Conversation = Schema.Struct({
   id: ConversationId,
   cwd: Schema.String,
   createdAt: Schema.Int,
   model: ModelSelection,
   approvals: Approvals,
+  lineage: Schema.optionalKey(Lineage),
 })
 export type Conversation = typeof Conversation.Type
 
@@ -114,6 +152,7 @@ export const Queued = Schema.Struct({
   author: Author,
   text: Schema.String,
   steer: Schema.Boolean,
+  mail: Schema.optionalKey(Mail),
 })
 export type Queued = typeof Queued.Type
 
@@ -218,7 +257,9 @@ export const Submit = Rpc.make("conversation/submit", {
 })
 
 export const Interrupt = Rpc.make("conversation/interrupt", {
-  payload: { conversation: ConversationId },
+  payload: {
+    conversation: ConversationId.annotate({ description: "Stops its run and the runs of every subagent under it." }),
+  },
   error: NoSuchConversation,
 })
 
