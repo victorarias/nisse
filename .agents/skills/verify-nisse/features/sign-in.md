@@ -50,21 +50,21 @@ time, and every connection sees it end as `succeeded`, `failed` or
 
 Preconditions:
 
-- A fresh run with no script, and network access to `auth.openai.com`.
-- For `signin-terminal` and the splash's Claude line: the run's server started
-  without the session's Claude variables, as [Claude](./claude.md) says.
-- For `signin-real`: a person with a ChatGPT account at the browser or device,
-  or a signed-out Claude Code they can sign in. Without one, drive every
-  journey up to the point where the person acts, and report the rest as not
-  verified.
+- A fresh run made with `drive.ts r up`, with no script; its Claude is the
+  fake playing `models`. The steps that reach the real ChatGPT's sign-in
+  pages need network access to `auth.openai.com`; **Device code, faked**
+  needs none.
+- For the Claude terminal steps, a fresh run made with
+  `drive.ts r up --fake-claude terminal_sign_in`: its first probe finds
+  Claude Code signed out, and its second finds `person@example.com`.
 
 - **Status.** Run `drive.ts r tui start`, `drive.ts r tui wait 'signed out'`,
-  `drive.ts r tui screen splash`: `● script ready`, `● claude <account>`,
-  `○ openai signed out`, and `^L  sign in`. Run
-  `drive.ts r rpc providers/list '{}'`: the same providers, `openai` with
-  `"signIn": ["browser", "device_code"]` and
+  `drive.ts r tui screen splash`: `● script ready`,
+  `● claude person@example.com · Claude Max`, `○ openai signed out`, and
+  `^L  sign in`. Run `drive.ts r rpc providers/list '{}'`: the same
+  providers, `openai` with `"signIn": ["browser", "device_code"]` and
   `"health": {"status": "signed_out", "message": "not signed in to ChatGPT", ...}`,
-  `claude` with `"signIn": ["terminal"]` and its `version`.
+  `claude` with `"signIn": ["terminal"]` and `"version": "2.1.310"`.
 - **Browser, TUI.** With the splash showing, run `drive.ts r tui key C-l`,
   `drive.ts r tui wait 'paste the address'`, `drive.ts r tui screen sign-in`:
   `SIGN IN · openai`, `Open this address to sign in:`, the whole
@@ -74,21 +74,26 @@ Preconditions:
   `drive.ts r watch-auth --until failed --save refused &` and, once it prints
   the `waiting` state, `drive.ts r tui type 'http://localhost:1455/auth/callback?state=<state>&error=access_denied&error_description=pasted+refusal'`
   and `drive.ts r tui key Enter`. The watch ends with
-  `"phase": "failed", "message": "ChatGPT refused the sign-in: pasted refusal"`,
-  the panel goes away, no `ADA` message is sent, and the splash still shows
-  `○ openai signed out`.
-- **Cancel, TUI.** Press `C-l` again, `drive.ts r tui wait 'esc  cancel'`,
-  `drive.ts r tui key Escape`, `drive.ts r tui wait --gone 'SIGN IN'`.
+  `"phase": "failed", "message": "ChatGPT refused the sign-in: pasted refusal"`.
+  `drive.ts r tui wait 'try again'`: the panel stays, showing
+  `✗ ChatGPT refused the sign-in: pasted refusal` over `^L  try again` and
+  `esc  close`; no `ADA` message is sent, and the splash still shows
+  `○ openai signed out`. This fails today: the panel shows `^L  try again`
+  and `esc  close` but keeps the stale address and its hint, with no
+  `✗` line.
+- **Cancel, TUI.** Press `Escape` to close the failed panel, then `C-l`,
+  `drive.ts r tui wait 'esc  cancel'`, `drive.ts r tui key Escape`,
+  `drive.ts r tui wait --gone 'SIGN IN'`.
   `curl http://localhost:1455/auth/callback` is refused.
 - **Over a transcript.** Send `hello`, wait for `You said: hello`, press
   `C-l` and wait for `another machine`: the panel shows the same lines as
-  over the splash.
+  over the splash. `Escape` cancels it.
 - **Browser, CLI.** Run `drive.ts r tui start login openai` and
   `drive.ts r tui wait 'paste the address'`: `Open this address to sign in:`
-  and the address. Take `<state>` from `drive.ts r watch-auth`, then
-  `drive.ts r tui type '<the refused address above>'` and
-  `drive.ts r tui key Enter`. `drive.ts r doctor` shows
-  `tui      exited with 1`; `drive.ts r tui stop` shows
+  and the address. Take `<state>` from `drive.ts r watch-auth`, then type the
+  refused address above with this `<state>` and press `Enter`.
+  `drive.ts r doctor` shows `tui      exited with 1`; `drive.ts r tui stop`
+  shows
   `signing in to openai failed: ChatGPT refused the sign-in: pasted refusal`.
 - **Browser, wire.** Run `drive.ts r serve`,
   `drive.ts r rpc auth/start '{"provider": "openai"}'`:
@@ -101,9 +106,11 @@ Preconditions:
   the page says `the person said no`, and the watch ends with
   `ChatGPT refused the sign-in: the person said no`.
 - **Paste, wire.** Start another sign-in with
-  `"method": "browser"`, then
-  `drive.ts r rpc auth/respond '{"provider": "openai", "flow": "<flow>", "response": {"_tag": "callback", "url": "<the refused address>"}}'`:
-  `{"accepted": true}`, and a `watch-auth` started before it ends with
+  `drive.ts r rpc auth/start '{"provider": "openai", "method": "browser"}'`,
+  start `drive.ts r watch-auth --until failed --save paste-wire &`, take
+  `<state>` from its `waiting` state, then
+  `drive.ts r rpc auth/respond '{"provider": "openai", "flow": "<flow>", "response": {"_tag": "callback", "url": "<the refused address with this state>"}}'`:
+  `{"accepted": true}`, and the watch ends with
   `ChatGPT refused the sign-in: pasted refusal`. The same call again answers
   `{"accepted": false}`.
 - **Cancel, wire.** Start a sign-in, start
@@ -121,24 +128,47 @@ Preconditions:
   `Open https://auth.openai.com/codex/device on any device and enter the code <code>`.
   With `drive.ts r watch-auth --until cancelled &` running, `drive.ts r tui stop`
   exits 130 and the watch ends `cancelled`.
-- **Device code over SSH.** In a fresh run, run
+- **Device code over SSH.** In a fresh run made the same way, run
   `SSH_CONNECTION='10.0.0.1 50000 10.0.0.2 22' drive.ts r tui start`, wait for
   `signed out`, press `C-l`, and `drive.ts r tui wait --timeout 20000 'enter the code'`:
   the `SIGN IN · openai` panel shows the device URL and the code. `Escape`
-  cancels it. `drive.ts r tui start login openai` in the same run shows a
-  device code without `--device-code`.
-- **Terminal, wire.** Run `drive.ts r rpc auth/start '{"provider": "claude"}'`
-  and `drive.ts r watch-auth --until waiting`: a `terminal` interaction whose
-  `command` is Claude Code's binary with `auth` and `login`. Answer it with
+  cancels it. `drive.ts r tui stop`, then `drive.ts r tui start login openai`
+  in the same run shows a device code without `--device-code`.
+- **Device code, faked.** In a fresh run made with
+  `drive.ts r up --fake-openai text_answer --openai-signed-out --openai-refreshes 1`,
+  run `SSH_CONNECTION='10.0.0.1 50000 10.0.0.2 22' drive.ts r tui start`, wait for `○ openai signed out`, save
+  `drive.ts r tui screen before`, and start
+  `drive.ts r watch-auth --until succeeded --save device-code &`. Press
+  `C-l` and `drive.ts r tui wait '● openai'`, then
+  `drive.ts r tui screen signed-in`: the splash shows
+  `● openai ada@example.com · ChatGPT Plus` and the panel is gone. The watch
+  shows `starting`, `waiting` with a `device_code` interaction whose `code`
+  is `ABCD-1234` and whose `url` is the fake's `/codex/device`, `verifying`,
+  then `succeeded` with `"message": "ada@example.com · ChatGPT Plus"`.
+  `ls -l /tmp/nisse-verify/r/home/auth/openai.json` is `-rw-------`, and
+  `drive.ts r nisse exec --provider openai hello` prints `Hello there`, its
+  request `as recorded`. In another fresh run made the same way,
+  without `SSH_CONNECTION`, `drive.ts r tui start login openai --device-code` shows
+  `Open http://127.0.0.1:<port>/codex/device on any device and enter the code ABCD-1234`,
+  then `signed in to openai as ada@example.com · ChatGPT Plus`, exit 0.
+- **Terminal, wire.** In a `terminal_sign_in` run, run `drive.ts r serve`
+  and `drive.ts r rpc providers/list '{}'`: `claude` is `signed_out` with
+  `not signed in to Claude Code`. Run
+  `drive.ts r rpc auth/start '{"provider": "claude"}'` and
+  `drive.ts r watch-auth --until waiting`: a `terminal` interaction whose
+  `command` is the fake's path with `auth` and `login`. Answer it with
   `drive.ts r rpc auth/respond '{"provider": "claude", "flow": "<flow>", "response": {"_tag": "terminal_exited", "success": false}}'`:
-  the sign-in fails with `` `claude auth login` did not finish ``. Answered
-  `"success": true` in a second sign-in, it goes `verifying`, then
-  `succeeded` with the account when Claude Code is signed in.
-- **Terminal, CLI.** Run `drive.ts r tui start login claude` and
-  `drive.ts r tui wait --timeout 20000 http`: Claude Code's own sign-in asks
-  for a browser and a pasted code. Press `drive.ts r tui key C-c C-c`;
-  `drive.ts r tui stop` shows
-  ``signing in to claude failed: `claude auth login` did not finish``, exit 1.
+  the sign-in fails with `` `claude auth login` did not finish ``. Start a
+  second sign-in, follow it with
+  `drive.ts r watch-auth --until succeeded --save terminal-wire &`, and
+  answer it `"success": true`: it goes `verifying`, then `succeeded` with
+  `"message": "person@example.com · Claude Max"`.
+- **Terminal, CLI.** In a fresh `terminal_sign_in` run, run
+  `drive.ts r tui start login claude` and
+  `drive.ts r tui wait --timeout 20000 'signed in to claude'`;
+  `drive.ts r tui stop` shows `fake claude auth login done` and
+  `signed in to claude as person@example.com · Claude Max`, exit 0, and
+  `evidence/fake-claude/log.ndjson` holds `{"auth":["login"]}`.
 - **Sign out.** Write
   `{"access_token": "x.e30.y", "refresh_token": "stale", "expires_at_ms": 99999999999999, "account_id": "acct"}`
   to `/tmp/nisse-verify/r/home/auth/openai.json`, then run
@@ -148,7 +178,7 @@ Preconditions:
   with `"status": "signed_out"`.
   Write the file again, `drive.ts r tui start` and wait for `● openai`, then
   `drive.ts r nisse logout openai`: the TUI's splash turns to
-  `○ openai  signed out`, and `drive.ts r watch-auth` shows
+  `○ openai signed out`, and `drive.ts r watch-auth` shows
   `"phase": "signed_out"` for `openai`.
 - **Cannot.** `drive.ts r nisse login nope`: exit 1, stderr
   `no provider named nope; there are script, claude, openai`.
@@ -157,15 +187,9 @@ Preconditions:
   `drive.ts r nisse logout script`: `there is nothing to sign out of`.
   `drive.ts r rpc auth/start '{"provider": "openai", "method": "terminal"}'`:
   an error, `openai can't sign in by terminal`.
-- **Real sign-in.** A person opens the address from **Browser, CLI** and
-  signs in: `signed in to openai as <email> · ChatGPT <plan>`, exit 0,
-  `auth/openai.json` readable only by its owner, and the splash shows
-  `● openai <email> · ChatGPT <plan>`. A device code entered on any device
-  finishes the same way.
 
 ## Gotchas
 
-- `tui stop` presses `^C` once; Claude Code's sign-in needs it twice.
 - The TUI follows only the sign-in it started; another client's sign-in does
   not open its panel.
 - A cancelled sign-in closes the TUI's panel. A failed one keeps it, showing
@@ -175,7 +199,68 @@ Preconditions:
   `could not listen on 127.0.0.1:1455 for the browser's answer (is another sign-in running?); ...`.
   `nisse login openai` there prints that failure and exits 1, and `^L` in
   that home's TUI shows it in the `SIGN IN · openai` panel.
-- `nisse logout claude` runs `claude auth logout`: drive it only with
-  `CLAUDE_CONFIG_DIR` set to a folder in the run.
+- The splash, `providers/list`, `nisse login claude` and `nisse logout claude`
+  run Claude Code: the fake, logging the logout as `{"auth":["logout"]}`,
+  unless the run is `--real-claude`, where `nisse logout claude` runs your
+  own `claude auth logout`.
+- The TUI and `nisse login` use a device code when `SSH_CONNECTION` reaches
+  them. Each tmux window gets the environment of the `drive.ts` command that
+  opens it, so set `SSH_CONNECTION` on `tui start`, not on `up`.
+- The fake ChatGPT grants a token only from `--openai-refreshes`, so a faked
+  sign-in needs at least 1; with none it fails after `waiting` with
+  `token exchange failed (400: invalid_grant)`.
 - The server exits 30 s after its last client leaves even while a sign-in
   waits; keep a `watch-auth` or the TUI open.
+
+## With a real account
+
+Proves a sign-in finishes against the real services. Every step needs a
+person at a browser or another device; the agent drives the commands and the
+person signs in. Follow the skill's [Real accounts](../SKILL.md#real-accounts),
+except that the provider starts signed out. Give every `tui wait` for the
+person `--timeout 300000`, and keep `evidence/`.
+
+- **ChatGPT, device code (needs a person).** Start with this one: it works
+  wherever the person's browser runs. In a run made with plain
+  `drive.ts r up`, run `drive.ts r serve` and
+  `drive.ts r rpc providers/list '{}'`: `openai` is `signed_out`. Run
+  `drive.ts r tui start login openai --device-code` and
+  `drive.ts r tui wait --timeout 20000 'enter the code'`; the person opens
+  `https://auth.openai.com/codex/device` on any device and enters the code
+  the screen shows. `drive.ts r tui wait --timeout 300000 'signed in to openai'`
+  and `drive.ts r tui stop`: `signed in to openai as <email> · ChatGPT <plan>`,
+  exit 0. `ls -l /tmp/nisse-verify/r/home/auth/openai.json` is `-rw-------`,
+  and a new `tui start` splash shows `● openai <email> · ChatGPT <plan>`.
+  To keep this sign-in for other runs, copy that file now, as
+  [Real accounts](../SKILL.md#real-accounts) says.
+- **ChatGPT, browser (needs a person).** In the same run,
+  `drive.ts r nisse logout openai`, then
+  `drive.ts r tui start login openai` and
+  `drive.ts r tui wait 'paste the address'`. The person opens the address
+  and signs in. When their browser runs on this machine it calls back by
+  itself. Otherwise the browser ends on an address starting
+  `http://localhost:1455/auth/callback?`: the person sends it to you, and
+  you run `drive.ts r tui type '<that address>'` and
+  `drive.ts r tui key Enter`. Then
+  `drive.ts r tui wait --timeout 300000 'signed in to openai'` and
+  `drive.ts r tui stop` end the same way as the device-code step.
+
+- **Claude, terminal (needs a person).** In a run made with
+  `drive.ts r2 up --real-claude`, write
+  `[providers.claude-alt]` with `driver = "claude"` and
+  `config_dir = "/tmp/nisse-verify/r2/claude-alt"` to the home's
+  `config.toml`, so the sign-in lands there and not in your own Claude Code.
+  Run `drive.ts r2 serve` and `drive.ts r2 rpc providers/list '{}'`: `claude`
+  is `ready` with your account, and `claude-alt` is `signed_out`. Where
+  Claude Code is signed in by its environment, as in a hosted session,
+  `claude-alt` is `ready` too; report that and skip this step. Run
+  `drive.ts r2 tui start login claude-alt` and
+  `drive.ts r2 tui wait --timeout 20000 http`: Claude Code's own sign-in asks
+  for a browser and a pasted code. The person signs in and pastes the code:
+  `signed in to claude-alt as <account>`, exit 0. To prove the cancel
+  instead, press `drive.ts r2 tui key C-c C-c` (Claude Code's sign-in needs
+  `^C` twice; `tui stop` presses it once): `drive.ts r2 tui stop` shows
+  ``signing in to claude-alt failed: `claude auth login` did not finish``,
+  exit 1.
+
+Save each `tui stop` output and a `providers/list` after it in `evidence/`.

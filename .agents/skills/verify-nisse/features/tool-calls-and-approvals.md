@@ -22,6 +22,8 @@ conversation was started with `--auto`, which runs every call without asking.
   `--auto`, from the TUI or `exec`.
 - `approval-interrupt` expires a waiting approval when the run is
   interrupted.
+- `tool-output-live` shows a command's output as it prints, under its call
+  while the status reads `WORKING`, then commits it whole with the result.
 - `tool-root-env` runs every command with `NISSE_ROOT_CONVERSATION` set to the
   id of the conversation people started, in a subagent too.
 
@@ -37,6 +39,8 @@ conversation was started with `--auto`, which runs every call without asking.
 
 Preconditions:
 
+- Every run here is `drive.ts r up --script <file>` and nothing else: Claude
+  is the signed-in fake that plays `models`, and the model is the script.
 - A run whose script is
   `[{"text": "checking", "tool": {"name": "Bash", "input": {"command": "echo approved"}}}, {"text": "all done"}]`;
   for `tool-read-only`, a run whose script is
@@ -49,7 +53,7 @@ Preconditions:
   `drive.ts r tui wait 'allow this call?'`, `drive.ts r tui screen asking`.
   Under `NISSE`: `checking`, `▸ Bash(echo approved)`,
   `allow this call?  ^Y  allow  ^N  deny`, and the status bar reads
-  `◆ WAITING`. `drive.ts r watch <id> --save asking` shows
+  `◆ WAITING 0s`, and the prompt panel is titled `QUEUE · tab`. `drive.ts r watch <id> --save asking` shows
   `"status": "waiting"` and an `approval` entry.
 - **Allow.** Run `drive.ts r tui key C-y`, `drive.ts r tui wait 'all done'`,
   `drive.ts r tui wait READY`, `drive.ts r tui screen allowed`. The call shows
@@ -76,7 +80,35 @@ Preconditions:
   `[{"tool": {"name": "Bash", "input": {"command": "echo root=$NISSE_ROOT_CONVERSATION"}}}, {"text": "all done"}]`,
   run `drive.ts r nisse exec --auto 'which conversation?'`, take the id from
   `drive.ts r rpc conversation/list`, then `drive.ts r watch <id> --save root-env`:
-  the `tool_result` is `root=<id>`.
+  the `tool_result` is `root=<id>`. A subagent's commands get the same id, in
+  [Subagents](./subagents.md).
+- **Output streams live.** In a fresh run whose script is
+
+  ```json
+  [
+    {
+      "text": "counting",
+      "tool": { "name": "Bash", "input": { "command": "for i in 1 2 3; do echo tick $i; sleep 1; done" } }
+    },
+    { "text": "counted" }
+  ]
+  ```
+
+  run `drive.ts r tui start --auto`, `drive.ts r tui wait READY`,
+  `drive.ts r tui type count`, `drive.ts r tui key Enter`,
+  `drive.ts r tui wait 'tick 2'`, `drive.ts r tui screen streaming`: under
+  `▸ Bash(for i in 1 2 3; do echo tick $i; sleep 1; done)` the lines
+  `tick 1` and `tick 2` show while the status bar reads `WORKING` and
+  `counted` is not there yet. `drive.ts r tui wait READY`,
+  `drive.ts r tui screen streamed`: `tick 1`, `tick 2` and `tick 3`, then
+  `counted`. Over the wire, in a fresh run,
+  `drive.ts r serve`,
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "approvals": "auto"}'` and
+  `drive.ts r watch <id> --submit count --until run_end --save stream`: three
+  commits about a second apart, each with a `live` `output` that appends
+  `tick 1\n`, `tick 2\n` and `tick 3\n` to the call, before the
+  `tool_result` whose `output` is `tick 1\ntick 2\ntick 3\n`.
+
 - **Wire.** In a fresh run, run `drive.ts r serve`, start a conversation with
   `rpc conversation/start '{"cwd": "/tmp"}'`, and run
   `drive.ts r watch <id> --submit 'check it' --until run_end --timeout 30000 --save wire &`.
@@ -84,7 +116,7 @@ Preconditions:
   `drive.ts r rpc approval/resolve '{"conversation": "<id>", "approval": "<approval>", "author": "bo", "allow": true}'`:
   `"accepted": true`. The same call again with `"author": "cy"` and
   `"allow": false` answers `"accepted": false`. The watch shows statuses
-  `working`, `waiting`, `working`, `idle`, one `approval_answer` with
+  `idle` (the snapshot), `working`, `waiting`, `working`, `idle`, one `approval_answer` with
   `"allow": true`, and a `tool_result` with `approved`.
 - **Interrupt while asking.** In a fresh run, ask as above, then
   `drive.ts r tui key Escape`, `drive.ts r tui wait interrupted`. The call

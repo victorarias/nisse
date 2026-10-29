@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import * as Net from "node:net"
+import { signIn } from "../../../packages/nisse/test/support/openai.ts"
 
 const REPO = resolve(import.meta.dir, "../../..")
 const MAIN = join(REPO, "packages/nisse/src/main.ts")
@@ -12,12 +13,21 @@ const ROWS = "30"
 
 const usage = `usage: drive.ts <run> <command> [args]
 
-  up [--script steps.json]         make the run's home and evidence folders
+  up [--script steps.json] [--fake-openai fixture,...] [--openai-refreshes N] [--openai-signed-out]
+     [--fake-claude fixture | --real-claude] [--openai-auth file]
+                                   make the run's home and evidence folders. --fake-openai serves a
+                                   fake ChatGPT replaying fixtures/openai/<fixture>.ndjson in order,
+                                   signed in unless --openai-signed-out, granting N token refreshes.
+                                   claude is a fake replaying fixtures/claude/<fixture>.ndjson, by
+                                   default models (signed in, no turns); --real-claude runs the
+                                   claude on PATH with your own login. --openai-auth copies a real
+                                   ChatGPT sign-in in, and down writes it back if a refresh rotated it
   doctor                           is this run's instance worth driving?
   nisse <args...>                  run the nisse CLI against the run's home
   serve                            start the run's server in the foreground of a tmux window
   kill-server                      SIGKILL the server that holds the run's home lock
-  rpc <method> [params-json]       one raw JSON-RPC call over the run's socket
+  rpc <method> [params-json] [--timeout MS]
+                                   one raw JSON-RPC call over the run's socket (5 s)
   watch <conversation> [--since N] [--submit TEXT] [--until TAG] [--timeout MS] [--save NAME]
                                    subscribe and print each delivery as one JSON line;
                                    --submit sends TEXT as ada once the first delivery arrives;
@@ -54,6 +64,22 @@ const scriptPath = join(dir, "script.json")
 const socket = join(home, "nisse.sock")
 const lock = join(home, "nisse.lock")
 const tmuxServer = `nisse-verify-${run}`
+const openaiPort = join(dir, "fake-openai.port")
+const claudeFixture = join(dir, "fake-claude.ndjson")
+const openaiAuth = join(home, "auth", "openai.json")
+const openaiAuthSource = join(dir, "openai-auth.source")
+const FIXTURES = join(REPO, "fixtures")
+
+const fakes = (): Record<string, string> => ({
+  ...(existsSync(openaiPort) ? { NISSE_OPENAI_URL: `http://127.0.0.1:${readFileSync(openaiPort, "utf8")}` } : {}),
+  ...(existsSync(claudeFixture)
+    ? {
+        NISSE_CLAUDE: join(REPO, "packages/nisse/test/support/fake-claude"),
+        FAKE_CLAUDE_FIXTURE: claudeFixture,
+        FAKE_CLAUDE_DIR: join(evidence, "fake-claude"),
+      }
+    : {}),
+})
 
 const env = (): Record<string, string> => ({
   ...(process.env as Record<string, string>),
@@ -61,6 +87,7 @@ const env = (): Record<string, string> => ({
   NISSE_MODEL_SCRIPT: existsSync(scriptPath) ? scriptPath : "",
   USER: "ada",
   TERM: "xterm-256color",
+  ...fakes(),
 })
 
 const record = (line: string) => {
@@ -161,7 +188,21 @@ const openWindow = (name: string, command: Array<string>) => {
     if (session.code !== 0) fail(`tmux could not start: ${session.stderr}`)
     tmux("set-option", "-g", "remain-on-exit", "on")
   }
-  const window = tmux("new-window", "-d", "-t", "nisse", "-n", name, "-c", REPO, "--", ...command)
+  const environment = Object.entries(env()).map(([key, value]) => `${key}=${value}`)
+  const window = tmux(
+    "new-window",
+    "-d",
+    "-t",
+    "nisse",
+    "-n",
+    name,
+    "-c",
+    REPO,
+    "--",
+    "env",
+    ...environment,
+    ...command,
+  )
   if (window.code !== 0) fail(`tmux could not open ${name}: ${window.stderr}`)
   tmux("resize-window", "-t", `nisse:${name}`, "-x", COLS, "-y", ROWS)
 }
@@ -246,14 +287,83 @@ const follow = async (
   if (!met) fail(`nothing reached ${until} in ${ms}ms`)
 }
 
+const fixture = (provider: string, name: string) => {
+  const path = existsSync(name) ? name : join(FIXTURES, provider, `${name}.ndjson`)
+  return existsSync(path) ? path : fail(`no ${provider} fixture ${name}: see ${join(FIXTURES, provider)}`)
+}
+
+const freePort = () => {
+  const probe = Bun.serve({ port: 0, fetch: () => new Response() })
+  const port = probe.port
+  probe.stop(true)
+  return port
+}
+
+const fakeOpenAi = async (fixtures: ReadonlyArray<string>, refreshes: string, signedOut: boolean) => {
+  if (existsSync(openaiPort)) fail(`run ${run} already has a fake ChatGPT; drive.ts ${run} down first`)
+  for (const name of fixtures) fixture("openai", name)
+  writeFileSync(openaiPort, String(freePort()))
+  if (!signedOut) await signIn({ dir: home } as Parameters<typeof signIn>[0])
+  const log = join(evidence, "fake-openai.ndjson")
+  rmSync(log, { force: true })
+  openWindow("fake-openai", [
+    join(import.meta.dir, "fake-openai.ts"),
+    readFileSync(openaiPort, "utf8"),
+    log,
+    refreshes,
+    ...fixtures,
+  ])
+  const listening = () => tmux("capture-pane", "-p", "-t", "nisse:fake-openai").stdout.includes("fake ChatGPT on")
+  if (!(await until(listening, 10_000)))
+    fail(`the fake ChatGPT did not start:\n${tmux("capture-pane", "-p", "-t", "nisse:fake-openai").stdout}`)
+  record(`fake ChatGPT replays ${fixtures.join(", ")}; requests go to ${log}`)
+}
+
+const describeFakes = () => {
+  if (existsSync(openaiPort))
+    console.log(
+      `openai   fake ChatGPT on port ${readFileSync(openaiPort, "utf8")}; requests in ${join(evidence, "fake-openai.ndjson")}`,
+    )
+  if (existsSync(claudeFixture))
+    console.log(`claude   fake claude; what nisse sent it in ${join(evidence, "fake-claude", "log.ndjson")}`)
+  else if (existsSync(home)) console.log("claude   the claude on PATH, with your own login")
+  if (existsSync(openaiAuthSource))
+    console.log(`openai   real sign-in from ${readFileSync(openaiAuthSource, "utf8")}, written back by down`)
+}
+
 const commands: Record<string, () => Promise<void> | void> = {
-  up: () => {
+  up: async () => {
     const script = flag("--script")
+    const openai = flag("--fake-openai")?.split(",")
+    const refreshes = flag("--openai-refreshes") ?? "0"
+    const signedOut = switchOn("--openai-signed-out")
+    const auth = flag("--openai-auth")
+    const realClaude = switchOn("--real-claude")
+    const fakeClaude = flag("--fake-claude")
+    if (realClaude && fakeClaude) fail("--real-claude and --fake-claude exclude each other")
+    const claude = realClaude ? undefined : (fakeClaude ?? "models")
+    if (auth && openai) fail("--openai-auth is a real sign-in; --fake-openai needs none")
+    if (!/^\d+$/.test(refreshes)) fail("--openai-refreshes takes a count")
     mkdirSync(home, { recursive: true, mode: 0o700 })
     mkdirSync(evidence, { recursive: true })
     if (script) writeFileSync(scriptPath, readFileSync(script))
     record(`up home=${home}${script ? ` script=${script}` : ""}`)
+    if (claude) {
+      writeFileSync(claudeFixture, readFileSync(fixture("claude", claude)))
+      rmSync(join(evidence, "fake-claude"), { recursive: true, force: true })
+      record(`fake claude replays ${claude}`)
+    } else record("claude is the claude on PATH")
+    if (auth) {
+      if (resolve(auth).startsWith(resolve(homedir(), ".nisse") + "/"))
+        fail("copy a sign-in kept for verification, not the production ~/.nisse's: a refresh here would rotate it")
+      mkdirSync(join(home, "auth"), { recursive: true, mode: 0o700 })
+      writeFileSync(openaiAuth, readFileSync(auth), { mode: 0o600 })
+      writeFileSync(openaiAuthSource, resolve(auth))
+      record(`real ChatGPT sign-in copied from ${resolve(auth)}`)
+    }
+    if (openai) await fakeOpenAi(openai, refreshes, signedOut)
     console.log(`home     ${home}\nevidence ${evidence}\nscript   ${existsSync(scriptPath) ? scriptPath : "echo"}`)
+    describeFakes()
   },
 
   doctor: async () => {
@@ -265,6 +375,12 @@ const commands: Record<string, () => Promise<void> | void> = {
     console.log(`checkout ${REPO} ${commit}${dirty ? " (uncommitted changes)" : ""}`)
     console.log(`home     ${home}`)
     console.log(`script   ${existsSync(scriptPath) ? scriptPath : "none: nisse echoes"}`)
+    describeFakes()
+    if (
+      existsSync(openaiPort) &&
+      !tmux("capture-pane", "-p", "-t", "nisse:fake-openai").stdout.includes("fake ChatGPT on")
+    )
+      problems.push("the fake ChatGPT is not running")
     const owner = lockOwner()
     if (!owner) console.log("server   none running (exec or the TUI starts one)")
     else {
@@ -333,8 +449,8 @@ const commands: Record<string, () => Promise<void> | void> = {
     if (lockOwner()) fail(`a server already holds ${lock}`)
     openWindow("serve", [MAIN, "serve"])
     record("serve")
-    if (!(await until(() => existsSync(socket) && lockOwner() !== undefined, 10_000)))
-      fail(`the server did not take ${lock} in 10s:\n${tmux("capture-pane", "-p", "-t", "serve").stdout}`)
+    if (!(await until(() => existsSync(socket) && lockOwner() !== undefined, 20_000)))
+      fail(`the server did not take ${lock} in 20s:\n${tmux("capture-pane", "-p", "-t", "serve").stdout}`)
     console.log(`serving, pid ${lockOwner()!.pid}`)
   },
 
@@ -350,10 +466,13 @@ const commands: Record<string, () => Promise<void> | void> = {
 
   rpc: async () => {
     requireUp()
+    const ms = Number(flag("--timeout") ?? 5000)
     const [method, params] = args
     if (!method) fail(usage)
     record(`rpc ${method} ${params ?? ""}`)
-    const reply = await call(method!, params ? JSON.parse(params) : undefined)
+    const reply = await call(method!, params ? JSON.parse(params) : undefined, ms).catch((error: Error) =>
+      fail(error.message),
+    )
     console.log(JSON.stringify(reply, null, 2))
     if (reply.error) process.exit(1)
   },
@@ -496,8 +615,19 @@ const commands: Record<string, () => Promise<void> | void> = {
     const owner = lockOwner()
     if (owner?.command.includes(MAIN)) process.kill(owner.pid, "SIGKILL")
     record("down")
+    if (existsSync(openaiAuthSource) && existsSync(openaiAuth)) {
+      const source = readFileSync(openaiAuthSource, "utf8")
+      const current = readFileSync(openaiAuth)
+      if (!current.equals(readFileSync(source))) {
+        writeFileSync(source, current, { mode: 0o600 })
+        record(`wrote the refreshed ChatGPT sign-in back to ${source}`)
+      }
+    }
+    rmSync(openaiAuthSource, { force: true })
     rmSync(home, { recursive: true, force: true })
     rmSync(scriptPath, { force: true })
+    rmSync(openaiPort, { force: true })
+    rmSync(claudeFixture, { force: true })
     console.log(`stopped; evidence kept in ${evidence}`)
   },
 }
