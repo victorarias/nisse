@@ -739,7 +739,7 @@ export class Conversations extends Context.Service<
             const running = runs.has(id)
             yield* interruptTree(conversation)
             const lineage = conversation.lineage
-            if (!running || lineage === undefined) return
+            if (!running || lineage?.task === undefined) return
             const parent = yield* Effect.orDie(store.state(lineage.parent))
             yield* deliver(id, lineage.parent, INTERRUPTED_BY_A_PERSON, {
               kind: "final_answer",
