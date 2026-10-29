@@ -91,12 +91,14 @@ Preconditions:
   `drive.ts r nisse exec --auto "tidy my home"` prints
   `◆ guard: Bash finished` to stderr and `all done` to stdout.
 
-- **Request hook.** In a fresh OpenAI run against the fake API (`--openai`
-  with a recorded `tool_call` exchange), add `focus.ts` whose
-  `ctx.request.hook` pushes `Answer briefly.` and keeps only `Bash`. After
-  `nisse exec --auto "what does echo say?"`, each request the fake API logged
-  ends its `instructions` with `Answer briefly.` and lists only `Bash` in
-  `tools`.
+- **Request hook.** drive.ts can't fake ChatGPT, so use a short Bun script:
+  start `FakeOpenAi` from `packages/nisse/test/support/openai.ts`, play
+  `tool_call`, save a sign-in with its `signIn`, and put a `focus.ts` in the
+  home's `extensions/` whose `ctx.request.hook` pushes `Answer briefly.` and
+  keeps only `Bash`. Run `nisse exec --provider openai --auto "what does echo say?"`
+  with `NISSE_HOME` and `NISSE_OPENAI_URL=<fake.base>`. It prints
+  `It printed hi.`, and both requests in `fake.responses()` end their
+  `instructions` with `Answer briefly.` and offer only `Bash`.
 
 ## Gotchas
 
