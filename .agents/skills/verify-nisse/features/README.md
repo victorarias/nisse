@@ -41,7 +41,10 @@ Each feature file starts with an H1 and one paragraph on what the user sees,
 then four H2s in this order: `Sub-features` (short ids, one line each),
 `How to get to it (user POV)` (every entry point), `Driving it with drive.ts`
 (`Preconditions:`, then labeled steps pairing an action, its exact command and
-the observable result), and `Gotchas`. Keep implementation out; name user
+the observable result), and `Gotchas`. A feature that needs ChatGPT or Claude
+drives them with `--fake-openai` or `--fake-claude` there, and adds a fifth H2,
+`With a real account`, with the steps that only a real signed-in account can
+prove, written so an agent that has one can run them cold. Keep implementation out; name user
 paths, handles, state, commands and proof.
 
 ## Features
@@ -86,8 +89,10 @@ paths, handles, state, commands and proof.
   finishes when the server comes back.
 - [Quiet when idle](./quiet-when-idle.md): an idle TUI and server use no CPU.
 - [Extensions](./extensions.md): extensions in `NISSE_HOME/extensions` add
-  and remove tools, hook calls before and after they run, and show a status
-  line and toasts; `nisse extensions` lists them and `reload` reloads them.
+  and remove tools, hook calls before and after they run, shape each request
+  to an OpenAI model, and show a status line and toasts, on every provider and
+  on Claude through Claude Code; `nisse extensions` lists them and `reload`
+  reloads them.
 - [Status and chosen ids](./status.md): `status/watch` follows every tree's
   status and how its runs end, a conversation says how its last run ended, and
   `conversation/start` takes a chosen `id`.

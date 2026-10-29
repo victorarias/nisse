@@ -45,6 +45,27 @@ and [Models](features/models.md). A run's tmux server keeps the environment of
 the `drive.ts` command that first opened a window in it, `serve` or
 `tui start`: set variables such as `SSH_CONNECTION` on that command.
 
+To drive ChatGPT or Claude without an account, a run can replay a recorded
+exchange instead of a model:
+
+```sh
+drive.ts r1 up --fake-openai tool_call                 # fixtures/openai/tool_call.ndjson
+drive.ts r1 up --fake-openai text_answer,text_answer   # one after the other
+drive.ts r1 up --fake-claude bash_allowed              # fixtures/claude/bash_allowed.ndjson
+```
+
+`--fake-openai` signs the run's home in to a fake ChatGPT that answers each
+request with the next recorded reply, and writes every request nisse sent it to
+`evidence/fake-openai.ndjson`, marked `as recorded`, `differs` (with what the
+recording expected) or `unscripted` once the replies run out. `--fake-claude`
+points nisse at a fake `claude` that plays the recording's Claude Code
+processes, one per spawn, and logs what nisse sent each to
+`evidence/fake-claude/log.ndjson`. Type what the recording's user typed: the
+fake plays its recording whatever it is sent, and `differs` or a stalled run
+means nisse sent something the recording did not expect. The fixtures'
+`scenario` line says what each one holds. Both fakes reach every window the run
+opens, and a run can use both, alongside a `--script`.
+
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its
 last client leaves. Start it yourself with `drive.ts r1 serve` when a journey
@@ -149,10 +170,13 @@ Proof standards:
 - Show live text and the committed transcript as two separate things: the
   words streaming while `WORKING`, then the `message` entry and the same
   screen after a reopen. A fix to one does not fix the other.
-- The scripted model is the only fake. When Claude or OpenAI is the subject,
-  the proof needs a real signed-in provider, which only the person can supply;
-  say so rather than calling a scripted run proof. Without one, drive what a
-  signed-out provider shows, as [Providers](features/providers.md) says.
+- A recording proves nisse's side of the wire: what it sends ChatGPT or Claude
+  Code, and what it does with their answers. It doesn't prove what a real
+  model or a real Claude Code does today. When the provider itself is the
+  subject (a new model, a real sign-in, a change in what the service sends),
+  the proof needs a real signed-in account; drive the feature's
+  `With a real account` steps where you have one, and otherwise say they
+  were not verified, rather than calling a recording proof of them.
 - When a journey cannot be driven, report it as not verified, with the command
   you tried and what was missing. Never report a different path as proof.
 
