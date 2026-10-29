@@ -493,8 +493,9 @@ ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
   has no `"tool_mode": "code_mode_only"`; if every other model has it, install
   the host first with
   `NISSE_HOME=/tmp/nisse-verify/r/home scripts/code-mode-host.sh`. Then send
-  `Start a subagent named scout on the model <that id> that replies with exactly: found it. Wait for it, then tell me what it said.`:
-  the subagent's conversation in `conversation/list` has
+  `Start a subagent named ranger on the model <that id> that replies with exactly: found it. Wait for it, then tell me what it said.`
+  (a new name: `scout` exists from the step before, and a name is never reused):
+  `/root/ranger`'s conversation in `conversation/list` has
   `"model": {"provider": "openai", "model": "<that id>", ...}`.
 - **Follow-up.** Then send
   `Give scout a follow-up task: reply with exactly: found again. Wait for it, then tell me what it said.`:
