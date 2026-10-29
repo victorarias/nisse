@@ -284,7 +284,7 @@ export class Conversations extends Context.Service<
             )
           })
 
-        const tools = yield* extensions.tools(conversation, [
+        const { tools, added, removed } = yield* extensions.tools(conversation, [
           ...builtinTools,
           ...driver.tools(conversation),
           ...agentTools(agentContext(conversation, driver)),
@@ -342,6 +342,10 @@ export class Conversations extends Context.Service<
           providerState: provider.state,
           providerSeq: provider.seq,
           tools,
+          addedTools: added,
+          removedTools: removed,
+          before: (call) => extensions.before(conversation, call),
+          after: (call, outcome, changeable) => extensions.after(conversation, call, outcome, changeable),
           say: (text) =>
             text === ""
               ? Effect.void
@@ -392,7 +396,7 @@ export class Conversations extends Context.Service<
                             output: (text) =>
                               text === "" ? Effect.void : live({ _tag: "output", call: call.call, append: text }),
                           }),
-                          (ran) => extensions.after(conversation, call, ran),
+                          (ran) => extensions.after(conversation, call, ran, true),
                         )
               yield* recordResult(call.call, outcome)
               return outcome

@@ -1,6 +1,8 @@
 import {
+  createSdkMcpServer,
   query,
   type EffortLevel,
+  type HookCallback,
   type Options,
   type SDKMessage,
   type SDKUserMessage,
@@ -8,7 +10,9 @@ import {
 import type { CallId, Entry } from "@nisse/protocol"
 import { tmpdir } from "node:os"
 import { Deferred, Effect, Semaphore, type Scope } from "effect"
-import { toolEnv } from "../../tools/index.ts"
+import { z } from "zod"
+import { toolEnv, type Tool } from "../../tools/index.ts"
+import { failed, type ToolOutcome } from "../../tools/tool.ts"
 import {
   nothingOfItsOwn,
   ProviderError,
@@ -65,6 +69,7 @@ type Start = { readonly _tag: "fresh"; readonly session: string } | ({ readonly 
 const JOINING =
   "This Claude Code session joins a conversation it does not hold. This is the conversation so far; continue it."
 const DENIED = "the person did not allow this call"
+const OWN_TOOL = "mcp__nisse__"
 const SESSION_GONE = /No conversation found/
 
 const failure = (message: string) => new ProviderError({ message })
@@ -144,6 +149,19 @@ const resultText = (content: unknown): string =>
       ? content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("")
       : ""
 
+const toolName = (name: string) => (name.startsWith(OWN_TOOL) ? name.slice(OWN_TOOL.length) : name)
+
+const toolUseOf = (extra: unknown) => {
+  const meta = (extra as { _meta?: Record<string, unknown> } | undefined)?._meta
+  return meta?.["claudecode/toolUseId"] as CallId | undefined
+}
+
+interface Sighting {
+  readonly call: Call
+  readonly owner: Turn
+  readonly at?: string
+}
+
 const userMessage = (texts: ReadonlyArray<string>, priority?: "next"): SDKUserMessage => ({
   type: "user",
   message: { role: "user", content: texts.map((text) => ({ type: "text" as const, text })) },
@@ -170,7 +188,6 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
   const converse = (turn: Turn, start: Start, opening: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       const serial = yield* Semaphore.make(1)
-      const owners = new Map<string, Turn>()
       const children = new Map<string, Hosted>()
       const arrivals = new Map<string, Deferred.Deferred<void>>()
       const arrival = (agent: string) => {
@@ -178,12 +195,17 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
         if (!arrived) arrivals.set(agent, (arrived = Deferred.makeUnsafe<void>()))
         return arrived
       }
-      const recorded = new Map<string, Deferred.Deferred<void>>()
-      const recording = (call: string) => {
-        let done = recorded.get(call)
-        if (!done) recorded.set(call, (done = Deferred.makeUnsafe<void>()))
-        return done
+      const sightings = new Map<string, Deferred.Deferred<Sighting>>()
+      const sighting = (call: string) => {
+        let seen = sightings.get(call)
+        if (!seen) sightings.set(call, (seen = Deferred.makeUnsafe<Sighting>()))
+        return seen
       }
+      const sight = (seen: Sighting) => Deferred.succeed(sighting(seen.call.call), seen)
+      const calls = new Map<string, Call>()
+      const answered = new Set<string>()
+      const denied = new Set<string>()
+      const own = new Map(turn.addedTools.map((tool) => [tool.spec.name, tool]))
       const awaitingReplay = new Set<string>()
       const inbox = new Inbox<SDKUserMessage>()
       const abort = yield* Effect.acquireRelease(
@@ -201,40 +223,124 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
         awaitingReplay.add(message.uuid!)
         inbox.push(message)
       }
-      const saved = (at: string): Saved | undefined =>
-        awaitingReplay.size === 0 ? { state: { session: start.session, at } satisfies ClaudeState } : undefined
-      const record = (call: Call, at: string) =>
+      const saved = (at: string | undefined): Saved | undefined =>
+        at !== undefined && awaitingReplay.size === 0
+          ? { state: { session: start.session, at } satisfies ClaudeState }
+          : undefined
+      const recordNow = (seen: Sighting, input: unknown) =>
         Effect.suspend(() => {
-          owners.set(call.call, turn)
-          return Effect.andThen(turn.recordCall(call, saved(at)), Deferred.succeed(recording(call.call), undefined))
+          const known = calls.get(seen.call.call)
+          if (known) return Effect.succeed(known)
+          const call = { ...seen.call, input }
+          calls.set(call.call, call)
+          return Effect.as(seen.owner.recordCall(call, seen.owner === turn ? saved(seen.at) : undefined), call)
         })
-      const recordChildCall = (child: Hosted, call: Call) =>
-        Effect.suspend(() => {
-          if (owners.has(call.call)) return Effect.void
-          owners.set(call.call, child.turn)
-          return child.turn.recordCall(call)
-        })
-      const childAsking = (agent: string, call: Call) =>
+      const record = (seen: Sighting, input = seen.call.input) => serial.withPermits(1)(recordNow(seen, input))
+      const recordIfSighted = (id: string) =>
+        Deferred.isDoneUnsafe(sighting(id))
+          ? Effect.flatMap(Deferred.await(sighting(id)), (seen) =>
+              Effect.map(recordNow(seen, seen.call.input), (call) => ({ seen, call })),
+            )
+          : Effect.succeed(undefined)
+      const sighted = (call: Call, agent: string | undefined) =>
         Effect.gen(function* () {
-          yield* Deferred.await(arrival(agent))
-          const child = children.get(agent)!
-          yield* serial.withPermits(1)(recordChildCall(child, call))
-          return child.turn
+          if (agent !== undefined) {
+            yield* Deferred.await(arrival(agent))
+            yield* sight({ call, owner: children.get(agent)!.turn })
+          }
+          return yield* Deferred.await(sighting(call.call))
         })
 
-      const canUseTool: NonNullable<Options["canUseTool"]> = async (tool, input, { signal, toolUseID, agentID }) => {
-        const call: Call = { call: toolUseID as CallId, tool, input }
-        if (turn.conversation.approvals === "auto") return { behavior: "allow", updatedInput: input, toolUseID }
-        const asking =
-          agentID === undefined ? Effect.as(Deferred.await(recording(toolUseID)), turn) : childAsking(agentID, call)
-        const allowed = await Effect.runPromise(
-          Effect.flatMap(asking, (asked) => asked.approve(call)),
+      const preToolUse: HookCallback = async (input, _toolUseID, { signal }) => {
+        if (input.hook_event_name !== "PreToolUse") return {}
+        const asked: Call = {
+          call: input.tool_use_id as CallId,
+          tool: toolName(input.tool_name),
+          input: input.tool_input,
+        }
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const seen = yield* sighted(asked, input.agent_id)
+            const checked = yield* seen.owner.before({ ...seen.call, input: asked.input })
+            if ("refused" in checked) {
+              yield* record(seen, asked.input)
+              answered.add(asked.call)
+              yield* seen.owner.recordResult(asked.call, failed(checked.refused))
+              return {
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse" as const,
+                  permissionDecision: "deny" as const,
+                  permissionDecisionReason: checked.refused,
+                },
+              }
+            }
+            yield* record(seen, checked.input)
+            return checked.input === asked.input
+              ? {}
+              : {
+                  hookSpecificOutput: {
+                    hookEventName: "PreToolUse" as const,
+                    updatedInput: checked.input as Record<string, unknown>,
+                  },
+                }
+          }),
           { signal },
         )
-        return allowed
-          ? { behavior: "allow", updatedInput: input, toolUseID }
-          : { behavior: "deny", message: DENIED, toolUseID }
       }
+
+      const canUseTool: NonNullable<Options["canUseTool"]> = async (tool, input, { signal, toolUseID, agentID }) => {
+        const allow = { behavior: "allow" as const, updatedInput: input, toolUseID }
+        if (turn.conversation.approvals === "auto" || own.get(toolName(tool))?.readOnly) return allow
+        const asked: Call = { call: toolUseID as CallId, tool: toolName(tool), input }
+        const allowed = await Effect.runPromise(
+          Effect.gen(function* () {
+            const seen = yield* sighted(asked, agentID)
+            const call = yield* record(seen, input)
+            return yield* seen.owner.approve({ ...call, input })
+          }),
+          { signal },
+        )
+        if (allowed) return allow
+        denied.add(toolUseID)
+        return { behavior: "deny", message: DENIED, toolUseID }
+      }
+
+      const runOwn = (tool: Tool) => async (input: unknown, extra: unknown) => {
+        const id = toolUseOf(extra)
+        const outcome = await Effect.runPromise(
+          Effect.gen(function* () {
+            if (id === undefined) return failed(`Claude Code called ${tool.spec.name} without a call id`)
+            const seen = yield* Deferred.await(sighting(id))
+            const call = yield* record(seen, input)
+            const conversation = seen.owner.conversation
+            const ran = yield* tool.run(input, {
+              call: id,
+              cwd: conversation.cwd,
+              env: toolEnv(conversation),
+              output: (text) => seen.owner.toolOutput(id, text),
+            })
+            return yield* seen.owner.after(call, ran, true)
+          }),
+          { signal: (extra as { signal?: AbortSignal } | undefined)?.signal },
+        )
+        return { content: [{ type: "text" as const, text: outcome.output }], isError: outcome.error }
+      }
+
+      const ownServer =
+        own.size === 0
+          ? {}
+          : {
+              nisse: createSdkMcpServer({
+                name: "nisse",
+                tools: [...own.values()].map((tool) => ({
+                  name: tool.spec.name,
+                  description: tool.spec.description,
+                  inputSchema: z.fromJSONSchema(tool.spec.parameters as z.core.JSONSchema.JSONSchema),
+                  handler: runOwn(tool),
+                })),
+              }),
+            }
+      const withheld = [...turn.removedTools, ...own.keys()]
 
       const messages = query({
         prompt: inbox,
@@ -243,6 +349,9 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
           abortController: abort,
           includePartialMessages: true,
           canUseTool,
+          hooks: { PreToolUse: [{ hooks: [preToolUse] }] },
+          mcpServers: ownServer,
+          ...(withheld.length === 0 ? {} : { disallowedTools: withheld }),
           settingSources: ["user", "project", "local"],
           extraArgs: { ...extraArgs(options.args ?? []), "replay-user-messages": null },
           systemPrompt: {
@@ -284,7 +393,10 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
                 for (const block of content) {
                   if (block.type === "text") yield* child.turn.message(block.text)
                   else if (block.type === "tool_use")
-                    yield* recordChildCall(child, { call: block.id as CallId, tool: block.name, input: block.input })
+                    yield* sight({
+                      call: { call: block.id as CallId, tool: toolName(block.name), input: block.input },
+                      owner: child.turn,
+                    })
                 }
                 return "next"
               }
@@ -296,7 +408,11 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
               for (const block of content) {
                 if (block.type === "text") yield* turn.message(block.text, saved(message.uuid))
                 else if (block.type === "tool_use") {
-                  yield* record({ call: block.id as CallId, tool: block.name, input: block.input }, message.uuid)
+                  yield* sight({
+                    call: { call: block.id as CallId, tool: toolName(block.name), input: block.input },
+                    owner: turn,
+                    at: message.uuid,
+                  })
                 }
               }
               return "next"
@@ -308,18 +424,24 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
               }
               if (!Array.isArray(message.message.content)) return "next"
               const bySubagent = message.parent_tool_use_id !== null
-              let answered = false
+              let anyResult = false
               for (const block of message.message.content) {
-                const owner = block.type === "tool_result" ? owners.get(block.tool_use_id) : undefined
-                if (block.type !== "tool_result" || !owner) continue
-                answered = true
-                yield* owner.recordResult(
-                  block.tool_use_id as CallId,
-                  { output: resultText(block.content), error: block.is_error === true },
+                if (block.type !== "tool_result") continue
+                const id = block.tool_use_id
+                const sighted = answered.has(id) ? undefined : yield* recordIfSighted(id)
+                if (!sighted) continue
+                const { seen, call } = sighted
+                anyResult = true
+                answered.add(id)
+                const outcome: ToolOutcome = { output: resultText(block.content), error: block.is_error === true }
+                if (!denied.has(id) && !own.has(call.tool)) yield* seen.owner.after(call, outcome, false)
+                yield* seen.owner.recordResult(
+                  call.call,
+                  outcome,
                   message.uuid && !bySubagent ? saved(message.uuid) : undefined,
                 )
               }
-              if (answered && !bySubagent) {
+              if (anyResult && !bySubagent) {
                 const steers = yield* turn.steers
                 if (steers.length > 0) send(steers, "next")
               }
@@ -329,6 +451,7 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
               if (message.subtype === "task_started" && message.tool_use_id && message.task_type === "local_agent") {
                 const parent = message.parent_task_id === undefined ? undefined : children.get(message.parent_task_id)
                 const task = message.task_id
+                yield* recordIfSighted(message.tool_use_id)
                 const child = yield* (parent?.turn ?? turn).host({
                   call: message.tool_use_id as CallId,
                   title: message.description,

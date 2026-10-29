@@ -7,8 +7,7 @@ a call before it runs (to change its input or refuse it) and after it returns
 it does: a status line in the TUI's status bar and toasts in the transcript,
 both committed so every client sees them. `nisse extensions` lists what loaded
 and why anything failed; `nisse extensions reload` loads them again. They work
-on OpenAI and scripted conversations; Claude Code's own tools don't reach them
-yet.
+on every provider; on Claude they reach Claude Code through the Agent SDK.
 
 ## Sub-features
 
@@ -34,6 +33,13 @@ yet.
   `extensionStatus` in a snapshot and in the commit that changes it.
 - `toast` is a `toast` entry `{ extension, text }`, drawn as
   `◆ <name>: <text>` in the TUI and printed to stderr by `nisse exec`.
+- `claude-extensions`: on Claude, an added tool is served from nisse's MCP
+  server `nisse` (Claude calls `mcp__nisse__<name>`, the transcript says
+  `<name>`), a removed tool is passed to Claude Code as `--disallowedTools`,
+  `execute.before` runs as Claude Code's `PreToolUse` hook (subagents' calls
+  too), and `execute.after` sees Claude Code's results but can't change them:
+  a change becomes the toast
+  `execute.after changed <tool>'s result, but Claude Code keeps its own tools' results`.
 - `reload` (`nisse extensions reload` or `extensions/reload`) loads every
   extension again from disk while the loaded ones keep guarding calls, then
   swaps them in, clears every status line and unloads the old ones. A server
@@ -89,5 +95,7 @@ Preconditions:
 - A toast is committed when the hook runs, so in the transcript it comes
   before the `tool_result` of the call it is about; the TUI draws it under the
   call.
-- On Claude the hooks don't run and added tools are not offered; drive
-  extensions with the scripted provider or OpenAI.
+- On Claude, drive the same `guard.ts` in a run whose home is signed in to
+  Claude, with `tui start --provider claude --auto` and a prompt that makes
+  Claude run `echo hello`: the screen shows `▸ Bash(echo hallo)`. Without a
+  signed-in Claude, say that the Claude path is not verified.

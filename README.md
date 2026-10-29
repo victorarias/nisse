@@ -271,9 +271,22 @@ export default Extension.define((ctx) =>
   unloaded and their status lines cleared. Restarting the server clears them
   too, so a line never outlives the code that set it.
 
-On Claude, Claude Code runs its own tools and nisse's hooks don't reach them
-yet: an extension's tools and hooks apply to OpenAI and scripted
-conversations.
+On Claude, Claude Code runs its own tools, and extensions reach them through
+the Agent SDK:
+
+- A tool an extension adds is served from nisse's own in-process MCP server,
+  `nisse`. Claude calls it as `mcp__nisse__<name>`; the transcript names it
+  `<name>`.
+- A tool an extension removes is withheld from Claude Code, including Claude
+  Code tools nisse doesn't have, such as `WebFetch`. `update` doesn't reach
+  Claude Code's own tools, which keep their own descriptions.
+- `execute.before` runs for every call, a subagent's too, as Claude Code's
+  `PreToolUse` hook: a refusal stops the call and a changed `input` is what
+  Claude Code runs.
+- `execute.after` sees what Claude Code's own tools return, as the model sees
+  it, but can't change it: Claude Code keeps its own tools' results, and a
+  change is reported in a toast. It can change the results of an extension's
+  tools.
 
 ## Protocol
 

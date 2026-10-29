@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test"
 import type { AuthState, Delivery, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import { bodies, errorTag, RawClient, statusOf } from "./support/raw.ts"
-import { runningServer, type ServerOptions } from "./support/server.ts"
+import { runningServer, tempHome, type ServerOptions } from "./support/server.ts"
 
 const settled = (count: number) => (deliveries: ReadonlyArray<Delivery>) =>
   bodies(deliveries).filter((body) => body._tag === "run_end").length >= count && deliveries.at(-1)?.status === "idle"
@@ -480,3 +482,148 @@ test("retelling a long conversation to Claude keeps its first prompt and the one
   expect(told).toContain("(5 entries left out here)")
   expect(told.at(-1)).toBe(asked)
 }, 20_000)
+
+const withExtension = (name: string, source: string) => {
+  const home = tempHome()
+  mkdirSync(home.extensions, { recursive: true })
+  writeFileSync(join(home.extensions, `${name}.ts`), source)
+  return home
+}
+
+test("an extension's tool reaches Claude through nisse's own MCP server, and a tool it removes is withheld", async () => {
+  using claude = new FakeClaude("own_tool")
+  const home = withExtension(
+    "clock",
+    `import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    tools.add(
+      Tool.make({
+        name: "Clock",
+        description: "The time in a zone",
+        input: Schema.Struct({ zone: Schema.String }),
+        readOnly: true,
+        run: ({ zone }) => Effect.succeed(Tool.ok("noon in " + zone)),
+      }),
+    )
+    tools.remove("WebFetch")
+  }),
+)`,
+  )
+  await using session = await conversationWith(claude, { home })
+  await session.submit("what time is it")
+  await session.view.until(settled(1))
+  expect(said(session.view.deliveries)).toEqual([
+    expect.objectContaining({ _tag: "tool_call", tool: "Clock", input: { zone: "CET" } }),
+    expect.objectContaining({ _tag: "tool_result", output: "noon in CET", error: false }),
+    { _tag: "message", text: "It is noon in CET." },
+    { _tag: "run_end", outcome: "answered" },
+  ])
+  expect(claude.spawns()[0]!["--disallowedTools"]).toBe("WebFetch,Clock")
+  expect(claude.log().find((entry) => entry.initialize)?.initialize.sdkMcpServers).toEqual(["nisse"])
+  expect(claude.mcpAnswers()).toEqual([
+    { jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "noon in CET" }], isError: false } },
+  ])
+  expect(bodies(session.view.deliveries).some((body) => body._tag === "approval")).toBe(false)
+})
+
+const guard = `import { Extension, Tool } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.before", (call) =>
+    Effect.gen(function* () {
+      const input = call.input as { command?: string; file_path?: string }
+      if (input.command?.startsWith("touch")) return yield* Tool.refuse("no touching")
+      if (input.command === "echo original") call.input = { ...input, command: "echo rewritten" }
+      if (input.file_path !== undefined) call.input = { ...input, limit: 1 }
+    }),
+  ),
+)`
+
+test("an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why", async () => {
+  using claude = new FakeClaude("bash_hook_denied")
+  await using session = await conversationWith(claude, { home: withExtension("guard", guard) })
+  await session.submit("touch it")
+  await session.view.until(settled(1))
+  const results = said(session.view.deliveries).filter((body) => (body as { _tag: string })._tag === "tool_result")
+  expect(results).toEqual([expect.objectContaining({ output: "guard refused this call: no touching", error: true })])
+  expect(claude.hookAnswers()).toEqual([
+    {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: "guard refused this call: no touching",
+    },
+  ])
+})
+
+test("an extension's rewrite of a call is what Claude Code runs and what the transcript shows", async () => {
+  using claude = new FakeClaude("bash_hook_rewritten")
+  await using session = await conversationWith(claude, { home: withExtension("guard", guard) })
+  await session.submit("echo it")
+  await session.view.until(settled(1))
+  expect(said(session.view.deliveries).slice(0, 2)).toEqual([
+    expect.objectContaining({
+      _tag: "tool_call",
+      tool: "Bash",
+      input: expect.objectContaining({ command: "echo rewritten" }),
+    }),
+    expect.objectContaining({ _tag: "tool_result", output: "rewritten", error: false }),
+  ])
+  expect(claude.hookAnswers()).toEqual([
+    {
+      hookEventName: "PreToolUse",
+      updatedInput: { command: "echo rewritten", description: "Print the word original" },
+    },
+  ])
+})
+
+test("an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation", async () => {
+  using claude = new FakeClaude("subagent_hooked")
+  await using session = await conversationWith(claude, { home: withExtension("guard", guard) })
+  await session.submit("find the gnome")
+  const child = await subagentOf(session)
+  await child.view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "tool_result"))
+  expect(bodies(child.view.deliveries).find((body) => body._tag === "tool_call")).toMatchObject({
+    tool: "Read",
+    input: { file_path: `${session.server.home.dir}/notes.txt`, limit: 1 },
+  })
+  expect(claude.hookAnswers()).toEqual([
+    {
+      hookEventName: "PreToolUse",
+      updatedInput: { file_path: `${session.server.home.dir}/notes.txt`, limit: 1 },
+    },
+  ])
+})
+
+test("execute.after sees what Claude Code's tools return, and says so when it can't change it", async () => {
+  using claude = new FakeClaude("read")
+  const home = withExtension(
+    "loud",
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.after", (call) =>
+    Effect.gen(function* () {
+      yield* call.conversation.status("read " + call.outcome.output.split("\\t")[1]?.split("\\n")[0])
+      call.outcome.output = call.outcome.output.toUpperCase()
+    }),
+  ),
+)`,
+  )
+  await using session = await conversationWith(claude, { home })
+  await session.submit("read it")
+  await session.view.until(settled(1))
+  expect(said(session.view.deliveries).slice(0, 3)).toEqual([
+    expect.objectContaining({ _tag: "tool_call", tool: "Read" }),
+    {
+      _tag: "toast",
+      extension: "loud",
+      text: "execute.after changed Read's result, but Claude Code keeps its own tools' results",
+    },
+    expect.objectContaining({ _tag: "tool_result", output: "1\tthe gnome lives under the floor\n2\t" }),
+  ])
+  expect(
+    session.view.deliveries.findLast((delivery) => delivery._tag === "commit" && delivery.extensionStatus),
+  ).toMatchObject({ extensionStatus: { loud: "read the gnome lives under the floor" } })
+})
