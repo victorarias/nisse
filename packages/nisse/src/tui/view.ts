@@ -6,6 +6,7 @@ import {
   type ConversationId,
   type Delivery,
   type Entry,
+  type ExtensionStatus,
   type Queued,
   type Status,
 } from "@nisse/protocol"
@@ -28,6 +29,7 @@ export interface View {
   answers: Record<CallId, Entry>
   asked: Record<ApprovalId, CallId>
   pendingApprovals: Array<PendingApproval>
+  extensionStatus: ExtensionStatus
 }
 
 export const emptyView = (id: ConversationId): View => ({
@@ -43,6 +45,7 @@ export const emptyView = (id: ConversationId): View => ({
   answers: {},
   asked: {},
   pendingApprovals: [],
+  extensionStatus: {},
 })
 
 const setStatus = (view: View, status: Status, now: number) => {
@@ -81,6 +84,7 @@ export const apply = (view: View, delivery: Delivery, now: number) => {
     index(view, delivery.entries)
     view.live = { text: delivery.live.text, output: { ...delivery.live.output } }
     view.queued = [...delivery.queued]
+    view.extensionStatus = { ...delivery.extensionStatus }
     setStatus(view, delivery.status, now)
     return
   }
@@ -111,5 +115,6 @@ export const apply = (view: View, delivery: Delivery, now: number) => {
     }
   }
   if (delivery.enqueued) view.queued.push(delivery.enqueued)
+  if (delivery.extensionStatus) view.extensionStatus = { ...delivery.extensionStatus }
   if (delivery.status) setStatus(view, delivery.status, now)
 }

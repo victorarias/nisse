@@ -21,13 +21,14 @@ import {
 import { Cause, Context, Deferred, Effect, Fiber, FiberSet, Layer, Option, Ref, type Scope } from "effect"
 import { agentTools, errored, taskOf, type AgentContext, type Child, type Woken } from "./agents.ts"
 import { projectDefaultModel } from "./config.ts"
+import { Extensions } from "./extensions/index.ts"
 import { newId } from "./ids.ts"
 import { attachedSkills } from "./workspace.ts"
 import { Lifetime } from "./lifetime.ts"
 import { Providers, type Call, type Driver, type Hosted, type HostedChild, type Saved, type Turn } from "./provider.ts"
 import { Store, type Change, type NewEntry } from "./store.ts"
 import { builtinTools, toolEnv, type ToolOutcome } from "./tools/index.ts"
-import { interrupted } from "./tools/tool.ts"
+import { failed, interrupted } from "./tools/tool.ts"
 
 const LIVE_WINDOW = "100 millis"
 export const RESTART_LIMIT = 3
@@ -140,6 +141,7 @@ export class Conversations extends Context.Service<
     Effect.gen(function* () {
       const store = yield* Store
       const providers = yield* Providers
+      const extensions = yield* Extensions
       const lifetime = yield* Lifetime
       const runners = yield* FiberSet.make<void>()
       const active = new Set<ConversationId>()
@@ -282,7 +284,11 @@ export class Conversations extends Context.Service<
             )
           })
 
-        const tools = [...builtinTools, ...agentTools(agentContext(conversation, driver))]
+        const tools = yield* extensions.tools(conversation, [
+          ...builtinTools,
+          ...driver.tools(conversation),
+          ...agentTools(agentContext(conversation, driver)),
+        ])
 
         const host = (child: HostedChild) =>
           Effect.gen(function* () {
@@ -365,25 +371,35 @@ export class Conversations extends Context.Service<
           approve,
           host,
           toolOutput: (call, text) => (text === "" ? Effect.void : live({ _tag: "output", call, append: text })),
-          runTool: (call, tool = tools.find((known) => known.spec.name === call.tool)) =>
+          runTool: (asked, tool = tools.find((known) => known.spec.name === asked.tool)) =>
             Effect.gen(function* () {
+              const checked = yield* extensions.before(conversation, asked)
+              const call = "refused" in checked ? asked : checked
               yield* recordCall(call)
-              const outcome: ToolOutcome = !tool
-                ? { output: `no tool named ${call.tool}`, error: true }
-                : !tool.readOnly && !(yield* approve(call))
-                  ? { output: "denied: the person did not allow this call", error: true }
-                  : yield* tool.run(call.input, {
-                      call: call.call,
-                      ...(call.parent === undefined ? {} : { parent: call.parent }),
-                      cwd: conversation.cwd,
-                      env: toolEnv(conversation),
-                      output: (text) =>
-                        text === "" ? Effect.void : live({ _tag: "output", call: call.call, append: text }),
-                    })
+              const outcome: ToolOutcome =
+                "refused" in checked
+                  ? failed(checked.refused)
+                  : !tool
+                    ? failed(`no tool named ${call.tool}`)
+                    : !tool.readOnly && !(yield* approve(call))
+                      ? failed("denied: the person did not allow this call")
+                      : yield* Effect.flatMap(
+                          tool.run(call.input, {
+                            call: call.call,
+                            ...(call.parent === undefined ? {} : { parent: call.parent }),
+                            cwd: conversation.cwd,
+                            env: toolEnv(conversation),
+                            output: (text) =>
+                              text === "" ? Effect.void : live({ _tag: "output", call: call.call, append: text }),
+                          }),
+                          (ran) => extensions.after(conversation, call, ran),
+                        )
               yield* recordResult(call.call, outcome)
               return outcome
             }).pipe(
-              Effect.onInterrupt(() => (openCalls.has(call.call) ? recordResult(call.call, interrupted) : Effect.void)),
+              Effect.onInterrupt(() =>
+                openCalls.has(asked.call) ? recordResult(asked.call, interrupted) : Effect.void,
+              ),
             ),
           steers: Effect.andThen(
             flush,

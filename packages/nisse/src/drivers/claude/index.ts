@@ -9,7 +9,15 @@ import type { CallId, Entry } from "@nisse/protocol"
 import { tmpdir } from "node:os"
 import { Deferred, Effect, Semaphore, type Scope } from "effect"
 import { toolEnv } from "../../tools/index.ts"
-import { noSkills, ProviderError, type Call, type Driver, type Hosted, type Saved, type Turn } from "../../provider.ts"
+import {
+  nothingOfItsOwn,
+  ProviderError,
+  type Call,
+  type Driver,
+  type Hosted,
+  type Saved,
+  type Turn,
+} from "../../provider.ts"
 import { Inbox } from "./inbox.ts"
 import { probe, type Probed } from "./probe.ts"
 
@@ -381,7 +389,7 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
 
   return {
     kind: "claude",
-    ...noSkills,
+    ...nothingOfItsOwn,
     health: (refresh) => Effect.map(probedNow(refresh), (found) => found.health),
     models: (refresh) => Effect.map(probedNow(refresh), (found) => found.models),
     signInMethods: ["terminal"],

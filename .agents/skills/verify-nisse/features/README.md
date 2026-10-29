@@ -85,6 +85,9 @@ paths, handles, state, commands and proof.
 - [Crash recovery](./crash-recovery.md): a run cut off by a killed server
   finishes when the server comes back.
 - [Quiet when idle](./quiet-when-idle.md): an idle TUI and server use no CPU.
+- [Extensions](./extensions.md): extensions in `NISSE_HOME/extensions` add
+  and remove tools, hook calls before and after they run, and show a status
+  line and toasts; `nisse extensions` lists them and `reload` reloads them.
 - [Status and chosen ids](./status.md): `status/watch` follows every tree's
   status and how its runs end, a conversation says how its last run ended, and
   `conversation/start` takes a chosen `id`.

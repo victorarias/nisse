@@ -1,11 +1,8 @@
 import type { Tool } from "../../../tools/index.ts"
-import { ApplyPatch } from "./apply-patch.ts"
 
 const OUTCOME = "{ is_error: boolean; output: string; }"
 
-const freeform = new Set<Tool>([ApplyPatch])
-
-export const nestedTools = (tools: ReadonlyArray<Tool>): ReadonlyArray<Tool> => [...tools, ApplyPatch]
+const freeform = (tool: Tool) => (tool.spec.parameters as { type?: unknown } | undefined)?.type === "string"
 
 const identifier = (name: string) =>
   [...name].map((ch, index) => (/[A-Za-z_$]/.test(ch) || (index > 0 && /[0-9]/.test(ch)) ? ch : "_")).join("") || "_"
@@ -49,7 +46,7 @@ const object = (schema: any): string => {
 }
 
 const sample = (tool: Tool) => {
-  const [input, type] = freeform.has(tool) ? ["input", "string"] : ["args", typescript(tool.spec.parameters)]
+  const [input, type] = freeform(tool) ? ["input", "string"] : ["args", typescript(tool.spec.parameters)]
   return `${tool.spec.description}\n\nexec tool declaration:\n\`\`\`ts\ndeclare const tools: { ${identifier(tool.spec.name)}(${input}: ${type}): Promise<${OUTCOME}>; };\n\`\`\``
 }
 
@@ -57,7 +54,7 @@ export const definition = (tool: Tool) => ({
   name: tool.spec.name,
   tool_name: { name: tool.spec.name, namespace: null },
   description: sample(tool),
-  kind: freeform.has(tool) ? "freeform" : "function",
+  kind: freeform(tool) ? "freeform" : "function",
   input_schema: null,
   output_schema: null,
 })
@@ -75,7 +72,7 @@ export const nestedCall = (
 ): { tool: Tool; input: unknown } | { error: string } => {
   const tool = tools.find((candidate) => candidate.spec.name === name)
   if (!tool) return { error: `no tool named ${name}` }
-  if (freeform.has(tool)) return typeof input === "string" ? { tool, input } : { error: `${name} takes a string` }
+  if (freeform(tool)) return typeof input === "string" ? { tool, input } : { error: `${name} takes a string` }
   if (input === null || input === undefined) return { tool, input: {} }
   if (typeof input === "object" && !Array.isArray(input)) return { tool, input }
   return { error: `${name} takes an object` }

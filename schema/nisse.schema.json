@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nisse protocol",
-  "protocol": 7,
+  "protocol": 8,
   "methods": {
     "initialize": {
       "params": {
@@ -879,6 +879,30 @@
                           ],
                           "additionalProperties": true,
                           "description": "The call started a subagent, which works in a conversation of its own."
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "toast"
+                              ]
+                            },
+                            "extension": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "extension",
+                            "text"
+                          ],
+                          "additionalProperties": true,
+                          "description": "An extension told the people in this conversation something. Providers never show it to the model."
                         }
                       ]
                     }
@@ -1030,6 +1054,13 @@
                   "working",
                   "waiting"
                 ]
+              },
+              "extensionStatus": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Each extension's status line in this conversation, by extension name."
               }
             },
             "required": [
@@ -1039,7 +1070,8 @@
               "entries",
               "live",
               "queued",
-              "status"
+              "status",
+              "extensionStatus"
             ],
             "additionalProperties": true
           },
@@ -1441,6 +1473,30 @@
                           ],
                           "additionalProperties": true,
                           "description": "The call started a subagent, which works in a conversation of its own."
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "_tag": {
+                              "type": "string",
+                              "enum": [
+                                "toast"
+                              ]
+                            },
+                            "extension": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "_tag",
+                            "extension",
+                            "text"
+                          ],
+                          "additionalProperties": true,
+                          "description": "An extension told the people in this conversation something. Providers never show it to the model."
                         }
                       ]
                     }
@@ -1669,6 +1725,13 @@
                   "working",
                   "waiting"
                 ]
+              },
+              "extensionStatus": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "The whole map, when it changed."
               }
             },
             "required": [
@@ -2717,6 +2780,90 @@
         "not": {}
       },
       "stream": true
+    },
+    "extensions/list": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "loaded",
+                "failed",
+                "disabled"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Why it failed to load."
+            }
+          },
+          "required": [
+            "name",
+            "path",
+            "state"
+          ],
+          "additionalProperties": true
+        },
+        "description": "Every extension in the home, in the order they load."
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "extensions/reload": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "loaded",
+                "failed",
+                "disabled"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Why it failed to load."
+            }
+          },
+          "required": [
+            "name",
+            "path",
+            "state"
+          ],
+          "additionalProperties": true
+        },
+        "description": "Unloads every extension and loads them again from disk, with their options from config.toml."
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
     }
   },
   "$defs": {

@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import * as Rpc from "effect/rpc/Rpc"
 import * as RpcGroup from "effect/rpc/RpcGroup"
 
-export const PROTOCOL_VERSION = 7
+export const PROTOCOL_VERSION = 8
 
 export const ConversationId = Schema.String.pipe(Schema.brand("ConversationId"))
 export type ConversationId = typeof ConversationId.Type
@@ -97,6 +97,9 @@ export const Outcome = Schema.Literals(["answered", "interrupted", "failed", "re
 export type Outcome = typeof Outcome.Type
 export const RunEnd = Schema.TaggedStruct("run_end", { outcome: Outcome, message: Schema.optionalKey(Schema.String) })
 export type RunEnd = typeof RunEnd.Type
+export const Toast = Schema.TaggedStruct("toast", { extension: Schema.String, text: Schema.String }).annotate({
+  description: "An extension told the people in this conversation something. Providers never show it to the model.",
+})
 export const EntryBody = Schema.Union([
   UserText,
   Message,
@@ -107,6 +110,7 @@ export const EntryBody = Schema.Union([
   RunEnd,
   ModelSwitch,
   Subagent,
+  Toast,
 ])
 export type EntryBody = typeof EntryBody.Type
 
@@ -192,6 +196,11 @@ export const LiveClear = Schema.TaggedStruct("clear", {})
 export const LiveChange = Schema.Union([LiveText, LiveTextEnd, LiveOutput, LiveOutputEnd, LiveClear])
 export type LiveChange = typeof LiveChange.Type
 
+export const ExtensionStatus = Schema.Record(Schema.String, Schema.String).annotate({
+  description: "Each extension's status line in this conversation, by extension name.",
+})
+export type ExtensionStatus = typeof ExtensionStatus.Type
+
 export const Snapshot = Schema.TaggedStruct("snapshot", {
   conversation: Conversation,
   seq: Schema.Int,
@@ -199,6 +208,7 @@ export const Snapshot = Schema.TaggedStruct("snapshot", {
   live: Live,
   queued: Schema.Array(Queued),
   status: Status,
+  extensionStatus: ExtensionStatus,
 })
 export type Snapshot = typeof Snapshot.Type
 
@@ -210,6 +220,7 @@ export const Commit = Schema.TaggedStruct("commit", {
   live: Schema.optionalKey(Schema.Array(LiveChange)),
   enqueued: Schema.optionalKey(Queued),
   status: Schema.optionalKey(Status),
+  extensionStatus: Schema.optionalKey(ExtensionStatus.annotate({ description: "The whole map, when it changed." })),
 })
 export type Commit = typeof Commit.Type
 
@@ -473,6 +484,29 @@ export const WatchAuth = Rpc.make("auth/watch", {
   stream: true,
 })
 
+export const ExtensionState = Schema.Literals(["loaded", "failed", "disabled"])
+export type ExtensionState = typeof ExtensionState.Type
+
+export const ExtensionInfo = Schema.Struct({
+  name: Schema.String,
+  path: Schema.String,
+  state: ExtensionState,
+  message: Schema.optionalKey(Schema.String.annotate({ description: "Why it failed to load." })),
+})
+export type ExtensionInfo = typeof ExtensionInfo.Type
+
+export const ListExtensions = Rpc.make("extensions/list", {
+  success: Schema.Array(ExtensionInfo).annotate({
+    description: "Every extension in the home, in the order they load.",
+  }),
+})
+
+export const ReloadExtensions = Rpc.make("extensions/reload", {
+  success: Schema.Array(ExtensionInfo).annotate({
+    description: "Unloads every extension and loads them again from disk, with their options from config.toml.",
+  }),
+})
+
 export const NisseRpcs = RpcGroup.make(
   Initialize,
   StartConversation,
@@ -492,4 +526,6 @@ export const NisseRpcs = RpcGroup.make(
   CancelAuth,
   Logout,
   WatchAuth,
+  ListExtensions,
+  ReloadExtensions,
 )
