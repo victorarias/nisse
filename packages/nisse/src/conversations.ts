@@ -346,6 +346,7 @@ export class Conversations extends Context.Service<
           removedTools: removed,
           before: (call) => extensions.before(conversation, call),
           after: (call, outcome, changeable) => extensions.after(conversation, call, outcome, changeable),
+          request: (tools) => extensions.request(conversation, tools),
           say: (text) =>
             text === ""
               ? Effect.void

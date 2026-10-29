@@ -408,28 +408,34 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
       Effect.gen(function* () {
         const instructions = instructionsFor(options, turn.conversation)
         const { model = MODEL, effort } = turn.conversation.model
-        let tools: ReadonlyArray<unknown> = turn.tools.map(({ spec }) => ({
-          type: "function",
-          name: spec.name,
-          description: spec.description,
-          parameters: spec.parameters,
-          strict: false,
-        }))
+        const codeMode = models.wantsCodeMode(model)
         let runTool = (call: Call) => turn.runTool(call)
-        if (models.wantsCodeMode(model)) {
+        if (codeMode) {
           const program = installedHost(options.codeModeHost, options.home)
           if (program === undefined) return yield* failure(missingHost)
-          tools = codeModeTools(turn.tools)
           runTool = yield* codeModeRun(host, program, turn)
+        }
+        const offered = (names: ReadonlyArray<string>): ReadonlyArray<unknown> => {
+          const specs = turn.tools.filter(({ spec }) => names.includes(spec.name))
+          return codeMode
+            ? codeModeTools(specs)
+            : specs.map(({ spec }) => ({
+                type: "function",
+                name: spec.name,
+                description: spec.description,
+                parameters: spec.parameters,
+                strict: false,
+              }))
         }
         while (true) {
           const transcript = yield* turn.transcript
+          const request = yield* turn.request(turn.tools.map(({ spec }) => spec.name))
           const calls = yield* respond(turn, {
             model,
             ...(effort ? { reasoning: { effort } } : {}),
-            instructions,
+            instructions: instructions + request.instructions.map((text) => `\n${text.trimEnd()}\n`).join(""),
             input: inputItems(transcript),
-            tools,
+            tools: offered(request.tools),
             tool_choice: "auto",
             parallel_tool_calls: true,
             store: false,

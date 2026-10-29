@@ -26,6 +26,9 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
   `<name> refused this call: <reason>`, and nobody is asked.
 - `execute-after` changes the output or error the model and the transcript
   get.
+- `request-hook` (OpenAI only) adds the text an extension pushes to
+  `instructions` to the model's instructions for each request, and offers the
+  model only the tools left in `tools`.
 - `hook-failure` turns a hook that fails or takes over 10 seconds into a toast
   `<hook> failed: <why>`; a failed `execute.before` refuses the call with
   `<name> refused this call: it failed: <why>`.
@@ -87,6 +90,13 @@ Preconditions:
 - **exec.** In a fresh run with the same script and `guard.ts`,
   `drive.ts r nisse exec --auto "tidy my home"` prints
   `◆ guard: Bash finished` to stderr and `all done` to stdout.
+
+- **Request hook.** In a fresh OpenAI run against the fake API (`--openai`
+  with a recorded `tool_call` exchange), add `focus.ts` whose
+  `ctx.request.hook` pushes `Answer briefly.` and keeps only `Bash`. After
+  `nisse exec --auto "what does echo say?"`, each request the fake API logged
+  ends its `instructions` with `Answer briefly.` and lists only `Bash` in
+  `tools`.
 
 ## Gotchas
 

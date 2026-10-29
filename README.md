@@ -12,7 +12,7 @@ the `rust` branch.
 
 ## Status
 
-R7b, extensions on Claude. What runs today:
+R7, extensions. What runs today:
 
 - One server per home, shared by every client. The TUI or `exec` starts it
   when none runs, and it exits 30 seconds after the last client leaves and the
@@ -76,7 +76,8 @@ R7b, extensions on Claude. What runs today:
 - Subagents, each a conversation of its own under the one that started it:
   Codex's agent tools on OpenAI, and Claude Code's own subagents on Claude.
 - Extensions: TypeScript files in `NISSE_HOME/extensions` that add, change
-  or remove tools, hook a call before it runs and after it returns, and tell
+  or remove tools, hook a call before it runs and after it returns, shape
+  each request to an OpenAI model, and tell
   the people in a conversation what they do through a status line and toasts
   that every client sees. They work on every provider; on Claude through the
   Agent SDK (see below).
@@ -256,13 +257,19 @@ export default Extension.define((ctx) =>
   instead. `execute.after` sees the call's `outcome` and may change what the
   model and the transcript get. Hooks run in load order, for every
   conversation and subagent, and each call of one has 10 seconds.
+- `ctx.request.hook` sees `{ conversation, instructions, tools }` before each
+  request to an OpenAI model. Text pushed to `instructions` is added to the
+  model's instructions for that request, and a name taken out of `tools`
+  keeps that tool from the model in it. It shapes only what the model is
+  offered; to stop a call, use `execute.before`. On Claude, Claude Code makes
+  its own requests and the hook doesn't run.
 - `conversation.status(text)` sets the extension's line in that conversation's
   status bar, and `status()` clears it. `conversation.toast(text)` adds a line
   to its transcript. Both are committed, so every client sees them, then and
   later; providers never show them to the model.
 - A hook that fails or times out tells the conversation in a toast. A failed
-  `execute.before` refuses the call, and a failed `execute.after` leaves the
-  outcome as it was.
+  `execute.before` refuses the call, and a failed `execute.after` or request
+  hook leaves the outcome or the request as it was.
 - `[extensions.<name>]` in `config.toml` is the extension's `ctx.options`, and
   `enabled = false` there skips it. An extension has 10 seconds to load; one
   that fails is listed with why, and the TUI shows it when it opens.
