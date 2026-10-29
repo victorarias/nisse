@@ -369,7 +369,7 @@ export class Store extends Context.Service<
               .query<
                 { model: string },
                 []
-              >("SELECT model FROM conversations ORDER BY model_at DESC, rowid DESC LIMIT 1")
+              >("SELECT model FROM conversations WHERE lineage IS NULL ORDER BY model_at DESC, rowid DESC LIMIT 1")
               .get()
             return row ? (JSON.parse(row.model) as ModelSelection) : undefined
           },

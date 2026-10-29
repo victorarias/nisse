@@ -63,8 +63,8 @@ R5, subagents. What runs today:
   `NISSE_HOME/skills`; the nearest skill of a name wins. A message that starts
   with `/name` or holds `$name` carries that skill's `SKILL.md` with it, and
   every client sees which skills it carried.
-- Subagents on OpenAI, each a conversation of its own under the one that
-  started it, with Codex's agent tools.
+- Subagents, each a conversation of its own under the one that started it:
+  Codex's agent tools on OpenAI, and Claude Code's own subagents on Claude.
 - The neon TUI, in OpenTUI with Solid.
 
 ## Try it
@@ -144,6 +144,11 @@ nisse looks for the host at `NISSE_CODE_MODE_HOST`, then in `NISSE_HOME/bin`,
 then on `PATH`. `gpt-5.5` keeps direct tools and needs no host.
 
 ### Subagents
+
+Claude keeps Claude Code's own subagents. Nisse commits what each one does into
+a conversation of its own under its parent's, and a call it wants to make waits
+for a person there. Such a subagent takes input only through its parent, and
+ends when its parent's run does; `Esc` in its own conversation stops just it.
 
 On OpenAI, nisse runs Codex's agent tools: `spawn_agent`, `send_message`,
 `followup_task`, `wait_agent`, `list_agents` and `interrupt_agent`. A spawned

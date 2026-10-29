@@ -8,8 +8,8 @@ its parent's provider and in its directory, addressed by a task name such as
 last did and whether it works, waits on a person or ended; a call the subagent
 asks about shows on its card and `^Y` or `^N` answers it from the parent. A
 subagent's last message of each run reaches its parent. `Esc` stops the run
-and every subagent's under it. Claude runs its own subagents inside Claude
-Code ([Claude](./claude.md)).
+and every subagent's under it. On Claude, Claude Code runs its own subagents,
+and nisse commits each into a conversation of its own the same way.
 
 ## Sub-features
 
@@ -43,6 +43,14 @@ Code ([Claude](./claude.md)).
 - `subagent-types` reads agent types from `.claude/agents/*.md` from the
   directory up to the repository root, then Claude Code's config directory's
   `agents/`; a type's `model` applies when it names an OpenAI model.
+
+- `subagent-claude` gives each subagent Claude Code starts a conversation of
+  its own: the parent shows `▸ Agent(...)` and a `⧉ <description>` card, the
+  subagent's conversation holds its prompt, calls, results and last message,
+  and its `lineage` has no `task`. Its calls wait on a person there and on its
+  card. Input to it is refused with `TakesNoInput`, and its TUI prompt reads
+  `INPUT GOES THROUGH ITS PARENT`. `Esc` there stops only it; stopping the
+  parent ends it `interrupted`, and so does a server crash.
 
 ## How to get to it (user POV)
 
@@ -101,6 +109,18 @@ Preconditions:
 - **Limits, follow-ups, idle parents.** These are wire promises covered by
   `bun test` in `wire.test.ts`; drive them with `rpc` and `watch` when a change
   touches them.
+
+- **Claude subagents.** Without a Claude sign-in, drive the recorded fake
+  Claude Code the tests use: start the run's server with
+  `NISSE_CLAUDE=$PWD/packages/nisse/test/support/fake-claude`,
+  `FAKE_CLAUDE_FIXTURE=$PWD/fixtures/claude/subagent_asks.ndjson` and
+  `FAKE_CLAUDE_DIR=/tmp/nisse-verify/r/fake-claude` on `drive.ts r serve`.
+  `drive.ts r tui start --provider claude`, type `go`, `Enter`, and wait for
+  `waiting on you`: the card reads `⧉ Find gnome location in notes waiting on
+you` with `allow Bash(touch made.txt)?`. Press `C-y` and wait for `READY`:
+  the card reads `done`. `drive.ts r tui start --conversation <subagent id>`
+  shows its transcript and a prompt titled `INPUT GOES THROUGH ITS PARENT`.
+  With a sign-in, ask Claude to use the Task tool for the same journey.
 
 ## Gotchas
 

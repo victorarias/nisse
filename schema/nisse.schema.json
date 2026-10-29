@@ -135,7 +135,7 @@
               },
               "task": {
                 "type": "string",
-                "description": "Its task name, such as /root/explore, which agents address it by."
+                "description": "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does."
               },
               "title": {
                 "type": "string"
@@ -154,7 +154,6 @@
               "parent",
               "root",
               "call",
-              "task",
               "title"
             ],
             "additionalProperties": true,
@@ -238,7 +237,7 @@
                 },
                 "task": {
                   "type": "string",
-                  "description": "Its task name, such as /root/explore, which agents address it by."
+                  "description": "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does."
                 },
                 "title": {
                   "type": "string"
@@ -257,7 +256,6 @@
                 "parent",
                 "root",
                 "call",
-                "task",
                 "title"
               ],
               "additionalProperties": true,
@@ -365,7 +363,7 @@
                       },
                       "task": {
                         "type": "string",
-                        "description": "Its task name, such as /root/explore, which agents address it by."
+                        "description": "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does."
                       },
                       "title": {
                         "type": "string"
@@ -384,7 +382,6 @@
                       "parent",
                       "root",
                       "call",
-                      "task",
                       "title"
                     ],
                     "additionalProperties": true,
@@ -1637,7 +1634,14 @@
         "additionalProperties": true
       },
       "error": {
-        "$ref": "#/$defs/NoSuchConversationEncoded"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
+          }
+        ]
       },
       "stream": false
     },
@@ -1760,6 +1764,9 @@
           },
           {
             "$ref": "#/$defs/UnknownProviderEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
           }
         ]
       },
@@ -2502,6 +2509,25 @@
       "required": [
         "_tag",
         "seq"
+      ],
+      "additionalProperties": true
+    },
+    "TakesNoInputEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "TakesNoInput"
+          ]
+        },
+        "conversation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "conversation"
       ],
       "additionalProperties": true
     },

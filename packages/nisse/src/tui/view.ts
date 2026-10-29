@@ -24,6 +24,7 @@ export interface View {
   status: Status
   workingSince: number | undefined
   results: Record<CallId, Entry>
+  delegated: Record<CallId, true>
   answers: Record<CallId, Entry>
   asked: Record<ApprovalId, CallId>
   pendingApprovals: Array<PendingApproval>
@@ -38,6 +39,7 @@ export const emptyView = (id: ConversationId): View => ({
   status: "idle",
   workingSince: undefined,
   results: {},
+  delegated: {},
   answers: {},
   asked: {},
   pendingApprovals: [],
@@ -55,6 +57,7 @@ const index = (view: View, entries: ReadonlyArray<Entry>) => {
     if (body._tag === "model" && view.conversation) {
       view.conversation = { ...view.conversation, model: body.selection }
     } else if (body._tag === "tool_result") view.results[body.call] = entry
+    else if (body._tag === "subagent") view.delegated[body.call] = true
     else if (body._tag === "approval") {
       view.asked[body.approval] = body.call
       view.pendingApprovals.push({ approval: body.approval, call: body.call })
@@ -71,6 +74,7 @@ export const apply = (view: View, delivery: Delivery, now: number) => {
     view.conversation = delivery.conversation
     view.entries = [...delivery.entries]
     view.results = {}
+    view.delegated = {}
     view.answers = {}
     view.asked = {}
     view.pendingApprovals = []

@@ -7,8 +7,8 @@ import {
 } from "@anthropic-ai/claude-agent-sdk"
 import type { CallId, Entry } from "@nisse/protocol"
 import { tmpdir } from "node:os"
-import { Deferred, Effect, Semaphore } from "effect"
-import { noSkills, ProviderError, type Call, type Driver, type Saved, type Turn } from "../../provider.ts"
+import { Deferred, Effect, Semaphore, type Scope } from "effect"
+import { noSkills, ProviderError, type Call, type Driver, type Hosted, type Saved, type Turn } from "../../provider.ts"
 import { Inbox } from "./inbox.ts"
 import { probe, type Probed } from "./probe.ts"
 
@@ -59,6 +59,8 @@ const DENIED = "the person did not allow this call"
 const SESSION_GONE = /No conversation found/
 
 const failure = (message: string) => new ProviderError({ message })
+
+const endings = { completed: "answered", failed: "failed", stopped: "interrupted" } as const
 
 const isClaudeState = (state: unknown): state is ClaudeState =>
   typeof state === "object" &&
@@ -159,7 +161,14 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
   const converse = (turn: Turn, start: Start, opening: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       const serial = yield* Semaphore.make(1)
-      const known = new Set<string>()
+      const owners = new Map<string, Turn>()
+      const children = new Map<string, Hosted>()
+      const arrivals = new Map<string, Deferred.Deferred<void>>()
+      const arrival = (agent: string) => {
+        let arrived = arrivals.get(agent)
+        if (!arrived) arrivals.set(agent, (arrived = Deferred.makeUnsafe<void>()))
+        return arrived
+      }
       const recorded = new Map<string, Deferred.Deferred<void>>()
       const recording = (call: string) => {
         let done = recorded.get(call)
@@ -187,22 +196,32 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
         awaitingReplay.size === 0 ? { state: { session: start.session, at } satisfies ClaudeState } : undefined
       const record = (call: Call, at: string) =>
         Effect.suspend(() => {
-          known.add(call.call)
+          owners.set(call.call, turn)
           return Effect.andThen(turn.recordCall(call, saved(at)), Deferred.succeed(recording(call.call), undefined))
         })
-      const recordSubagentCall = (call: Call) =>
+      const recordChildCall = (child: Hosted, call: Call) =>
         Effect.suspend(() => {
-          if (known.has(call.call)) return Effect.void
-          known.add(call.call)
-          return turn.recordCall(call)
+          if (owners.has(call.call)) return Effect.void
+          owners.set(call.call, child.turn)
+          return child.turn.recordCall(call)
+        })
+      const childAsking = (agent: string, call: Call) =>
+        Effect.gen(function* () {
+          yield* Deferred.await(arrival(agent))
+          const child = children.get(agent)!
+          yield* serial.withPermits(1)(recordChildCall(child, call))
+          return child.turn
         })
 
       const canUseTool: NonNullable<Options["canUseTool"]> = async (tool, input, { signal, toolUseID, agentID }) => {
         const call: Call = { call: toolUseID as CallId, tool, input }
         if (turn.conversation.approvals === "auto") return { behavior: "allow", updatedInput: input, toolUseID }
-        const asked =
-          agentID === undefined ? Deferred.await(recording(toolUseID)) : serial.withPermits(1)(recordSubagentCall(call))
-        const allowed = await Effect.runPromise(Effect.andThen(asked, turn.approve(call)), { signal })
+        const asking =
+          agentID === undefined ? Effect.as(Deferred.await(recording(toolUseID)), turn) : childAsking(agentID, call)
+        const allowed = await Effect.runPromise(
+          Effect.flatMap(asking, (asked) => asked.approve(call)),
+          { signal },
+        )
         return allowed
           ? { behavior: "allow", updatedInput: input, toolUseID }
           : { behavior: "deny", message: DENIED, toolUseID }
@@ -228,7 +247,7 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
       })
       send(opening)
 
-      const handle = (message: SDKMessage): Effect.Effect<"next" | "done" | "gone", ProviderError> =>
+      const handle = (message: SDKMessage): Effect.Effect<"next" | "done" | "gone", ProviderError, Scope.Scope> =>
         Effect.gen(function* () {
           switch (message.type) {
             case "stream_event": {
@@ -246,9 +265,12 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
             case "assistant": {
               const content = message.message.content
               if (message.parent_tool_use_id !== null) {
+                const child = children.get(message.parent_tool_use_id)
+                if (!child) return "next"
                 for (const block of content) {
-                  if (block.type === "tool_use")
-                    yield* recordSubagentCall({ call: block.id as CallId, tool: block.name, input: block.input })
+                  if (block.type === "text") yield* child.turn.message(block.text)
+                  else if (block.type === "tool_use")
+                    yield* recordChildCall(child, { call: block.id as CallId, tool: block.name, input: block.input })
                 }
                 return "next"
               }
@@ -274,9 +296,10 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
               const bySubagent = message.parent_tool_use_id !== null
               let answered = false
               for (const block of message.message.content) {
-                if (block.type !== "tool_result" || !known.has(block.tool_use_id)) continue
+                const owner = block.type === "tool_result" ? owners.get(block.tool_use_id) : undefined
+                if (block.type !== "tool_result" || !owner) continue
                 answered = true
-                yield* turn.recordResult(
+                yield* owner.recordResult(
                   block.tool_use_id as CallId,
                   { output: resultText(block.content), error: block.is_error === true },
                   message.uuid && !bySubagent ? saved(message.uuid) : undefined,
@@ -285,6 +308,25 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
               if (answered && !bySubagent) {
                 const steers = yield* turn.steers
                 if (steers.length > 0) send(steers, "next")
+              }
+              return "next"
+            }
+            case "system": {
+              if (message.subtype === "task_started" && message.tool_use_id && message.task_type === "local_agent") {
+                const parent = message.parent_task_id === undefined ? undefined : children.get(message.parent_task_id)
+                const task = message.task_id
+                const child = yield* (parent?.turn ?? turn).host({
+                  call: message.tool_use_id as CallId,
+                  title: message.description,
+                  ...(message.subagent_type === undefined ? {} : { agentType: message.subagent_type }),
+                  prompt: message.prompt ?? "",
+                  stop: Effect.ignore(Effect.tryPromise(() => messages.stopTask(task))),
+                })
+                children.set(message.tool_use_id, child)
+                children.set(task, child)
+                yield* Deferred.succeed(arrival(task), undefined)
+              } else if (message.subtype === "task_notification" && message.tool_use_id) {
+                yield* children.get(message.tool_use_id)?.end(endings[message.status], message.summary) ?? Effect.void
               }
               return "next"
             }

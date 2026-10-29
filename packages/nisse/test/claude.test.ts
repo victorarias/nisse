@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import type { AuthState, Delivery, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
 import { FakeClaude } from "./support/claude.ts"
-import { bodies, RawClient, statusOf } from "./support/raw.ts"
+import { bodies, errorTag, RawClient, statusOf } from "./support/raw.ts"
 import { runningServer, type ServerOptions } from "./support/server.ts"
 
 const settled = (count: number) => (deliveries: ReadonlyArray<Delivery>) =>
@@ -199,20 +199,158 @@ test("a run cut off by a server stop resumes, and Claude Code is told which call
   client.close()
 }, 20_000)
 
-test("the calls a Claude subagent makes show in the conversation with their results", async () => {
+const AGENT_CALL = "toolu_01DxmcUXKnbFWBQecJLTs1n3"
+
+const subagentOf = async (session: Awaited<ReturnType<typeof conversationWith>>) => {
+  await session.view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "subagent"))
+  const listed = (await session.client.call("conversation/list")).result as Array<{
+    id: string
+    lineage?: Record<string, unknown>
+  }>
+  const child = listed.find((conversation) => conversation.lineage?.parent === session.conversation)!
+  return { ...child, view: session.client.subscribe({ conversation: child.id }) }
+}
+
+const ended = (deliveries: ReadonlyArray<Delivery>) =>
+  bodies(deliveries).some((body) => body._tag === "run_end") && deliveries.at(-1)?.status === "idle"
+
+test("a Claude subagent works in a conversation of its own under the one that started it", async () => {
   using claude = new FakeClaude("subagent")
   await using session = await conversationWith(claude)
   await session.submit("go")
   await session.view.until(settled(1))
-  const entries = said(session.view.deliveries) as Array<{ _tag: string } & Record<string, unknown>>
-  expect(entries.map((entry) => [entry._tag, entry.tool ?? entry.call])).toEqual([
-    ["tool_call", "Agent"],
-    ["tool_call", "Read"],
-    ["tool_result", "toolu_014CZioACz8p6vaiRZxtSoto"],
-    ["tool_result", "toolu_01DxmcUXKnbFWBQecJLTs1n3"],
-    ["message", undefined],
-    ["run_end", undefined],
+  const child = await subagentOf(session)
+  await child.view.until(ended)
+
+  expect(said(session.view.deliveries)).toMatchObject([
+    { _tag: "tool_call", call: AGENT_CALL, tool: "Agent" },
+    { _tag: "subagent", call: AGENT_CALL, conversation: child.id, title: "Find gnome location in notes" },
+    { _tag: "tool_result", call: AGENT_CALL, error: false },
+    { _tag: "message", text: "Under the floor." },
+    { _tag: "run_end", outcome: "answered" },
   ])
+  expect(child.lineage).toEqual({
+    parent: session.conversation,
+    root: session.conversation,
+    call: AGENT_CALL,
+    title: "Find gnome location in notes",
+    agentType: "general-purpose",
+  })
+  const summary =
+    "The gnome lives under the floor.\n\nThe exact line from `" +
+    session.server.home.dir +
+    "/notes.txt` (line 1) is: `the gnome lives under the floor`\n\nI did not modify any files."
+  expect(child.view.deliveries.flatMap((delivery) => delivery.entries)).toMatchObject([
+    { author: { _tag: "agent", conversation: session.conversation }, body: { _tag: "user" } },
+    { body: { _tag: "tool_call", tool: "Read" } },
+    { body: { _tag: "tool_result", output: "1\tthe gnome lives under the floor\n2\t", error: false } },
+    { body: { _tag: "message", text: summary } },
+    { body: { _tag: "run_end", outcome: "answered" } },
+  ])
+  expect((bodies(child.view.deliveries)[0] as { text: string }).text).toStartWith(
+    "Read the file notes.txt using the Read tool.",
+  )
+})
+
+test("a Claude subagent takes input only through its parent", async () => {
+  using claude = new FakeClaude("subagent")
+  await using session = await conversationWith(claude)
+  await session.submit("go")
+  const child = await subagentOf(session)
+  await session.view.until(settled(1))
+
+  const submitted = await session.client.call("conversation/submit", {
+    conversation: child.id,
+    requestId: "r1",
+    author: "ada",
+    text: "and the cat?",
+  })
+  const switched = await session.client.call("conversation/select_model", {
+    conversation: child.id,
+    author: "ada",
+    selection: { provider: "claude", model: "opus" },
+  })
+
+  expect([errorTag(submitted), errorTag(switched)]).toEqual(["TakesNoInput", "TakesNoInput"])
+  expect(claude.spawns()).toHaveLength(1)
+})
+
+test("a Claude subagent leaves the model a new conversation starts with as the person last chose it", async () => {
+  using claude = new FakeClaude("subagent")
+  await using session = await conversationWith(claude, { model: "opus", effort: "high" })
+  await session.submit("go")
+  await subagentOf(session)
+  await session.view.until(settled(1))
+
+  const next = await session.client.call("conversation/start", { cwd: session.server.home.dir })
+  expect(next.result.model).toEqual({ provider: "claude", model: "opus", effort: "high" })
+})
+
+test("a call a Claude subagent wants to make waits for a person in the subagent's conversation", async () => {
+  using claude = new FakeClaude("subagent_asks")
+  await using session = await conversationWith(claude)
+  await session.submit("go")
+  const child = await subagentOf(session)
+  await child.view.until((deliveries) => statusOf(deliveries) === "waiting")
+  const approval = bodies(child.view.deliveries).find((body) => body._tag === "approval") as {
+    approval: string
+    tool: string
+  }
+  expect(approval.tool).toBe("Bash")
+  expect(statusOf(session.view.deliveries)).toBe("working")
+
+  await session.client.call("approval/resolve", {
+    conversation: child.id,
+    approval: approval.approval,
+    author: "ada",
+    allow: true,
+  })
+  await session.view.until(settled(1))
+  await child.view.until(ended)
+
+  expect(claude.permissionAnswers()).toEqual([
+    {
+      behavior: "allow",
+      toolUseID: "toolu_014CZioACz8p6vaiRZxtSoto",
+      updatedInput: { command: "touch made.txt", description: "Create made.txt" },
+    },
+  ])
+  expect(bodies(session.view.deliveries).some((body) => body._tag === "approval")).toBe(false)
+  expect(bodies(child.view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "answered" })
+})
+
+test("stopping a Claude subagent stops only it, and its parent's run carries on", async () => {
+  using claude = new FakeClaude("subagent_stopped")
+  await using session = await conversationWith(claude)
+  await session.submit("go")
+  const child = await subagentOf(session)
+  await child.view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "tool_result"))
+
+  await session.client.call("conversation/interrupt", { conversation: child.id })
+  await session.view.until(settled(1))
+  await child.view.until(ended)
+
+  expect(bodies(child.view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "interrupted" })
+  expect(said(session.view.deliveries).slice(-2)).toEqual([
+    { _tag: "message", text: "The subagent was stopped." },
+    { _tag: "run_end", outcome: "answered" },
+  ])
+  expect(claude.log().some((entry) => entry.received?.request?.subtype === "stop_task")).toBe(true)
+})
+
+test("stopping a run ends the Claude subagents working under it", async () => {
+  using claude = new FakeClaude("subagent_working")
+  await using session = await conversationWith(claude)
+  await session.submit("go")
+  const child = await subagentOf(session)
+  await child.view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "tool_result"))
+
+  await session.client.call("conversation/interrupt", { conversation: session.conversation })
+  await session.view.until(settled(1))
+  await child.view.until(ended)
+
+  expect(bodies(session.view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "interrupted" })
+  expect(bodies(child.view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "interrupted" })
 })
 
 test("Claude Code says once how it is signed in and which models it offers, without asking Claude anything", async () => {

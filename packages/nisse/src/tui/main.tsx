@@ -203,7 +203,7 @@ const ToolCallView = (props: { view: View; call: CallId; tool: string; input: un
           {tail(output(), RESULT_LINES)}
         </text>
       </Show>
-      <Show when={result()}>
+      <Show when={props.view.delegated[props.call] ? undefined : result()}>
         {(body) => {
           const outcome = body()
           if (outcome._tag !== "tool_result" || outcome.output.trim() === "") return null
@@ -397,8 +397,12 @@ const Header = (props: { view: View }) => (
 
 const Prompt = (props: { view: View; setup: SetupView; actions: Actions; steer: boolean }) => {
   let input: TextareaRenderable | undefined
+  const hosted = () => {
+    const lineage = props.view.conversation?.lineage
+    return lineage !== undefined && lineage.task === undefined
+  }
   const submit = () => {
-    if (!input) return
+    if (!input || hosted()) return
     const text = input.plainText
     if (text.trim() === "") return
     input.clear()
@@ -411,7 +415,15 @@ const Prompt = (props: { view: View; setup: SetupView; actions: Actions; steer: 
       border
       borderStyle="rounded"
       borderColor={color.violet}
-      title={props.view.status === "idle" ? " PROMPT " : props.steer ? " STEER · tab " : " QUEUE · tab "}
+      title={
+        hosted()
+          ? " INPUT GOES THROUGH ITS PARENT "
+          : props.view.status === "idle"
+            ? " PROMPT "
+            : props.steer
+              ? " STEER · tab "
+              : " QUEUE · tab "
+      }
       titleColor={color.magenta}
       flexDirection="row"
       paddingLeft={1}
@@ -426,7 +438,7 @@ const Prompt = (props: { view: View; setup: SetupView; actions: Actions; steer: 
         focused={props.setup.picker === undefined}
         textColor={color.ink}
         focusedTextColor={color.ink}
-        placeholder="type a message"
+        placeholder={hosted() ? "Claude Code runs this subagent; talk to it through its parent" : "type a message"}
         placeholderColor={color.faint}
         keyBindings={promptKeys}
         onSubmit={submit}

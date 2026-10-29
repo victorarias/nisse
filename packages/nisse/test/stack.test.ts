@@ -3,6 +3,7 @@ import type { Delivery } from "@nisse/protocol"
 import { Database } from "bun:sqlite"
 import { rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { FakeClaude } from "./support/claude.ts"
 import { installedCodeModeHost } from "./support/code-mode-host.ts"
 import { FakeOpenAi, matches, signIn } from "./support/openai.ts"
 import { bodies, deadline, RawClient } from "./support/raw.ts"
@@ -207,6 +208,40 @@ test("a call cut off by a crashed server is recorded as interrupted and the run 
     { _tag: "message", text: "picked up again" },
     { _tag: "run_end", outcome: "answered" },
   ])
+  second.client.close()
+}, 30_000)
+
+test("a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own", async () => {
+  const nisseHome = home()
+  using claude = new FakeClaude("subagent_working")
+  const env = nisseEnv(nisseHome, { NISSE_CLAUDE: claude.options.executable!, ...claude.options.env })
+  const first = await serving(env, nisseHome)
+  const conversation = (
+    await first.client.call("conversation/start", { cwd: nisseHome.dir, provider: "claude", approvals: "auto" })
+  ).result.id
+  const view = first.client.subscribe({ conversation })
+  await first.client.call("conversation/submit", { conversation, requestId: "r1", author: "ada", text: "go" })
+  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "subagent"))
+  const child = (bodies(view.deliveries).find((body) => body._tag === "subagent") as { conversation: string })
+    .conversation
+  const childView = first.client.subscribe({ conversation: child })
+  await childView.until((deliveries) => bodies(deliveries).some((body) => body._tag === "tool_result"))
+  first.server.kill("SIGKILL")
+  await first.server.exited
+  first.client.close()
+
+  const second = await serving(env, nisseHome)
+  const resumed = second.client.subscribe({ conversation: child, sinceSeq: childView.deliveries.at(-1)!.seq })
+  await resumed.until((deliveries) => deliveries.at(-1)?.status === "idle", 10_000)
+  const parent = second.client.subscribe({ conversation })
+  await parent.until((deliveries) => deliveries.at(-1)?.status === "idle", 10_000)
+  expect(resumed.deliveries.flatMap((delivery) => delivery.entries).map((entry) => entry.body)).toEqual([
+    { _tag: "run_end", outcome: "interrupted" },
+  ])
+  expect(claude.userTexts(1)).toEqual([
+    ["Your Agent call toolu_01DxmcUXKnbFWBQecJLTs1n3 was cut off: interrupted; it may or may not have taken effect"],
+  ])
+  expect(claude.spawns()).toHaveLength(2)
   second.client.close()
 }, 30_000)
 
