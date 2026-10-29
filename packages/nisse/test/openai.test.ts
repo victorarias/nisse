@@ -680,6 +680,94 @@ withCodeModeHost("a code-mode model is offered exec and wait, with nisse's tools
   expect(tools[0].description).toContain("  // The shell command to run.\n  command: string;")
 })
 
+const withExtension = (name: string, source: string) => {
+  const home = tempHome()
+  mkdirSync(home.extensions, { recursive: true })
+  writeFileSync(join(home.extensions, `${name}.ts`), source)
+  return home
+}
+
+test("an extension's request hook adds instructions and narrows the tools of each request to the model", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("tool_call")
+  const home = withExtension(
+    "focus",
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+let asked = 0
+export default Extension.define((ctx) =>
+  ctx.request.hook((request) =>
+    Effect.sync(() => {
+      asked += 1
+      request.instructions.push("Request " + asked + " in " + request.conversation.cwd + ".")
+      request.tools = request.tools.filter((name) => name === "Bash" || name === "made_up")
+      request.tools.push("made_up")
+    }),
+  ),
+)`,
+  )
+  await using session = await conversationWith(fake, { home })
+  await session.submit("what does echo say?")
+  await session.view.until(settled(1))
+  expectRequests(fake, expected)
+  const requests = fake.responses().map((response) => JSON.parse(response.body))
+  expect(
+    requests.map((request) =>
+      request.instructions.endsWith(`\nRequest ${requests.indexOf(request) + 1} in ${home.dir}.\n`),
+    ),
+  ).toEqual([true, true])
+  expect(requests.map((request) => request.tools.map((tool: { name: string }) => tool.name))).toEqual([
+    ["Bash"],
+    ["Bash"],
+  ])
+  rmSync(home.dir, { recursive: true })
+})
+
+test("a request hook that fails is skipped with a toast, and the model gets the request as it was", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  const home = withExtension(
+    "broken",
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.request.hook((request) => {
+    request.tools = []
+    return Effect.fail("no network")
+  }),
+)`,
+  )
+  await using session = await conversationWith(fake, { home })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  expect(bodies(session.view.deliveries)).toContainEqual({
+    _tag: "toast",
+    extension: "broken",
+    text: "request failed: no network",
+  })
+  expect(JSON.parse(fake.responses()[0]!.body).tools.length).toBe(12)
+  rmSync(home.dir, { recursive: true })
+})
+
+withCodeModeHost("a tool a request hook withholds is missing from a code-mode script's ALL_TOOLS too", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_all_tools")
+  const home = withExtension(
+    "focus",
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.request.hook((request) => Effect.sync(() => { request.tools = ["Read", "Bash"] })),
+)`,
+  )
+  await using session = await conversationWith(fake, { ...inCodeMode, home })
+  await session.submit("which tools can you call?")
+  await session.view.until(settled(1))
+  expectRequests(fake, expected)
+  expect(resultOf(session.view.deliveries, "call_1").output).toEndWith("Output:\nRead Bash")
+  rmSync(home.dir, { recursive: true })
+})
+
 withCodeModeHost("a tool an extension removes is gone from a code-mode model's exec too", async () => {
   await using fake = new FakeOpenAi()
   fake.play("code_mode_script")

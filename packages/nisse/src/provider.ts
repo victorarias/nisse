@@ -13,6 +13,7 @@ import type {
 } from "@nisse/protocol"
 import { Context, Effect, Schema, type Scope } from "effect"
 import type { AgentLimits } from "./agents.ts"
+import type { RequestShape } from "./extensions/index.ts"
 import type { Tool, ToolOutcome } from "./tools/index.ts"
 import type { AgentType } from "./workspace.ts"
 
@@ -52,6 +53,7 @@ export interface Turn {
   readonly removedTools: ReadonlyArray<string>
   readonly before: (call: Call) => Effect.Effect<Call | { readonly refused: string }>
   readonly after: (call: Call, outcome: ToolOutcome, changeable: boolean) => Effect.Effect<ToolOutcome>
+  readonly request: (tools: ReadonlyArray<string>) => Effect.Effect<RequestShape>
   readonly say: (text: string) => Effect.Effect<void>
   readonly message: (text: string, saved?: Saved) => Effect.Effect<void>
   readonly runTool: (call: Call, tool?: Tool) => Effect.Effect<ToolOutcome>

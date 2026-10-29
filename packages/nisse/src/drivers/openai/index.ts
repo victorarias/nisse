@@ -19,6 +19,7 @@ import { accountOf, isExpired, loadCredentials, refreshed, saveCredentials, type
 import { CALLBACK_PORT, signIn } from "./signin.ts"
 import { events } from "./sse.ts"
 import { mailText } from "../../agents.ts"
+import type { Tool, ToolOutcome } from "../../tools/tool.ts"
 import { agentsMd, agentTypes, skillsFor } from "../../workspace.ts"
 
 export const BASE_URL = "https://chatgpt.com/backend-api"
@@ -408,28 +409,34 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
       Effect.gen(function* () {
         const instructions = instructionsFor(options, turn.conversation)
         const { model = MODEL, effort } = turn.conversation.model
-        let tools: ReadonlyArray<unknown> = turn.tools.map(({ spec }) => ({
-          type: "function",
-          name: spec.name,
-          description: spec.description,
-          parameters: spec.parameters,
-          strict: false,
-        }))
-        let runTool = (call: Call) => turn.runTool(call)
-        if (models.wantsCodeMode(model)) {
+        const codeMode = models.wantsCodeMode(model)
+        let runTool: (call: Call, offered: ReadonlyArray<Tool>) => Effect.Effect<ToolOutcome> = (call) =>
+          turn.runTool(call)
+        if (codeMode) {
           const program = installedHost(options.codeModeHost, options.home)
           if (program === undefined) return yield* failure(missingHost)
-          tools = codeModeTools(turn.tools)
           runTool = yield* codeModeRun(host, program, turn)
         }
+        const declared = (specs: ReadonlyArray<Tool>): ReadonlyArray<unknown> =>
+          codeMode
+            ? codeModeTools(specs)
+            : specs.map(({ spec }) => ({
+                type: "function",
+                name: spec.name,
+                description: spec.description,
+                parameters: spec.parameters,
+                strict: false,
+              }))
         while (true) {
           const transcript = yield* turn.transcript
+          const request = yield* turn.request(turn.tools.map(({ spec }) => spec.name))
+          const offered = turn.tools.filter(({ spec }) => request.tools.includes(spec.name))
           const calls = yield* respond(turn, {
             model,
             ...(effort ? { reasoning: { effort } } : {}),
-            instructions,
+            instructions: instructions + request.instructions.map((text) => `\n${text.trimEnd()}\n`).join(""),
             input: inputItems(transcript),
-            tools,
+            tools: declared(offered),
             tool_choice: "auto",
             parallel_tool_calls: true,
             store: false,
@@ -437,7 +444,7 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
             prompt_cache_key: turn.conversation.id,
           })
           if (calls.length === 0) return
-          for (const call of calls) yield* runTool(call)
+          for (const call of calls) yield* runTool(call, offered)
           yield* turn.steers
         }
       }).pipe(Effect.scoped),

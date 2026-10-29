@@ -24,6 +24,12 @@ export interface ToolResult {
   outcome: { output: string; error: boolean }
 }
 
+export interface ModelRequest {
+  readonly conversation: ConversationHandle
+  instructions: Array<string>
+  tools: Array<string>
+}
+
 export interface ToolHooks {
   readonly "execute.before": ToolCall
   readonly "execute.after": ToolResult
@@ -55,6 +61,11 @@ export interface Context {
     readonly hook: <Name extends keyof ToolHooks>(
       name: Name,
       run: (event: ToolHooks[Name]) => Effect.Effect<void, ToolFailures[Name]>,
+    ) => Effect.Effect<void, never, Scope.Scope>
+  }
+  readonly request: {
+    readonly hook: (
+      run: (request: ModelRequest) => Effect.Effect<void, unknown>,
     ) => Effect.Effect<void, never, Scope.Scope>
   }
 }

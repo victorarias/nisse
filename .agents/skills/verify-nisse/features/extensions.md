@@ -26,6 +26,9 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
   `<name> refused this call: <reason>`, and nobody is asked.
 - `execute-after` changes the output or error the model and the transcript
   get.
+- `request-hook` (OpenAI only) adds the text an extension pushes to
+  `instructions` to the model's instructions for each request, and offers the
+  model only the tools left in `tools`.
 - `hook-failure` turns a hook that fails or takes over 10 seconds into a toast
   `<hook> failed: <why>`; a failed `execute.before` refuses the call with
   `<name> refused this call: it failed: <why>`.
@@ -87,6 +90,15 @@ Preconditions:
 - **exec.** In a fresh run with the same script and `guard.ts`,
   `drive.ts r nisse exec --auto "tidy my home"` prints
   `◆ guard: Bash finished` to stderr and `all done` to stdout.
+
+- **Request hook.** drive.ts can't fake ChatGPT, so use a short Bun script:
+  start `FakeOpenAi` from `packages/nisse/test/support/openai.ts`, play
+  `tool_call`, save a sign-in with its `signIn`, and put a `focus.ts` in the
+  home's `extensions/` whose `ctx.request.hook` pushes `Answer briefly.` and
+  keeps only `Bash`. Run `nisse exec --provider openai --auto "what does echo say?"`
+  with `NISSE_HOME` and `NISSE_OPENAI_URL=<fake.base>`. It prints
+  `It printed hi.`, and both requests in `fake.responses()` end their
+  `instructions` with `Answer briefly.` and offer only `Bash`.
 
 ## Gotchas
 

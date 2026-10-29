@@ -11,6 +11,7 @@ import {
   Refused,
   type ConversationHandle,
   type Extension,
+  type ModelRequest,
   type ToolCall,
   type ToolEditor,
   type ToolFailures,
@@ -30,6 +31,11 @@ interface Registered<A> {
 
 type Hook<Name extends keyof ToolHooks> = (event: ToolHooks[Name]) => Effect.Effect<void, ToolFailures[Name]>
 
+export interface RequestShape {
+  readonly instructions: ReadonlyArray<string>
+  readonly tools: ReadonlyArray<string>
+}
+
 export interface ToolSet {
   readonly tools: ReadonlyArray<Tool>
   readonly added: ReadonlyArray<Tool>
@@ -41,6 +47,7 @@ interface Loaded {
   readonly scopes: ReadonlyArray<Scope.Closeable>
   readonly transforms: Array<Registered<(tools: ToolEditor) => void>>
   readonly hooks: { readonly [Name in keyof ToolHooks]: Array<Registered<Hook<Name>>> }
+  readonly requests: Array<Registered<(request: ModelRequest) => Effect.Effect<void, unknown>>>
 }
 
 interface Found {
@@ -76,6 +83,7 @@ export class Extensions extends Context.Service<
     readonly reload: Effect.Effect<ReadonlyArray<ExtensionInfo>>
     readonly tools: (conversation: Conversation, base: ReadonlyArray<Tool>) => Effect.Effect<ToolSet>
     readonly before: (conversation: Conversation, call: Call) => Effect.Effect<Call | { readonly refused: string }>
+    readonly request: (conversation: Conversation, tools: ReadonlyArray<string>) => Effect.Effect<RequestShape>
     readonly after: (
       conversation: Conversation,
       call: Call,
@@ -152,6 +160,9 @@ export class Extensions extends Context.Service<
                     value: run,
                   }),
               },
+              request: {
+                hook: (run) => register(into.requests, { extension: extension.name, value: run }),
+              },
             })
           }).pipe(Effect.timeout(LOAD_LIMIT), Scope.provide(scope))
 
@@ -165,6 +176,7 @@ export class Extensions extends Context.Service<
             scopes: opened,
             transforms: [],
             hooks: { "execute.before": [], "execute.after": [] },
+            requests: [],
           }
           for (const extension of found(home.extensions)) {
             const info = { name: extension.name, path: extension.path }
@@ -318,6 +330,30 @@ export class Extensions extends Context.Service<
                 input = event.input
               }
               return JSON.stringify(input) === JSON.stringify(call.input) ? call : { ...call, input }
+            }),
+          request: (conversation, tools) =>
+            Effect.gen(function* () {
+              let shape: RequestShape = { instructions: [], tools }
+              const loaded = current
+              for (const registered of [...loaded.requests]) {
+                const event: ModelRequest = {
+                  conversation: handle(conversation, registered.extension, loaded),
+                  instructions: [...shape.instructions],
+                  tools: [...shape.tools],
+                }
+                const exit = yield* runHook(
+                  conversation.id,
+                  registered.extension,
+                  "request",
+                  Effect.suspend(() => registered.value(event)),
+                )
+                if (Exit.isSuccess(exit))
+                  shape = {
+                    instructions: event.instructions.map(String),
+                    tools: tools.filter((name) => event.tools.includes(name)),
+                  }
+              }
+              return shape
             }),
           after: (conversation, call, outcome, changeable) =>
             Effect.gen(function* () {
