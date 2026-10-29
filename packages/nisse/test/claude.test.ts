@@ -275,6 +275,17 @@ test("a Claude subagent takes input only through its parent", async () => {
   expect(claude.spawns()).toHaveLength(1)
 })
 
+test("a Claude subagent leaves the model a new conversation starts with as the person last chose it", async () => {
+  using claude = new FakeClaude("subagent")
+  await using session = await conversationWith(claude, { model: "opus", effort: "high" })
+  await session.submit("go")
+  await subagentOf(session)
+  await session.view.until(settled(1))
+
+  const next = await session.client.call("conversation/start", { cwd: session.server.home.dir })
+  expect(next.result.model).toEqual({ provider: "claude", model: "opus", effort: "high" })
+})
+
 test("a call a Claude subagent wants to make waits for a person in the subagent's conversation", async () => {
   using claude = new FakeClaude("subagent_asks")
   await using session = await conversationWith(claude)
