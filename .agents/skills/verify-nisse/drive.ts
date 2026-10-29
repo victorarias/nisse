@@ -427,12 +427,12 @@ const commands: Record<string, () => Promise<void> | void> = {
   "watch-auth": () => follow("watch-auth", "auth/watch", ({ item, until }) => item.phase === until),
 
   "watch-status": () =>
-    follow(
-      "watch-status",
-      "status/watch",
-      ({ item, until, conversation }) =>
-        item._tag === "tree" && item.status === until && (!conversation || item.conversation === conversation),
-    ),
+    follow("watch-status", "status/watch", ({ item, until, conversation }) => {
+      const trees: Array<any> = item._tag === "trees" ? item.trees : [item]
+      const mine = trees.filter((tree) => !conversation || tree.conversation === conversation)
+      if (item._tag === "trees" && until === "idle" && conversation && mine.length === 0) return true
+      return mine.some((tree) => tree.status === until)
+    }),
 
   tui: async () => {
     requireUp()
