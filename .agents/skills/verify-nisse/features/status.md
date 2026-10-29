@@ -3,9 +3,10 @@
 A client can follow every conversation people started without reading its
 transcript: `status/watch` lists the trees that are busy, then reports each
 commit that changes a tree's status or ends its root's run, with how that run
-ended and what the model said last. A client can also choose a new
-conversation's id, and starting with an id that exists answers with that
-conversation. attn uses both to run Nisse sessions.
+ended and what the model said last. A client that was not watching when a run
+ended reads the same from the conversation's `ended`. A client can also choose
+a new conversation's id, and starting with an id that exists answers with that
+conversation. attn uses these to run Nisse sessions.
 
 ## Sub-features
 
@@ -15,6 +16,9 @@ conversation. attn uses both to run Nisse sessions.
 - `status-subagent` shows a subagent waiting on a person as its whole tree
   `waiting`.
 - `status-ended` carries the outcome of the root's run and its last message.
+- `conversation-ended` shows how a conversation's last run ended, as `ended`
+  on it in `conversation/list`, on a start with an existing id and in a
+  subscription's snapshot; a conversation that never ran has none.
 - `start-with-id` starts a conversation with a chosen id, and answers a second
   start with that id with the first conversation.
 
@@ -22,6 +26,7 @@ conversation. attn uses both to run Nisse sessions.
 
 - Call `status/watch`, a stream.
 - Call `conversation/start` with `id`.
+- Call `conversation/list`.
 
 ## Driving it with drive.ts
 
@@ -47,6 +52,9 @@ Preconditions:
   while `drive.ts r watch-status 11111111-1111-4111-8111-111111111111 --until idle`
   runs. One line carries `"ended":{"outcome":"interrupted"}`, the last is
   `idle`, and none in between is `working`.
+- **Ended, read later.** Then run `drive.ts r rpc conversation/list`: the
+  conversation carries `"ended":{"outcome":"interrupted"}`, with `said` when
+  the model wrote a message.
 
 ## Gotchas
 

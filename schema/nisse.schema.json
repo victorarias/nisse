@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nisse protocol",
-  "protocol": 6,
+  "protocol": 7,
   "methods": {
     "initialize": {
       "params": {
@@ -170,6 +170,33 @@
           "instructions": {
             "type": "string",
             "description": "What the client that started it asked the model to follow, beside its own."
+          },
+          "ended": {
+            "type": "object",
+            "properties": {
+              "outcome": {
+                "type": "string",
+                "enum": [
+                  "answered",
+                  "interrupted",
+                  "failed",
+                  "restart_limit"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "The run_end's message, such as why it failed."
+              },
+              "said": {
+                "type": "string",
+                "description": "The last message the model wrote in the conversation."
+              }
+            },
+            "required": [
+              "outcome"
+            ],
+            "additionalProperties": true,
+            "description": "How the conversation's last run ended."
           }
         },
         "required": [
@@ -276,6 +303,33 @@
             "instructions": {
               "type": "string",
               "description": "What the client that started it asked the model to follow, beside its own."
+            },
+            "ended": {
+              "type": "object",
+              "properties": {
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "answered",
+                    "interrupted",
+                    "failed",
+                    "restart_limit"
+                  ]
+                },
+                "message": {
+                  "type": "string",
+                  "description": "The run_end's message, such as why it failed."
+                },
+                "said": {
+                  "type": "string",
+                  "description": "The last message the model wrote in the conversation."
+                }
+              },
+              "required": [
+                "outcome"
+              ],
+              "additionalProperties": true,
+              "description": "How the conversation's last run ended."
             }
           },
           "required": [
@@ -406,6 +460,33 @@
                   "instructions": {
                     "type": "string",
                     "description": "What the client that started it asked the model to follow, beside its own."
+                  },
+                  "ended": {
+                    "type": "object",
+                    "properties": {
+                      "outcome": {
+                        "type": "string",
+                        "enum": [
+                          "answered",
+                          "interrupted",
+                          "failed",
+                          "restart_limit"
+                        ]
+                      },
+                      "message": {
+                        "type": "string",
+                        "description": "The run_end's message, such as why it failed."
+                      },
+                      "said": {
+                        "type": "string",
+                        "description": "The last message the model wrote in the conversation."
+                      }
+                    },
+                    "required": [
+                      "outcome"
+                    ],
+                    "additionalProperties": true,
+                    "description": "How the conversation's last run ended."
                   }
                 },
                 "required": [

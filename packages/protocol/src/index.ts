@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import * as Rpc from "effect/rpc/Rpc"
 import * as RpcGroup from "effect/rpc/RpcGroup"
 
-export const PROTOCOL_VERSION = 6
+export const PROTOCOL_VERSION = 7
 
 export const ConversationId = Schema.String.pipe(Schema.brand("ConversationId"))
 export type ConversationId = typeof ConversationId.Type
@@ -96,6 +96,7 @@ export const ApprovalAnswer = Schema.TaggedStruct("approval_answer", { approval:
 export const Outcome = Schema.Literals(["answered", "interrupted", "failed", "restart_limit"])
 export type Outcome = typeof Outcome.Type
 export const RunEnd = Schema.TaggedStruct("run_end", { outcome: Outcome, message: Schema.optionalKey(Schema.String) })
+export type RunEnd = typeof RunEnd.Type
 export const EntryBody = Schema.Union([
   UserText,
   Message,
@@ -139,6 +140,15 @@ export const Lineage = Schema.Struct({
 }).annotate({ description: "Where a subagent comes from. It runs on its parent's provider, in its directory." })
 export type Lineage = typeof Lineage.Type
 
+export const RunEnded = Schema.Struct({
+  outcome: Outcome,
+  message: Schema.optionalKey(Schema.String.annotate({ description: "The run_end's message, such as why it failed." })),
+  said: Schema.optionalKey(
+    Schema.String.annotate({ description: "The last message the model wrote in the conversation." }),
+  ),
+})
+export type RunEnded = typeof RunEnded.Type
+
 export const Conversation = Schema.Struct({
   id: ConversationId,
   cwd: Schema.String,
@@ -151,6 +161,7 @@ export const Conversation = Schema.Struct({
       description: "What the client that started it asked the model to follow, beside its own.",
     }),
   ),
+  ended: Schema.optionalKey(RunEnded.annotate({ description: "How the conversation's last run ended." })),
 })
 export type Conversation = typeof Conversation.Type
 
@@ -204,15 +215,6 @@ export type Commit = typeof Commit.Type
 
 export const Delivery = Schema.Union([Snapshot, Commit])
 export type Delivery = typeof Delivery.Type
-
-export const RunEnded = Schema.Struct({
-  outcome: Outcome,
-  message: Schema.optionalKey(Schema.String.annotate({ description: "The run_end's message, such as why it failed." })),
-  said: Schema.optionalKey(
-    Schema.String.annotate({ description: "The last message the model wrote in the conversation." }),
-  ),
-})
-export type RunEnded = typeof RunEnded.Type
 
 export const TreeStatus = Schema.TaggedStruct("tree", {
   conversation: ConversationId.annotate({

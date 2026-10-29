@@ -803,3 +803,30 @@ test("a conversation keeps the instructions it started with, and its subagents s
   expect(listed.find((conversation) => conversation.id === helper)?.instructions).toBeUndefined()
   client.close()
 })
+
+test("a conversation tells a client that was not watching how its last run ended", async () => {
+  const cwd = workdir()
+  await using server = await runningServer([
+    { text: "all done" },
+    { ...writeCall(`${cwd}/note.txt`, "hi"), text: "Writing the note." },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, { cwd })
+  const endedOf = async () =>
+    ((await client.call("conversation/list")).result as Array<{ id: string; ended?: unknown }>).find(
+      (listed) => listed.id === conversation,
+    )?.ended
+  expect(await endedOf()).toBeUndefined()
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "go")
+  await view.until(settled)
+  expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
+  await submit(client, conversation, "write a note")
+  await view.until((deliveries) => deliveries.at(-1)?.status === "waiting")
+  expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
+  await client.call("conversation/interrupt", { conversation })
+  await view.until((deliveries) => ended(2)(deliveries) && deliveries.at(-1)?.status === "idle")
+  expect(await endedOf()).toEqual({ outcome: "interrupted", said: "Writing the note." })
+  client.close()
+  rmSync(cwd, { recursive: true })
+})

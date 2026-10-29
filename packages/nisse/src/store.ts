@@ -21,6 +21,8 @@ import {
   type Mail,
   type ModelSelection,
   type Queued,
+  type RunEnd,
+  type RunEnded,
   type Snapshot,
   type Status,
   type SubmissionId,
@@ -215,16 +217,37 @@ export class Store extends Context.Service<
         const treeSeq = db.query<{ seq: number | null }, [string, string]>(
           "SELECT max(seq) AS seq FROM commits WHERE conversation IN (SELECT id FROM conversations WHERE id = ? OR root = ?)",
         )
-        const lastSaid = db.query<{ body: string }, [string]>(
-          "SELECT body FROM entries WHERE conversation = ? AND body ->> '$.body._tag' = 'message' ORDER BY seq DESC, rowid DESC LIMIT 1",
+        const saidBefore = db.query<{ body: string }, [string, string]>(
+          "SELECT body FROM entries WHERE conversation = ? AND body ->> '$.body._tag' = 'message' AND rowid < (SELECT rowid FROM entries WHERE id = ?) ORDER BY rowid DESC LIMIT 1",
         )
+        const lastEnd = db.query<{ id: string; body: string }, [string]>(
+          "SELECT id, body FROM entries WHERE conversation = ? AND body ->> '$.body._tag' = 'run_end' ORDER BY rowid DESC LIMIT 1",
+        )
+
+        const endedOf = (conversation: string, endId: string, end: RunEnd): RunEnded => {
+          const said = saidBefore.get(conversation, endId)
+          return {
+            outcome: end.outcome,
+            ...(end.message === undefined ? {} : { message: end.message }),
+            ...(said ? { said: (JSON.parse(said.body) as { body: { text: string } }).body.text } : {}),
+          }
+        }
+
+        const described = (row: ConversationRow): Conversation => {
+          const end = lastEnd.get(row.id)
+          return {
+            ...toConversation(row),
+            ...(end ? { ended: endedOf(row.id, end.id, (JSON.parse(end.body) as { body: RunEnd }).body) } : {}),
+          }
+        }
+
         const approvalRow = db.query<{ answered_seq: number | null }, [string, string]>(
           "SELECT answered_seq FROM approvals WHERE id = ? AND conversation = ?",
         )
 
         const snapshot = (row: ConversationRow): Snapshot => ({
           _tag: "snapshot",
-          conversation: toConversation(row),
+          conversation: described(row),
           seq: lastSeq.get(row.id)?.seq ?? 0,
           entries: entryRows.all(row.id).map((r) => JSON.parse(r.body) as Entry),
           live: JSON.parse(row.live) as Live,
@@ -351,7 +374,8 @@ export class Store extends Context.Service<
           statuses.includes("waiting") ? "waiting" : statuses.includes("working") ? "working" : "idle"
 
         const treeOf = (commit: Commit): TreeStatus | undefined => {
-          const end = commit.entries.find((entry) => entry.body._tag === "run_end")?.body
+          const endEntry = commit.entries.find((entry) => entry.body._tag === "run_end")
+          const end = endEntry?.body
           if (commit.status === undefined && end === undefined) return undefined
           const row = conversationRow.get(commit.conversation)
           if (!row) return undefined
@@ -361,21 +385,12 @@ export class Store extends Context.Service<
           if (ended === undefined && status === (watched.get(root) ?? "idle")) return undefined
           if (status === "idle") watched.delete(root)
           else watched.set(root, status)
-          const said = ended && lastSaid.get(root)
           return {
             _tag: "tree",
             conversation: root,
             seq: commit.seq,
             status,
-            ...(ended
-              ? {
-                  ended: {
-                    outcome: ended.outcome,
-                    ...(ended.message === undefined ? {} : { message: ended.message }),
-                    ...(said ? { said: (JSON.parse(said.body) as { body: { text: string } }).body.text } : {}),
-                  },
-                }
-              : {}),
+            ...(ended && endEntry ? { ended: endedOf(root, endEntry.id, ended) } : {}),
           }
         }
 
@@ -444,7 +459,7 @@ export class Store extends Context.Service<
           },
           find: (conversation) => {
             const row = conversationRow.get(conversation)
-            return row ? toConversation(row) : undefined
+            return row ? described(row) : undefined
           },
           family: (root) => familyRows.all(root, root).map(stateOf),
           lastModel: () => {
@@ -460,7 +475,7 @@ export class Store extends Context.Service<
             db
               .query<ConversationRow, []>("SELECT * FROM conversations ORDER BY created_at DESC, rowid DESC")
               .all()
-              .map(toConversation),
+              .map(described),
           state: (conversation) => Effect.map(findConversation(conversation), stateOf),
           commit,
           submissionFor: (conversation, requestId) =>
