@@ -85,3 +85,5 @@ paths, handles, state, commands and proof.
 - [Crash recovery](./crash-recovery.md): a run cut off by a killed server
   finishes when the server comes back.
 - [Quiet when idle](./quiet-when-idle.md): an idle TUI and server use no CPU.
+- [Status and chosen ids](./status.md): `status/watch` follows every tree's
+  status and how its runs end; `conversation/start` takes a chosen `id`.

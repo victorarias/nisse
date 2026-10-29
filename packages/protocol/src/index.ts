@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import * as Rpc from "effect/rpc/Rpc"
 import * as RpcGroup from "effect/rpc/RpcGroup"
 
-export const PROTOCOL_VERSION = 4
+export const PROTOCOL_VERSION = 5
 
 export const ConversationId = Schema.String.pipe(Schema.brand("ConversationId"))
 export type ConversationId = typeof ConversationId.Type
@@ -200,6 +200,36 @@ export type Commit = typeof Commit.Type
 export const Delivery = Schema.Union([Snapshot, Commit])
 export type Delivery = typeof Delivery.Type
 
+export const RunEnded = Schema.Struct({
+  outcome: Outcome,
+  message: Schema.optionalKey(Schema.String.annotate({ description: "The run_end's message, such as why it failed." })),
+  said: Schema.optionalKey(
+    Schema.String.annotate({ description: "The last message the model wrote in the conversation." }),
+  ),
+})
+export type RunEnded = typeof RunEnded.Type
+
+export const TreeStatus = Schema.TaggedStruct("tree", {
+  conversation: ConversationId.annotate({
+    description: "A conversation people started; its tree is it and its subagents.",
+  }),
+  seq: Schema.Int,
+  status: Status.annotate({
+    description: "waiting when a conversation in the tree waits on a person, working when one runs, idle otherwise.",
+  }),
+  ended: Schema.optionalKey(RunEnded.annotate({ description: "The run of the conversation itself ended at seq." })),
+})
+export type TreeStatus = typeof TreeStatus.Type
+
+export const TreeSnapshot = Schema.TaggedStruct("trees", {
+  seq: Schema.Int,
+  trees: Schema.Array(TreeStatus).annotate({ description: "Every tree that is not idle; the rest are idle." }),
+})
+export type TreeSnapshot = typeof TreeSnapshot.Type
+
+export const TreeDelivery = Schema.Union([TreeSnapshot, TreeStatus])
+export type TreeDelivery = typeof TreeDelivery.Type
+
 export class NoSuchConversation extends Schema.TaggedError<NoSuchConversation>()("NoSuchConversation", {
   conversation: Schema.String,
 }) {}
@@ -232,6 +262,11 @@ export const Initialize = Rpc.make("initialize", {
 
 export const StartConversation = Rpc.make("conversation/start", {
   payload: {
+    id: Schema.optionalKey(
+      ConversationId.annotate({
+        description: "Start it with this id. When a conversation has it already, that conversation is the answer.",
+      }),
+    ),
     cwd: Schema.String,
     provider: Schema.optionalKey(Schema.String),
     model: Schema.optionalKey(Schema.String),
@@ -281,6 +316,14 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
 export const SelectModel = Rpc.make("conversation/select_model", {
   payload: { conversation: ConversationId, author: Schema.String, selection: ModelSelection },
   error: Schema.Union([NoSuchConversation, UnknownProvider, TakesNoInput]),
+})
+
+export const WatchStatus = Rpc.make("status/watch", {
+  success: TreeDelivery.annotate({
+    description: "The status of every tree, then each commit that changes one or ends the run of its root.",
+  }),
+  error: FellBehind,
+  stream: true,
 })
 
 export const StopServer = Rpc.make("server/stop")
@@ -426,6 +469,7 @@ export const NisseRpcs = RpcGroup.make(
   Interrupt,
   ResolveApproval,
   SelectModel,
+  WatchStatus,
   StopServer,
   ListSkills,
   ListProviders,

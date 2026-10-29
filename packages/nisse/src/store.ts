@@ -24,6 +24,8 @@ import {
   type Snapshot,
   type Status,
   type SubmissionId,
+  type TreeDelivery,
+  type TreeStatus,
 } from "@nisse/protocol"
 import { Cause, Context, Effect, Layer, Queue, Stream } from "effect"
 import { newId } from "./ids.ts"
@@ -132,7 +134,14 @@ const applyLive = (live: Live, changes: ReadonlyArray<LiveChange>): Live => {
 export class Store extends Context.Service<
   Store,
   {
-    readonly start: (cwd: string, model: ModelSelection, approvals: Approvals, lineage?: Lineage) => Conversation
+    readonly start: (
+      cwd: string,
+      model: ModelSelection,
+      approvals: Approvals,
+      lineage?: Lineage,
+      id?: ConversationId,
+    ) => Conversation
+    readonly find: (conversation: ConversationId) => Conversation | undefined
     readonly family: (root: ConversationId) => ReadonlyArray<ConversationState>
     readonly lastModel: () => ModelSelection | undefined
     readonly list: () => ReadonlyArray<Conversation>
@@ -155,6 +164,7 @@ export class Store extends Context.Service<
       conversation: ConversationId,
       sinceSeq: number | undefined,
     ) => Stream.Stream<Delivery, NoSuchConversation | FellBehind>
+    readonly watch: Stream.Stream<TreeDelivery, FellBehind>
   }
 >()("nisse/Store") {
   static readonly layer = (path: string) =>
@@ -166,6 +176,8 @@ export class Store extends Context.Service<
           (db) => Effect.sync(() => db.close()),
         )
         const subscribers = new Map<ConversationId, Set<Queue.Queue<Delivery, FellBehind>>>()
+        const watchers = new Set<Queue.Queue<TreeDelivery, FellBehind>>()
+        const watched = new Map<ConversationId, Status>()
 
         const conversationRow = db.query<ConversationRow, [string]>("SELECT * FROM conversations WHERE id = ?")
         const lastSeq = db.query<{ seq: number | null }, [string]>(
@@ -191,6 +203,18 @@ export class Store extends Context.Service<
         )
         const commitsSince = db.query<{ body: string }, [string, number]>(
           "SELECT body FROM commits WHERE conversation = ? AND seq > ? ORDER BY seq",
+        )
+        const treeStatuses = db.query<{ status: Status }, [string, string]>(
+          "SELECT status FROM conversations WHERE id = ? OR root = ?",
+        )
+        const busyTrees = db.query<{ tree: string; status: Status }, []>(
+          "SELECT coalesce(root, id) AS tree, status FROM conversations WHERE status != 'idle'",
+        )
+        const treeSeq = db.query<{ seq: number | null }, [string, string]>(
+          "SELECT max(seq) AS seq FROM commits WHERE conversation IN (SELECT id FROM conversations WHERE id = ? OR root = ?)",
+        )
+        const lastSaid = db.query<{ body: string }, [string]>(
+          "SELECT body FROM entries WHERE conversation = ? AND body ->> '$.body._tag' = 'message' ORDER BY seq DESC, rowid DESC LIMIT 1",
         )
         const approvalRow = db.query<{ answered_seq: number | null }, [string, string]>(
           "SELECT answered_seq FROM approvals WHERE id = ? AND conversation = ?",
@@ -311,16 +335,69 @@ export class Store extends Context.Service<
           return commit
         }
 
-        const publish = (commit: Commit) => {
-          const queues = subscribers.get(commit.conversation)
-          if (!queues) return
+        const offer = <A>(queues: Set<Queue.Queue<A, FellBehind>>, item: A, seq: number) => {
           for (const queue of queues) {
-            if (!Queue.offerUnsafe(queue, commit)) {
+            if (!Queue.offerUnsafe(queue, item)) {
               queues.delete(queue)
               Effect.runSync(Queue.clear(queue))
-              Queue.failCauseUnsafe(queue, Cause.fail(new FellBehind({ seq: commit.seq })))
+              Queue.failCauseUnsafe(queue, Cause.fail(new FellBehind({ seq })))
             }
           }
+        }
+
+        const worst = (statuses: ReadonlyArray<Status>): Status =>
+          statuses.includes("waiting") ? "waiting" : statuses.includes("working") ? "working" : "idle"
+
+        const treeOf = (commit: Commit): TreeStatus | undefined => {
+          const end = commit.entries.find((entry) => entry.body._tag === "run_end")?.body
+          if (commit.status === undefined && end === undefined) return undefined
+          const row = conversationRow.get(commit.conversation)
+          if (!row) return undefined
+          const root = (row.lineage === null ? row.id : (JSON.parse(row.lineage) as Lineage).root) as ConversationId
+          const status = worst(treeStatuses.all(root, root).map((r) => r.status))
+          const ended = root === commit.conversation && end?._tag === "run_end" ? end : undefined
+          if (ended === undefined && status === (watched.get(root) ?? "idle")) return undefined
+          if (status === "idle") watched.delete(root)
+          else watched.set(root, status)
+          const said = ended && lastSaid.get(root)
+          return {
+            _tag: "tree",
+            conversation: root,
+            seq: commit.seq,
+            status,
+            ...(ended
+              ? {
+                  ended: {
+                    outcome: ended.outcome,
+                    ...(ended.message === undefined ? {} : { message: ended.message }),
+                    ...(said ? { said: (JSON.parse(said.body) as { body: { text: string } }).body.text } : {}),
+                  },
+                }
+              : {}),
+          }
+        }
+
+        const trees = (): TreeDelivery => {
+          const statuses = new Map<ConversationId, Array<Status>>()
+          for (const { tree, status } of busyTrees.all()) {
+            statuses.set(tree as ConversationId, [...(statuses.get(tree as ConversationId) ?? []), status])
+          }
+          watched.clear()
+          const busy: Array<TreeStatus> = []
+          for (const [tree, all] of statuses) {
+            const status = worst(all)
+            watched.set(tree, status)
+            busy.push({ _tag: "tree", conversation: tree, seq: treeSeq.get(tree, tree)?.seq ?? 0, status })
+          }
+          const seq = db.query<{ seq: number | null }, []>("SELECT max(seq) AS seq FROM commits").get()?.seq ?? 0
+          return { _tag: "trees", seq, trees: busy }
+        }
+
+        const publish = (commit: Commit) => {
+          const queues = subscribers.get(commit.conversation)
+          if (queues) offer(queues, commit, commit.seq)
+          const tree = watchers.size > 0 ? treeOf(commit) : undefined
+          if (tree) offer(watchers, tree, commit.seq)
         }
 
         const commit = (conversation: ConversationId, change: Change) => {
@@ -344,8 +421,7 @@ export class Store extends Context.Service<
           })
 
         return Store.of({
-          start: (cwd, model, approvals, lineage) => {
-            const id = newId()
+          start: (cwd, model, approvals, lineage, id = newId() as ConversationId) => {
             const now = Date.now()
             db.run(
               "INSERT INTO conversations (id, cwd, created_at, model, model_at, approvals, live, lineage, root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -362,6 +438,10 @@ export class Store extends Context.Service<
               ],
             )
             return toConversation(conversationRow.get(id)!)
+          },
+          find: (conversation) => {
+            const row = conversationRow.get(conversation)
+            return row ? toConversation(row) : undefined
           },
           family: (root) => familyRows.all(root, root).map(stateOf),
           lastModel: () => {
@@ -444,6 +524,15 @@ export class Store extends Context.Service<
                 return Stream.concat(Stream.fromIterable(first), Stream.fromQueue(queue))
               }),
             ),
+          watch: Stream.unwrap(
+            Effect.gen(function* () {
+              const queue = yield* Queue.bounded<TreeDelivery, FellBehind>(SUBSCRIBER_QUEUE)
+              const first = trees()
+              watchers.add(queue)
+              yield* Effect.addFinalizer(() => Effect.sync(() => watchers.delete(queue)))
+              return Stream.concat(Stream.make(first), Stream.fromQueue(queue))
+            }),
+          ),
         })
       }),
     )

@@ -10,12 +10,15 @@ resubscribes from the last commit it saw and misses nothing.
 - `reopen-tui` reopens the conversation with its transcript.
 - `reopen-continue` continues a reopened conversation with a new prompt.
 - `resume-since` resubscribes with `sinceSeq` and gets only later commits.
+- `chosen-id` opens the TUI on an id that names no conversation yet, starting
+  one with that id, and sends a prompt given on the command line.
 
 ## How to get to it (user POV)
 
 - Press `^C` in the TUI, then run `nisse --conversation <id>`.
 - Run `nisse exec --conversation <id> '<prompt>'`.
 - Call `conversation/subscribe` with `sinceSeq`.
+- Run `nisse --conversation <new id> '<prompt>'`, as attn does.
 
 ## Driving it with drive.ts
 
@@ -40,6 +43,12 @@ Preconditions:
   then `drive.ts r watch <id> --since <seq> --save since`. It delivers no
   snapshot, only the commits for `later`, its `message` and its `run_end`,
   each with a `seq` above the one you took.
+- **Chosen id.** Run `drive.ts r tui start --conversation picked-1 'first words'`,
+  `drive.ts r tui wait 'You said: first words'`, `drive.ts r tui stop`: it ends
+  with `resume with: nisse --conversation picked-1`. Then
+  `drive.ts r tui start --conversation picked-1`, `drive.ts r tui wait READY`,
+  `drive.ts r tui screen chosen`: one `You said: first words`, nothing sent
+  twice.
 
 ## Gotchas
 

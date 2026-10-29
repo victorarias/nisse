@@ -38,6 +38,11 @@ R5, subagents. What runs today:
   words. `Esc` interrupts and keeps what was said.
 - Clients resume from the last `seq` they saw. A client that falls 4096 commits
   behind is dropped and resubscribes; it never slows the server.
+- Clients can follow every conversation people started without reading its
+  transcript: `status/watch` reports each tree's status (`working`, `waiting`
+  on a person anywhere in it, or `idle`) and how its runs end. A client can
+  choose a new conversation's id; starting with an id that exists answers with
+  that conversation.
 - Providers. Claude through the Claude Agent SDK, which runs Claude Code with
   its own tools, permissions and session: nisse asks a person before the calls
   Claude Code would ask about, resumes Claude Code's session where nisse's
@@ -77,7 +82,8 @@ bun packages/nisse/src/main.ts --provider openai     # a conversation with ChatG
 bun packages/nisse/src/main.ts --model opus --effort high
 bun packages/nisse/src/main.ts login openai          # sign in; --device-code to enter a code on any device
 bun packages/nisse/src/main.ts logout openai
-bun packages/nisse/src/main.ts --conversation <id>   # reopen a conversation
+bun packages/nisse/src/main.ts --conversation <id>   # reopen a conversation, or start one with that id
+bun packages/nisse/src/main.ts 'fix the build'       # open the TUI and send a first prompt
 bun packages/nisse/src/main.ts exec 'hello'          # one prompt, headless; exits 1 if the run fails
 bun packages/nisse/src/main.ts exec --auto 'fix it'  # exec denies calls that change things unless --auto
 bun packages/nisse/src/main.ts serve                 # the home's server in the foreground

@@ -37,6 +37,7 @@ const Handlers = NisseRpcs.toLayer(
           submission,
         })),
       "conversation/interrupt": ({ conversation }) => conversations.interrupt(conversation),
+      "status/watch": () => Stream.unwrap(Effect.as(lifetime.hold, store.watch)),
       "approval/resolve": ({ conversation, approval, author, allow }) =>
         Effect.map(conversations.resolve(conversation, approval, author, allow), (accepted) => ({ accepted })),
       "skills/list": ({ conversation }) => conversations.skills(conversation),

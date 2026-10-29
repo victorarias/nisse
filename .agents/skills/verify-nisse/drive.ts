@@ -25,6 +25,9 @@ const usage = `usage: drive.ts <run> <command> [args]
   watch-auth [--until PHASE] [--timeout MS] [--save NAME]
                                    follow every sign-in and print each state as one JSON line;
                                    --until returns once a state reaches PHASE, such as waiting
+  watch-status [conversation] [--until STATUS] [--timeout MS] [--save NAME]
+                                   follow the status of every tree and print each as one JSON line;
+                                   --until returns once the conversation's tree reaches STATUS
   idle [--seconds N]               measure the TUI's and server's CPU time over N seconds (10)
   tui start [nisse args...]        open the TUI in a ${COLS}x${ROWS} tmux pane
   tui type <text>                  type literal text into the TUI
@@ -195,6 +198,52 @@ const until = async (check: () => boolean, ms: number) => {
     await Bun.sleep(100)
   }
   return check()
+}
+
+const follow = async (
+  what: string,
+  method: string,
+  reached: (seen: { item: any; until: string; conversation: string | undefined }) => boolean,
+) => {
+  requireUp()
+  const until = flag("--until")
+  const ms = Number(flag("--timeout") ?? 10_000)
+  const name = flag("--save")
+  const conversation = args[0]
+  record(`${what}${conversation ? ` ${conversation}` : ""}${until ? ` until ${until}` : ""}`)
+  const out: Array<string> = []
+  const client = await connect()
+  const done = Promise.withResolvers<boolean>()
+  let quiet: ReturnType<typeof setTimeout> | undefined
+  const settleAfterQuiet = () => {
+    if (until !== undefined) return
+    clearTimeout(quiet)
+    quiet = setTimeout(() => done.resolve(true), 1000)
+  }
+  settleAfterQuiet()
+  lines(client, (message) => {
+    if (message.id !== 1) return
+    if (!message.chunk) {
+      out.push(JSON.stringify(message))
+      console.log(out.at(-1))
+      return done.resolve(until === undefined)
+    }
+    for (const item of message.result) {
+      out.push(JSON.stringify(item))
+      console.log(out.at(-1))
+      if (until !== undefined && reached({ item, until, conversation })) done.resolve(true)
+    }
+    settleAfterQuiet()
+    client.write(JSON.stringify({ jsonrpc: "2.0", method: "@effect/rpc/Ack", params: { requestId: 1 } }) + "\n")
+  })
+  client.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method }) + "\n")
+  const timer = setTimeout(() => done.resolve(until === undefined), ms)
+  const met = await done.promise
+  clearTimeout(timer)
+  clearTimeout(quiet)
+  client.destroy()
+  if (name) save(`${name}.ndjson`, out.join("\n") + "\n")
+  if (!met) fail(`nothing reached ${until} in ${ms}ms`)
 }
 
 const commands: Record<string, () => Promise<void> | void> = {
@@ -375,46 +424,15 @@ const commands: Record<string, () => Promise<void> | void> = {
     if (!met) fail(`no ${untilTag} entry arrived in ${ms}ms`)
   },
 
-  "watch-auth": async () => {
-    requireUp()
-    const untilPhase = flag("--until")
-    const ms = Number(flag("--timeout") ?? 10_000)
-    const name = flag("--save")
-    record(`watch-auth${untilPhase ? ` until ${untilPhase}` : ""}`)
-    const out: Array<string> = []
-    const client = await connect()
-    const done = Promise.withResolvers<boolean>()
-    let quiet: ReturnType<typeof setTimeout> | undefined
-    const settleAfterQuiet = () => {
-      if (untilPhase !== undefined) return
-      clearTimeout(quiet)
-      quiet = setTimeout(() => done.resolve(true), 1000)
-    }
-    settleAfterQuiet()
-    lines(client, (message) => {
-      if (message.id !== 1) return
-      if (!message.chunk) {
-        out.push(JSON.stringify(message))
-        console.log(out.at(-1))
-        return done.resolve(untilPhase === undefined)
-      }
-      for (const state of message.result) {
-        out.push(JSON.stringify(state))
-        console.log(out.at(-1))
-        if (state.phase === untilPhase) done.resolve(true)
-      }
-      settleAfterQuiet()
-      client.write(JSON.stringify({ jsonrpc: "2.0", method: "@effect/rpc/Ack", params: { requestId: 1 } }) + "\n")
-    })
-    client.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "auth/watch" }) + "\n")
-    const timer = setTimeout(() => done.resolve(untilPhase === undefined), ms)
-    const met = await done.promise
-    clearTimeout(timer)
-    clearTimeout(quiet)
-    client.destroy()
-    if (name) save(`${name}.ndjson`, out.join("\n") + "\n")
-    if (!met) fail(`no ${untilPhase} sign-in state arrived in ${ms}ms`)
-  },
+  "watch-auth": () => follow("watch-auth", "auth/watch", ({ item, until }) => item.phase === until),
+
+  "watch-status": () =>
+    follow("watch-status", "status/watch", ({ item, until, conversation }) => {
+      const trees: Array<any> = item._tag === "trees" ? item.trees : [item]
+      const mine = trees.filter((tree) => !conversation || tree.conversation === conversation)
+      if (item._tag === "trees" && until === "idle" && conversation && mine.length === 0) return true
+      return mine.some((tree) => tree.status === until)
+    }),
 
   tui: async () => {
     requireUp()
