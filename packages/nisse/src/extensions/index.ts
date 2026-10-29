@@ -301,7 +301,7 @@ export class Extensions extends Context.Service<
                   conversation: handle(conversation, registered.extension, loaded),
                   call: call.call,
                   tool: call.tool,
-                  input,
+                  input: structuredClone(input),
                 }
                 const exit = yield* runHook(
                   conversation.id,
@@ -317,7 +317,7 @@ export class Extensions extends Context.Service<
                 }
                 input = event.input
               }
-              return { ...call, input }
+              return JSON.stringify(input) === JSON.stringify(call.input) ? call : { ...call, input }
             }),
           after: (conversation, call, outcome, changeable) =>
             Effect.gen(function* () {

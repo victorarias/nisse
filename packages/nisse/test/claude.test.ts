@@ -535,7 +535,7 @@ export default Extension.define((ctx) =>
     Effect.gen(function* () {
       const input = call.input as { command?: string; file_path?: string }
       if (input.command?.startsWith("touch")) return yield* Tool.refuse("no touching")
-      if (input.command === "echo original") call.input = { ...input, command: "echo rewritten" }
+      if (input.command === "echo original") input.command = "echo rewritten"
       if (input.file_path !== undefined) call.input = { ...input, limit: 1 }
     }),
   ),

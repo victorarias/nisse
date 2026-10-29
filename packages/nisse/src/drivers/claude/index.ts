@@ -428,7 +428,11 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
               for (const block of message.message.content) {
                 if (block.type !== "tool_result") continue
                 const id = block.tool_use_id
-                const sighted = answered.has(id) ? undefined : yield* recordIfSighted(id)
+                if (answered.has(id)) {
+                  anyResult = true
+                  continue
+                }
+                const sighted = yield* recordIfSighted(id)
                 if (!sighted) continue
                 const { seen, call } = sighted
                 anyResult = true
