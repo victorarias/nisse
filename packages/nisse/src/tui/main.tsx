@@ -6,7 +6,6 @@ import type {
   AuthState,
   CallId,
   ConversationId,
-  Delivery,
   Entry,
   ModelSelection,
   Outcome,
@@ -16,7 +15,7 @@ import { Deferred, Effect, Fiber, Stream } from "effect"
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { userName } from "../author.ts"
-import { Client, follow, startConversation, type StartOptions } from "../client.ts"
+import { Client, followTree, startConversation, type Followed, type StartOptions } from "../client.ts"
 import { runTerminal } from "../login.ts"
 import { VERSION } from "../version.ts"
 import { describeCall } from "./calls.ts"
@@ -109,13 +108,32 @@ const childState = (child: View | undefined): { label: string; tone: string } =>
   return { label: end.outcome === "interrupted" ? "interrupted" : "failed", tone: color.yellow }
 }
 
-const SubagentCard = (props: { title: string; agentType: string | undefined; child: View | undefined }) => {
-  const state = () => childState(props.child)
+const isUnder = (subagents: Children, view: View, ancestor: ConversationId) => {
+  let parent = view.conversation?.lineage?.parent
+  while (parent !== undefined) {
+    if (parent === ancestor) return true
+    parent = subagents[parent]?.conversation?.lineage?.parent
+  }
+  return false
+}
+
+const askingIn = (subagents: Children, subagent: ConversationId) =>
+  [subagents[subagent], ...Object.values(subagents).filter((view) => isUnder(subagents, view, subagent))].find(
+    (view) => view !== undefined && view.pendingApprovals.length > 0,
+  )
+
+const SubagentCard = (props: {
+  title: string
+  agentType: string | undefined
+  child: View | undefined
+  asker: View | undefined
+}) => {
+  const state = () => (props.asker ? { label: "waiting on you", tone: color.yellow } : childState(props.child))
   const asking = () => {
-    const child = props.child
-    const pending = child?.pendingApprovals[0]
+    const asker = props.asker
+    const pending = asker?.pendingApprovals[0]
     const call =
-      pending && child.entries.find((entry) => entry.body._tag === "tool_call" && entry.body.call === pending.call)
+      pending && asker.entries.find((entry) => entry.body._tag === "tool_call" && entry.body.call === pending.call)
     return call?.body._tag === "tool_call" ? describeCall(call.body.tool, call.body.input) : undefined
   }
   return (
@@ -257,7 +275,12 @@ const EntryView = (props: { view: View; subagents: Children; entry: Entry; previ
     case "subagent":
       return (
         <box flexDirection="column" marginTop={1}>
-          <SubagentCard title={body.title} agentType={body.agentType} child={props.subagents[body.conversation]} />
+          <SubagentCard
+            title={body.title}
+            agentType={body.agentType}
+            child={props.subagents[body.conversation]}
+            asker={askingIn(props.subagents, body.conversation)}
+          />
         </box>
       )
     case "model":
@@ -494,37 +517,20 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
 
   const [children, setChildren] = createStore<Children>({})
   const scope = yield* Effect.scope
-  const followChildren = (delivery: Delivery) =>
-    Effect.forEach(
-      delivery.entries.flatMap((entry) => (entry.body._tag === "subagent" ? [entry.body.conversation] : [])),
-      (child) =>
-        child in children
-          ? Effect.void
-          : Effect.andThen(
-              Effect.sync(() => setChildren(child, emptyView(child))),
-              follow(client, child).pipe(
-                Stream.runForEach((update) =>
-                  Effect.sync(() =>
-                    setChildren(
-                      child,
-                      produce((draft) => apply(draft, update, Date.now())),
-                    ),
-                  ),
-                ),
-                Effect.ignore,
-                Effect.forkIn(scope),
-              ),
-            ),
-      { discard: true },
-    )
+  const applyTo = ({ conversation: from, delivery }: Followed) =>
+    Effect.sync(() => {
+      if (from === conversation) setView(produce((draft) => apply(draft, delivery, Date.now())))
+      else {
+        if (!(from in children)) setChildren(from, emptyView(from))
+        setChildren(
+          from,
+          produce((draft) => apply(draft, delivery, Date.now())),
+        )
+      }
+    })
 
-  yield* follow(client, conversation).pipe(
-    Stream.runForEach((delivery) =>
-      Effect.andThen(
-        Effect.sync(() => setView(produce((draft) => apply(draft, delivery, Date.now())))),
-        followChildren(delivery),
-      ),
-    ),
+  yield* followTree(client, conversation).pipe(
+    Stream.runForEach(applyTo),
     Effect.catchTag("NoSuchConversation", () => Deferred.fail(done, `no conversation ${conversation}`)),
     Effect.forkScoped,
   )

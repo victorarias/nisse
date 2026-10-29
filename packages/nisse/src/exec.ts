@@ -1,7 +1,7 @@
 import type { ConversationId, Delivery, Entry, LiveChange, SubmissionId } from "@nisse/protocol"
-import { Effect, type Scope, Stream } from "effect"
+import { Effect, Stream } from "effect"
 import { userName } from "./author.ts"
-import { Client, follow, startConversation, type StartOptions } from "./client.ts"
+import { Client, followTree, startConversation, type StartOptions } from "./client.ts"
 import { describeCall } from "./tui/calls.ts"
 
 interface Watch {
@@ -9,9 +9,10 @@ interface Watch {
   live: string
   printed: string
   outcome: "answered" | "failed" | undefined
-  denials: Array<Extract<Entry["body"], { _tag: "approval" }>>
-  subagents: Array<ConversationId>
+  denials: Array<{ readonly conversation: ConversationId; readonly approval: Approval }>
 }
+
+type Approval = Extract<Entry["body"], { _tag: "approval" }>
 
 const write = (text: string) => process.stdout.write(text)
 const note = (text: string) => process.stderr.write(`${text}\n`)
@@ -28,7 +29,12 @@ const endMessage = (watch: Watch) => {
   watch.printed = ""
 }
 
-const onEntries = (watch: Watch, submission: SubmissionId, entries: ReadonlyArray<Entry>) => {
+const onEntries = (
+  watch: Watch,
+  conversation: ConversationId,
+  submission: SubmissionId,
+  entries: ReadonlyArray<Entry>,
+) => {
   for (const entry of entries) {
     const body = entry.body
     if (watch.outcome && body._tag === "user") return
@@ -44,10 +50,7 @@ const onEntries = (watch: Watch, submission: SubmissionId, entries: ReadonlyArra
         note(`› ${describeCall(body.tool, body.input)}`)
         break
       case "approval":
-        watch.denials.push(body)
-        break
-      case "subagent":
-        watch.subagents.push(body.conversation)
+        watch.denials.push({ conversation, approval: body })
         break
       case "run_end":
         endMessage(watch)
@@ -64,15 +67,13 @@ const applyLive = (watch: Watch, changes: ReadonlyArray<LiveChange>) => {
   }
 }
 
-const onDelivery = (watch: Watch, submission: SubmissionId) => (delivery: Delivery) =>
+const onDelivery = (watch: Watch, conversation: ConversationId, submission: SubmissionId) => (delivery: Delivery) =>
   Effect.sync(() => {
     if (delivery._tag === "snapshot") watch.live = delivery.live.text
-    onEntries(watch, submission, delivery.entries)
+    onEntries(watch, conversation, submission, delivery.entries)
     if (delivery._tag === "commit" && delivery.live) applyLive(watch, delivery.live)
     if (watch.placed && !watch.outcome) show(watch, watch.live)
   })
-
-type Approval = Extract<Entry["body"], { _tag: "approval" }>
 
 export const exec = Effect.fnUntraced(function* (prompt: string, existing: string | undefined, options: StartOptions) {
   const client = yield* Client
@@ -83,7 +84,7 @@ export const exec = Effect.fnUntraced(function* (prompt: string, existing: strin
     author: userName(),
     text: prompt,
   })
-  const watch: Watch = { placed: false, live: "", printed: "", outcome: undefined, denials: [], subagents: [] }
+  const watch: Watch = { placed: false, live: "", printed: "", outcome: undefined, denials: [] }
   const refuse = (asked: ConversationId, approval: Approval) =>
     Effect.tap(
       client["approval/resolve"]({
@@ -99,29 +100,22 @@ export const exec = Effect.fnUntraced(function* (prompt: string, existing: strin
           }
         }),
     )
-  const refuseUnder = (subagent: ConversationId): Effect.Effect<void, unknown, Scope.Scope> =>
-    follow(client, subagent).pipe(
-      Stream.flatMap((delivery) => Stream.fromIterable(delivery.entries)),
-      Stream.runForEach(({ body }) =>
-        body._tag === "approval"
-          ? refuse(subagent, body)
-          : body._tag === "subagent"
-            ? Effect.forkScoped(refuseUnder(body.conversation))
-            : Effect.void,
-      ),
-    )
+  const onSubagent = (subagent: ConversationId, delivery: Delivery) =>
+    Effect.sync(() => {
+      for (const { body } of delivery.entries) {
+        if (body._tag === "approval") watch.denials.push({ conversation: subagent, approval: body })
+      }
+    })
   const deny = Effect.suspend(() =>
-    Effect.andThen(
-      Effect.forEach(watch.denials.splice(0), (approval) => refuse(conversation, approval)),
-      Effect.forEach(watch.subagents.splice(0), (subagent) => Effect.forkScoped(refuseUnder(subagent))),
-    ),
+    Effect.forEach(watch.denials.splice(0), (denial) => refuse(denial.conversation, denial.approval)),
   )
-  yield* follow(client, conversation).pipe(
-    Stream.tap(onDelivery(watch, submission)),
+  yield* followTree(client, conversation).pipe(
+    Stream.tap(({ conversation: from, delivery }) =>
+      from === conversation ? onDelivery(watch, conversation, submission)(delivery) : onSubagent(from, delivery),
+    ),
     Stream.tap(() => deny),
     Stream.takeUntil(() => watch.outcome !== undefined),
     Stream.runDrain,
-    Effect.scoped,
   )
   return watch.outcome === "answered"
 })

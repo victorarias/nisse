@@ -21,7 +21,8 @@ Code ([Claude](./claude.md)).
   asked call and `allow <Tool(subject)>?  ^Y  allow  ^N  deny`, `done` with its
   last message, `interrupted` or `failed`.
 - `subagent-approve` answers a subagent's asked call with `^Y` or `^N` in the
-  parent's TUI, or `approval/resolve` on the subagent's conversation.
+  parent's TUI, or `approval/resolve` on the subagent's conversation. A call
+  asked deeper in the tree shows on the card of the subagent above it.
 - `subagent-answer` hands a subagent's last message to its parent: a waiting
   `wait_agent` returns `Wait completed.`, and the message shows under a
   `/root/<name>` author in the parent's transcript; an idle parent gets it in

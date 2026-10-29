@@ -291,3 +291,26 @@ test("a subagent shows as a card under its parent, and ctrl+y answers the call i
   session.type("\x03")
   await session.exited
 })
+
+test("a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it", async () => {
+  const nisseHome = home()
+  await Bun.write(join(nisseHome.dir, "config.toml"), "[agents]\nmax_depth = 2\n")
+  const env = await scripted(nisseHome, [
+    { tool: { name: "spawn_agent", input: { task_name: "lead", message: "delegate further" } } },
+    { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
+    { text: "the lead is done" },
+    { agent: "/root/lead", tool: { name: "spawn_agent", input: { task_name: "deep", message: "dig" } } },
+    { agent: "/root/lead", tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
+    { agent: "/root/lead", text: "deep reported" },
+    { agent: "/root/lead/deep", tool: { name: "Bash", input: { command: "echo dug" } } },
+    { agent: "/root/lead/deep", text: "dug it" },
+  ])
+  const session = screenSession([], env)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("delegate\r")
+  await session.waitFor((screen) => /⧉ lead +waiting on you/.test(screen) && screen.includes("allow Bash(echo dug)?"))
+  session.type("\x19")
+  await session.waitFor((screen) => screen.includes("the lead is done") && screen.includes("READY"))
+  session.type("\x03")
+  await session.exited
+}, 30_000)
