@@ -10,6 +10,7 @@ export interface Home {
   readonly socket: string
   readonly lock: string
   readonly log: string
+  readonly extensions: string
 }
 
 export const homeAt = (dir: string): Home => ({
@@ -18,6 +19,7 @@ export const homeAt = (dir: string): Home => ({
   socket: join(dir, "nisse.sock"),
   lock: join(dir, "nisse.lock"),
   log: join(dir, "nisse.log"),
+  extensions: join(dir, "extensions"),
 })
 
 export const defaultHome = () => homeAt(process.env.NISSE_HOME ?? join(homedir(), ".nisse"))

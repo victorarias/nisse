@@ -357,3 +357,31 @@ test("a Claude subagent shows as a card in place of its call's result, and its o
   own.type("\x03")
   await own.exited
 }, 40_000)
+
+test("a person sees what extensions say in the footer and the transcript, and which failed to load", async () => {
+  const nisseHome = home()
+  const script = `${nisseHome.dir}/script.json`
+  await Bun.write(
+    script,
+    JSON.stringify([{ tool: { name: "Read", input: { file_path: script } } }, { text: "read it" }]),
+  )
+  await Bun.write(join(nisseHome.extensions, "broken.ts"), "export default 42")
+  await Bun.write(
+    join(nisseHome.extensions, "watch.ts"),
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.after", (call) =>
+    Effect.andThen(call.conversation.status("tests green"), call.conversation.toast("suite ran")),
+  ),
+)`,
+  )
+  const session = screenSession([], nisseEnv(nisseHome, { NISSE_MODEL_SCRIPT: script }))
+  await session.waitFor((screen) => screen.includes("extension broken failed to load") && screen.includes("READY"))
+  session.type("read the script\r")
+  const screen = await session.waitFor((screen) => screen.includes("read it") && screen.includes("READY"))
+  expect(screen).toContain("◆ watch: suite ran")
+  expect(screen.split("\n").at(-1)).toContain("watch: tests green")
+  session.type("\x03")
+  await session.exited
+})

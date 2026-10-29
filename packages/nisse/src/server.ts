@@ -4,6 +4,7 @@ import { Console, Duration, Effect, Layer, Stream } from "effect"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as RpcServer from "effect/rpc/RpcServer"
 import { Conversations } from "./conversations.ts"
+import { Extensions } from "./extensions/index.ts"
 import type { Home } from "./home.ts"
 import { Lifetime } from "./lifetime.ts"
 import type { Providers } from "./provider.ts"
@@ -24,6 +25,7 @@ const Handlers = NisseRpcs.toLayer(
     const conversations = yield* Conversations
     const lifetime = yield* Lifetime
     const setup = yield* Setup
+    const extensions = yield* Extensions
     return NisseRpcs.of({
       initialize: () => Effect.succeed({ version: VERSION, protocol: PROTOCOL_VERSION }),
       "conversation/start": ({ cwd, ...options }) => conversations.start(cwd, options),
@@ -50,12 +52,15 @@ const Handlers = NisseRpcs.toLayer(
       "auth/cancel": ({ provider, flow }) => Effect.map(setup.cancel(provider, flow), (accepted) => ({ accepted })),
       "auth/logout": ({ provider }) => setup.logout(provider),
       "auth/watch": () => Stream.unwrap(Effect.as(lifetime.hold, setup.watch)),
+      "extensions/list": () => extensions.list,
+      "extensions/reload": () => extensions.reload,
     })
   }),
 )
 
 export const serverLayer = (home: Home, options: { readonly idleGrace: Duration.Input }) => {
   const app = Layer.merge(Conversations.layer, Setup.layer).pipe(
+    Layer.provideMerge(Extensions.layer(home)),
     Layer.provideMerge(Store.layer(home.database)),
     Layer.provideMerge(Lifetime.layer(options.idleGrace)),
   )

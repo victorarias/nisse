@@ -14,6 +14,7 @@ import {
   type Delivery,
   type Entry,
   type EntryBody,
+  type ExtensionStatus,
   type EntryId,
   type Live,
   type Lineage,
@@ -55,6 +56,7 @@ export interface Change {
   readonly providerState?: unknown
   readonly approval?: { readonly id: ApprovalId; readonly call: CallId }
   readonly model?: ModelSelection
+  readonly extensionStatus?: { readonly extension: string; readonly text?: string }
 }
 
 export interface ConversationState {
@@ -86,6 +88,7 @@ interface ConversationRow {
   provider_seq: number
   lineage: string | null
   instructions: string | null
+  extension_status: string
 }
 
 interface SubmissionRow {
@@ -156,6 +159,8 @@ export class Store extends Context.Service<
     readonly queuedSteers: (conversation: ConversationId) => ReadonlyArray<Queued>
     readonly queuedMail: (conversation: ConversationId) => ReadonlyArray<Queued>
     readonly transcript: (conversation: ConversationId) => ReadonlyArray<Entry>
+    readonly extensionStatus: (conversation: ConversationId) => ExtensionStatus
+    readonly showingStatus: () => ReadonlyArray<ConversationId>
     readonly resolveApproval: (
       conversation: ConversationId,
       approval: ApprovalId,
@@ -253,6 +258,7 @@ export class Store extends Context.Service<
           live: JSON.parse(row.live) as Live,
           queued: queuedRows.all(row.id).map(toQueued),
           status: row.status,
+          extensionStatus: JSON.parse(row.extension_status) as ExtensionStatus,
         })
 
         const write = (conversation: ConversationId, change: Change): Commit => {
@@ -325,6 +331,18 @@ export class Store extends Context.Service<
               ])
             }
           }
+          let extensionStatus: ExtensionStatus | undefined
+          if (change.extensionStatus) {
+            const { extension, text } = change.extensionStatus
+            const { [extension]: _, ...others } = JSON.parse(
+              conversationRow.get(conversation)!.extension_status,
+            ) as ExtensionStatus
+            extensionStatus = text === undefined ? others : { ...others, [extension]: text }
+            db.run("UPDATE conversations SET extension_status = ? WHERE id = ?", [
+              JSON.stringify(extensionStatus),
+              conversation,
+            ])
+          }
           if (change.providerState !== undefined) {
             db.run("UPDATE conversations SET provider_state = ?, provider_seq = ? WHERE id = ?", [
               JSON.stringify(change.providerState),
@@ -351,6 +369,7 @@ export class Store extends Context.Service<
                 }
               : {}),
             ...(change.status ? { status: change.status } : {}),
+            ...(extensionStatus ? { extensionStatus } : {}),
           }
           db.run("INSERT INTO commits (seq, conversation, body) VALUES (?, ?, ?)", [
             seq,
@@ -492,6 +511,13 @@ export class Store extends Context.Service<
           queuedSteers: (conversation) => steerRows.all(conversation).map(toQueued),
           queuedMail: (conversation) => mailRows.all(conversation).map(toQueued),
           transcript: (conversation) => entryRows.all(conversation).map((r) => JSON.parse(r.body) as Entry),
+          extensionStatus: (conversation) =>
+            JSON.parse(conversationRow.get(conversation)?.extension_status ?? "{}") as ExtensionStatus,
+          showingStatus: () =>
+            db
+              .query<{ id: string }, []>("SELECT id FROM conversations WHERE extension_status != '{}'")
+              .all()
+              .map((row) => row.id as ConversationId),
           resolveApproval: (conversation, approval, author, allow) =>
             Effect.suspend(() => {
               const outcome = db.transaction(() => {

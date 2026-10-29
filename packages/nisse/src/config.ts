@@ -22,6 +22,7 @@ const HomeConfig = Schema.Struct({
   default_model: Schema.optionalKey(ModelSelection),
   agents: Schema.optionalKey(AgentsConfig),
   providers: Schema.optionalKey(Schema.Record(Schema.String, Instance)),
+  extensions: Schema.optionalKey(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown))),
 })
 export type HomeConfig = typeof HomeConfig.Type
 

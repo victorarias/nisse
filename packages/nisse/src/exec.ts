@@ -52,6 +52,10 @@ const onEntries = (
       case "approval":
         watch.denials.push({ conversation, approval: body })
         break
+      case "toast":
+        endMessage(watch)
+        note(`◆ ${body.extension}: ${body.text}`)
+        break
       case "run_end":
         endMessage(watch)
         if (body.outcome !== "answered") note(body.message ?? body.outcome)

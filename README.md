@@ -12,7 +12,7 @@ the `rust` branch.
 
 ## Status
 
-R5, subagents. What runs today:
+R7a, extensions. What runs today:
 
 - One server per home, shared by every client. The TUI or `exec` starts it
   when none runs, and it exits 30 seconds after the last client leaves and the
@@ -75,6 +75,11 @@ R5, subagents. What runs today:
   every client sees which skills it carried.
 - Subagents, each a conversation of its own under the one that started it:
   Codex's agent tools on OpenAI, and Claude Code's own subagents on Claude.
+- Extensions: TypeScript files in `NISSE_HOME/extensions` that add, change
+  or remove tools, hook a call before it runs and after it returns, and tell
+  the people in a conversation what they do through a status line and toasts
+  that every client sees. They work on OpenAI and the scripted provider for
+  now (see below).
 - The neon TUI, in OpenTUI with Solid.
 
 ## Try it
@@ -94,6 +99,8 @@ bun packages/nisse/src/main.ts exec 'hello'          # one prompt, headless; exi
 bun packages/nisse/src/main.ts exec --auto 'fix it'  # exec denies calls that change things unless --auto
 bun packages/nisse/src/main.ts serve                 # the home's server in the foreground
 bun packages/nisse/src/main.ts serve --restart       # replace the running server once its runs settle
+bun packages/nisse/src/main.ts extensions            # the home's extensions, and why any failed to load
+bun packages/nisse/src/main.ts extensions reload     # load them again from disk
 bun packages/nisse/src/main.ts schema                # the protocol's JSON Schema
 ```
 
@@ -106,7 +113,7 @@ provider's models: `↑↓` picks one, `←→` its effort, and `⏎` switches.
 
 `NISSE_HOME` (default `~/.nisse`) holds `config.toml`, `store.sqlite`,
 `nisse.sock`, `nisse.lock`, the background server's `nisse.log`, the
-code-mode host under `bin/`, ChatGPT
+code-mode host under `bin/`, extensions under `extensions/`, ChatGPT
 sign-ins under `auth/` (readable only by you), and the model lists ChatGPT
 last sent under `cache/`. One server serves a home at a time.
 
@@ -196,6 +203,76 @@ steps (or is empty), such as
 A step with a tool calls it and moves on to the next step; a step without one
 ends the run. A step with `"agent": "/root/explore"` is played only by that
 subagent; the others are the root's.
+
+### Extensions
+
+An extension is `NISSE_HOME/extensions/<name>.ts`, or a folder
+`extensions/<name>/` with an `index.ts`. The server loads them in name order
+when it starts, in its own process and with its full authority, and serves
+them `effect` and `@nisse/extension` from its own copy, so an extension needs
+no `package.json`. This one refuses forced pushes, adds a tool, and says what
+it saw:
+
+```ts
+import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+
+export default Extension.define((ctx) =>
+  Effect.gen(function* () {
+    yield* ctx.tool.transform((tools) => {
+      tools.add(
+        Tool.make({
+          name: "Clock",
+          description: "The date and time on the server.",
+          input: Schema.Struct({}),
+          readOnly: true,
+          run: () => Effect.succeed(Tool.ok(new Date().toISOString())),
+        }),
+      )
+      tools.remove("Glob")
+    })
+    yield* ctx.tool.hook("execute.before", (call) =>
+      call.tool === "Bash" && JSON.stringify(call.input).includes("push --force")
+        ? Tool.refuse("force pushes need a person")
+        : Effect.void,
+    )
+    yield* ctx.tool.hook("execute.after", (call) =>
+      Effect.andThen(
+        call.conversation.status(`last ran ${call.tool}`),
+        call.outcome.error ? call.conversation.toast(`${call.tool} failed`) : Effect.void,
+      ),
+    )
+  }),
+)
+```
+
+- `ctx.tool.transform` edits the tools of each turn as it starts: `list`,
+  `get`, `add` (replacing a tool of the same name), `update` (a tool's
+  `description` or `readOnly`) and `remove`. `Tool.make` is how nisse's own
+  tools are made; a tool that is not read-only asks before it runs.
+- `execute.before` sees `{ conversation, call, tool, input }` and may change
+  `input`, which is what a person is asked about, what runs and what the
+  transcript shows. `Tool.refuse(reason)` ends the call with that reason
+  instead. `execute.after` sees the call's `outcome` and may change what the
+  model and the transcript get. Hooks run in load order, for every
+  conversation and subagent, and each call of one has 10 seconds.
+- `conversation.status(text)` sets the extension's line in that conversation's
+  status bar, and `status()` clears it. `conversation.toast(text)` adds a line
+  to its transcript. Both are committed, so every client sees them, then and
+  later; providers never show them to the model.
+- A hook that fails or times out tells the conversation in a toast. A failed
+  `execute.before` refuses the call, and a failed `execute.after` leaves the
+  outcome as it was.
+- `[extensions.<name>]` in `config.toml` is the extension's `ctx.options`, and
+  `enabled = false` there skips it. An extension has 10 seconds to load; one
+  that fails is listed with why, and the TUI shows it when it opens.
+- `nisse extensions reload` unloads every extension, clears their status
+  lines, and loads them again from disk. Restarting the server clears them
+  too, so a line never outlives the code that set it.
+
+On Claude, Claude Code runs its own tools and nisse's hooks don't reach them
+yet: an extension's tools and hooks apply to OpenAI and scripted
+conversations.
 
 ## Protocol
 

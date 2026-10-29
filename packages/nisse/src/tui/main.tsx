@@ -289,6 +289,12 @@ const EntryView = (props: { view: View; subagents: Children; entry: Entry; previ
           {`◆ ${authorLabel(props.entry).toLowerCase()} switched to ${modelLabel(body.selection)}`}
         </text>
       )
+    case "toast":
+      return (
+        <text fg={color.dim} marginLeft={2}>
+          {`◆ ${body.extension}: ${body.text}`}
+        </text>
+      )
     default:
       return null
   }
@@ -348,6 +354,11 @@ const elapsed = (since: number | undefined, now: number) => {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`
 }
 
+const statusLines = (view: View) => {
+  const lines = Object.entries(view.extensionStatus).map(([extension, text]) => `${extension}: ${text}`)
+  return lines.length === 0 ? "" : ` ${lines.join(" · ")}`
+}
+
 const StatusBar = (props: { view: View; subagentAsks: boolean }) => {
   const [now, setNow] = createSignal(Date.now())
   createEffect(() => {
@@ -372,6 +383,7 @@ const StatusBar = (props: { view: View; subagentAsks: boolean }) => {
           {` ${waiting() ? "◆ WAITING" : `${spinner()} WORKING`} ${elapsed(props.view.workingSince, now())} `}
         </text>
       </Show>
+      <text fg={color.dim}>{statusLines(props.view)}</text>
       <box flexGrow={1} />
       <Show when={props.view.conversation}>
         {(conversation) => <text fg={color.violet}>{`${modelLabel(conversation().model)}  `}</text>}
@@ -488,6 +500,13 @@ const App = (props: { view: View; subagents: Children; setup: SetupView; actions
         {(picker) => <ModelPicker picker={picker()} />}
       </Show>
       <Show when={props.setup.signIn}>{(state) => <SignInPanel state={state()} />}</Show>
+      <For each={props.setup.brokenExtensions}>
+        {(extension) => (
+          <text fg={color.yellow} marginLeft={1}>
+            {`✗ extension ${extension.name} failed to load: ${extension.message ?? "no reason given"}`}
+          </text>
+        )}
+      </For>
       <Prompt view={props.view} setup={props.setup} actions={props.actions} steer={steer()} />
       <StatusBar
         view={props.view}
@@ -568,6 +587,18 @@ export const tui = Effect.fnUntraced(function* (
       Effect.ignore,
     )
   yield* Effect.forkScoped(refreshProviders(false))
+  yield* client["extensions/list"]().pipe(
+    Effect.tap((extensions) =>
+      Effect.sync(() =>
+        setSetup(
+          "brokenExtensions",
+          extensions.filter((extension) => extension.state === "failed"),
+        ),
+      ),
+    ),
+    Effect.ignore,
+    Effect.forkScoped,
+  )
 
   let renderer: CliRenderer | undefined
   const signInTerminal = (state: AuthState, command: ReadonlyArray<string>, env: Readonly<Record<string, string>>) =>

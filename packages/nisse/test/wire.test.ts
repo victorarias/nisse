@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { LIVE_OUTPUT_TAIL, type Delivery } from "@nisse/protocol"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { bodies, deadline, entriesOf, errorTag, RawClient } from "./support/raw.ts"
 import { runningServer, servingUntilIdle, tempHome } from "./support/server.ts"
 
@@ -829,4 +830,217 @@ test("a conversation tells a client that was not watching how its last run ended
   expect(await endedOf()).toEqual({ outcome: "interrupted", said: "Writing the note." })
   client.close()
   rmSync(cwd, { recursive: true })
+})
+
+const homeWithExtensions = (files: Record<string, string>, config = "") => {
+  const home = tempHome()
+  mkdirSync(home.extensions, { recursive: true })
+  for (const [name, source] of Object.entries(files)) {
+    mkdirSync(join(home.extensions, name, ".."), { recursive: true })
+    writeFileSync(join(home.extensions, name), source)
+  }
+  if (config !== "") writeFileSync(join(home.dir, "config.toml"), config)
+  return home
+}
+
+const clockAndNoGlob = `
+import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    tools.add(
+      Tool.make({
+        name: "Clock",
+        description: "The time in " + String(ctx.options.city ?? "nowhere"),
+        input: Schema.Struct({ zone: Schema.String }),
+        readOnly: true,
+        run: ({ zone }) => Effect.succeed(Tool.ok("noon in " + zone)),
+      }),
+    )
+    tools.remove("Glob")
+  }),
+)
+`
+
+test("an extension's tool answers the model's calls, and a tool it removes is gone", async () => {
+  const home = homeWithExtensions({ "clock.ts": clockAndNoGlob }, `[extensions.clock]\ncity = "Oslo"\n`)
+  await using server = await runningServer(
+    [
+      { tool: { name: "Clock", input: { zone: "CET" } } },
+      { tool: { name: "Glob", input: { pattern: "*" } } },
+      { text: "done" },
+    ],
+    { home },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "what time is it")
+  await view.until(settled)
+  expect(bodies(view.deliveries).filter((body) => body._tag === "tool_result")).toEqual([
+    expect.objectContaining({ output: "noon in CET", error: false }),
+    expect.objectContaining({ output: "no tool named Glob", error: true }),
+  ])
+  expect((await client.call("extensions/list")).result).toEqual([
+    { name: "clock", path: join(home.extensions, "clock.ts"), state: "loaded" },
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+const guard = `
+import { Extension, Tool } from "@nisse/extension"
+import { Effect } from "effect"
+
+export default Extension.define((ctx) =>
+  Effect.gen(function* () {
+    yield* ctx.tool.hook("execute.before", (call) =>
+      Effect.gen(function* () {
+        if (call.tool !== "Bash") return
+        const command = String((call.input as { command: string }).command)
+        if (command.includes("rm -rf")) return yield* Tool.refuse("that deletes too much")
+        call.input = { command: command.replace("hello", "hej") }
+      }),
+    )
+    yield* ctx.tool.hook("execute.after", (call) =>
+      Effect.gen(function* () {
+        call.outcome.output = call.outcome.output.toUpperCase()
+        yield* call.conversation.status("ran " + call.tool)
+        yield* call.conversation.toast(call.tool + " finished")
+      }),
+    )
+  }),
+)
+`
+
+test("an extension can refuse a call, change what runs and what the model sees, and tell people", async () => {
+  const cwd = workdir()
+  const home = homeWithExtensions({ "guard.ts": guard })
+  await using server = await runningServer(
+    [
+      { tool: { name: "Bash", input: { command: "rm -rf /" } } },
+      { tool: { name: "Bash", input: { command: "echo hello" } } },
+      { text: "done" },
+    ],
+    { home },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, { cwd, approvals: "auto" })
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "clean up")
+  await view.until(settled)
+  expect(withoutUsers(view.deliveries)).toEqual([
+    expect.objectContaining({ _tag: "tool_call", tool: "Bash", input: { command: "rm -rf /" } }),
+    expect.objectContaining({
+      _tag: "tool_result",
+      output: "guard refused this call: that deletes too much",
+      error: true,
+    }),
+    expect.objectContaining({ _tag: "tool_call", tool: "Bash", input: { command: "echo hej" } }),
+    { _tag: "toast", extension: "guard", text: "Bash finished" },
+    expect.objectContaining({ _tag: "tool_result", output: expect.stringContaining("HEJ"), error: false }),
+    { _tag: "message", text: "done" },
+    { _tag: "run_end", outcome: "answered" },
+  ])
+  expect(view.deliveries.findLast((delivery) => delivery._tag === "commit" && delivery.extensionStatus)).toMatchObject({
+    extensionStatus: { guard: "ran Bash" },
+  })
+  const late = client.subscribe({ conversation })
+  await late.until((deliveries) => deliveries.length > 0)
+  expect(late.deliveries[0]).toMatchObject({ _tag: "snapshot", extensionStatus: { guard: "ran Bash" } })
+  client.close()
+  rmSync(cwd, { recursive: true })
+  rmSync(home.dir, { recursive: true })
+})
+
+test("an extension that fails to load is listed with why, while the others load and run", async () => {
+  const home = homeWithExtensions(
+    {
+      "broken.ts": `export default 42`,
+      "crashes/index.ts": `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.before", () => Effect.die(new Error("the guard crashed"))),
+)`,
+      "off.ts": `throw new Error("a disabled extension never runs")`,
+    },
+    `[extensions.off]\nenabled = false\n`,
+  )
+  await using server = await runningServer(
+    [{ tool: { name: "Read", input: { file_path: "/etc/hostname" } } }, { text: "done" }],
+    {
+      home,
+    },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  expect((await client.call("extensions/list")).result).toEqual([
+    {
+      name: "broken",
+      path: join(home.extensions, "broken.ts"),
+      state: "failed",
+      message: "it exports no extension; export default Extension.define(...)",
+    },
+    { name: "crashes", path: join(home.extensions, "crashes", "index.ts"), state: "loaded" },
+    { name: "off", path: join(home.extensions, "off.ts"), state: "disabled" },
+  ])
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "read it")
+  await view.until(settled)
+  expect(withoutUsers(view.deliveries).slice(0, 3)).toEqual([
+    { _tag: "toast", extension: "crashes", text: "execute.before failed: the guard crashed" },
+    expect.objectContaining({ _tag: "tool_call", tool: "Read" }),
+    expect.objectContaining({
+      _tag: "tool_result",
+      output: "crashes refused this call: it failed: the guard crashed",
+      error: true,
+    }),
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+const statusSaying = (text: string) => `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.after", (call) => call.conversation.status("${text}")),
+)`
+
+test("reloading runs the extensions as they are now, and no status outlives the code that set it", async () => {
+  const home = homeWithExtensions({ "lines.ts": statusSaying("first") })
+  const script = [{ tool: { name: "Read", input: { file_path: "/etc/hostname" } } }, { text: "done" }]
+  const statusIn = async (client: RawClient, conversation: string) => {
+    const view = client.subscribe({ conversation })
+    await view.until((deliveries) => deliveries.length > 0)
+    return (view.deliveries[0] as { extensionStatus: unknown }).extensionStatus
+  }
+  {
+    await using server = await runningServer([...script, ...script], { home })
+    const client = await RawClient.connect(server.home.socket)
+    const conversation = await start(client)
+    const view = client.subscribe({ conversation })
+    await submit(client, conversation, "read it")
+    await view.until(settled)
+    expect(await statusIn(client, conversation)).toEqual({ lines: "first" })
+
+    writeFileSync(join(home.extensions, "lines.ts"), statusSaying("second"))
+    expect((await client.call("extensions/reload")).result).toEqual([
+      { name: "lines", path: join(home.extensions, "lines.ts"), state: "loaded" },
+    ])
+    expect(await statusIn(client, conversation)).toEqual({})
+    await submit(client, conversation, "read it again")
+    await view.until(ended(2))
+    expect(await statusIn(client, conversation)).toEqual({ lines: "second" })
+    client.close()
+  }
+  rmSync(join(home.extensions, "lines.ts"))
+  {
+    await using server = await runningServer([], { home })
+    const client = await RawClient.connect(server.home.socket)
+    const [conversation] = (await client.call("conversation/list")).result
+    expect(await statusIn(client, conversation.id)).toEqual({})
+    client.close()
+  }
+  rmSync(home.dir, { recursive: true })
 })

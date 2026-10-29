@@ -1,4 +1,4 @@
-import type { AuthState, ModelSelection, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
+import type { AuthState, ExtensionInfo, ModelSelection, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
 import { useTerminalDimensions } from "@opentui/solid"
 import { For, Show } from "solid-js"
 import { color, KeyCap } from "./theme.tsx"
@@ -18,11 +18,17 @@ export interface Picker {
 
 export interface SetupView {
   providers: Array<ProviderSnapshot>
+  brokenExtensions: Array<ExtensionInfo>
   signIn: AuthState | undefined
   picker: Picker | undefined
 }
 
-export const emptySetup = (): SetupView => ({ providers: [], signIn: undefined, picker: undefined })
+export const emptySetup = (): SetupView => ({
+  providers: [],
+  brokenExtensions: [],
+  signIn: undefined,
+  picker: undefined,
+})
 
 export const modelLabel = (model: ModelSelection) =>
   [model.provider, model.model, model.effort].filter((part) => part !== undefined).join(" · ")

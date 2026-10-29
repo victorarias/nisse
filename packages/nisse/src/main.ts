@@ -2,7 +2,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option, Schedule } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
-import type { UnknownProvider } from "@nisse/protocol"
+import type { ExtensionInfo, UnknownProvider } from "@nisse/protocol"
 import { Client, clientLayer, ServerFailed, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, type Home } from "./home.ts"
@@ -173,6 +173,44 @@ const logoutCommand = Command.make(
   }),
 ).pipe(Command.withDescription("Sign out of a provider"))
 
+const showExtensions = (home: Home, extensions: ReadonlyArray<ExtensionInfo>) =>
+  Effect.gen(function* () {
+    if (extensions.length === 0) return yield* Console.log(`no extensions in ${home.extensions}`)
+    for (const extension of extensions) {
+      yield* Console.log(
+        [extension.name, extension.state, extension.path, ...(extension.message ? [extension.message] : [])].join("  "),
+      )
+    }
+    if (extensions.some((extension) => extension.state === "failed")) process.exitCode = 1
+  })
+
+const reloadExtensionsCommand = Command.make(
+  "reload",
+  {},
+  Effect.fn(function* () {
+    const home = defaultHome()
+    yield* Effect.gen(function* () {
+      const client = yield* Client
+      yield* showExtensions(home, yield* client["extensions/reload"]())
+    }).pipe(withClient(home), Effect.scoped)
+  }),
+).pipe(Command.withDescription("Load every extension again from disk, with its options from config.toml"))
+
+const extensionsCommand = Command.make(
+  "extensions",
+  {},
+  Effect.fn(function* () {
+    const home = defaultHome()
+    yield* Effect.gen(function* () {
+      const client = yield* Client
+      yield* showExtensions(home, yield* client["extensions/list"]())
+    }).pipe(withClient(home), Effect.scoped)
+  }),
+).pipe(
+  Command.withDescription("List the home's extensions, and why any failed to load"),
+  Command.withSubcommands([reloadExtensionsCommand]),
+)
+
 const schemaCommand = Command.make(
   "schema",
   {},
@@ -205,7 +243,7 @@ const nisse = Command.make(
   }),
 ).pipe(
   Command.withDescription("A durable, multiplayer coding agent"),
-  Command.withSubcommands([serveCommand, execCommand, loginCommand, logoutCommand, schemaCommand]),
+  Command.withSubcommands([serveCommand, execCommand, loginCommand, logoutCommand, extensionsCommand, schemaCommand]),
 )
 
 nisse.pipe(

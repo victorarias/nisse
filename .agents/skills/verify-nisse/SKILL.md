@@ -96,7 +96,10 @@ to settle and stops it, and the next client starts one on the new code.
   over `^L  sign in`; a sign-in shows in the `SIGN IN · <provider>` panel over
   `esc  cancel`; the model list is the `MODEL` panel, whose chosen row ends in
   `‹ <effort> ›`; a switch shows as `◆ <name> switched to <provider> · <model> · <effort>`,
-  and the status bar ends with the conversation's model.
+  and the status bar ends with the conversation's model. An extension's
+  status line shows as `<name>: <text>` after the status word, its toast as
+  `◆ <name>: <text>` in the transcript, and one that failed to load as
+  `✗ extension <name> failed to load: <why>` over the prompt.
 - **CLI.** `drive.ts r1 nisse <args>` runs `nisse` against the run's home and
   records the command, stdout, stderr and exit code.
   It gives `nisse` no terminal; a command that reads one, such as
@@ -105,8 +108,8 @@ to settle and stops it, and the next client starts one on the new code.
   `initialize`, `conversation/start`, `conversation/list`,
   `conversation/submit`, `conversation/interrupt`, `approval/resolve`,
   `conversation/select_model`, `skills/list`, `providers/list`,
-  `models/list`, `auth/start`, `auth/respond`, `auth/cancel`, `auth/logout`
-  and `server/stop`.
+  `models/list`, `auth/start`, `auth/respond`, `auth/cancel`, `auth/logout`,
+  `extensions/list`, `extensions/reload` and `server/stop`.
   `drive.ts r1 watch <conversation>` subscribes as a second client and prints
   each delivery as one JSON line: the snapshot first, then each commit.
   `--submit <text>` submits as `ada` once the snapshot is in, so nothing races;
