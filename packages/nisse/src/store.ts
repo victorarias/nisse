@@ -217,15 +217,15 @@ export class Store extends Context.Service<
         const treeSeq = db.query<{ seq: number | null }, [string, string]>(
           "SELECT max(seq) AS seq FROM commits WHERE conversation IN (SELECT id FROM conversations WHERE id = ? OR root = ?)",
         )
-        const lastSaid = db.query<{ body: string }, [string]>(
-          "SELECT body FROM entries WHERE conversation = ? AND body ->> '$.body._tag' = 'message' ORDER BY seq DESC, rowid DESC LIMIT 1",
+        const saidBefore = db.query<{ body: string }, [string, string]>(
+          "SELECT body FROM entries WHERE conversation = ? AND body ->> '$.body._tag' = 'message' AND rowid < (SELECT rowid FROM entries WHERE id = ?) ORDER BY rowid DESC LIMIT 1",
         )
-        const lastEnd = db.query<{ body: string }, [string]>(
-          "SELECT body FROM entries WHERE conversation = ? AND body ->> '$.body._tag' = 'run_end' ORDER BY seq DESC, rowid DESC LIMIT 1",
+        const lastEnd = db.query<{ id: string; body: string }, [string]>(
+          "SELECT id, body FROM entries WHERE conversation = ? AND body ->> '$.body._tag' = 'run_end' ORDER BY rowid DESC LIMIT 1",
         )
 
-        const endedOf = (conversation: string, end: RunEnd): RunEnded => {
-          const said = lastSaid.get(conversation)
+        const endedOf = (conversation: string, endId: string, end: RunEnd): RunEnded => {
+          const said = saidBefore.get(conversation, endId)
           return {
             outcome: end.outcome,
             ...(end.message === undefined ? {} : { message: end.message }),
@@ -237,7 +237,7 @@ export class Store extends Context.Service<
           const end = lastEnd.get(row.id)
           return {
             ...toConversation(row),
-            ...(end ? { ended: endedOf(row.id, (JSON.parse(end.body) as { body: RunEnd }).body) } : {}),
+            ...(end ? { ended: endedOf(row.id, end.id, (JSON.parse(end.body) as { body: RunEnd }).body) } : {}),
           }
         }
 
@@ -374,7 +374,8 @@ export class Store extends Context.Service<
           statuses.includes("waiting") ? "waiting" : statuses.includes("working") ? "working" : "idle"
 
         const treeOf = (commit: Commit): TreeStatus | undefined => {
-          const end = commit.entries.find((entry) => entry.body._tag === "run_end")?.body
+          const endEntry = commit.entries.find((entry) => entry.body._tag === "run_end")
+          const end = endEntry?.body
           if (commit.status === undefined && end === undefined) return undefined
           const row = conversationRow.get(commit.conversation)
           if (!row) return undefined
@@ -389,7 +390,7 @@ export class Store extends Context.Service<
             conversation: root,
             seq: commit.seq,
             status,
-            ...(ended ? { ended: endedOf(root, ended) } : {}),
+            ...(ended && endEntry ? { ended: endedOf(root, endEntry.id, ended) } : {}),
           }
         }
 
