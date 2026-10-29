@@ -48,6 +48,10 @@ export interface Turn {
   readonly providerState: unknown
   readonly providerSeq: number
   readonly tools: ReadonlyArray<Tool>
+  readonly addedTools: ReadonlyArray<Tool>
+  readonly removedTools: ReadonlyArray<string>
+  readonly before: (call: Call) => Effect.Effect<Call | { readonly refused: string }>
+  readonly after: (call: Call, outcome: ToolOutcome, changeable: boolean) => Effect.Effect<ToolOutcome>
   readonly say: (text: string) => Effect.Effect<void>
   readonly message: (text: string, saved?: Saved) => Effect.Effect<void>
   readonly runTool: (call: Call, tool?: Tool) => Effect.Effect<ToolOutcome>

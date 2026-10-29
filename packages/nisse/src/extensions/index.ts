@@ -30,6 +30,12 @@ interface Registered<A> {
 
 type Hook<Name extends keyof ToolHooks> = (event: ToolHooks[Name]) => Effect.Effect<void, ToolFailures[Name]>
 
+export interface ToolSet {
+  readonly tools: ReadonlyArray<Tool>
+  readonly added: ReadonlyArray<Tool>
+  readonly removed: ReadonlyArray<string>
+}
+
 interface Loaded {
   readonly infos: ReadonlyArray<ExtensionInfo>
   readonly scopes: ReadonlyArray<Scope.Closeable>
@@ -68,9 +74,14 @@ export class Extensions extends Context.Service<
   {
     readonly list: Effect.Effect<ReadonlyArray<ExtensionInfo>>
     readonly reload: Effect.Effect<ReadonlyArray<ExtensionInfo>>
-    readonly tools: (conversation: Conversation, base: ReadonlyArray<Tool>) => Effect.Effect<ReadonlyArray<Tool>>
+    readonly tools: (conversation: Conversation, base: ReadonlyArray<Tool>) => Effect.Effect<ToolSet>
     readonly before: (conversation: Conversation, call: Call) => Effect.Effect<Call | { readonly refused: string }>
-    readonly after: (conversation: Conversation, call: Call, outcome: ToolOutcome) => Effect.Effect<ToolOutcome>
+    readonly after: (
+      conversation: Conversation,
+      call: Call,
+      outcome: ToolOutcome,
+      changeable: boolean,
+    ) => Effect.Effect<ToolOutcome>
   }
 >()("nisse/Extensions") {
   static readonly layer = (home: Home) =>
@@ -232,11 +243,15 @@ export class Extensions extends Context.Service<
           tools: (conversation, base) =>
             Effect.gen(function* () {
               let tools = [...base]
+              let added = new Set<string>()
+              let removed = new Set<string>()
               const editor: ToolEditor = {
                 list: () => tools,
                 get: (name) => tools.find((tool) => tool.spec.name === name),
                 add: (tool) => {
                   tools = [...tools.filter((other) => other.spec.name !== tool.spec.name), tool]
+                  added.add(tool.spec.name)
+                  removed.delete(tool.spec.name)
                 },
                 update: (name, edit) => {
                   tools = tools.map((tool) => {
@@ -252,14 +267,18 @@ export class Extensions extends Context.Service<
                 },
                 remove: (name) => {
                   tools = tools.filter((tool) => tool.spec.name !== name)
+                  added.delete(name)
+                  removed.add(name)
                 },
               }
               for (const transform of [...current.transforms]) {
-                const before = tools
+                const before = { tools, added: new Set(added), removed: new Set(removed) }
                 try {
                   transform.value(editor)
                 } catch (error) {
-                  tools = before
+                  tools = before.tools
+                  added = before.added
+                  removed = before.removed
                   yield* toast(
                     conversation.id,
                     transform.extension,
@@ -267,7 +286,11 @@ export class Extensions extends Context.Service<
                   )
                 }
               }
-              return tools
+              return {
+                tools,
+                added: tools.filter((tool) => added.has(tool.spec.name)),
+                removed: [...removed],
+              }
             }),
           before: (conversation, call) =>
             Effect.gen(function* () {
@@ -278,7 +301,7 @@ export class Extensions extends Context.Service<
                   conversation: handle(conversation, registered.extension, loaded),
                   call: call.call,
                   tool: call.tool,
-                  input,
+                  input: structuredClone(input),
                 }
                 const exit = yield* runHook(
                   conversation.id,
@@ -294,9 +317,9 @@ export class Extensions extends Context.Service<
                 }
                 input = event.input
               }
-              return { ...call, input }
+              return JSON.stringify(input) === JSON.stringify(call.input) ? call : { ...call, input }
             }),
-          after: (conversation, call, outcome) =>
+          after: (conversation, call, outcome, changeable) =>
             Effect.gen(function* () {
               let shown = outcome
               const loaded = current
@@ -314,8 +337,16 @@ export class Extensions extends Context.Service<
                   "execute.after",
                   Effect.suspend(() => registered.value(event)),
                 )
-                if (Exit.isSuccess(exit))
-                  shown = { output: String(event.outcome.output), error: event.outcome.error === true }
+                if (Exit.isFailure(exit)) continue
+                const changed = { output: String(event.outcome.output), error: event.outcome.error === true }
+                if (changeable) shown = changed
+                else if (changed.output !== shown.output || changed.error !== shown.error) {
+                  yield* toast(
+                    conversation.id,
+                    registered.extension,
+                    `execute.after changed ${call.tool}'s result, but Claude Code keeps its own tools' results`,
+                  )
+                }
               }
               return shown
             }),

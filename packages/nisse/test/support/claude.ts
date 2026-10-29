@@ -71,8 +71,21 @@ export class FakeClaude {
 
   permissionAnswers() {
     return this.log()
-      .filter((entry) => entry.received?.type === "control_response")
+      .filter((entry) => entry.answered === "can_use_tool")
       .map((entry) => entry.received.response.response)
+  }
+
+  hookAnswers() {
+    return this.log()
+      .filter((entry) => entry.answered === "hook_callback")
+      .map((entry) => entry.received.response.response.hookSpecificOutput)
+      .filter((output) => output !== undefined)
+  }
+
+  mcpAnswers() {
+    return this.log()
+      .filter((entry) => entry.answered === "mcp_message")
+      .map((entry) => entry.received.response.response.mcp_response)
   }
 
   [Symbol.dispose]() {

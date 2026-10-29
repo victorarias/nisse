@@ -114,6 +114,9 @@ const receive = async (wanted: (frame: any) => boolean) => {
 }
 
 const skippedHooks = new Set<string>()
+const hookRequests = new Set<string>()
+const callbacks = new Map<string, string>()
+const asked = new Map<string, string>()
 for (const step of segments[spawn] ?? []) {
   const frame = step.frame
   if (step.type === "expect_outbound") {
@@ -121,6 +124,8 @@ for (const step of segments[spawn] ?? []) {
       const request = await receive((f) => f.type === "control_request" && f.request?.subtype === "initialize")
       bind(request.request_id)
       log({ initialize: request.request })
+      for (const [event, matchers] of Object.entries<any>(request.request.hooks ?? {}))
+        callbacks.set(event, matchers[0].hookCallbackIds[0])
     } else if (frame.type === "control_request") {
       const request = await receive((f) => f.type === "control_request" && f.request?.subtype === frame.request.subtype)
       bind(request.request_id)
@@ -131,14 +136,22 @@ for (const step of segments[spawn] ?? []) {
       log({ received: message })
     } else if (frame.type === "control_response") {
       if (skippedHooks.has(frame.response.request_id)) continue
-      log({ received: await receive((f) => f.type === "control_response") })
+      const answering = substitute(frame).response.request_id
+      log({
+        received: await receive((f) => f.type === "control_response" && f.response?.request_id === answering),
+        answered: asked.get(answering),
+      })
     }
   } else if (step.type === "emit_inbound") {
+    if (frame.type === "control_request") asked.set(frame.request_id, frame.request.subtype)
     if (frame.type === "control_request" && frame.request?.subtype === "hook_callback") {
-      skippedHooks.add(frame.request_id)
+      hookRequests.add(frame.request_id)
+      const callback = callbacks.get(frame.request.input.hook_event_name)
+      if (callback === undefined) skippedHooks.add(frame.request_id)
+      else write(substitute({ ...frame, request: { ...frame.request, callback_id: callback } }))
       continue
     }
-    if (frame.type === "control_response" && skippedHooks.has(frame.response?.request_id)) continue
+    if (frame.type === "control_response" && hookRequests.has(frame.response?.request_id)) continue
     write(substitute(frame))
   }
 }
