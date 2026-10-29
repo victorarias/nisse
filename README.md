@@ -266,8 +266,9 @@ export default Extension.define((ctx) =>
 - `[extensions.<name>]` in `config.toml` is the extension's `ctx.options`, and
   `enabled = false` there skips it. An extension has 10 seconds to load; one
   that fails is listed with why, and the TUI shows it when it opens.
-- `nisse extensions reload` unloads every extension, clears their status
-  lines, and loads them again from disk. Restarting the server clears them
+- `nisse extensions reload` loads every extension again from disk. The ones
+  loaded keep running until their replacements are ready; then they are
+  unloaded and their status lines cleared. Restarting the server clears them
   too, so a line never outlives the code that set it.
 
 On Claude, Claude Code runs its own tools and nisse's hooks don't reach them

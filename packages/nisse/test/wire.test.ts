@@ -1044,3 +1044,43 @@ test("reloading runs the extensions as they are now, and no status outlives the 
   }
   rmSync(home.dir, { recursive: true })
 })
+
+const refusingAfter = (reason: string, loadsOnceExists = "") => `import { Extension, Tool } from "@nisse/extension"
+import { existsSync } from "node:fs"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  Effect.gen(function* () {
+    while (${JSON.stringify(loadsOnceExists)} !== "" && !existsSync(${JSON.stringify(loadsOnceExists)})) yield* Effect.sleep("10 millis")
+    yield* ctx.tool.hook("execute.before", () => Tool.refuse("${reason}"))
+  }),
+)`
+
+test("while extensions reload, the loaded ones keep guarding calls until their replacements are ready", async () => {
+  const home = homeWithExtensions({ "guard.ts": refusingAfter("the old guard says no") })
+  const script = [{ tool: { name: "Bash", input: { command: "echo hi" } } }, { text: "done" }]
+  await using server = await runningServer([...script, ...script], { home })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, { approvals: "auto" })
+  const view = client.subscribe({ conversation })
+  const refusals = () => bodies(view.deliveries).flatMap((body) => (body._tag === "tool_result" ? [body.output] : []))
+
+  const ready = join(home.dir, "new-guard-ready")
+  writeFileSync(join(home.extensions, "guard.ts"), refusingAfter("the new guard says no", ready))
+  const reloading = client.call("extensions/reload")
+  await submit(client, conversation, "say hi")
+  await view.until(settled)
+  expect(refusals()).toEqual(["guard refused this call: the old guard says no"])
+
+  writeFileSync(ready, "")
+  expect((await reloading).result).toEqual([
+    { name: "guard", path: join(home.extensions, "guard.ts"), state: "loaded" },
+  ])
+  await submit(client, conversation, "say hi again")
+  await view.until(ended(2))
+  expect(refusals()).toEqual([
+    "guard refused this call: the old guard says no",
+    "guard refused this call: the new guard says no",
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})

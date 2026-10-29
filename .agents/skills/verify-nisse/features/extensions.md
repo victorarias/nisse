@@ -34,9 +34,10 @@ yet.
   `extensionStatus` in a snapshot and in the commit that changes it.
 - `toast` is a `toast` entry `{ extension, text }`, drawn as
   `◆ <name>: <text>` in the TUI and printed to stderr by `nisse exec`.
-- `reload` (`nisse extensions reload` or `extensions/reload`) unloads every
-  extension, clears every status line, and loads them again from disk. A
-  server start clears every status line before loading.
+- `reload` (`nisse extensions reload` or `extensions/reload`) loads every
+  extension again from disk while the loaded ones keep guarding calls, then
+  swaps them in, clears every status line and unloads the old ones. A server
+  start clears every status line before loading.
 
 ## How to get to it (user POV)
 

@@ -3,6 +3,7 @@ import { Effect, Semaphore } from "effect"
 import { rmSync } from "node:fs"
 import { ProviderError, type Call, type Driver, type Health, type Turn } from "../../provider.ts"
 import { catalog, CLIENT_VERSION } from "./catalog.ts"
+import { ApplyPatch } from "./code-mode/apply-patch.ts"
 import {
   CELL,
   codeModeRun,
@@ -385,6 +386,7 @@ export const openAiDriver = Effect.fnUntraced(function* (options: OpenAiOptions)
     signInMethods: ["browser", "device_code"],
     skills: (cwd) => skillsFor(cwd, options.home),
     agentTypes: (cwd) => agentTypes(cwd, options.claudeConfig),
+    tools: (conversation) => (models.wantsCodeMode(conversation.model.model ?? MODEL) ? [ApplyPatch] : []),
     signIn: (method, flow) =>
       Effect.gen(function* () {
         const credentials = yield* signIn(

@@ -77,9 +77,13 @@ export interface Driver {
   readonly signOut: Effect.Effect<void, ProviderError>
   readonly skills: (cwd: string) => ReadonlyArray<Skill>
   readonly agentTypes: (cwd: string) => ReadonlyArray<AgentType>
+  readonly tools: (conversation: Conversation) => ReadonlyArray<Tool>
 }
 
-export const noSkills = { skills: () => [], agentTypes: () => [] } satisfies Pick<Driver, "skills" | "agentTypes">
+export const nothingOfItsOwn = { skills: () => [], agentTypes: () => [], tools: () => [] } satisfies Pick<
+  Driver,
+  "skills" | "agentTypes" | "tools"
+>
 
 export const nothingToSignIn = {
   signInMethods: [],

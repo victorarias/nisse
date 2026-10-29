@@ -5,7 +5,7 @@ import { Effect, Fiber, FiberSet, Queue } from "effect"
 import type { Call, Turn } from "../../../provider.ts"
 import { failed, interrupted, type Tool, type ToolOutcome } from "../../../tools/tool.ts"
 import { Host, NoRunningCell, type Delegated, type HostConnection, type Runtime } from "./host.ts"
-import { definition, nestedCall, nestedTools, section } from "./nested.ts"
+import { definition, nestedCall, section } from "./nested.ts"
 
 export const EXEC = "exec"
 export const WAIT = "wait"
@@ -66,8 +66,8 @@ export const codeModeTools = (tools: ReadonlyArray<Tool>): ReadonlyArray<unknown
     type: "custom",
     name: EXEC,
     description: [
-      EXEC_DESCRIPTION.replace("{{ first_tool }}", nestedTools(tools)[0]?.spec.name ?? "name"),
-      ...nestedTools(tools).map(section),
+      EXEC_DESCRIPTION.replace("{{ first_tool }}", tools[0]?.spec.name ?? "name"),
+      ...tools.map(section),
     ].join("\n\n"),
     format: { type: "grammar", syntax: "lark", definition: EXEC_GRAMMAR },
   },
@@ -166,7 +166,7 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 
 export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: string, turn: Turn) {
   const conversation = turn.conversation.id
-  const tools = nestedTools(turn.tools)
+
   let starting: CallId | undefined
 
   const delegated = yield* Queue.unbounded<Delegated>()
@@ -177,7 +177,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
     Effect.gen(function* () {
       const parent = (call.script as CallId | undefined) ?? starting
       if (parent === undefined) return call.answer({ error: "no exec call started this cell" })
-      const resolved = nestedCall(tools, call.tool, call.input)
+      const resolved = nestedCall(turn.tools, call.tool, call.input)
       if ("error" in resolved) return call.answer({ error: resolved.error })
       const outcome = yield* turn.runTool(
         {
@@ -284,7 +284,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       starting = call.call
       return connection
         .execute(conversation, call.call, {
-          enabled_tools: tools.map(definition),
+          enabled_tools: turn.tools.map(definition),
           source: pragma.source,
           yield_time_ms: pragma.yieldTimeMs ?? DEFAULT_YIELD_TIME_MS,
           max_output_tokens: pragma.maxOutputTokens ?? null,

@@ -24,9 +24,13 @@ const conversationWith = async (
     codeModeHost?: string
     cwd?: (home: string) => string
     instructions?: string
+    home?: ReturnType<typeof tempHome>
   } = {},
 ) => {
-  const server = await runningServer([], { openai: fake.options(undefined, options.codeModeHost) })
+  const server = await runningServer([], {
+    openai: fake.options(undefined, options.codeModeHost),
+    ...(options.home === undefined ? {} : { home: options.home }),
+  })
   if (options.signedIn ?? true) await signIn(server.home)
   const client = await RawClient.connect(server.home.socket)
   const conversation = (
@@ -674,6 +678,25 @@ withCodeModeHost("a code-mode model is offered exec and wait, with nisse's tools
     expect(tools[0].description).toContain(declared)
   expect(tools[0].description).toContain("apply_patch(input: string)")
   expect(tools[0].description).toContain("  // The shell command to run.\n  command: string;")
+})
+
+withCodeModeHost("a tool an extension removes is gone from a code-mode model's exec too", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("code_mode_script")
+  const home = tempHome()
+  mkdirSync(home.extensions, { recursive: true })
+  writeFileSync(
+    join(home.extensions, "no-patches.ts"),
+    `import { Extension } from "@nisse/extension"
+export default Extension.define((ctx) => ctx.tool.transform((tools) => tools.remove("apply_patch")))`,
+  )
+  await using session = await conversationWith(fake, { ...inCodeMode, home })
+  await session.submit("what does echo say?")
+  await session.view.until(settled(1))
+  const exec = JSON.parse(fake.responses()[0]!.body).tools[0]
+  expect(exec.description).toContain("Bash(args: {")
+  expect(exec.description).not.toContain("apply_patch")
+  rmSync(home.dir, { recursive: true })
 })
 
 withCodeModeHost(

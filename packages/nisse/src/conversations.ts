@@ -286,6 +286,7 @@ export class Conversations extends Context.Service<
 
         const tools = yield* extensions.tools(conversation, [
           ...builtinTools,
+          ...driver.tools(conversation),
           ...agentTools(agentContext(conversation, driver)),
         ])
 

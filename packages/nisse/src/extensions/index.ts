@@ -30,6 +30,13 @@ interface Registered<A> {
 
 type Hook<Name extends keyof ToolHooks> = (event: ToolHooks[Name]) => Effect.Effect<void, ToolFailures[Name]>
 
+interface Loaded {
+  readonly infos: ReadonlyArray<ExtensionInfo>
+  readonly scopes: ReadonlyArray<Scope.Closeable>
+  readonly transforms: Array<Registered<(tools: ToolEditor) => void>>
+  readonly hooks: { readonly [Name in keyof ToolHooks]: Array<Registered<Hook<Name>>> }
+}
+
 interface Found {
   readonly name: string
   readonly path: string
@@ -72,13 +79,6 @@ export class Extensions extends Context.Service<
       Effect.gen(function* () {
         serveSharedModules()
         const store = yield* Store
-        let infos: ReadonlyArray<ExtensionInfo> = []
-        let scopes: ReadonlyArray<Scope.Closeable> = []
-        const transforms: Array<Registered<(tools: ToolEditor) => void>> = []
-        const hooks: { readonly [Name in keyof ToolHooks]: Array<Registered<Hook<Name>>> } = {
-          "execute.before": [],
-          "execute.after": [],
-        }
 
         const register = <A>(list: Array<Registered<A>>, entry: Registered<A>) =>
           Effect.andThen(
@@ -123,7 +123,7 @@ export class Extensions extends Context.Service<
               }),
           )
 
-        const load = (scope: Scope.Closeable, extension: Found, options: Record<string, unknown>) =>
+        const load = (into: Loaded, scope: Scope.Closeable, extension: Found, options: Record<string, unknown>) =>
           Effect.gen(function* () {
             const module = yield* Effect.tryPromise(() => import(extension.path))
             const define = module.default as Extension | undefined
@@ -134,9 +134,12 @@ export class Extensions extends Context.Service<
               name: extension.name,
               options,
               tool: {
-                transform: (edit) => register(transforms, { extension: extension.name, value: edit }),
+                transform: (edit) => register(into.transforms, { extension: extension.name, value: edit }),
                 hook: (name, run) =>
-                  register(hooks[name] as Array<Registered<typeof run>>, { extension: extension.name, value: run }),
+                  register(into.hooks[name] as Array<Registered<typeof run>>, {
+                    extension: extension.name,
+                    value: run,
+                  }),
               },
             })
           }).pipe(Effect.timeout(LOAD_LIMIT), Scope.provide(scope))
@@ -146,6 +149,12 @@ export class Extensions extends Context.Service<
           const config = yield* Effect.result(readHomeConfig(home.dir))
           const loaded: Array<ExtensionInfo> = []
           const opened: Array<Scope.Closeable> = []
+          const next: Loaded = {
+            infos: loaded,
+            scopes: opened,
+            transforms: [],
+            hooks: { "execute.before": [], "execute.after": [] },
+          }
           for (const extension of found(home.extensions)) {
             const info = { name: extension.name, path: extension.path }
             if (config._tag === "Failure") {
@@ -168,7 +177,7 @@ export class Extensions extends Context.Service<
               continue
             }
             const scope = yield* Scope.make()
-            const exit = yield* Effect.exit(load(scope, extension, options))
+            const exit = yield* Effect.exit(load(next, scope, extension, options))
             if (Exit.isSuccess(exit)) {
               opened.push(scope)
               loaded.push({ ...info, state: "loaded" })
@@ -177,20 +186,15 @@ export class Extensions extends Context.Service<
               loaded.push({ ...info, state: "failed", message: reason(exit.cause) })
             }
           }
-          infos = loaded
-          scopes = opened
-          return loaded
+          return next
         })
 
-        const unloadAll = Effect.suspend(() => {
-          const closing = scopes
-          scopes = []
-          return Effect.forEach(closing, (scope) => Scope.close(scope, Exit.void), { discard: true })
-        })
+        const unload = (loaded: Loaded) =>
+          Effect.forEach(loaded.scopes, (scope) => Scope.close(scope, Exit.void), { discard: true })
 
         yield* clearStatus
-        yield* loadAll
-        yield* Effect.addFinalizer(() => unloadAll)
+        let current = yield* loadAll
+        yield* Effect.addFinalizer(() => Effect.suspend(() => unload(current)))
 
         const hookFailed = (
           conversation: ConversationId,
@@ -214,11 +218,14 @@ export class Extensions extends Context.Service<
           )
 
         return Extensions.of({
-          list: Effect.sync(() => infos),
+          list: Effect.sync(() => current.infos),
           reload: Effect.gen(function* () {
-            yield* unloadAll
+            const next = yield* loadAll
+            const previous = current
+            current = next
             yield* clearStatus
-            return yield* loadAll
+            yield* unload(previous)
+            return next.infos
           }),
           tools: (conversation, base) =>
             Effect.gen(function* () {
@@ -245,7 +252,7 @@ export class Extensions extends Context.Service<
                   tools = tools.filter((tool) => tool.spec.name !== name)
                 },
               }
-              for (const transform of [...transforms]) {
+              for (const transform of [...current.transforms]) {
                 const before = tools
                 try {
                   transform.value(editor)
@@ -263,7 +270,7 @@ export class Extensions extends Context.Service<
           before: (conversation, call) =>
             Effect.gen(function* () {
               let input = call.input
-              for (const registered of [...hooks["execute.before"]]) {
+              for (const registered of [...current.hooks["execute.before"]]) {
                 const event: ToolCall = {
                   conversation: handle(conversation, registered.extension),
                   call: call.call,
@@ -289,7 +296,7 @@ export class Extensions extends Context.Service<
           after: (conversation, call, outcome) =>
             Effect.gen(function* () {
               let shown = outcome
-              for (const registered of [...hooks["execute.after"]]) {
+              for (const registered of [...current.hooks["execute.after"]]) {
                 const event: ToolResult = {
                   conversation: handle(conversation, registered.extension),
                   call: call.call,
