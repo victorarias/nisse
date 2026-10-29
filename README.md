@@ -27,7 +27,9 @@ R5, subagents. What runs today:
 - Built-in tools: `Read`, `Write`, `Edit`, `Bash`, `Grep` and `Glob`. Calls
   that change things wait for a person to allow them, unless the conversation
   was started with `--auto`. Any client can answer; the first answer counts.
-  A command's output streams live while it runs.
+  A command's output streams live while it runs, with
+  `NISSE_ROOT_CONVERSATION` set to the id of the conversation people started,
+  in a subagent too.
 - Steering: a prompt sent mid-run with `steer` reaches the model at its next
   step instead of waiting for the run to end.
 - Crash recovery. A run the server's crash cut off resumes when the server
@@ -59,7 +61,10 @@ R5, subagents. What runs today:
   next run. Switching providers keeps the conversation: OpenAI is sent the
   whole transcript, and a new Claude Code session is told the first prompt and
   as much of the newest history as fits in about 64,000 characters.
-- Instructions and skills. Claude Code reads its own `CLAUDE.md` files and
+- Instructions and skills. A conversation can start with instructions of its
+  own (`--instructions`), which its subagents don't get: Claude Code appends
+  them to its own system prompt, and OpenAI is told them after the
+  `AGENTS.md` files. Claude Code reads its own `CLAUDE.md` files and
   skills. OpenAI is told `NISSE_HOME/AGENTS.md`, then the `AGENTS.md` (or
   `AGENTS.override.md`) of each folder from the repository's root down to the
   conversation's directory, up to 32 KiB, and the skills it can use: each
@@ -80,6 +85,7 @@ bun packages/nisse/src/main.ts                       # the TUI, in this director
 bun packages/nisse/src/main.ts --auto                # a conversation that runs calls without asking
 bun packages/nisse/src/main.ts --provider openai     # a conversation with ChatGPT instead of Claude
 bun packages/nisse/src/main.ts --model opus --effort high
+bun packages/nisse/src/main.ts --instructions 'Answer in Swedish.'
 bun packages/nisse/src/main.ts login openai          # sign in; --device-code to enter a code on any device
 bun packages/nisse/src/main.ts logout openai
 bun packages/nisse/src/main.ts --conversation <id>   # reopen a conversation, or start one with that id
@@ -124,7 +130,8 @@ browser, which calls back to port 1455; a browser on another machine can't, so
 paste the address it ends on into the prompt, or sign in with a device code.
 Over SSH, the TUI and `login` use a device code.
 
-A new conversation takes `--provider`, `--model` and `--effort`. Otherwise it
+A new conversation takes `--provider`, `--model`, `--effort` and
+`--instructions`. Otherwise it
 takes `default_model` from the nearest `.nisse/config.toml` above its
 directory, then from `NISSE_HOME/config.toml`, then the model chosen last, then
 Claude. Claude's models are the ones Claude Code offers; OpenAI's come from

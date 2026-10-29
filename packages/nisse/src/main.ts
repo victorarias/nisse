@@ -42,18 +42,31 @@ const effortFlag = Flag.String("effort").pipe(
   Flag.optional,
 )
 
-const startFlags = { auto: autoFlag, provider: providerFlag, model: modelFlag, effort: effortFlag }
+const instructionsFlag = Flag.String("instructions").pipe(
+  Flag.withDescription("Start the conversation with these instructions for the model, beside its own"),
+  Flag.optional,
+)
+
+const startFlags = {
+  auto: autoFlag,
+  provider: providerFlag,
+  model: modelFlag,
+  effort: effortFlag,
+  instructions: instructionsFlag,
+}
 
 const startWith = (flags: {
   readonly auto: boolean
   readonly provider: Option.Option<string>
   readonly model: Option.Option<string>
   readonly effort: Option.Option<string>
+  readonly instructions: Option.Option<string>
 }): StartOptions => ({
   ...(flags.auto ? { approvals: "auto" as const } : {}),
   ...Option.match(flags.provider, { onNone: () => ({}), onSome: (provider) => ({ provider }) }),
   ...Option.match(flags.model, { onNone: () => ({}), onSome: (model) => ({ model }) }),
   ...Option.match(flags.effort, { onNone: () => ({}), onSome: (effort) => ({ effort }) }),
+  ...Option.match(flags.instructions, { onNone: () => ({}), onSome: (instructions) => ({ instructions }) }),
 })
 
 const withClient =

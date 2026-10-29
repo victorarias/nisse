@@ -23,6 +23,7 @@ const conversationWith = async (
     model?: string
     codeModeHost?: string
     cwd?: (home: string) => string
+    instructions?: string
   } = {},
 ) => {
   const server = await runningServer([], { openai: fake.options(undefined, options.codeModeHost) })
@@ -34,6 +35,7 @@ const conversationWith = async (
       provider: "openai",
       ...(options.model === undefined ? {} : { model: options.model }),
       approvals: options.approvals ?? "auto",
+      ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
     })
   ).result.id as string
   const view = client.subscribe({ conversation })
@@ -548,6 +550,19 @@ test("ChatGPT is told the AGENTS.md files from home to the working directory, an
     `- review: Nearer review (file: ${join(app, ".claude", "skills", "review", "SKILL.md")})`,
   )
   expect(instructions).toContain("- ship: Ship it carefully")
+})
+
+test("ChatGPT is told the instructions its conversation started with, after the AGENTS.md files", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, { cwd: project, instructions: "Report with attn when done." })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+
+  const { instructions } = JSON.parse(fake.responses()[0]!.body)
+  expect(instructions.indexOf("Report with attn when done.")).toBeGreaterThan(
+    instructions.indexOf("App override rules."),
+  )
 })
 
 test("a skill named in a message comes with it, for the model and for everyone watching", async () => {

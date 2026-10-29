@@ -111,6 +111,10 @@ const toV5 = (db: Database) => {
   db.run("ALTER TABLE submissions ADD COLUMN mail TEXT")
 }
 
+const toV6 = (db: Database) => {
+  db.run("ALTER TABLE conversations ADD COLUMN instructions TEXT")
+}
+
 const migrations: Array<(db: Database) => void> = [
   (db) => {
     for (const statement of v1) db.run(statement)
@@ -119,6 +123,7 @@ const migrations: Array<(db: Database) => void> = [
   toV3,
   toV4,
   toV5,
+  toV6,
 ]
 
 export const migrate = (db: Database) => {

@@ -54,6 +54,7 @@ const instructionsFor = (options: OpenAiOptions, conversation: Conversation) => 
   for (const file of agentsMd(cwd, options.home)) {
     text += `\n# AGENTS.md instructions from ${file.path}\n\n${file.text.trimEnd()}\n`
   }
+  if (conversation.instructions !== undefined) text += `\n${conversation.instructions.trimEnd()}\n`
   const skills = skillsFor(cwd, options.home)
   if (skills.length > 0) {
     text += `\n${SKILLS}${skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.path})\n`).join("")}`

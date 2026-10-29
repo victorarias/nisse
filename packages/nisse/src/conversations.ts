@@ -26,7 +26,7 @@ import { attachedSkills } from "./workspace.ts"
 import { Lifetime } from "./lifetime.ts"
 import { Providers, type Call, type Driver, type Hosted, type HostedChild, type Saved, type Turn } from "./provider.ts"
 import { Store, type Change, type NewEntry } from "./store.ts"
-import { builtinTools, type ToolOutcome } from "./tools/index.ts"
+import { builtinTools, toolEnv, type ToolOutcome } from "./tools/index.ts"
 import { interrupted } from "./tools/tool.ts"
 
 const LIVE_WINDOW = "100 millis"
@@ -105,6 +105,7 @@ export interface StartOptions {
   readonly model?: string
   readonly effort?: string
   readonly approvals?: Approvals
+  readonly instructions?: string
 }
 
 export class Conversations extends Context.Service<
@@ -288,11 +289,13 @@ export class Conversations extends Context.Service<
             yield* flush
             const { effort: _, ...model } = conversation.model
             const started = store.start(conversation.cwd, model, conversation.approvals, {
-              parent: id,
-              root: conversation.lineage?.root ?? id,
-              call: child.call,
-              title: child.title,
-              ...(child.agentType === undefined ? {} : { agentType: child.agentType }),
+              lineage: {
+                parent: id,
+                root: conversation.lineage?.root ?? id,
+                call: child.call,
+                title: child.title,
+                ...(child.agentType === undefined ? {} : { agentType: child.agentType }),
+              },
             })
             store.commit(id, { entries: [subagentEntry(child.call, started.id, child.title, child.agentType)] })
             store.commit(started.id, {
@@ -373,6 +376,7 @@ export class Conversations extends Context.Service<
                       call: call.call,
                       ...(call.parent === undefined ? {} : { parent: call.parent }),
                       cwd: conversation.cwd,
+                      env: toolEnv(conversation),
                       output: (text) =>
                         text === "" ? Effect.void : live({ _tag: "output", call: call.call, append: text }),
                     })
@@ -609,7 +613,7 @@ export class Conversations extends Context.Service<
             ...(child.agentType === undefined ? {} : { agentType: child.agentType }),
             ...(child.forkedAt === undefined ? {} : { forkedAt: child.forkedAt }),
           }
-          const started = store.start(parent.cwd, child.model, parent.approvals, lineage)
+          const started = store.start(parent.cwd, child.model, parent.approvals, { lineage })
           store.commit(parent.id, {
             entries: [subagentEntry(child.call, started.id, child.title, child.agentType)],
           })
@@ -711,7 +715,12 @@ export class Conversations extends Context.Service<
             if (!providers.drivers.has(model.provider)) {
               return Effect.fail(new UnknownProvider({ provider: model.provider }))
             }
-            return Effect.succeed(store.start(cwd, model, options.approvals ?? "ask", undefined, options.id))
+            return Effect.succeed(
+              store.start(cwd, model, options.approvals ?? "ask", {
+                ...(options.id === undefined ? {} : { id: options.id }),
+                ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+              }),
+            )
           }),
         selectModel: (conversation, author, selection) =>
           Effect.gen(function* () {

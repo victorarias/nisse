@@ -22,6 +22,8 @@ conversation was started with `--auto`, which runs every call without asking.
   `--auto`, from the TUI or `exec`.
 - `approval-interrupt` expires a waiting approval when the run is
   interrupted.
+- `tool-root-env` runs every command with `NISSE_ROOT_CONVERSATION` set to the
+  id of the conversation people started, in a subagent too.
 
 ## How to get to it (user POV)
 
@@ -70,6 +72,11 @@ Preconditions:
   `drive.ts r tui start --auto`, send `check it`, and
   `drive.ts r tui wait 'all done'`: the call shows `approved` and the screen
   never asks.
+- **Root conversation.** In a fresh run whose script is
+  `[{"tool": {"name": "Bash", "input": {"command": "echo root=$NISSE_ROOT_CONVERSATION"}}}, {"text": "all done"}]`,
+  run `drive.ts r nisse exec --auto 'which conversation?'`, take the id from
+  `drive.ts r rpc conversation/list`, then `drive.ts r watch <id> --save root-env`:
+  the `tool_result` is `root=<id>`.
 - **Wire.** In a fresh run, run `drive.ts r serve`, start a conversation with
   `rpc conversation/start '{"cwd": "/tmp"}'`, and run
   `drive.ts r watch <id> --submit 'check it' --until run_end --timeout 30000 --save wire &`.

@@ -1,4 +1,4 @@
-import type { CallId } from "@nisse/protocol"
+import type { CallId, Conversation } from "@nisse/protocol"
 import { Effect, Schema } from "effect"
 
 export interface ToolOutcome {
@@ -10,6 +10,7 @@ export interface ToolContext {
   readonly call: CallId
   readonly parent?: CallId
   readonly cwd: string
+  readonly env: Readonly<Record<string, string>>
   readonly output: (text: string) => Effect.Effect<void>
 }
 
@@ -24,6 +25,10 @@ export interface Tool {
   readonly readOnly: boolean
   readonly run: (input: unknown, context: ToolContext) => Effect.Effect<ToolOutcome>
 }
+
+export const toolEnv = (conversation: Conversation): Record<string, string> => ({
+  NISSE_ROOT_CONVERSATION: conversation.lineage?.root ?? conversation.id,
+})
 
 export const ok = (output: string): ToolOutcome => ({ output, error: false })
 export const failed = (output: string): ToolOutcome => ({ output, error: true })

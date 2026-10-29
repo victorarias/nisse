@@ -8,6 +8,7 @@ import {
 import type { CallId, Entry } from "@nisse/protocol"
 import { tmpdir } from "node:os"
 import { Deferred, Effect, Semaphore, type Scope } from "effect"
+import { toolEnv } from "../../tools/index.ts"
 import { noSkills, ProviderError, type Call, type Driver, type Hosted, type Saved, type Turn } from "../../provider.ts"
 import { Inbox } from "./inbox.ts"
 import { probe, type Probed } from "./probe.ts"
@@ -236,7 +237,12 @@ export const claudeDriver = (options: ClaudeOptions): Driver => {
           canUseTool,
           settingSources: ["user", "project", "local"],
           extraArgs: { ...extraArgs(options.args ?? []), "replay-user-messages": null },
-          env: { ...process.env, ...env, CLAUDE_AGENT_SDK_CLIENT_APP: "nisse" },
+          systemPrompt: {
+            type: "preset",
+            preset: "claude_code",
+            ...(turn.conversation.instructions === undefined ? {} : { append: turn.conversation.instructions }),
+          },
+          env: { ...process.env, ...env, ...toolEnv(turn.conversation), CLAUDE_AGENT_SDK_CLIENT_APP: "nisse" },
           ...(turn.conversation.model.model ? { model: turn.conversation.model.model } : {}),
           ...(turn.conversation.model.effort ? { effort: turn.conversation.model.effort as EffortLevel } : {}),
           ...(start._tag === "resume"
