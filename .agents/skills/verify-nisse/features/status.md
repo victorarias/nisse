@@ -1,0 +1,56 @@
+# Status and chosen ids
+
+A client can follow every conversation people started without reading its
+transcript: `status/watch` lists the trees that are busy, then reports each
+commit that changes a tree's status or ends its root's run, with how that run
+ended and what the model said last. A client can also choose a new
+conversation's id, and starting with an id that exists answers with that
+conversation. attn uses both to run Nisse sessions.
+
+## Sub-features
+
+- `status-snapshot` opens with every tree that is not idle; the rest are idle.
+- `status-follow` reports `working`, `waiting` and `idle` for each tree, in
+  `seq` order.
+- `status-subagent` shows a subagent waiting on a person as its whole tree
+  `waiting`.
+- `status-ended` carries the outcome of the root's run and its last message.
+- `start-with-id` starts a conversation with a chosen id, and answers a second
+  start with that id with the first conversation.
+
+## How to get to it (user POV)
+
+- Call `status/watch`, a stream.
+- Call `conversation/start` with `id`.
+
+## Driving it with drive.ts
+
+Preconditions:
+
+- A fresh run with `--script` steps that spawn a subagent which writes a file:
+  `[{"tool": {"name": "spawn_agent", "input": {"task_name": "writer", "message": "go"}}}, {"tool": {"name": "wait_agent", "input": {"timeout_ms": 600000}}}, {"agent": "/root/writer", "tool": {"name": "Write", "input": {"file_path": "/tmp/nisse-verify/r/note.txt", "content": "hi"}}}]`.
+
+- **Chosen id.** Run
+  `drive.ts r rpc conversation/start '{"id": "11111111-1111-4111-8111-111111111111", "cwd": "/tmp"}'`,
+  then the same call with `"cwd": "/elsewhere"`. Both answer with the same
+  conversation, whose `cwd` is `/tmp`.
+- **Follow.** In one shell run
+  `drive.ts r watch-status 11111111-1111-4111-8111-111111111111 --until waiting --save status`.
+  In another, run
+  `drive.ts r watch 11111111-1111-4111-8111-111111111111 --submit "write a note" --until subagent`.
+  The first opens with `{"_tag":"trees","trees":[]}`, then prints the tree
+  `working`, then `waiting` once the subagent asks.
+- **Snapshot.** While it waits, run `drive.ts r watch-status`: its first line
+  lists the tree as `waiting`.
+- **Ended.** Run
+  `drive.ts r rpc conversation/interrupt '{"conversation": "11111111-1111-4111-8111-111111111111"}'`
+  while `drive.ts r watch-status 11111111-1111-4111-8111-111111111111 --until idle`
+  runs. One line carries `"ended":{"outcome":"interrupted"}`, the last is
+  `idle`, and none in between is `working`.
+
+## Gotchas
+
+- A tree's status changes only when the commit changes it; a subagent that
+  starts working inside a working tree reports nothing.
+- `ended` belongs to the root's own run. A subagent's run ending never carries
+  it.

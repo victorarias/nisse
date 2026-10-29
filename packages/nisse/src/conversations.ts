@@ -100,6 +100,7 @@ const danglingIn = (transcript: ReadonlyArray<Entry>) => {
 }
 
 export interface StartOptions {
+  readonly id?: ConversationId
   readonly provider?: string
   readonly model?: string
   readonly effort?: string
@@ -266,14 +267,17 @@ export class Conversations extends Context.Service<
               approval: { id: approval, call: call.call },
               status: "waiting",
             })
-            const settled = Effect.sync(() => {
+            const withdrawn = Effect.sync(() => {
               waiting.delete(approval)
               openApprovals.delete(approval)
-              if (openApprovals.size === 0) store.commit(id, { status: "working" })
             })
+            const answeredAll = Effect.andThen(
+              withdrawn,
+              Effect.sync(() => (openApprovals.size === 0 ? void store.commit(id, { status: "working" }) : undefined)),
+            )
             return yield* Deferred.await(answered).pipe(
-              Effect.onInterrupt(() => Effect.andThen(expire(id, [approval]), settled)),
-              Effect.tap(() => settled),
+              Effect.onInterrupt(() => Effect.andThen(expire(id, [approval]), withdrawn)),
+              Effect.tap(() => answeredAll),
             )
           })
 
@@ -701,11 +705,13 @@ export class Conversations extends Context.Service<
       return Conversations.of({
         start: (cwd, options) =>
           Effect.suspend(() => {
+            const existing = options.id === undefined ? undefined : store.find(options.id)
+            if (existing) return Effect.succeed(existing)
             const model = chosenModel(cwd, options)
             if (!providers.drivers.has(model.provider)) {
               return Effect.fail(new UnknownProvider({ provider: model.provider }))
             }
-            return Effect.succeed(store.start(cwd, model, options.approvals ?? "ask"))
+            return Effect.succeed(store.start(cwd, model, options.approvals ?? "ask", undefined, options.id))
           }),
         selectModel: (conversation, author, selection) =>
           Effect.gen(function* () {

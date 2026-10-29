@@ -687,3 +687,72 @@ test("a follow-up task does not wake an idle subagent while the tree runs as man
   expect(bodies(aView.deliveries).filter((body) => body._tag === "run_end")).toHaveLength(1)
   client.close()
 })
+
+test("starting a conversation with an id it already has answers with that conversation", async () => {
+  await using server = await runningServer([])
+  const client = await RawClient.connect(server.home.socket)
+  const id = crypto.randomUUID()
+  const first = (await client.call("conversation/start", { id, cwd: "/work", approvals: "auto" })).result
+  const again = (await client.call("conversation/start", { id, cwd: "/elsewhere" })).result
+  expect(first).toMatchObject({ id, cwd: "/work", approvals: "auto" })
+  expect(again).toEqual(first)
+  const listed = (await client.call("conversation/list")).result as Array<{ id: string }>
+  expect(listed.filter((conversation) => conversation.id === id)).toHaveLength(1)
+  client.close()
+})
+
+type Tree = { _tag: "tree"; conversation: string; seq: number; status: string; ended?: Record<string, string> }
+type Trees = { _tag: "trees"; seq: number; trees: Array<Tree> } | Tree
+
+const treesOf = (items: ReadonlyArray<Trees>, conversation: string) =>
+  items.filter((item): item is Tree => item._tag === "tree" && item.conversation === conversation)
+
+test("watching status follows each run of a tree and says how it ended", async () => {
+  await using server = await runningServer([{ text: "all done" }])
+  const client = await RawClient.connect(server.home.socket)
+  const watch = client.watch<Trees>("status/watch")
+  await watch.until((items) => items.length > 0)
+  expect(watch.items[0]).toMatchObject({ _tag: "trees", trees: [] })
+  const conversation = await start(client)
+  await submit(client, conversation, "go")
+  await watch.until((items) => treesOf(items, conversation).some((tree) => tree.ended))
+
+  const seen = treesOf(watch.items, conversation)
+  expect(seen.map(({ status, ended }) => ({ status, ended }))).toEqual([
+    { status: "working", ended: undefined },
+    { status: "idle", ended: { outcome: "answered", said: "all done" } },
+  ])
+  expect(seen[1]!.seq).toBeGreaterThan(seen[0]!.seq)
+  client.close()
+})
+
+test("a subagent waiting on a person shows as its whole tree waiting, to watchers then and later", async () => {
+  const cwd = workdir()
+  await using server = await runningServer([
+    spawnStep("writer"),
+    waitStep,
+    { agent: "/root/writer", ...writeCall(`${cwd}/note.txt`, "hi") },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const watch = client.watch<Trees>("status/watch")
+  const conversation = await start(client, { cwd })
+  await submit(client, conversation, "have someone write a note")
+  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "waiting")
+
+  const late = await RawClient.connect(server.home.socket)
+  const lateWatch = late.watch<Trees>("status/watch")
+  await lateWatch.until((items) => items.length > 0)
+  expect(lateWatch.items[0]).toMatchObject({
+    _tag: "trees",
+    trees: [{ _tag: "tree", conversation, status: "waiting" }],
+  })
+  expect(treesOf(watch.items, conversation).map((tree) => tree.status)).toEqual(["working", "waiting"])
+  await client.call("conversation/interrupt", { conversation })
+  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "idle")
+  const afterInterrupt = treesOf(watch.items, conversation).slice(2)
+  expect(afterInterrupt.map((tree) => tree.status)).not.toContain("working")
+  expect(afterInterrupt.find((tree) => tree.ended)?.ended).toEqual({ outcome: "interrupted" })
+  client.close()
+  late.close()
+  rmSync(cwd, { recursive: true })
+})
