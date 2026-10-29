@@ -40,7 +40,7 @@ const log = (entry: unknown) =>
     join(dir, "log.ndjson"),
     `${JSON.stringify(probe ? { probe: spawn, ...(entry as object) } : { spawn, ...(entry as object) })}\n`,
   )
-log({ argv })
+log({ argv, rootConversation: process.env.NISSE_ROOT_CONVERSATION })
 
 const segments: Array<Array<any>> = []
 let playing = false
@@ -120,6 +120,7 @@ for (const step of segments[spawn] ?? []) {
     if (frame.type === "control_request" && frame.request?.subtype === "initialize") {
       const request = await receive((f) => f.type === "control_request" && f.request?.subtype === "initialize")
       bind(request.request_id)
+      log({ initialize: request.request })
     } else if (frame.type === "control_request") {
       const request = await receive((f) => f.type === "control_request" && f.request?.subtype === frame.request.subtype)
       bind(request.request_id)

@@ -34,6 +34,12 @@ scripted conversations list none and carry none.
   placed; editing the file later changes later messages only.
 - `skills-tui` shows `with <name>, <name>` under the message in every TUI and
   after a reopen.
+- `start-instructions` keeps the instructions a conversation started with
+  (`--instructions`, or `instructions` on `conversation/start`) on the
+  conversation, for every client to see; a subagent starts without them.
+  Claude Code appends them to its own system prompt, and ChatGPT is told them
+  after the `AGENTS.md` files. Only a signed-in run shows the model taking
+  them.
 - `agents-md` tells ChatGPT `NISSE_HOME/AGENTS.md`, then the `AGENTS.md` (or
   `AGENTS.override.md` instead) of each folder from the repository's root down
   to the conversation's directory, up to 32 KiB in all, then the skill list.
@@ -50,6 +56,8 @@ scripted conversations list none and carry none.
 - In an OpenAI conversation, type a message that starts with `/name` or holds
   `$name`, in the TUI, `nisse exec` or `conversation/submit`.
 - Call `skills/list` with `{"conversation": "<id>"}`.
+- Run `nisse --instructions '<text>'` or `nisse exec --instructions '<text>'`,
+  or call `conversation/start` with `"instructions"`.
 - The TUI has no skill completion or listing; `skills/list` is the list.
 
 ## Driving it with drive.ts
@@ -106,6 +114,11 @@ Preconditions:
   `with verify-nisse, maintain-verification-skill`, then the failure. Take the
   id from `drive.ts r tui stop`; `tui start --conversation <id>` and
   `tui wait 'with verify-nisse'` show it again.
+- **Start instructions.** Run
+  `drive.ts r nisse exec --instructions 'Answer in Swedish.' hello`, then
+  `drive.ts r rpc conversation/list`: the conversation `exec` printed has
+  `"instructions": "Answer in Swedish."`. With a ChatGPT sign-in and
+  `--provider openai`, the answer is in Swedish.
 - **Instructions, signed in.** Write `Always end a reply with the word heron.`
   to `/tmp/nisse-verify/r/home/AGENTS.md` and `The code word is egret.` to
   `/tmp/nisse-verify/r/project/AGENTS.md`, then

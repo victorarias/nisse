@@ -51,6 +51,7 @@ export const Bash = tool({
       Effect.sync(() =>
         Bun.spawn(["sh", "-c", input.command], {
           cwd: context.cwd,
+          env: { ...process.env, ...context.env },
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",

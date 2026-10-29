@@ -17,6 +17,7 @@ interface StartWith {
   readonly provider?: string
   readonly model?: string
   readonly effort?: string
+  readonly instructions?: string
 }
 
 const conversationWith = async (claude: FakeClaude, options: StartWith & ServerOptions = {}) => {
@@ -29,6 +30,7 @@ const conversationWith = async (claude: FakeClaude, options: StartWith & ServerO
       approvals: options.approvals ?? "ask",
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
+      ...(options.instructions ? { instructions: options.instructions } : {}),
     })
   ).result.id as string
   const view = client.subscribe({ conversation })
@@ -68,6 +70,17 @@ test("Claude's answer through Claude Code is committed as nisse's message", asyn
     { _tag: "run_end", outcome: "answered" },
   ])
   expect(claude.userTexts()).toEqual([["Reply with exactly: fixture text ok"]])
+})
+
+test("Claude Code keeps its own system prompt, adds the conversation's instructions, and its commands know the conversation", async () => {
+  using claude = new FakeClaude("text")
+  await using session = await conversationWith(claude, { instructions: "Report with attn when done." })
+  await session.submit("Reply with exactly: fixture text ok")
+  await session.view.until(settled(1))
+  const initialize = claude.log().find((entry) => entry.initialize)?.initialize
+  expect(initialize.systemPrompt).toBeUndefined()
+  expect(initialize.appendSystemPrompt).toBe("Report with attn when done.")
+  expect(claude.log().find((entry) => entry.argv)?.rootConversation).toBe(session.conversation)
 })
 
 test("a command Claude wants to run waits for a person, and Claude Code hears the answer", async () => {

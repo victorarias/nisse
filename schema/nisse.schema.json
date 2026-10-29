@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nisse protocol",
-  "protocol": 5,
+  "protocol": 6,
   "methods": {
     "initialize": {
       "params": {
@@ -75,6 +75,10 @@
               "ask",
               "auto"
             ]
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Instructions the model follows in this conversation, beside its own. Its subagents don't get them."
           }
         },
         "required": [
@@ -162,6 +166,10 @@
             ],
             "additionalProperties": true,
             "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
+          },
+          "instructions": {
+            "type": "string",
+            "description": "What the client that started it asked the model to follow, beside its own."
           }
         },
         "required": [
@@ -264,6 +272,10 @@
               ],
               "additionalProperties": true,
               "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
+            },
+            "instructions": {
+              "type": "string",
+              "description": "What the client that started it asked the model to follow, beside its own."
             }
           },
           "required": [
@@ -390,6 +402,10 @@
                     ],
                     "additionalProperties": true,
                     "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "description": "What the client that started it asked the model to follow, beside its own."
                   }
                 },
                 "required": [

@@ -8,3 +8,4 @@ export const builtinTools: ReadonlyArray<Tool> = [Read, Write, Edit, Bash, Grep,
 export const toolNamed = (name: string) => builtinTools.find((tool) => tool.spec.name === name)
 
 export type { Tool, ToolContext, ToolOutcome, ToolSpec } from "./tool.ts"
+export { toolEnv } from "./tool.ts"

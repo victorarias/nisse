@@ -65,6 +65,12 @@ export interface ConversationState {
 
 const SUBSCRIBER_QUEUE = 4096
 
+export interface Origin {
+  readonly lineage?: Lineage
+  readonly id?: ConversationId
+  readonly instructions?: string
+}
+
 interface ConversationRow {
   id: string
   cwd: string
@@ -77,6 +83,7 @@ interface ConversationRow {
   provider_state: string | null
   provider_seq: number
   lineage: string | null
+  instructions: string | null
 }
 
 interface SubmissionRow {
@@ -94,6 +101,7 @@ const toConversation = (row: ConversationRow): Conversation => ({
   model: JSON.parse(row.model) as ModelSelection,
   approvals: row.approvals,
   ...(row.lineage === null ? {} : { lineage: JSON.parse(row.lineage) as Lineage }),
+  ...(row.instructions === null ? {} : { instructions: row.instructions }),
 })
 
 const toQueued = (row: SubmissionRow): Queued => ({
@@ -134,13 +142,7 @@ const applyLive = (live: Live, changes: ReadonlyArray<LiveChange>): Live => {
 export class Store extends Context.Service<
   Store,
   {
-    readonly start: (
-      cwd: string,
-      model: ModelSelection,
-      approvals: Approvals,
-      lineage?: Lineage,
-      id?: ConversationId,
-    ) => Conversation
+    readonly start: (cwd: string, model: ModelSelection, approvals: Approvals, origin?: Origin) => Conversation
     readonly find: (conversation: ConversationId) => Conversation | undefined
     readonly family: (root: ConversationId) => ReadonlyArray<ConversationState>
     readonly lastModel: () => ModelSelection | undefined
@@ -421,10 +423,10 @@ export class Store extends Context.Service<
           })
 
         return Store.of({
-          start: (cwd, model, approvals, lineage, id = newId() as ConversationId) => {
+          start: (cwd, model, approvals, { lineage, id = newId() as ConversationId, instructions } = {}) => {
             const now = Date.now()
             db.run(
-              "INSERT INTO conversations (id, cwd, created_at, model, model_at, approvals, live, lineage, root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO conversations (id, cwd, created_at, model, model_at, approvals, live, lineage, root, instructions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               [
                 id,
                 cwd,
@@ -435,6 +437,7 @@ export class Store extends Context.Service<
                 JSON.stringify({ text: "", output: {} }),
                 lineage === undefined ? null : JSON.stringify(lineage),
                 lineage?.root ?? null,
+                instructions ?? null,
               ],
             )
             return toConversation(conversationRow.get(id)!)

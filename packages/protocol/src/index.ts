@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import * as Rpc from "effect/rpc/Rpc"
 import * as RpcGroup from "effect/rpc/RpcGroup"
 
-export const PROTOCOL_VERSION = 5
+export const PROTOCOL_VERSION = 6
 
 export const ConversationId = Schema.String.pipe(Schema.brand("ConversationId"))
 export type ConversationId = typeof ConversationId.Type
@@ -146,6 +146,11 @@ export const Conversation = Schema.Struct({
   model: ModelSelection,
   approvals: Approvals,
   lineage: Schema.optionalKey(Lineage),
+  instructions: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "What the client that started it asked the model to follow, beside its own.",
+    }),
+  ),
 })
 export type Conversation = typeof Conversation.Type
 
@@ -272,6 +277,12 @@ export const StartConversation = Rpc.make("conversation/start", {
     model: Schema.optionalKey(Schema.String),
     effort: Schema.optionalKey(Schema.String),
     approvals: Schema.optionalKey(Approvals),
+    instructions: Schema.optionalKey(
+      Schema.String.annotate({
+        description:
+          "Instructions the model follows in this conversation, beside its own. Its subagents don't get them.",
+      }),
+    ),
   },
   success: Conversation,
   error: UnknownProvider,

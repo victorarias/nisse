@@ -756,3 +756,50 @@ test("a subagent waiting on a person shows as its whole tree waiting, to watcher
   late.close()
   rmSync(cwd, { recursive: true })
 })
+
+test("commands a conversation runs, its subagents' included, know the conversation people started", async () => {
+  await using server = await runningServer([
+    { tool: { name: "Bash", input: { command: 'echo "root sees $NISSE_ROOT_CONVERSATION"' } } },
+    spawnStep("helper"),
+    waitStep,
+    {
+      agent: "/root/helper",
+      tool: { name: "Bash", input: { command: 'echo "helper sees $NISSE_ROOT_CONVERSATION"' } },
+    },
+    { agent: "/root/helper", text: "done", delayMs: 100 },
+    { text: "all done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, { cwd: workdir(), approvals: "auto" })
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "go")
+  await view.until(settled)
+  const [helper] = await childrenOf(client, conversation)
+  const helperView = client.subscribe({ conversation: helper! })
+  await helperView.until(ended(1))
+  const outputs = (deliveries: ReadonlyArray<Delivery>) =>
+    bodies(deliveries).flatMap((body) => (body._tag === "tool_result" ? [body.output.trim()] : []))
+  expect(outputs(view.deliveries)).toContain(`root sees ${conversation}`)
+  expect(outputs(helperView.deliveries)).toEqual([`helper sees ${conversation}`])
+  client.close()
+})
+
+test("a conversation keeps the instructions it started with, and its subagents start without them", async () => {
+  await using server = await runningServer([
+    spawnStep("helper"),
+    waitStep,
+    { agent: "/root/helper", text: "done", delayMs: 100 },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const instructions = "Report progress with `attn` when you finish."
+  const started = (await client.call("conversation/start", { cwd: workdir(), approvals: "auto", instructions })).result
+  expect(started.instructions).toBe(instructions)
+  const view = client.subscribe({ conversation: started.id })
+  await submit(client, started.id, "go")
+  await view.until(settled)
+  const listed = (await client.call("conversation/list")).result as Array<{ id: string; instructions?: string }>
+  const [helper] = await childrenOf(client, started.id)
+  expect(listed.find((conversation) => conversation.id === started.id)?.instructions).toBe(instructions)
+  expect(listed.find((conversation) => conversation.id === helper)?.instructions).toBeUndefined()
+  client.close()
+})

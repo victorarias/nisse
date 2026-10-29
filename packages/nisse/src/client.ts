@@ -19,6 +19,7 @@ export interface StartOptions {
   readonly model?: string
   readonly effort?: string
   readonly approvals?: Approvals
+  readonly instructions?: string
 }
 
 export const startConversation = (client: Client["Service"], id: string | undefined, options: StartOptions) =>

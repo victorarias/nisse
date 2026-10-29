@@ -27,6 +27,9 @@ message.
   1 from `exec`.
 - `claude-health` lists Claude as `ready` with its account and version, and
   its models, from Claude Code itself.
+- `claude-system-prompt` keeps Claude Code's own system prompt and appends the
+  conversation's start instructions to it; Claude Code's commands see
+  `NISSE_ROOT_CONVERSATION`.
 - `claude-model` hands Claude Code the conversation's model and effort.
 - `claude-switch` retells a conversation switched to Claude to a new Claude
   Code session.
