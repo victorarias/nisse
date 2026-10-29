@@ -12,7 +12,7 @@ the `rust` branch.
 
 ## Status
 
-R7a, extensions. What runs today:
+R7b, extensions on Claude. What runs today:
 
 - One server per home, shared by every client. The TUI or `exec` starts it
   when none runs, and it exits 30 seconds after the last client leaves and the
@@ -78,8 +78,8 @@ R7a, extensions. What runs today:
 - Extensions: TypeScript files in `NISSE_HOME/extensions` that add, change
   or remove tools, hook a call before it runs and after it returns, and tell
   the people in a conversation what they do through a status line and toasts
-  that every client sees. They work on OpenAI and the scripted provider for
-  now (see below).
+  that every client sees. They work on every provider; on Claude through the
+  Agent SDK (see below).
 - The neon TUI, in OpenTUI with Solid.
 
 ## Try it
