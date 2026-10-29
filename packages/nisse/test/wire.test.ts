@@ -1084,3 +1084,41 @@ test("while extensions reload, the loaded ones keep guarding calls until their r
   client.close()
   rmSync(home.dir, { recursive: true })
 })
+
+test("a hook still running when its extension is unloaded can't bring back a status line", async () => {
+  const home = homeWithExtensions({})
+  const released = join(home.dir, "released")
+  writeFileSync(
+    join(home.extensions, "slow.ts"),
+    `import { Extension } from "@nisse/extension"
+import { existsSync } from "node:fs"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.after", (call) =>
+    Effect.gen(function* () {
+      while (!existsSync(${JSON.stringify(released)})) yield* Effect.sleep("10 millis")
+      yield* call.conversation.status("stale")
+    }),
+  ),
+)`,
+  )
+  await using server = await runningServer(
+    [{ tool: { name: "Read", input: { file_path: "/etc/hostname" } } }, { text: "done" }],
+    { home },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "read it")
+  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "tool_call"))
+
+  rmSync(join(home.extensions, "slow.ts"))
+  expect((await client.call("extensions/reload")).result).toEqual([])
+  writeFileSync(released, "")
+  await view.until(settled)
+  const late = client.subscribe({ conversation })
+  await late.until((deliveries) => deliveries.length > 0)
+  expect((late.deliveries[0] as { extensionStatus: unknown }).extensionStatus).toEqual({})
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})

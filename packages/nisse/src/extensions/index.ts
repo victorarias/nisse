@@ -91,15 +91,15 @@ export class Extensions extends Context.Service<
             ),
           )
 
-        const clearStatus = Effect.sync(() => {
+        const clearStatus = () => {
           for (const id of store.showingStatus()) {
             for (const name of Object.keys(store.extensionStatus(id))) {
               store.commit(id, { extensionStatus: { extension: name } })
             }
           }
-        })
+        }
 
-        const handle = (conversation: Conversation, extension: string): ConversationHandle => ({
+        const handle = (conversation: Conversation, extension: string, loaded: Loaded): ConversationHandle => ({
           id: conversation.id,
           cwd: conversation.cwd,
           model: conversation.model,
@@ -107,7 +107,7 @@ export class Extensions extends Context.Service<
           status: (text) =>
             Effect.sync(() => {
               const line = text === "" ? undefined : text
-              if (store.extensionStatus(conversation.id)[extension] === line) return
+              if (loaded !== current || store.extensionStatus(conversation.id)[extension] === line) return
               store.commit(conversation.id, {
                 extensionStatus: line === undefined ? { extension } : { extension, text: line },
               })
@@ -192,7 +192,7 @@ export class Extensions extends Context.Service<
         const unload = (loaded: Loaded) =>
           Effect.forEach(loaded.scopes, (scope) => Scope.close(scope, Exit.void), { discard: true })
 
-        yield* clearStatus
+        clearStatus()
         let current = yield* loadAll
         yield* Effect.addFinalizer(() => Effect.suspend(() => unload(current)))
 
@@ -222,8 +222,10 @@ export class Extensions extends Context.Service<
           reload: Effect.gen(function* () {
             const next = yield* loadAll
             const previous = current
-            current = next
-            yield* clearStatus
+            yield* Effect.sync(() => {
+              current = next
+              clearStatus()
+            })
             yield* unload(previous)
             return next.infos
           }),
@@ -270,9 +272,10 @@ export class Extensions extends Context.Service<
           before: (conversation, call) =>
             Effect.gen(function* () {
               let input = call.input
-              for (const registered of [...current.hooks["execute.before"]]) {
+              const loaded = current
+              for (const registered of [...loaded.hooks["execute.before"]]) {
                 const event: ToolCall = {
-                  conversation: handle(conversation, registered.extension),
+                  conversation: handle(conversation, registered.extension, loaded),
                   call: call.call,
                   tool: call.tool,
                   input,
@@ -296,9 +299,10 @@ export class Extensions extends Context.Service<
           after: (conversation, call, outcome) =>
             Effect.gen(function* () {
               let shown = outcome
-              for (const registered of [...current.hooks["execute.after"]]) {
+              const loaded = current
+              for (const registered of [...loaded.hooks["execute.after"]]) {
                 const event: ToolResult = {
-                  conversation: handle(conversation, registered.extension),
+                  conversation: handle(conversation, registered.extension, loaded),
                   call: call.call,
                   tool: call.tool,
                   input: call.input,
