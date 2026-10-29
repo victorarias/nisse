@@ -18,7 +18,7 @@ const IDLE_GRACE = "30 seconds"
 
 const conversationFlag = Flag.String("conversation").pipe(
   Flag.withAlias("c"),
-  Flag.withDescription("Open this conversation instead of starting a new one"),
+  Flag.withDescription("Open this conversation, starting it with this id if there is none"),
   Flag.optional,
 )
 
@@ -170,14 +170,21 @@ const schemaCommand = Command.make(
 
 const nisse = Command.make(
   "nisse",
-  { conversation: conversationFlag, ...startFlags },
-  Effect.fn(function* ({ conversation, ...flags }) {
+  {
+    prompt: Argument.String("prompt").pipe(
+      Argument.withDescription("Send this prompt once it opens"),
+      Argument.optional,
+    ),
+    conversation: conversationFlag,
+    ...startFlags,
+  },
+  Effect.fn(function* ({ prompt, conversation, ...flags }) {
     const home = defaultHome()
     const { tui } = yield* Effect.promise(async () => {
       await import("@opentui/solid/preload")
       return import("./tui/main.tsx")
     })
-    yield* tui(Option.getOrUndefined(conversation), startWith(flags)).pipe(
+    yield* tui(Option.getOrUndefined(conversation), startWith(flags), Option.getOrUndefined(prompt)).pipe(
       withClient(home),
       Effect.scoped,
       Effect.catchTag("UnknownProvider", unknownProvider),

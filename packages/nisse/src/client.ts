@@ -21,10 +21,15 @@ export interface StartOptions {
   readonly approvals?: Approvals
 }
 
-export const startConversation = (client: Client["Service"], existing: string | undefined, options: StartOptions) =>
-  existing === undefined
-    ? Effect.map(client["conversation/start"]({ cwd: process.cwd(), ...options }), (conversation) => conversation.id)
-    : Effect.succeed(existing as ConversationId)
+export const startConversation = (client: Client["Service"], id: string | undefined, options: StartOptions) =>
+  Effect.map(
+    client["conversation/start"]({
+      cwd: process.cwd(),
+      ...options,
+      ...(id === undefined ? {} : { id: id as ConversationId }),
+    }),
+    (conversation) => conversation.id,
+  )
 
 const CLOSE_GRACE = "1 second"
 

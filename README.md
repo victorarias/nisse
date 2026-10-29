@@ -82,7 +82,8 @@ bun packages/nisse/src/main.ts --provider openai     # a conversation with ChatG
 bun packages/nisse/src/main.ts --model opus --effort high
 bun packages/nisse/src/main.ts login openai          # sign in; --device-code to enter a code on any device
 bun packages/nisse/src/main.ts logout openai
-bun packages/nisse/src/main.ts --conversation <id>   # reopen a conversation
+bun packages/nisse/src/main.ts --conversation <id>   # reopen a conversation, or start one with that id
+bun packages/nisse/src/main.ts 'fix the build'       # open the TUI and send a first prompt
 bun packages/nisse/src/main.ts exec 'hello'          # one prompt, headless; exits 1 if the run fails
 bun packages/nisse/src/main.ts exec --auto 'fix it'  # exec denies calls that change things unless --auto
 bun packages/nisse/src/main.ts serve                 # the home's server in the foreground

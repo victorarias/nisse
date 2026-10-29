@@ -56,6 +56,20 @@ test("quitting prints the command that reopens the conversation", async () => {
   await second.exited
 })
 
+test("a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation", async () => {
+  const nisseHome = home()
+  const first = screenSession(["--conversation", "chosen-by-attn", "first words"], nisseEnv(nisseHome))
+  await first.waitFor((screen) => screen.includes("You said: first words"))
+  first.type("\x03")
+  await first.exited
+  expect(first.output()).toContain("nisse --conversation chosen-by-attn")
+  const second = screenSession(["--conversation", "chosen-by-attn"], nisseEnv(nisseHome))
+  const screen = await second.waitFor((screen) => screen.includes("You said: first words") && screen.includes("READY"))
+  expect(screen.split("You said: first words").length).toBe(2)
+  second.type("\x03")
+  await second.exited
+})
+
 test("escape stops nisse mid-answer and the answer shows it was interrupted", async () => {
   const nisseHome = home()
   const script = `${nisseHome.dir}/script.json`

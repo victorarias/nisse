@@ -521,9 +521,13 @@ const openRenderer = Effect.acquireRelease(
     }),
 )
 
-export const tui = Effect.fnUntraced(function* (existing: string | undefined, options: StartOptions) {
+export const tui = Effect.fnUntraced(function* (
+  id: string | undefined,
+  options: StartOptions,
+  prompt: string | undefined,
+) {
   const client = yield* Client
-  const conversation = yield* startConversation(client, existing, options)
+  const conversation = yield* startConversation(client, id, options)
   const [view, setView] = createStore(emptyView(conversation))
   const done = yield* Deferred.make<void, string>()
 
@@ -546,6 +550,15 @@ export const tui = Effect.fnUntraced(function* (existing: string | undefined, op
     Effect.catchTag("NoSuchConversation", () => Deferred.fail(done, `no conversation ${conversation}`)),
     Effect.forkScoped,
   )
+
+  if (prompt !== undefined) {
+    yield* client["conversation/submit"]({
+      conversation,
+      requestId: crypto.randomUUID(),
+      author: userName(),
+      text: prompt,
+    })
+  }
 
   const [setup, setSetup] = createStore<SetupView>(emptySetup())
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runFork(effect)

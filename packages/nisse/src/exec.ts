@@ -75,9 +75,9 @@ const onDelivery = (watch: Watch, conversation: ConversationId, submission: Subm
     if (watch.placed && !watch.outcome) show(watch, watch.live)
   })
 
-export const exec = Effect.fnUntraced(function* (prompt: string, existing: string | undefined, options: StartOptions) {
+export const exec = Effect.fnUntraced(function* (prompt: string, id: string | undefined, options: StartOptions) {
   const client = yield* Client
-  const conversation = yield* startConversation(client, existing, options)
+  const conversation = yield* startConversation(client, id, options)
   const { submission } = yield* client["conversation/submit"]({
     conversation,
     requestId: crypto.randomUUID(),
