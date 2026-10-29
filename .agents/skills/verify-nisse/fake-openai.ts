@@ -2,14 +2,15 @@
 import { appendFileSync } from "node:fs"
 import { FakeOpenAi, matches } from "../../../packages/nisse/test/support/openai.ts"
 
-const [port, log, ...fixtures] = process.argv.slice(2)
-if (!port || !log || fixtures.length === 0) {
-  console.error("usage: fake-openai.ts <port> <log.ndjson> <fixture...>")
+const [port, log, refreshes, ...fixtures] = process.argv.slice(2)
+if (!port || !log || !refreshes || fixtures.length === 0) {
+  console.error("usage: fake-openai.ts <port> <log.ndjson> <refreshes> <fixture...>")
   process.exit(1)
 }
 
 const fake = new FakeOpenAi(Number(port))
 const expected = fixtures.flatMap((fixture) => fake.play(fixture))
+for (let refresh = 1; refresh <= Number(refreshes); refresh++) fake.issueTokens(`refresh-${refresh}`, 3600)
 let answered = 0
 fake.onResponse = (body) => {
   const want = expected[answered]

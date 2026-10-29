@@ -57,12 +57,22 @@ drive.ts r1 up --fake-claude bash_allowed              # fixtures/claude/bash_al
 `--fake-openai` signs the run's home in to a fake ChatGPT that answers each
 request with the next recorded reply, and writes every request nisse sent it to
 `evidence/fake-openai.ndjson`, marked `as recorded`, `differs` (with what the
-recording expected) or `unscripted` once the replies run out. `--fake-claude`
-points nisse at a fake `claude` that plays the recording's Claude Code
-processes, one per spawn, and logs what nisse sent each to
-`evidence/fake-claude/log.ndjson`. Type what the recording's user typed: the
-fake plays its recording whatever it is sent, and `differs` or a stalled run
-means nisse sent something the recording did not expect. The fixtures'
+recording expected) or `unscripted` once the replies run out.
+`--openai-signed-out` leaves the home signed out, for sign-in journeys, and
+`--openai-refreshes N` lets the fake grant N token refreshes; without it every
+refresh is refused.
+
+Claude is always a fake unless the run says otherwise: a fake `claude` plays
+the recording's Claude Code processes, one per spawn, and logs what nisse sent
+each to `evidence/fake-claude/log.ndjson`. Without `--fake-claude` it plays
+`models`, a signed-in Claude Code that answers the probe and nothing else, so
+a scripted run never starts the `claude` on your PATH. The spawns count across
+the whole run, so a recording covers one journey: drive another in a new run.
+
+Type what the recording's user typed, in the same conversation: the fakes play
+their recordings whatever they are sent, and `differs` or a stalled run means
+nisse sent something the recording did not expect. A step that knowingly
+departs from its recording says which requests will differ. The fixtures'
 `scenario` line says what each one holds. Both fakes reach every window the run
 opens, and a run can use both, alongside a `--script`.
 
@@ -131,13 +141,18 @@ to settle and stops it, and the next client starts one on the new code.
   `conversation/select_model`, `skills/list`, `providers/list`,
   `models/list`, `auth/start`, `auth/respond`, `auth/cancel`, `auth/logout`,
   `extensions/list`, `extensions/reload` and `server/stop`.
+  `conversation/list` and `server/stop` take no params. `providers/list`,
+  `models/list` and `skills/list` take an object, at least `'{}'`.
+  `conversation/start` needs a `cwd`, and `conversation/submit` a
+  `requestId`; the schema in `schema/nisse.schema.json` has the rest.
   `drive.ts r1 watch <conversation>` subscribes as a second client and prints
   each delivery as one JSON line: the snapshot first, then each commit.
   `--submit <text>` submits as `ada` once the snapshot is in, so nothing races;
   `--until <tag>` returns once a commit carries an entry with that body tag,
   such as `run_end` or `approval`, and without it `watch` returns after a
   second with no delivery; `--since <seq>` resumes after a commit; `--save <name>`
-  keeps the lines as evidence.
+  keeps the lines as evidence. `--until` gives up after `--timeout <ms>`,
+  10 s by default, here and on `watch-auth`, `watch-status` and `tui wait`.
   `drive.ts r1 watch-auth` follows every sign-in over `auth/watch` and prints
   each state as one JSON line, the running ones first; `--until <phase>`, such
   as `waiting` or `failed`, returns once a state reaches it, and `--save` and
@@ -179,6 +194,31 @@ Proof standards:
   were not verified, rather than calling a recording proof of them.
 - When a journey cannot be driven, report it as not verified, with the command
   you tried and what was missing. Never report a different path as proof.
+
+## Real accounts
+
+The fakes prove nisse's side of the wire. A feature's `With a real account`
+section holds what only the real ChatGPT or Claude Code can show; an agent
+holding the account drives it cold, like this.
+
+- **ChatGPT.** Use a sign-in kept for verification, never the production
+  `~/.nisse`'s: a refresh in a run rotates the token, and the copy it came
+  from would stop working. Make one once: `drive.ts keep up`,
+  `drive.ts keep tui start login openai`, finish the browser or device-code
+  sign-in (that takes a person), copy `/tmp/nisse-verify/keep/home/auth/openai.json`
+  to a file of your own with mode 0600, then `drive.ts keep down`. Start each
+  run with `drive.ts r up --openai-auth <that file>`; `down` writes the
+  sign-in back when a refresh changed it. Don't drive two runs on one sign-in
+  at once.
+- **Claude.** `drive.ts r up --real-claude` runs the `claude` on your PATH
+  with your own login, as a person's nisse does, and its sessions land in your
+  Claude Code configuration.
+- **First check.** Before any step, `drive.ts r serve` and
+  `drive.ts r rpc providers/list '{}'`: the provider is `ready` and names your
+  account. Otherwise stop and report what it shows.
+- **Report** each step with its evidence, and the steps you could not drive as
+  not verified, with why. A model may word its answers differently from a
+  recipe; judge what the step says to check, not the wording.
 
 ## Cleanup
 
