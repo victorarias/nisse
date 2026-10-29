@@ -749,6 +749,25 @@ export default Extension.define((ctx) =>
   rmSync(home.dir, { recursive: true })
 })
 
+withCodeModeHost("a tool a request hook withholds is missing from a code-mode script's ALL_TOOLS too", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_all_tools")
+  const home = withExtension(
+    "focus",
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.request.hook((request) => Effect.sync(() => { request.tools = ["Read", "Bash"] })),
+)`,
+  )
+  await using session = await conversationWith(fake, { ...inCodeMode, home })
+  await session.submit("which tools can you call?")
+  await session.view.until(settled(1))
+  expectRequests(fake, expected)
+  expect(resultOf(session.view.deliveries, "call_1").output).toEndWith("Output:\nRead Bash")
+  rmSync(home.dir, { recursive: true })
+})
+
 withCodeModeHost("a tool an extension removes is gone from a code-mode model's exec too", async () => {
   await using fake = new FakeOpenAi()
   fake.play("code_mode_script")

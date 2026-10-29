@@ -275,7 +275,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       return failed(`interrupted: ${errorText(runtime.failure.cause)}; the script may or may not have taken effect`)
     })
 
-  const exec = (call: Call, startedAt: number): Effect.Effect<ToolOutcome> => {
+  const exec = (call: Call, startedAt: number, offered: ReadonlyArray<Tool>): Effect.Effect<ToolOutcome> => {
     if (typeof call.input !== "string" || call.input.trim() === "")
       return Effect.succeed(failed("exec expects raw JavaScript source text"))
     const pragma = parsePragma(call.input)
@@ -284,7 +284,7 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
       starting = call.call
       return connection
         .execute(conversation, call.call, {
-          enabled_tools: turn.tools.map(definition),
+          enabled_tools: offered.map(definition),
           source: pragma.source,
           yield_time_ms: pragma.yieldTimeMs ?? DEFAULT_YIELD_TIME_MS,
           max_output_tokens: pragma.maxOutputTokens ?? null,
@@ -310,13 +310,13 @@ export const codeModeRun = Effect.fnUntraced(function* (host: Host, program: str
     )
   }
 
-  return (call: Call) =>
+  return (call: Call, offered: ReadonlyArray<Tool>) =>
     Effect.gen(function* () {
       const startedAt = Date.now()
       yield* turn.recordCall(call)
       const outcome =
         call.tool === EXEC
-          ? yield* exec(call, startedAt)
+          ? yield* exec(call, startedAt, offered)
           : call.tool === WAIT
             ? yield* wait(call, startedAt)
             : failed(`no tool named ${call.tool}`)
