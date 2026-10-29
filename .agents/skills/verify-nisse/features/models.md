@@ -87,8 +87,9 @@ Preconditions:
   and `/model` opens on `claude · Haiku ‹ high ›`.
   `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "openai", "effort": "low"}'`
   answers `"model": {"provider": "openai", "effort": "low"}`.
-- **Chosen last.** In a fresh run, `rpc conversation/start '{"cwd": "/tmp"}'`
-  answers `{"provider": "script"}`. After a start or a switch to
+- **Chosen last.** In a fresh run, `drive.ts r serve`, then
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` answers
+  `{"provider": "script"}`. After a start or a switch to
   `{"provider": "openai", "effort": "low"}`, the same call answers that, and
   `'{"cwd": "/tmp", "effort": "high"}'` answers
   `{"provider": "openai", "effort": "high"}`. A new TUI's status bar then
@@ -99,7 +100,7 @@ Preconditions:
   `default_model = { provider = "script", effort = "low" }` to
   `/tmp/nisse-verify/r/project/.nisse/config.toml`, and make
   `/tmp/nisse-verify/r/project/src`. Run `drive.ts r serve`, then
-  `rpc conversation/start '{"cwd": "/tmp"}'`:
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`:
   `{"provider": "openai", "model": "gpt-5.5", "effort": "high"}`;
   `'{"cwd": "/tmp/nisse-verify/r/project/src"}'`:
   `{"provider": "script", "effort": "low"}`;
@@ -143,7 +144,8 @@ Preconditions:
 
 A recording proves what nisse sends; only a real provider proves it is
 understood. Follow SKILL.md's [Real accounts](../SKILL.md#real-accounts).
-Save `evidence/` with each run.
+Save `evidence/` with each run. Before a later `rpc`, if `drive.ts r doctor`
+shows `none running`, run `drive.ts r serve` again.
 
 - **To Claude.** `drive.ts r up --real-claude`. First check:
   `drive.ts r serve` and `drive.ts r rpc providers/list '{}'` list `claude`
@@ -154,8 +156,9 @@ Save `evidence/` with each run.
   `drive.ts r tui wait READY` and `drive.ts r tui screen switched`. The
   session lands in your own Claude Code configuration.
 - **To ChatGPT.** In a new run, `drive.ts r up --openai-auth <your sign-in file>`.
-  First check: `providers/list` lists `openai` as `"status": "ready"` with
-  your account. Run the same first `exec` and question, switching to
+  First check: `drive.ts r serve` and `drive.ts r rpc providers/list '{}'`
+  list `openai` as `"status": "ready"` with your account; otherwise stop and
+  report what it shows. Run the same first `exec` and question, switching to
   `{"provider": "openai", "model": "gpt-5.5"}` instead: stdout `pelican`.
   `drive.ts r rpc models/list '{}'` lists `openai`'s models as ChatGPT
   serves them today, the same slugs as

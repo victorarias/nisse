@@ -183,26 +183,44 @@ the skill's [Real accounts](../SKILL.md#real-accounts). Give every
   `drive.ts r nisse exec --provider claude-own 'Reply with one word: ok'`:
   stdout `ok`, exit 0.
 - **openai-work from a saved sign-in.** In a run made with plain
-  `drive.ts r2 up`, write the **Config** `config.toml`, then copy your
-  ChatGPT sign-in to `/tmp/nisse-verify/r2/home/auth/openai-work.json` with
-  mode 0600 (`--openai-auth` only fills `auth/openai.json`). Run
+  `drive.ts r2 up`, write `/tmp/nisse-verify/r2/home/config.toml`:
+
+  ```toml
+  [providers.openai-work]
+  driver = "openai"
+  ```
+
+  Copy your ChatGPT sign-in to
+  `/tmp/nisse-verify/r2/home/auth/openai-work.json` with mode 0600
+  (`--openai-auth` only fills `auth/openai.json`). Run
   `drive.ts r2 serve` and `drive.ts r2 rpc providers/list '{}'`:
   `openai-work` is `ready` with your account and `openai` is `signed_out`.
   `drive.ts r2 nisse exec --provider openai-work 'Reply with one word: ok'`
   prints `ok`, and `drive.ts r2 nisse exec --provider openai hi` still fails
   `not signed in to ChatGPT`. `down` does not write this file back: before
   `drive.ts r2 down`, copy it over your saved sign-in if it changed.
+
 - **openai-work sign-in (needs a person).** In that run, after
   `drive.ts r2 nisse logout openai-work`, run
-  `drive.ts r2 tui start login openai-work`; the person signs in at the
-  address it shows. `drive.ts r2 tui wait --timeout 300000 'signed in to openai-work'`
-  and `drive.ts r2 tui stop`:
+  `drive.ts r2 tui start login openai-work --device-code`; the person enters
+  the code it shows at the address it names.
+  `drive.ts r2 tui wait --timeout 300000 'signed in to openai-work'` and
+  `drive.ts r2 tui stop`:
   `signed in to openai-work as <email> · ChatGPT <plan>`, and
   `auth/openai-work.json` exists beside no `auth/openai.json`.
 - **claude-alt sign-in (needs a person).** In a run made with
-  `drive.ts r3 up --real-claude` and the **Config** `config.toml`, whose
-  `claude-alt` keeps its login in the empty `/tmp/nisse-verify/r3/claude-alt`,
-  `drive.ts r3 rpc providers/list '{}'` shows `claude-alt` `signed_out`. Run
+  `drive.ts r3 up --real-claude`, write `/tmp/nisse-verify/r3/home/config.toml`
+  before anything starts the server:
+
+  ```toml
+  [providers.claude-alt]
+  driver = "claude"
+  config_dir = "/tmp/nisse-verify/r3/claude-alt"
+  ```
+
+  Run `drive.ts r3 serve` and `drive.ts r3 rpc providers/list '{}'`:
+  `claude-alt` is `signed_out`, its login kept in the empty
+  `/tmp/nisse-verify/r3/claude-alt`. Run
   `drive.ts r3 tui start login claude-alt`; the person finishes Claude Code's
   sign-in. `drive.ts r3 tui stop` shows `signed in to claude-alt as <account>`,
   `/tmp/nisse-verify/r3/claude-alt` holds that login, and `providers/list`

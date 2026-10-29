@@ -116,3 +116,31 @@ have taken effect`.
 - Kill only with `kill-server`, which checks the pid holds this run's home.
 - Between kills, wait for `three` to go and come back: the restarted run
   clears the live text, and a kill before the run restarts does not count.
+
+## With a real account
+
+Proves that a real Claude Code, not a recording, is resumed after the server
+dies while its subagent works. Follow the skill's
+[Real accounts](../SKILL.md#real-accounts): one run,
+`drive.ts r up --real-claude`, then `drive.ts r serve` and
+`drive.ts r rpc providers/list '{}'`: `claude` is `ready` with your account.
+Otherwise stop and report what it shows. Give every `tui wait`
+`--timeout 120000`, and keep `evidence/`. No step needs a person. The plain
+call cut off by a kill is Claude's **Cut off** step in [Claude](./claude.md#with-a-real-account).
+
+- **Subagent cut off.** Run `drive.ts r tui start --provider claude --auto`,
+  `drive.ts r tui wait READY`, then
+  `drive.ts r tui type 'Use the Task tool to start a general-purpose subagent that runs the Bash command sleep 90 and then reports done. Do not run anything yourself. If the Agent call is cut off or interrupted, do not start another subagent; reply with exactly: resumed ok'`
+  and `drive.ts r tui key Enter`. Once `drive.ts r tui wait 'sleep 90'`
+  returns and the subagent's card reads `working`, run
+  `drive.ts r tui screen before-kill` and `drive.ts r kill-server`. Then
+  `drive.ts r tui wait 'resumed ok'` and `drive.ts r tui wait READY`, and
+  `drive.ts r tui screen recovered`: the card reads `interrupted` and
+  `resumed ok` follows. `drive.ts r rpc conversation/list` shows the parent
+  `answered` with `"said": "resumed ok"` and the subagent `interrupted`;
+  `drive.ts r watch <parent>` shows a `tool_result` starting
+  `interrupted; it may or may not have taken effect`, and one `run_end` with
+  `"outcome": "answered"`; `drive.ts r watch <subagent>` ends with one
+  `run_end` with `"outcome": "interrupted"`. A new
+  `drive.ts r tui start --conversation <parent>` shows the same screen. A
+  model may word a reply differently: judge the states, not the wording.

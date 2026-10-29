@@ -28,6 +28,15 @@ and nisse commits each into a conversation of its own the same way.
 - `subagent-approve` answers a subagent's asked call with `^Y` or `^N` in the
   parent's TUI, or `approval/resolve` on the subagent's conversation. A call
   asked deeper in the tree shows on the card of the subagent above it.
+- `subagent-message` delivers a parent's `send_message` to a running subagent
+  at its next step, as a `user` entry with `"mail": {"kind": "message", ...}`
+  inside the same run; it starts no run.
+- `subagent-agents` shows the tree with `list_agents` (each agent's name and
+  `running`, `interrupted`, `completed` or `errored`), and stops one
+  subagent from its parent with `interrupt_agent`, answering its previous
+  status.
+- `subagent-root-env` runs a subagent's commands with
+  `NISSE_ROOT_CONVERSATION` set to the conversation people started.
 - `subagent-answer` hands a subagent's last message to its parent: a waiting
   `wait_agent` returns `Wait completed.`, and the message shows under a
   `/root/<name>` author in the parent's transcript; an idle parent gets it in
@@ -100,6 +109,162 @@ Preconditions:
   `wrote it` and `NISSE` says `the scribe is done`, `■ READY`.
   `drive.ts r rpc conversation/list` lists the subagent with
   `"lineage": {"parent": <the TUI's conversation>, "task": "/root/scribe", "title": "scribe", "forkedAt": <seq>, ...}`.
+
+- **Message, list and interrupt.** With this script:
+
+  ```json
+  [
+    {
+      "tool": {
+        "name": "spawn_agent",
+        "input": { "task_name": "reader", "message": "read the hostname", "fork_turns": "none" }
+      }
+    },
+    { "tool": { "name": "list_agents", "input": {} } },
+    { "tool": { "name": "send_message", "input": { "target": "reader", "message": "also say it twice" } } },
+    { "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
+    { "text": "reader reported" },
+    {
+      "agent": "/root/reader",
+      "text": "reading it now slowly",
+      "delayMs": 600,
+      "tool": { "name": "Read", "input": { "file_path": "/etc/hostname" } }
+    },
+    { "agent": "/root/reader", "text": "read it" }
+  ]
+  ```
+
+  run `drive.ts r serve`,
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "script"}'`
+  and
+  `drive.ts r watch <id> --submit delegate --until run_end --timeout 30000 --save message`:
+  `list_agents` returns
+  `{"agents":[{"agent_name":"/root","agent_status":"running"},{"agent_name":"/root/reader","agent_status":"running"}]}`,
+  `send_message` returns an empty result, `wait_agent` returns
+  `Wait completed.`, and `reader reported` ends the run.
+  `drive.ts r watch <reader id> --save reader` shows the `new_task`, the
+  `Read` call and its result, then a `user` entry `also say it twice` with
+  `"mail": {"kind": "message", ...}`, then `read it` and a `run_end`
+  `answered`: the message joined the run after its call finished.
+
+- **Interrupt one subagent from the parent.** In a fresh run, with this
+  script:
+
+  ```json
+  [
+    {
+      "tool": {
+        "name": "spawn_agent",
+        "input": { "task_name": "slowpoke", "message": "count slowly", "fork_turns": "none" }
+      }
+    },
+    { "tool": { "name": "interrupt_agent", "input": { "target": "slowpoke" } } },
+    { "tool": { "name": "list_agents", "input": {} } },
+    { "text": "stopped it" },
+    { "agent": "/root/slowpoke", "text": "one two three four five six seven eight nine ten", "delayMs": 1500 }
+  ]
+  ```
+
+  start a `script` conversation as above and run
+  `drive.ts r watch <id> --submit 'stop the slowpoke' --until run_end --save interrupt-agent`:
+  `interrupt_agent` returns `{"previous_status":"running"}`, `list_agents`
+  then lists `/root/slowpoke` as `interrupted`, and the run ends
+  `stopped it`. `drive.ts r watch <slowpoke id>` shows the `new_task` and a
+  `run_end` `interrupted`.
+
+- **Stopped from its own conversation.** With the script
+
+  ```json
+  [
+    {
+      "tool": {
+        "name": "spawn_agent",
+        "input": { "task_name": "slowpoke", "message": "count slowly", "fork_turns": "none" }
+      }
+    },
+    { "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
+    { "text": "heard back" },
+    { "agent": "/root/slowpoke", "text": "one two three four five six seven eight nine ten", "delayMs": 1500 }
+  ]
+  ```
+
+  run `drive.ts r serve`, start a `script` conversation as above, and
+  `drive.ts r watch <id> --submit count --until subagent --save own-start`.
+  Take the `conversation` of its `subagent` entry (the subagent's id) and the
+  `seq` of its last line. Open the parent with
+  `drive.ts r tui start --conversation <id>` and run
+  `drive.ts r rpc conversation/interrupt '{"conversation": "<subagent id>", "author": "ada"}'`
+  (result `null`), then
+  `drive.ts r watch <id> --since <seq> --until run_end --timeout 30000 --save own`:
+  `wait_agent` returns `Wait completed.`, a `user` entry from `/root/slowpoke`
+  with `"mail": {"kind": "final_answer", ...}` says
+  `A person interrupted this agent. If you still need it, use the available collaboration tools to give it another task.`,
+  and the parent ends `heard back`, `answered`. `drive.ts r tui wait READY`,
+  `drive.ts r tui screen own`
+  shows `⧉ slowpoke interrupted` and `READY`, and
+  `drive.ts r watch <subagent id>` ends with a `run_end` `interrupted`.
+
+- **Answered over the wire.** With the `Spawn, approve, answer` script, run
+  `drive.ts r serve`, start a `script` conversation, and
+  `drive.ts r watch <id> --submit delegate --until subagent`; take the
+  subagent's id from its `subagent` entry. Run `drive.ts r watch <subagent id> --save scribe-asking`
+  and take the `approval` id of its `approval` entry. Run
+  `drive.ts r rpc approval/resolve '{"conversation": "<subagent id>", "approval": "<approval>", "author": "bo", "allow": true}'`:
+  `"accepted": true`; the same call with `"author": "cy"` and
+  `"allow": false` answers `"accepted": false`. `drive.ts r watch <subagent id>`
+  shows the `approval_answer` by `bo`, the `tool_result` `scribbled`, then
+  `wrote it`, and `drive.ts r watch <id>` ends `the scribe is done`.
+
+- **Asked two levels down.** After `up`, write the depth to the home's config
+  before anything starts the server:
+
+  ```sh
+  printf '[agents]\nmax_depth = 2\n' > /tmp/nisse-verify/r/home/config.toml
+  ```
+
+  and use the script
+
+  ```json
+  [
+    { "tool": { "name": "spawn_agent", "input": { "task_name": "lead", "message": "get it done" } } },
+    { "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
+    { "text": "the lead is done" },
+    {
+      "agent": "/root/lead",
+      "tool": { "name": "spawn_agent", "input": { "task_name": "helper", "message": "do the thing" } }
+    },
+    { "agent": "/root/lead", "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
+    { "agent": "/root/lead", "text": "the helper is done" },
+    { "agent": "/root/lead/helper", "tool": { "name": "Bash", "input": { "command": "echo deep" } } },
+    { "agent": "/root/lead/helper", "text": "did it" }
+  ]
+  ```
+
+  `drive.ts r tui start`, wait for `READY`, type `delegate` and `Enter`, and
+  wait for `allow Bash(echo deep)?`: on the parent's screen `⧉ lead waiting on you`
+  holds `allow Bash(echo deep)?  ^Y  allow  ^N  deny`, though the call is the
+  helper's. Press `C-y` and wait for `the lead is done` and `READY`: the card
+  reads `⧉ lead done` over `the helper is done`.
+  `drive.ts r rpc conversation/list` has `"task": "/root/lead/helper"`, and
+  `drive.ts r watch <helper id>` shows the `approval`, an `approval_answer` by
+  `ada`, and the `tool_result` `deep`.
+
+- **Root conversation in a subagent.** With the script
+
+  ```json
+  [
+    { "tool": { "name": "spawn_agent", "input": { "task_name": "envy", "message": "show your root" } } },
+    { "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
+    { "text": "envy answered" },
+    { "agent": "/root/envy", "tool": { "name": "Bash", "input": { "command": "echo root=$NISSE_ROOT_CONVERSATION" } } },
+    { "agent": "/root/envy", "text": "shown", "delayMs": 1 }
+  ]
+  ```
+
+  run `drive.ts r nisse exec --auto delegate`: stdout `envy answered`. Take the
+  ids from `drive.ts r rpc conversation/list`: the subagent's `lineage` names
+  the parent as `root`. `drive.ts r watch <subagent id> --save root-env`
+  holds a `tool_result` `root=<the parent's id>`.
 
 - **Exec denies a subagent's call.** With the same script, in a fresh run,
   `drive.ts r nisse exec delegate`: exit 0, stdout `the scribe is done`,
@@ -259,6 +424,20 @@ Preconditions:
   `drive.ts r rpc conversation/submit '{"conversation": "<subagent id>", "author": "ada", "text": "hi", "requestId": "r1"}'`
   fails with `TakesNoInput`.
 
+- **Claude subagent, plain** (`--fake-claude subagent`). Send the same prompt
+  as `Claude subagent asks`, with `drive.ts r tui start --provider claude`, and wait for
+  `Under the floor.` and `READY`: `▸ Agent`, then
+  `⧉ Find gnome location in notes (general-purpose) done` over its last
+  message, and the answer. No call waits on you. `conversation/list` lists
+  the subagent with `"title": "Find gnome location in notes"` and
+  `"agentType": "general-purpose"`. `drive.ts r watch <subagent id> --save plain-sub`
+  holds the prompt, a `Read` call that ran without an `approval`, its
+  result, a `message` and a `run_end` `answered`. `drive.ts r tui stop`, then
+  `drive.ts r tui start --conversation <subagent id>` and
+  `drive.ts r tui wait 'INPUT GOES THROUGH ITS PARENT'`: the same transcript.
+  The recording's prompt and answer name the checkout it was recorded in and
+  the recorded `notes.txt` text, which the fake does not read from your disk.
+
 - **Claude subagent stopped over the wire** (`--fake-claude subagent_stopped`).
   Send the same prompt and wait for `(general-purpose) working`. Run
   `drive.ts r rpc conversation/interrupt '{"conversation": "<subagent id>", "author": "ada"}'`,
@@ -310,7 +489,10 @@ ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
   wait for `READY` and save the screen: `▸ spawn_agent(scout)`,
   `⧉ scout done` and an answer naming `found it`.
 - **Another model.** Pick a model from `drive.ts r rpc models/list '{}'` other
-  than the conversation's, then send
+  than the conversation's whose entry in `/tmp/nisse-verify/r/home/cache/openai-models.json`
+  has no `"tool_mode": "code_mode_only"`; if every other model has it, install
+  the host first with
+  `NISSE_HOME=/tmp/nisse-verify/r/home scripts/code-mode-host.sh`. Then send
   `Start a subagent named scout on the model <that id> that replies with exactly: found it. Wait for it, then tell me what it said.`:
   the subagent's conversation in `conversation/list` has
   `"model": {"provider": "openai", "model": "<that id>", ...}`.
@@ -318,6 +500,11 @@ ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
   `Give scout a follow-up task: reply with exactly: found again. Wait for it, then tell me what it said.`:
   `▸ followup_task`, the card's last message `found again`, and the same
   subagent conversation, no new one.
+- **Message and list.** Then send
+  `Send scout the message "stay put", then list your agents and tell me each one's status.`:
+  `▸ send_message`, `▸ list_agents` with `/root/scout` in its result, and a
+  `user` entry `stay put` in the subagent's conversation with
+  `"mail": {"kind": "message", ...}`.
 
 Claude, in a run made with `drive.ts r up --real-claude`:
 

@@ -92,12 +92,28 @@ Preconditions:
   so typing it stalls and fails this step today. Stop after the answer, and
   press `Escape` if you typed it.
 - **Claude, between parallel calls** (`steer_mid_message`). In a fresh run made
-  with `--fake-claude steer_mid_message`, put a `guard.ts` in
-  `/tmp/nisse-verify/<run>/home/extensions/` whose `execute.before` refuses a
-  call whose `file_path` ends with `a.txt`, with `Tool.refuse("a.txt is off limits")`,
-  and waits `Effect.sleep("10 seconds")` before a call whose `file_path` ends
-  with `b.txt`; the wait leaves time to steer between the two results. Start
-  the TUI as above and type
+  with `--fake-claude steer_mid_message`, write this extension as is to
+  `/tmp/nisse-verify/r/home/extensions/guard.ts` (`mkdir -p` the folder
+  first), before the TUI starts the server. It refuses a read of `a.txt` and
+  holds a read of `b.txt` for ten seconds, which leaves time to steer between
+  the two results:
+
+  ```ts
+  import { Extension, Tool } from "@nisse/extension"
+  import { Effect } from "effect"
+
+  export default Extension.define((ctx) =>
+    ctx.tool.hook("execute.before", (call) =>
+      Effect.gen(function* () {
+        const path = String((call.input as { file_path?: string }).file_path)
+        if (path.endsWith("a.txt")) return yield* Tool.refuse("a.txt is off limits")
+        if (path.endsWith("b.txt")) yield* Effect.sleep("10 seconds")
+      }),
+    ),
+  )
+  ```
+
+  Start the TUI as above and type
   `In a single message, call the Read tool twice in parallel: once on a.txt and once on b.txt. Then reply with both contents, separated by a comma.`.
   Wait for `guard refused this call`, press `Tab`, type
   `Also end your reply with the word BANANA.` and `Enter`, and wait
@@ -109,8 +125,10 @@ Preconditions:
   frame to `"spawn": 0`, and `watch <id>` has one
   `run_end`. The recording's hook answer says `guard: a.txt is off limits`
   where the log says `guard refused this call: a.txt is off limits`.
-  A steer typed after the sleep has no call result left to wait for, and
-  Claude Code waits for it: type it inside the ten seconds.
+  Type the steer inside the ten seconds. A steer typed once `banana` shows
+  has no call result left to travel with (see Gotchas): the recording waits
+  for it, and the run stalls at `WORKING` with `steering · Also` showing.
+
 - **OpenAI** (`steer_after_parallel_calls`). In a fresh run made with
   `drive.ts r up --fake-openai steer_after_parallel_calls`, run
   `drive.ts r tui start --provider openai`, wait for `READY`, type
@@ -129,12 +147,15 @@ Preconditions:
 ## Gotchas
 
 - A steer is placed when the model takes its next step, after the running
-  call. A run that ends before then runs the steer next, like a queued
-  prompt.
+  call: the script's next step, or ChatGPT's next request. A run that ends
+  before then runs the steer next, like a queued prompt.
 - Replace `r` in the commands with your run id.
-- A steer reaches Claude Code when a call's result arrives, and ChatGPT at its
-  next request. A steer sent after the last result of a run that then ends
-  runs next, like a queued prompt.
+- On Claude, today, a steer reaches Claude Code only with a call result that
+  arrives after it is sent. A steer sent after the run's last result waits in
+  `steering · <text>` until the run ends, and then runs next like a queued
+  prompt; pressing `Escape` on the stalled `steer_mid_message` run shows it
+  start a run of its own. What a real Claude Code does meanwhile is checked
+  in With a real account.
 - The Claude and OpenAI steps hold the run at an approval or a hook so that
   the steer lands inside the run; the fakes wait for a steer the recording
   has, whatever the timing, so a steer sent late stalls the run.
@@ -147,14 +168,25 @@ SKILL.md's "Real accounts" first, and run the first check before any step.
 
 - **Claude.** Start with `drive.ts r up --real-claude`. Run
   `drive.ts r tui start --provider claude`, wait for `READY`, and type
-  ``Run the bash command `touch steered.txt` with the Bash tool, then reply with exactly: done``.
+  ``Run the bash command `touch /tmp/nisse-verify/r/steered.txt` with the Bash tool, then reply with exactly: done``.
   At `allow this call?` press `Tab`, type
   `Also end your reply with the word BANANA.` and `Enter`, then press `C-y`.
   Wait `--timeout 120000` for `READY`. The final `message` ends with
   `BANANA`, the steer's `user` entry sits between the `tool_result` and the
   `message` in `drive.ts r watch <id> --save real-claude-steer`, and the
-  conversation has one `run_end`. `ls steered.txt` in the run's working
-  directory shows the file. Needs no person once Claude Code is signed in.
+  conversation has one `run_end`. `ls /tmp/nisse-verify/r/steered.txt` shows
+  the file. Needs no person once Claude Code is signed in.
+- **Claude, a steer after the last result.** In the same run, after
+  `drive.ts r tui stop`, run `drive.ts r tui start --provider claude --auto`,
+  wait for `READY`, and type
+  ``Run `echo hi` with the Bash tool, then write a 300-word story about a gnome.``
+  and `Enter`. Once `▸ Bash(echo hi)` shows `hi` and the status is still
+  `WORKING`, press `Tab`, type `Now reply with exactly: BANANA` and `Enter`,
+  and wait `--timeout 120000` for `READY`. Today's behaviour, which this
+  checks: the story ends the first run, the steer's `user` entry follows that
+  run's `run_end`, and a second run answers `BANANA`; `drive.ts r watch <id> --save real-claude-late-steer` shows two `run_end`s. Report what the screen and
+  the watch show if they differ: a steer folded into the story, a steer that
+  never runs, or a run that does not end.
 - **ChatGPT.** Start with `drive.ts r up --openai-auth <file>`. Run
   `drive.ts r tui start --provider openai`, wait for `READY`, and type
   ``Run `echo one` and then `echo two` with the Bash tool, one call at a time, then say what they printed.``.

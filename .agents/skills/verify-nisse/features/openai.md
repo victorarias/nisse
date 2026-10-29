@@ -174,7 +174,9 @@ a browser). Run every step in one run started with
 rotates the sign-in; `down` writes the rotated one back. First check:
 `drive.ts r serve` and `drive.ts r rpc providers/list '{}'` list `openai`
 as `"status": "ready"` with your account. Otherwise stop and report what it
-shows. Save `evidence/` and the steps' screens.
+shows. Before a later `rpc` or `watch`, if `drive.ts r doctor` shows
+`none running`, run `drive.ts r serve` again. Save `evidence/` and the
+steps' screens.
 
 - **Answer and tools.** `drive.ts r tui start --provider openai`,
   `drive.ts r tui wait READY`, and take `<id>` from the header's

@@ -2,7 +2,8 @@
 
 Most of OpenAI's models work in code mode: instead of nisse's tools they get
 `exec`, which runs a JavaScript script, and `wait`. Each call a script makes
-(`Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob` or `apply_patch`) is an
+(`Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `apply_patch` or an agent
+tool such as `spawn_agent`) is an
 ordinary nisse call under the script's own: committed with the script's call
 as its `parent`, shown as its own `▸ Tool(subject)`, and asked about when it
 changes things. The model sees only the script and what it printed. Scripts
@@ -34,12 +35,20 @@ installs; without it a code-mode run fails saying how to install it.
   `Script terminated` from `wait`, or `interrupted` when the host stops, the
   run ends or the server stops first. A script that stops before finishing,
   as its `exec` or as its `cell`, tells the model what its calls finished.
+- `code-mode-tools` gives a script, as `tools` and `ALL_TOOLS`, exactly the
+  tools its request offered: nisse's tools and the agent tools, less any an
+  extension's request hook withheld. Codex's own nested tools, such as
+  `exec_command`, are not among them: a script that calls one fails with
+  `TypeError: tools.<name> is not a function`.
 - `code-mode-approvals` asks before a nested call that changes things, with
   `allow this call?`, `^Y`, `^N` or `approval/resolve`; `exec` denies them and
   `--auto` allows them, as for any call.
 - `code-mode-host-life` starts the host on a conversation's first script,
   keeps one session per conversation so a later script can `load` what an
-  earlier one `store`d, and stops it after five idle minutes.
+  earlier one `store`d, and stops it after five idle minutes; the next
+  script starts a new one. A `wait` on a script whose host stopped answers
+  `no running cell <id>; it already finished, or the code-mode host running it stopped`,
+  even after a new host started other scripts.
 
 ## How to get to it (user POV)
 
@@ -134,6 +143,41 @@ Preconditions:
   a nested `apply_patch` `tool_call` with `"parent": "call_1"`, its result
   `Success. Updated the following files:` and `M ./notes.txt`, and
   `notes.txt` now holds `final`.
+- **Tools offered.** `drive.ts r up --fake-openai code_mode_all_tools`,
+  install the host, and before the server starts write
+  `/tmp/nisse-verify/r/home/extensions/focus.ts`, whose request hook offers
+  only `Read` and `Bash`:
+
+  ```ts
+  import { Extension } from "@nisse/extension"
+  import { Effect } from "effect"
+
+  export default Extension.define((ctx) =>
+    ctx.request.hook((request) =>
+      Effect.sync(() => {
+        request.tools = ["Read", "Bash"]
+      }),
+    ),
+  )
+  ```
+
+  Open the TUI on `gpt-6.1-sol` as for **Calls**, send
+  `which tools can you call?` and `drive.ts r tui wait 'Just those.'`,
+  `drive.ts r tui screen all-tools`: `▸ exec` with `Script completed` and
+  the output `Read Bash`, then `Just those.`. Both requests are
+  `as recorded`, and request 1's `exec` description lists only `Read` and
+  `Bash`. In a new run without `focus.ts`,
+  `drive.ts r nisse exec --provider openai --model gpt-6.1-sol 'which tools can you call?'`
+  exits 0 with `Just those.`, and request 2's `custom_tool_call_output` ends
+  `Read Write Edit Bash Grep Glob apply_patch spawn_agent send_message followup_task wait_agent list_agents interrupt_agent`.
+
+- **Codex's tools.** `drive.ts r up --fake-openai code_mode_codex_tools`,
+  install the host, open the TUI on `gpt-6.1-sol` as for **Calls**, send
+  `what does echo say?` and `drive.ts r tui wait 'It says hi.'`,
+  `drive.ts r tui screen codex-tools`: `▸ exec` with `Script failed` and
+  `TypeError: tools.exec_command is not a function`, no nested call, then
+  the recording's `It says hi.`. `watch <id>` commits one `tool_call` and
+  one `tool_result`, and both requests are `as recorded`.
 
 The script stops below share one setup, called **Stop setup** with a
 fixture: `drive.ts r up --fake-openai <fixture>`, install the host, make
@@ -202,11 +246,26 @@ and `drive.ts r tui wait READY`. Each step's requests are all `as recorded`.
   `The shell call was cut off.` and `"outcome": "answered"`. Request 3's
   `developer` note lists `- Read (done):` with the manifest and
   `- Bash (failed): interrupted; it may or may not have taken effect`.
+- **Two scripts, interrupted.** Stop setup with
+  `code_mode_two_scripts_interrupted`, the TUI open. Type
+  `read slowly while doing something else`, press `Enter`,
+  `drive.ts r tui wait 'wait(call_1)'`, `drive.ts r tui screen waiting`:
+  `▸ exec` with `Script running with cell ID call_1`, an open
+  `▸ cell(call_1)`, `▸ Read(Cargo.toml)` with the manifest, a second
+  `▸ exec` with `Script completed` and `b`, and an open `▸ wait(call_1)`,
+  status `WORKING`. `drive.ts r tui key Escape`,
+  `drive.ts r tui wait '◆ interrupted'`, `drive.ts r tui screen interrupted`:
+  `▸ cell(call_1)` and `▸ wait(call_1)` end
+  `interrupted; it may or may not have taken effect`. Send
+  `what did the first script read?` and
+  `drive.ts r tui wait 'It read the manifest.'`. Request 4 in
+  `fake-openai.ndjson` answers `call_3` with that `interrupted` line and
+  carries a `developer` note starting
+  `Cell call_1 stopped before its script finished.`, then
+  `The calls it made that finished:` and `- Read (done):` with the manifest.
 
-The host stops need the host's pid. Start the run with
-`NISSE_CODE_MODE_HOST=/tmp/nisse-verify/r/launcher/host drive.ts r up --fake-openai <fixture>`,
-since the first command that opens a tmux window keeps its environment for
-`serve`. Before `serve`, write `/tmp/nisse-verify/r/launcher/host`, mode
+The host stops need the host's pid. Do the Stop setup with the step's
+fixture, but before `serve` write `/tmp/nisse-verify/r/launcher/host`, mode
 755, which records the pid and runs the installed host:
 
 ```sh
@@ -215,7 +274,9 @@ echo $$ > /tmp/nisse-verify/r/launcher/host.pid
 exec /tmp/nisse-verify/r/home/bin/codex-code-mode-host "$@"
 ```
 
-Then finish the Stop setup with the TUI open, and stop the host with
+and start the server with it:
+`NISSE_CODE_MODE_HOST=/tmp/nisse-verify/r/launcher/host drive.ts r serve`.
+Finish the Stop setup with the TUI open, and stop the host with
 `kill -KILL "$(cat /tmp/nisse-verify/r/launcher/host.pid)"` at the moment
 each step names.
 
@@ -248,6 +309,26 @@ each step names.
   carries two notes, `Cell call_1 stopped before its script finished.` and
   `Cell call_2 ...` listing
   `- Bash (failed): interrupted; it may or may not have taken effect`.
+- **Wait after host restart.** `code_mode_wait_after_host_restart`: send
+  `start a slow script, then another once its host stops`,
+  `drive.ts r tui wait 'wait(call_1)'`, stop the host,
+  `drive.ts r tui wait checked`, `drive.ts r tui screen host-restart`:
+  `▸ wait(call_1)` shows the host message, a second `▸ exec` shows
+  `Script running with cell ID call_3`, and a later `▸ wait(call_1)` shows
+  `no running cell call_1; it already finished, or the code-mode host running it stopped`
+  rather than anything from `call_3`; then `checked`. `host.pid` now holds
+  the new host's pid. All five requests are `as recorded`.
+- **Idle stop.** This one takes five minutes. Make the run with
+  `--fake-openai code_mode_script,code_mode_script`, install the host,
+  write the launcher and start the server with it as above, then keep the
+  server up with `drive.ts r tui start` and `drive.ts r tui wait READY`.
+  Run
+  `drive.ts r nisse exec --auto --provider openai --model gpt-6.1-sol 'what does echo say?'`:
+  `It says hi.`, and the pid in `host.pid` is running. Wait for it to exit
+  with
+  `timeout 420 sh -c 'while kill -0 "$(cat /tmp/nisse-verify/r/launcher/host.pid)" 2>/dev/null; do sleep 5; done'`:
+  it exits 0 about five minutes after the script ended. The same `exec`
+  again answers `It says hi.`, and `host.pid` holds a new pid.
 
 ## Gotchas
 
@@ -267,6 +348,10 @@ each step names.
   SHA-256 and replaces it only when the pinned release changes.
 - A call cut off while it asked shows `✗ denied by nisse`: nisse answered
   the approval when the script stopped.
+- `NISSE_CODE_MODE_HOST` reaches the server only from the command that
+  starts it: put it on `serve`, `tui start` or `nisse`, never on `up`.
+- No recording holds a script that `store`s and a later one that `load`s;
+  only the real account's **Memory across scripts** shows it.
 - What the model is told about a stopped script is in `fake-openai.ndjson`,
   not in the transcript: the committed result is the `interrupted` line
   alone.
@@ -285,8 +370,10 @@ Needs a ChatGPT sign-in kept for verification, as SKILL.md's
 `drive.ts r up --openai-auth <that file>` and install the host. First check:
 `drive.ts r serve` and `drive.ts r rpc providers/list '{}'` list `openai`
 as `"status": "ready"` with your account; otherwise stop and report what it
-shows. It proves that ChatGPT today puts the model in code mode and writes
-scripts nisse runs. Save `evidence/` with the screens.
+shows. Before a later `rpc` or `watch`, if `drive.ts r doctor` shows
+`none running`, run `drive.ts r serve` again. It proves that ChatGPT today
+puts the model in code mode and writes scripts nisse runs. Save `evidence/`
+with the screens.
 
 - **Pick a model.** `drive.ts r rpc models/list '{}'` saves ChatGPT's list
   to `/tmp/nisse-verify/r/home/cache/openai-models.json`. Pick a `slug`

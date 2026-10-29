@@ -135,8 +135,8 @@ Preconditions:
   cancels it. `drive.ts r tui stop`, then `drive.ts r tui start login openai`
   in the same run shows a device code without `--device-code`.
 - **Device code, faked.** In a fresh run made with
-  `SSH_CONNECTION='10.0.0.1 50000 10.0.0.2 22' drive.ts r up --fake-openai text_answer --openai-signed-out --openai-refreshes 1`,
-  run `drive.ts r tui start`, wait for `○ openai signed out`, save
+  `drive.ts r up --fake-openai text_answer --openai-signed-out --openai-refreshes 1`,
+  run `SSH_CONNECTION='10.0.0.1 50000 10.0.0.2 22' drive.ts r tui start`, wait for `○ openai signed out`, save
   `drive.ts r tui screen before`, and start
   `drive.ts r watch-auth --until succeeded --save device-code &`. Press
   `C-l` and `drive.ts r tui wait '● openai'`, then
@@ -147,8 +147,8 @@ Preconditions:
   then `succeeded` with `"message": "ada@example.com · ChatGPT Plus"`.
   `ls -l /tmp/nisse-verify/r/home/auth/openai.json` is `-rw-------`, and
   `drive.ts r nisse exec --provider openai hello` prints `Hello there`, its
-  request `as recorded`. In another fresh run made the same way without
-  `SSH_CONNECTION`, `drive.ts r tui start login openai --device-code` shows
+  request `as recorded`. In another fresh run made the same way,
+  without `SSH_CONNECTION`, `drive.ts r tui start login openai --device-code` shows
   `Open http://127.0.0.1:<port>/codex/device on any device and enter the code ABCD-1234`,
   then `signed in to openai as ada@example.com · ChatGPT Plus`, exit 0.
 - **Terminal, wire.** In a `terminal_sign_in` run, run `drive.ts r serve`
@@ -204,9 +204,8 @@ Preconditions:
   unless the run is `--real-claude`, where `nisse logout claude` runs your
   own `claude auth logout`.
 - The TUI and `nisse login` use a device code when `SSH_CONNECTION` reaches
-  them. A run's tmux server keeps the environment of the command that first
-  opened a window in it, and with `--fake-openai` that is `up`, so set
-  `SSH_CONNECTION` on `up` there.
+  them. Each tmux window gets the environment of the `drive.ts` command that
+  opens it, so set `SSH_CONNECTION` on `tui start`, not on `up`.
 - The fake ChatGPT grants a token only from `--openai-refreshes`, so a faked
   sign-in needs at least 1; with none it fails after `waiting` with
   `token exchange failed (400: invalid_grant)`.
@@ -221,21 +220,31 @@ person signs in. Follow the skill's [Real accounts](../SKILL.md#real-accounts),
 except that the provider starts signed out. Give every `tui wait` for the
 person `--timeout 300000`, and keep `evidence/`.
 
-- **ChatGPT, browser (needs a person).** In a run made with plain
-  `drive.ts r up`, `drive.ts r rpc providers/list '{}'` shows `openai`
-  `signed_out`. Run `drive.ts r tui start login openai` and
-  `drive.ts r tui wait 'paste the address'`; the person opens the address
-  and signs in. `drive.ts r tui wait 'signed in to openai'` and
-  `drive.ts r tui stop`: `signed in to openai as <email> · ChatGPT <plan>`,
+- **ChatGPT, device code (needs a person).** Start with this one: it works
+  wherever the person's browser runs. In a run made with plain
+  `drive.ts r up`, run `drive.ts r serve` and
+  `drive.ts r rpc providers/list '{}'`: `openai` is `signed_out`. Run
+  `drive.ts r tui start login openai --device-code` and
+  `drive.ts r tui wait --timeout 20000 'enter the code'`; the person opens
+  `https://auth.openai.com/codex/device` on any device and enters the code
+  the screen shows. `drive.ts r tui wait --timeout 300000 'signed in to openai'`
+  and `drive.ts r tui stop`: `signed in to openai as <email> · ChatGPT <plan>`,
   exit 0. `ls -l /tmp/nisse-verify/r/home/auth/openai.json` is `-rw-------`,
   and a new `tui start` splash shows `● openai <email> · ChatGPT <plan>`.
   To keep this sign-in for other runs, copy that file now, as
   [Real accounts](../SKILL.md#real-accounts) says.
-- **ChatGPT, device code (needs a person).** In the same run,
+- **ChatGPT, browser (needs a person).** In the same run,
   `drive.ts r nisse logout openai`, then
-  `drive.ts r tui start login openai --device-code`; the person enters the
-  code it shows at `https://auth.openai.com/codex/device`. It ends the same
-  way.
+  `drive.ts r tui start login openai` and
+  `drive.ts r tui wait 'paste the address'`. The person opens the address
+  and signs in. When their browser runs on this machine it calls back by
+  itself. Otherwise the browser ends on an address starting
+  `http://localhost:1455/auth/callback?`: the person sends it to you, and
+  you run `drive.ts r tui type '<that address>'` and
+  `drive.ts r tui key Enter`. Then
+  `drive.ts r tui wait --timeout 300000 'signed in to openai'` and
+  `drive.ts r tui stop` end the same way as the device-code step.
+
 - **Claude, terminal (needs a person).** In a run made with
   `drive.ts r2 up --real-claude`, write
   `[providers.claude-alt]` with `driver = "claude"` and
