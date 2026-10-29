@@ -26,7 +26,8 @@ const usage = `usage: drive.ts <run> <command> [args]
   nisse <args...>                  run the nisse CLI against the run's home
   serve                            start the run's server in the foreground of a tmux window
   kill-server                      SIGKILL the server that holds the run's home lock
-  rpc <method> [params-json]       one raw JSON-RPC call over the run's socket
+  rpc <method> [params-json] [--timeout MS]
+                                   one raw JSON-RPC call over the run's socket (5 s)
   watch <conversation> [--since N] [--submit TEXT] [--until TAG] [--timeout MS] [--save NAME]
                                    subscribe and print each delivery as one JSON line;
                                    --submit sends TEXT as ada once the first delivery arrives;
@@ -187,8 +188,21 @@ const openWindow = (name: string, command: Array<string>) => {
     if (session.code !== 0) fail(`tmux could not start: ${session.stderr}`)
     tmux("set-option", "-g", "remain-on-exit", "on")
   }
-  const pinned = Object.entries(fakes()).flatMap(([key, value]) => ["-e", `${key}=${value}`])
-  const window = tmux("new-window", "-d", "-t", "nisse", "-n", name, "-c", REPO, ...pinned, "--", ...command)
+  const environment = Object.entries(env()).map(([key, value]) => `${key}=${value}`)
+  const window = tmux(
+    "new-window",
+    "-d",
+    "-t",
+    "nisse",
+    "-n",
+    name,
+    "-c",
+    REPO,
+    "--",
+    "env",
+    ...environment,
+    ...command,
+  )
   if (window.code !== 0) fail(`tmux could not open ${name}: ${window.stderr}`)
   tmux("resize-window", "-t", `nisse:${name}`, "-x", COLS, "-y", ROWS)
 }
@@ -435,8 +449,8 @@ const commands: Record<string, () => Promise<void> | void> = {
     if (lockOwner()) fail(`a server already holds ${lock}`)
     openWindow("serve", [MAIN, "serve"])
     record("serve")
-    if (!(await until(() => existsSync(socket) && lockOwner() !== undefined, 10_000)))
-      fail(`the server did not take ${lock} in 10s:\n${tmux("capture-pane", "-p", "-t", "serve").stdout}`)
+    if (!(await until(() => existsSync(socket) && lockOwner() !== undefined, 20_000)))
+      fail(`the server did not take ${lock} in 20s:\n${tmux("capture-pane", "-p", "-t", "serve").stdout}`)
     console.log(`serving, pid ${lockOwner()!.pid}`)
   },
 
@@ -452,10 +466,13 @@ const commands: Record<string, () => Promise<void> | void> = {
 
   rpc: async () => {
     requireUp()
+    const ms = Number(flag("--timeout") ?? 5000)
     const [method, params] = args
     if (!method) fail(usage)
     record(`rpc ${method} ${params ?? ""}`)
-    const reply = await call(method!, params ? JSON.parse(params) : undefined)
+    const reply = await call(method!, params ? JSON.parse(params) : undefined, ms).catch((error: Error) =>
+      fail(error.message),
+    )
     console.log(JSON.stringify(reply, null, 2))
     if (reply.error) process.exit(1)
   },

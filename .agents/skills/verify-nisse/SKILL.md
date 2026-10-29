@@ -41,9 +41,9 @@ server starts them over. `--script` copies the file into the run, so later
 edits to it do nothing. `up` with or without a script makes the scripted
 provider the one a conversation falls back to; real providers and models are
 chosen with `--provider` and `--model`, see [Providers](features/providers.md)
-and [Models](features/models.md). A run's tmux server keeps the environment of
-the `drive.ts` command that first opened a window in it, `serve` or
-`tui start`: set variables such as `SSH_CONNECTION` on that command.
+and [Models](features/models.md). Each window `serve` or
+`tui start` opens gets the environment of that `drive.ts` command: set
+variables such as `SSH_CONNECTION` on it.
 
 To drive ChatGPT or Claude without an account, a run can replay a recorded
 exchange instead of a model:
@@ -204,8 +204,9 @@ holding the account drives it cold, like this.
 - **ChatGPT.** Use a sign-in kept for verification, never the production
   `~/.nisse`'s: a refresh in a run rotates the token, and the copy it came
   from would stop working. Make one once: `drive.ts keep up`,
-  `drive.ts keep tui start login openai`, finish the browser or device-code
-  sign-in (that takes a person), copy `/tmp/nisse-verify/keep/home/auth/openai.json`
+  `drive.ts keep tui start login openai --device-code`, and a person enters
+  the code it shows at the address it names (a browser sign-in works only
+  when their browser runs on this machine), copy `/tmp/nisse-verify/keep/home/auth/openai.json`
   to a file of your own with mode 0600, then `drive.ts keep down`. Start each
   run with `drive.ts r up --openai-auth <that file>`; `down` writes the
   sign-in back when a refresh changed it. Don't drive two runs on one sign-in

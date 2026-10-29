@@ -37,6 +37,8 @@ conversation was started with `--auto`, which runs every call without asking.
 
 Preconditions:
 
+- Every run here is `drive.ts r up --script <file>` and nothing else: Claude
+  is the signed-in fake that plays `models`, and the model is the script.
 - A run whose script is
   `[{"text": "checking", "tool": {"name": "Bash", "input": {"command": "echo approved"}}}, {"text": "all done"}]`;
   for `tool-read-only`, a run whose script is
@@ -49,7 +51,7 @@ Preconditions:
   `drive.ts r tui wait 'allow this call?'`, `drive.ts r tui screen asking`.
   Under `NISSE`: `checking`, `▸ Bash(echo approved)`,
   `allow this call?  ^Y  allow  ^N  deny`, and the status bar reads
-  `◆ WAITING`. `drive.ts r watch <id> --save asking` shows
+  `◆ WAITING 0s`, and the prompt panel is titled `QUEUE · tab`. `drive.ts r watch <id> --save asking` shows
   `"status": "waiting"` and an `approval` entry.
 - **Allow.** Run `drive.ts r tui key C-y`, `drive.ts r tui wait 'all done'`,
   `drive.ts r tui wait READY`, `drive.ts r tui screen allowed`. The call shows
@@ -84,7 +86,7 @@ Preconditions:
   `drive.ts r rpc approval/resolve '{"conversation": "<id>", "approval": "<approval>", "author": "bo", "allow": true}'`:
   `"accepted": true`. The same call again with `"author": "cy"` and
   `"allow": false` answers `"accepted": false`. The watch shows statuses
-  `working`, `waiting`, `working`, `idle`, one `approval_answer` with
+  `idle` (the snapshot), `working`, `waiting`, `working`, `idle`, one `approval_answer` with
   `"allow": true`, and a `tool_result` with `approved`.
 - **Interrupt while asking.** In a fresh run, ask as above, then
   `drive.ts r tui key Escape`, `drive.ts r tui wait interrupted`. The call

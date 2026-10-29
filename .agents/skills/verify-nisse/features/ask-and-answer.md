@@ -29,6 +29,9 @@ Preconditions:
 - A fresh run with no script, so Nisse answers `You said: <prompt>`; for
   `answer-exec-fail`, a run whose script is
   `[{"text": "half an ", "fail": "provider went away"}]`.
+- Claude is the `models` recording, so the splash lists
+  `● claude person@example.com · Claude Max` and `○ openai signed out`; no run
+  here starts the `claude` on your PATH.
 
 - **TUI.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`,
   `drive.ts r tui type 'hello nisse'`, `drive.ts r tui screen typed`,
