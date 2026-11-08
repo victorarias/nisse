@@ -41,15 +41,18 @@ installs; without it a code-mode run fails saying how to install it.
   keeps one session per conversation so a later script can `load` what an
   earlier one `store`d, and stops it after five idle minutes.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Run `scripts/code-mode-host.sh` once, then
-  `nisse --provider openai --model <a code-mode model>` or
-  `nisse exec --provider openai --model <model> '<prompt>'`.
-- Switch a conversation to a code-mode model with `/model` or
-  `conversation/select_model`.
-- Set `NISSE_CODE_MODE_HOST` in the environment of the command that starts the
-  server.
+### People
+
+- Run `scripts/code-mode-host.sh` once, then `nisse --provider openai --model <a code-mode model>`.
+- Switch a conversation to a code-mode model with `/model`.
+
+### Agents
+
+- Run `nisse exec --provider openai --model <model> '<prompt>'`.
+- Switch a conversation to a code-mode model with `conversation/select_model`.
+- Set `NISSE_CODE_MODE_HOST` in the environment of the command that starts the server.
 
 ## Driving it with drive.ts
 
@@ -106,6 +109,17 @@ Preconditions:
   `drive.ts r tui start --conversation <id>`: the same `▸ exec` and nested
   calls. Send `What did the last script print?`: ChatGPT answers from the
   script's output.
+
+## Contexts
+
+- **Provider.** OpenAI only, and `gpt-5.5` keeps direct tools and needs no host.
+- **Idle.** Nisse starts the host on the first script and stops it after five idle minutes.
+
+## Tests
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- a code-mode model without the code-mode host says how to install it
 
 ## Gotchas
 

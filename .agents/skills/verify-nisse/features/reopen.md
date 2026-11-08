@@ -13,9 +13,14 @@ resubscribes from the last commit it saw and misses nothing.
 - `chosen-id` opens the TUI on an id that names no conversation yet, starting
   one with that id, and sends a prompt given on the command line.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Press `^C` in the TUI, then run `nisse --conversation <id>`.
+
+### Agents
+
 - Run `nisse exec --conversation <id> '<prompt>'`.
 - Call `conversation/subscribe` with `sinceSeq`.
 - Run `nisse --conversation <new id> '<prompt>'`, as attn does.
@@ -49,6 +54,21 @@ Preconditions:
   `drive.ts r tui start --conversation picked-1`, `drive.ts r tui wait READY`,
   `drive.ts r tui screen chosen`: one `You said: first words`, nothing sent
   twice.
+
+## Contexts
+
+- **Server restart.** A reopened conversation shows the same committed transcript.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- a client resuming from a seq receives exactly the commits it missed
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- quitting prints the command that reopens the conversation
+- a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation
 
 ## Gotchas
 

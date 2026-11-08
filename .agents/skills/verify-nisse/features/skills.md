@@ -45,20 +45,21 @@ scripted conversations list none and carry none.
   to the conversation's directory, up to 32 KiB in all, then the skill list.
   Only a ChatGPT run shows it.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Put skills in `<repo>/.agents/skills/<name>/SKILL.md`,
-  `<repo>/.claude/skills/<name>/SKILL.md`, the same under any folder between
-  the repository's root and the conversation's directory, or
-  `NISSE_HOME/skills/<name>/SKILL.md`.
-- Put instructions in `NISSE_HOME/AGENTS.md` and in `AGENTS.md` or
-  `AGENTS.override.md` in the repository's folders.
-- In an OpenAI conversation, type a message that starts with `/name` or holds
-  `$name`, in the TUI, `nisse exec` or `conversation/submit`.
-- Call `skills/list` with `{"conversation": "<id>"}`.
-- Run `nisse --instructions '<text>'` or `nisse exec --instructions '<text>'`,
-  or call `conversation/start` with `"instructions"`.
+### People
+
+- Put skills in `<repo>/.agents/skills/<name>/SKILL.md`, `<repo>/.claude/skills/<name>/SKILL.md`, the same under any folder between the repository's root and the conversation's directory, or `NISSE_HOME/skills/<name>/SKILL.md`.
+- Put instructions in `NISSE_HOME/AGENTS.md` and in `AGENTS.md` or `AGENTS.override.md` in the repository's folders.
+- In an OpenAI conversation, type a message in the TUI that starts with `/name` or holds `$name`.
+- Run `nisse --instructions '<text>'`.
 - The TUI has no skill completion or listing; `skills/list` is the list.
+
+### Agents
+
+- Send `/name` or `$name` with `nisse exec` or `conversation/submit`.
+- Call `skills/list` with `{"conversation": "<id>"}`.
+- Run `nisse exec --instructions '<text>'`, or call `conversation/start` with `"instructions"`.
 
 ## Driving it with drive.ts
 
@@ -132,6 +133,19 @@ Preconditions:
   `/deploy What does the deploy skill say? Quote it.`: the answer quotes
   `deploy steps.` Submit `Which skills can you use? List their names.`: the
   answer names `bare`, `deploy`, `notes` and `review`.
+
+## Contexts
+
+- **Provider.** Claude Code reads its own `CLAUDE.md` files and skills. OpenAI is told the `AGENTS.md` files and skills.
+
+## Tests
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- ChatGPT is told the AGENTS.md files from home to the working directory, and the skills it can use
+- ChatGPT is told the instructions its conversation started with, after the AGENTS.md files
+- a skill named in a message comes with it, for the model and for everyone watching
+- every client can list the skills a conversation's model can use
 
 ## Gotchas
 

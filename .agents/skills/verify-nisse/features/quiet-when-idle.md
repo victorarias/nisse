@@ -10,10 +10,16 @@ and its server, use no CPU.
 - `idle-closed` ends the TUI when its terminal closes, so nothing keeps the
   server from its idle exit.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Leave the TUI open on a finished conversation.
 - Close the terminal the TUI runs in.
+
+### Agents
+
+None.
 
 ## Driving it with drive.ts
 
@@ -32,6 +38,12 @@ Preconditions:
   terminal with `tmux -L nisse-verify-r kill-server`. `drive.ts r doctor`
   shows no TUI, and `ps -p <pid>` finds nothing. Within 40 s `doctor` shows
   `server   none running`.
+
+## Tests
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- closing the terminal ends nisse instead of leaving it running unseen
 
 ## Gotchas
 

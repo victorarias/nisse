@@ -16,9 +16,14 @@ printing the answer and exiting 0, or 1 when the run fails.
   the `message` entry and the `run_end` entry as commits.
 - `answer-shared` shows a run started in the TUI to a second client.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Type in the TUI's `PROMPT` and press Enter.
+
+### Agents
+
 - Run `nisse exec '<prompt>'`.
 - Call `conversation/submit` on the home's socket.
 
@@ -52,6 +57,28 @@ Preconditions:
   `user` entry and `"status": "working"`, commits whose `live` changes append
   text, a commit with the `message` entry, and a commit with the `run_end`
   entry and `"status": "idle"`.
+
+## Contexts
+
+- **Second client.** Every client sees the prompt and the same answer.
+- **Server restart.** A run the crash cut off finishes when the server returns, as [Crash recovery](./crash-recovery.md) says.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- every client of a conversation sees the prompt and the same answer
+- submitting again with the same request id is answered once
+- a model failure is recorded after what was said and the conversation goes idle
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- a person types a prompt, presses enter and reads the answer under their name
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- nisse exec exits 1 and reports the failure when the run fails
+- nisse exec finishes when nisse answers with nothing
 
 ## Gotchas
 

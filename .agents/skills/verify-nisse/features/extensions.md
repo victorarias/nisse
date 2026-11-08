@@ -48,15 +48,19 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
   swaps them in, clears every status line and unloads the old ones. A server
   start clears every status line before loading.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Write `NISSE_HOME/extensions/<name>.ts` (or `<name>/index.ts`), importing
-  `@nisse/extension` and `effect`; the server serves both.
+### People
+
+- Write `NISSE_HOME/extensions/<name>.ts` (or `<name>/index.ts`), importing `@nisse/extension` and `effect`; the server serves both.
 - Set options in `NISSE_HOME/config.toml` under `[extensions.<name>]`.
-- Run `nisse extensions` and `nisse extensions reload`, or call
-  `extensions/list` and `extensions/reload`.
-- Watch the TUI's status bar and transcript, `nisse exec`'s stderr, or a
-  subscription's `extensionStatus` and `toast` entries.
+- Run `nisse extensions` and `nisse extensions reload`.
+- Watch the TUI's status bar and transcript.
+
+### Agents
+
+- Call `extensions/list` and `extensions/reload`.
+- Read `nisse exec`'s stderr, or a subscription's `extensionStatus` and `toast` entries.
 
 ## Driving it with drive.ts
 
@@ -99,6 +103,40 @@ Preconditions:
   with `NISSE_HOME` and `NISSE_OPENAI_URL=<fake.base>`. It prints
   `It printed hi.`, and both requests in `fake.responses()` end their
   `instructions` with `Answer briefly.` and offer only `Bash`.
+
+## Contexts
+
+- **Provider.** On Claude the request hook does not run, and `execute.after` cannot change the results of Claude Code's own tools.
+- **Server restart.** Status lines clear, so none outlives the code that set it.
+- **Second client.** Status lines and toasts are committed, so every client sees them, then and later.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- an extension's tool answers the model's calls, and a tool it removes is gone
+- an extension can refuse a call, change what runs and what the model sees, and tell people
+- an extension that fails to load is listed with why, while the others load and run
+- reloading runs the extensions as they are now, and no status outlives the code that set it
+- while extensions reload, the loaded ones keep guarding calls until their replacements are ready
+- a hook still running when its extension is unloaded can't bring back a status line
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- a person sees what extensions say in the footer and the transcript, and which failed to load
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- an extension's request hook adds instructions and narrows the tools of each request to the model
+- a request hook that fails is skipped with a toast, and the model gets the request as it was
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- an extension's tool reaches Claude through nisse's own MCP server, and a tool it removes is withheld
+- an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why
+- an extension's rewrite of a call is what Claude Code runs and what the transcript shows
+- an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
+- execute.after sees what Claude Code's tools return, and says so when it can't change it
 
 ## Gotchas
 

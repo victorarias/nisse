@@ -27,15 +27,18 @@ next run. Switching providers keeps the conversation.
 - `model-switch-provider` keeps the conversation across providers: the new
   provider is told what was said.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Run `nisse --model <model> --effort <effort>`, with `--provider`, or the
-  same on `nisse exec`.
+### People
+
+- Run `nisse --model <model> --effort <effort>`, with `--provider`.
 - Type `/model` in the TUI's prompt and press `⏎`.
-- Write `default_model = { provider = "...", model = "...", effort = "..." }`
-  in `NISSE_HOME/config.toml` or a project's `.nisse/config.toml`.
-- Call `models/list`, `conversation/start` with `model` and `effort`, and
-  `conversation/select_model`.
+- Write `default_model = { provider = "...", model = "...", effort = "..." }` in `NISSE_HOME/config.toml` or a project's `.nisse/config.toml`.
+
+### Agents
+
+- Run the same flags on `nisse exec`.
+- Call `models/list`, `conversation/start` with `model` and `effort`, and `conversation/select_model`.
 
 ## Driving it with drive.ts
 
@@ -113,6 +116,33 @@ Preconditions:
   entry, then the second run. `drive.ts r tui start --conversation <id>`
   shows `◆ bo switched to claude · haiku` between them and `claude · haiku`
   in the status bar.
+
+## Contexts
+
+- **Provider.** A switch to OpenAI sends the whole transcript. A switch to Claude tells a new Claude Code session the first prompt and as much of the newest history as fits in about 64,000 characters.
+- **Second client.** A switch is an entry everyone sees, and applies from the next run.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- a new conversation takes the project's default model, else the home's, else the one chosen last
+- switching models is an entry everyone sees, and a provider nisse does not have is refused
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- /model lists every provider's models, and enter switches the conversation's model for everyone
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't
+- a switched model and effort reach ChatGPT from the next run on
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- the conversation's model and effort reach Claude Code
+- switching to Claude from another provider retells the conversation to a new Claude Code session
+- retelling a long conversation to Claude keeps its first prompt and the one being answered
 
 ## Gotchas
 

@@ -16,10 +16,19 @@ server three times in a row ends instead of looping.
 - `crash-limit` ends the run with `restart_limit` after the server stopped
   during it three times in a row.
 
-## How to get to it (user POV)
+## How to get to it
 
-- The server dies (SIGKILL, power loss) while Nisse is answering or a call
-  runs, with a TUI or `exec` waiting on it.
+### People
+
+None.
+
+### Agents
+
+None.
+
+### Triggers
+
+- The server dies (SIGKILL, power loss) while Nisse is answering or a call runs, with a TUI or `exec` waiting on it.
 
 ## Driving it with drive.ts
 
@@ -62,6 +71,23 @@ Preconditions:
   `drive.ts r tui screen restart-limit`:
   `✗ the server stopped during this run 3 times in a row` and `READY`. The
   snapshot's last entry is a `run_end` with `"outcome": "restart_limit"`.
+
+## Contexts
+
+- **Provider.** On every provider a running call is recorded as interrupted. Claude Code is also told which calls were cut off.
+
+## Tests
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- a run cut off by a crashed server finishes after the server comes back
+- a call cut off by a crashed server is recorded as interrupted and the run carries on
+- a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own
+- a run that keeps crashing the server stops after three tries instead of looping
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- a run cut off by a server stop resumes, and Claude Code is told which call was cut off
 
 ## Gotchas
 

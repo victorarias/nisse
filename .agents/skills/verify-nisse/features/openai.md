@@ -37,12 +37,17 @@ provider signed out with that message. A provider `config.toml` names with
 - `openai-code-mode` runs code-mode models' scripts, in
   [Code mode](./code-mode.md).
 
-## How to get to it (user POV)
+## How to get to it
 
-- Run `nisse --provider openai` or `nisse exec --provider openai '<prompt>'`,
-  with `--model` and `--effort`.
-- Call `conversation/start` with `"provider": "openai"`.
+### People
+
+- Run `nisse --provider openai`, with `--model` and `--effort`.
 - Run `nisse login openai`, or press `^L` in the TUI.
+
+### Agents
+
+- Run `nisse exec --provider openai '<prompt>'`.
+- Call `conversation/start` with `"provider": "openai"`.
 
 ## Driving it with drive.ts
 
@@ -97,6 +102,22 @@ Preconditions:
   `"status": "signed_out"` with that message. With
   `"expires_at_ms": 99999999999999` ChatGPT turns the token down, Nisse
   refreshes once, and the run fails with the same message.
+
+## Contexts
+
+- **SSH.** Sign-in uses a device code.
+
+## Tests
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- a recorded ChatGPT exchange replays into the same answer
+- nisse offers its tools, runs the call the model asks for and sends back the result
+- a call the person denies reaches the model as denied
+- an expired token is refreshed once, saved, and used from then on
+- a failed response, a cut stream and a reached usage limit each end the run with the reason
+- an answer streams live, and interrupting it closes the request and keeps what was said
+- an answer whose CRLF event separators arrive split across reads is read whole
 
 ## Gotchas
 

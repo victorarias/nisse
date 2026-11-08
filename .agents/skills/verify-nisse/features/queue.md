@@ -12,9 +12,14 @@ the order sent.
   queue.
 - `queue-shared` shows the queue to a second client.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Type and press Enter in the TUI while it shows `WORKING`.
+
+### Agents
+
 - Call `conversation/submit` while a run works.
 
 ## Driving it with drive.ts
@@ -39,6 +44,20 @@ Preconditions:
   `slow one two three four five six seven eight` answers `first`,
   `fast reply` answers `second`, and the queue is empty. A `watch <id>` shows
   the `run_end` of `first` before the `user` entry of `second`.
+
+## Contexts
+
+- **Second client.** The queue shows to every client.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- prompts sent while nisse is working wait in a visible queue and run in order
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- a prompt sent while nisse works waits in the queue, then runs
 
 ## Gotchas
 

@@ -35,14 +35,18 @@ message.
   Code session.
 - `claude-sign-in` runs `claude auth login`, in [Sign-in](./sign-in.md).
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Run `nisse --provider claude`, or `nisse` with no `NISSE_MODEL_SCRIPT`.
-- Run `nisse exec --provider claude '<prompt>'`, with `--auto` to allow calls,
-  and `--model` and `--effort` to choose the model.
+- Switch a conversation to Claude with `/model`.
+
+### Agents
+
+- Run `nisse exec --provider claude '<prompt>'`, with `--auto` to allow calls, and `--model` and `--effort` to choose the model.
 - Call `conversation/start` with `"provider": "claude"`.
-- Switch a conversation to Claude with `/model` or
-  `conversation/select_model`.
+- Switch a conversation to Claude with `conversation/select_model`.
 
 ## Driving it with drive.ts
 
@@ -111,6 +115,24 @@ Preconditions:
   `ANTHROPIC_API_KEY=sk-ant-not-a-key drive.ts r nisse exec --provider claude hi`.
   Exit 1, empty stdout, stderr `Invalid API key · Fix external API key`. A
   signed-out Claude Code fails the same way with its own message.
+
+## Contexts
+
+- **Inside an agent.** Start the run's server without the session's `CLAUDE`, `ANTHROPIC` and `CCR` variables.
+- **Server restart.** The run resumes Claude Code's session where Nisse's transcript ends.
+
+## Tests
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- Claude's answer through Claude Code is committed as nisse's message
+- Claude Code keeps its own system prompt, adds the conversation's instructions, and its commands know the conversation
+- a command Claude wants to run waits for a person, and Claude Code hears the answer
+- Claude reads files without asking and the read shows as a call and its result
+- each run resumes the Claude Code session where nisse's transcript ends
+- when Claude Code lost the session, a fresh one is given the conversation so far
+- a signed-out Claude Code fails the run with its own words
+- Claude Code says once how it is signed in and which models it offers, without asking Claude anything
 
 ## Gotchas
 

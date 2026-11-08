@@ -14,9 +14,14 @@ run, instead of waiting for the run to end.
   in the same run.
 - `steer-wire` steers with `conversation/submit` and `"steer": true`.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Press `Tab` in the TUI while it shows `WORKING`, type, and press Enter.
+
+### Agents
+
 - Call `conversation/submit` with `"steer": true` while a run works.
 
 ## Driving it with drive.ts
@@ -48,6 +53,29 @@ Preconditions:
   `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "steer-1", "author": "bo", "text": "go left", "steer": true}'`.
   The watch shows an `enqueued` commit with `"steer": true`, then the same
   entries as above, ending in one `run_end`.
+
+## Contexts
+
+- **Provider.** With calls running, a steer reaches the model after all of them, before its next answer.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- a steering prompt reaches nisse during the run instead of after it
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- tab switches a prompt sent mid-run from queueing to steering the run
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- a steer sent while calls run reaches the model after all of them, before its next answer
+- a skill named in a steer comes with it for the model the run is using, even after a switch
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- a steer sent while Claude works reaches Claude Code in the same run
 
 ## Gotchas
 

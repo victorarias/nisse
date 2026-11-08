@@ -22,7 +22,13 @@ conversation. attn uses these to run Nisse sessions.
 - `start-with-id` starts a conversation with a chosen id, and answers a second
   start with that id with the first conversation.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
+
+None.
+
+### Agents
 
 - Call `status/watch`, a stream.
 - Call `conversation/start` with `id`.
@@ -55,6 +61,18 @@ Preconditions:
 - **Ended, read later.** Then run `drive.ts r rpc conversation/list`: the
   conversation carries `"ended":{"outcome":"interrupted"}`, with `said` when
   the model wrote a message.
+
+## Contexts
+
+- **Subagents.** A subagent waiting on a person shows its whole tree as waiting.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- starting a conversation with an id it already has answers with that conversation
+- watching status follows each run of a tree and says how it ended
+- a conversation tells a client that was not watching how its last run ended
 
 ## Gotchas
 

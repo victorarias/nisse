@@ -52,15 +52,18 @@ and nisse commits each into a conversation of its own the same way.
   `INPUT GOES THROUGH ITS PARENT`. `Esc` there stops only it; stopping the
   parent ends it `interrupted`, and so does a server crash.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Ask an OpenAI conversation for work it hands to subagents, in the TUI or with
-  `nisse exec --provider openai`.
-- Drive it without a model through `NISSE_MODEL_SCRIPT`: a step with
-  `"agent": "/root/<name>"` is played by that subagent, the others by the
-  parent.
-- Read the tree with `conversation/list` (`lineage`) and open a subagent with
-  `nisse --conversation <id>`.
+### People
+
+- Ask an OpenAI conversation for work it hands to subagents, in the TUI.
+- Open a subagent with `nisse --conversation <id>`.
+
+### Agents
+
+- Run `nisse exec --provider openai` with such a prompt.
+- Drive it without a model through `NISSE_MODEL_SCRIPT`: a step with `"agent": "/root/<name>"` is played by that subagent, the others by the parent.
+- Read the tree with `conversation/list` (`lineage`).
 
 ## Driving it with drive.ts
 
@@ -121,6 +124,48 @@ you` with `allow Bash(touch made.txt)?`. Press `C-y` and wait for `READY`:
   the card reads `done`. `drive.ts r tui start --conversation <subagent id>`
   shows its transcript and a prompt titled `INPUT GOES THROUGH ITS PARENT`.
   With a sign-in, ask Claude to use the Task tool for the same journey.
+
+## Contexts
+
+- **Provider.** Claude keeps Claude Code's own subagents, which take input only through their parent. OpenAI uses Codex's agent tools.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- interrupting a conversation stops the runs of its subagents too
+- a person interrupting a subagent wakes its parent's wait, which hears who stopped it
+- a subagent's answer lands in its idle parent's transcript without starting a run
+- a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent
+- a tree runs at most as many subagents at once as config.toml allows
+- a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows
+- a subagent waiting on a person shows as its whole tree waiting, to watchers then and later
+- commands a conversation runs, its subagents' included, know the conversation people started
+- a conversation keeps the instructions it started with, and its subagents start without them
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- a subagent shows as a card under its parent, and ctrl+y answers the call it asks about
+- a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it
+- a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- nisse exec without --auto denies the calls its subagents would ask about too
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- a spawned agent starts from its parent's history, and its last answer reaches the parent
+- an agent of a type gets its instructions, and fork_turns none leaves the parent's history out
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- a Claude subagent works in a conversation of its own under the one that started it
+- a Claude subagent takes input only through its parent
+- a Claude subagent leaves the model a new conversation starts with as the person last chose it
+- a call a Claude subagent wants to make waits for a person in the subagent's conversation
+- stopping a Claude subagent stops only it, and its parent's run carries on
+- stopping a run ends the Claude subagents working under it
 
 ## Gotchas
 

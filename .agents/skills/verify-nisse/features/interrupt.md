@@ -9,9 +9,14 @@ can interrupt any conversation's run.
 - `interrupt-tui` stops the run with `Esc`.
 - `interrupt-wire` stops it with `conversation/interrupt` from another client.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Press `Esc` in the TUI while it shows `WORKING`.
+
+### Agents
+
 - Call `conversation/interrupt` with the conversation's id.
 
 ## Driving it with drive.ts
@@ -39,6 +44,22 @@ Preconditions:
   `drive.ts r rpc conversation/interrupt '{"conversation": "<id>"}'`. It
   answers with a `null` result, and the watch ends with the partial `message`
   and a `run_end` with `"outcome": "interrupted"` in one commit.
+
+## Contexts
+
+- **Second client.** Any client can interrupt, and every client sees the run end `interrupted`.
+- **Subagents.** Stopping a run stops every subagent under it. `Esc` in a subagent's own conversation stops only it.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- interrupting keeps what nisse already said and marks the run interrupted
+- interrupting while nisse waits for an answer withdraws the question
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- escape stops nisse mid-answer and the answer shows it was interrupted
 
 ## Gotchas
 
