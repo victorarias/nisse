@@ -34,7 +34,10 @@ Preconditions:
 - A fresh run with no script.
 
 - **Schema.** Run `drive.ts r nisse schema`: exit 0, and stdout is JSON titled
-  `Nisse protocol` with its `protocol` number and `methods`.
+  `Nisse protocol` with its `protocol` number and `methods`. No server starts
+  (`doctor` still shows `none running`), and the saved stdout, between
+  `--- stdout` and `--- stderr`, is the same text as
+  `schema/nisse.schema.json`.
 - **Initialize.** Run `drive.ts r serve`, then
   `drive.ts r rpc initialize '{"client": "verify", "version": "1", "protocol": 8}'`:
   a result with the server's `version` and the `protocol` that `nisse schema`

@@ -65,5 +65,7 @@ Screen, `packages/nisse/test/screen.test.ts`:
 
 - `Esc` only interrupts while the TUI shows `WORKING` or `WAITING`; once
   `READY`, it does nothing.
+- Where the words stop depends on timing: the committed `message` ends after
+  some number of words, always before `ten`.
 - With the default 30 ms echo, the run ends before you can press anything.
   Interrupt needs a script with `delayMs`.
