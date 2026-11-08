@@ -52,9 +52,10 @@ export class FakeOpenAi {
   private readonly server: ReturnType<typeof Bun.serve>
   modelList: unknown
   devicePolls = 1
+  onResponse: (body: unknown) => void = () => undefined
 
-  constructor() {
-    this.server = Bun.serve({ port: 0, fetch: (request) => this.answer(request) })
+  constructor(port = 0) {
+    this.server = Bun.serve({ port, fetch: (request) => this.answer(request) })
   }
 
   get base() {
@@ -130,6 +131,7 @@ export class FakeOpenAi {
       const tokens = this.tokens.shift()
       return tokens ? Response.json(tokens) : Response.json({ error: "invalid_grant" }, { status: 400 })
     }
+    if (path === "/codex/responses") this.onResponse(JSON.parse(body))
     const reply = this.replies.shift()
     if (!reply) return Response.json({ error: { message: "no reply scripted" } }, { status: 500 })
     if ("http" in reply) return Response.json(reply.http.body, { status: reply.http.status })

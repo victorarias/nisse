@@ -9,6 +9,8 @@ printing the answer and exiting 0, or 1 when the run fails.
 
 - `answer-tui` sends a prompt from the TUI and shows it under `ADA` and the
   answer under `NISSE`.
+- `answer-newline` adds a line to the prompt with `⇧⏎` or `^J` and sends all
+  lines as one message with `⏎`.
 - `answer-exec` prints the answer on stdout and exits 0.
 - `answer-exec-fail` prints what was said, reports the failure on stderr and
   exits 1.
@@ -18,7 +20,8 @@ printing the answer and exiting 0, or 1 when the run fails.
 
 ## How to get to it (user POV)
 
-- Type in the TUI's `PROMPT` and press Enter.
+- Type in the TUI's `PROMPT` and press Enter; `⇧⏎` or `^J` starts a new line
+  instead.
 - Run `nisse exec '<prompt>'`.
 - Call `conversation/submit` on the home's socket.
 
@@ -29,6 +32,9 @@ Preconditions:
 - A fresh run with no script, so Nisse answers `You said: <prompt>`; for
   `answer-exec-fail`, a run whose script is
   `[{"text": "half an ", "fail": "provider went away"}]`.
+- Claude is the `models` recording, so the splash lists
+  `● claude person@example.com · Claude Max` and `○ openai signed out`; no run
+  here starts the `claude` on your PATH.
 
 - **TUI.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`,
   `drive.ts r tui type 'hello nisse'`, `drive.ts r tui screen typed`,
@@ -36,6 +42,19 @@ Preconditions:
   `drive.ts r tui wait READY`, `drive.ts r tui screen answered`. The screen
   shows `ADA` over `hello nisse`, `NISSE` over `You said: hello nisse`, and
   `READY`.
+- **New line.** In a fresh run, run `drive.ts r tui start`,
+  `drive.ts r tui wait READY`, `drive.ts r tui type 'first line'`,
+  `drive.ts r tui key S-Enter`, `drive.ts r tui type 'second line'`,
+  `drive.ts r tui key M-Enter`, `drive.ts r tui type 'third line'`,
+  `drive.ts r tui screen lines`: the `PROMPT` panel holds the three lines
+  and nothing was sent. `drive.ts r tui key Enter`,
+  `drive.ts r tui wait 'You said: first line'`, `drive.ts r tui wait READY`,
+  `drive.ts r tui screen sent`: `ADA` over the three lines and `NISSE` over
+  `You said: first line`, `second line`, `third line`; `drive.ts r watch <id>`
+  holds one `user` entry whose `text` is `first line\nsecond line\nthird line`.
+  Then, in a fresh run, type `aa`, press `drive.ts r tui key C-j`, type
+  `bb`: the panel holds two lines and nothing was sent. This fails today:
+  `C-j` sends `aa` at once.
 - **Shared.** With the TUI still open, run `drive.ts r rpc conversation/list`
   and take the conversation's `id`, then
   `drive.ts r watch <id> --save shared`. The snapshot holds the `user` entry,
@@ -55,6 +74,7 @@ Preconditions:
 
 ## Gotchas
 
+- tmux sends `⇧⏎` as `S-Enter` and `⌥⏎` as `M-Enter`; both add a line.
 - `exec` starts a new conversation each time unless given
   `--conversation <id>`.
 - `watch --until run_end` only looks at commits after the snapshot. To see a
