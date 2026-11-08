@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { Duration, Effect, Exit, Layer, Scope } from "effect"
 import { homeAt, type Home } from "../../src/home.ts"
 import { openAiOptions, providersLayer } from "../../src/drivers/index.ts"
@@ -9,7 +9,8 @@ import type { HomeConfig } from "../../src/config.ts"
 import { Lifetime } from "../../src/lifetime.ts"
 import { serverLayer } from "../../src/server.ts"
 
-export const tempHome = () => homeAt(mkdtempSync("/tmp/nisse-"))
+// The real path: on macOS /tmp is a link, and a process's working directory is never reported through it.
+export const tempHome = () => homeAt(realpathSync(mkdtempSync("/tmp/nisse-")))
 
 export interface ServerOptions {
   readonly home?: Home
