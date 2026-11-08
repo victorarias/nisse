@@ -121,6 +121,25 @@ Provider, `packages/nisse/test/openai.test.ts`:
 
 - a code-mode model without the code-mode host says how to install it
 
+These need the host, and are skipped when it is not installed:
+
+- a code-mode model is offered exec and wait, with nisse's tools declared inside exec
+- a tool a request hook withholds is missing from a code-mode script's ALL_TOOLS too
+- a tool an extension removes is gone from a code-mode model's exec too
+- a script's nested call is committed under its script and asks first, and the model sees only the script
+- a script that yields is resumed by wait, and its cell ends when it does
+- terminating a script ends the call it was waiting on before the model hears it stopped
+- a patch that moves a file to another spelling of its own path keeps the file
+- a host that dies mid-script interrupts the script with the nested results so far
+- a host that dies while the model waits tells the wait what the script finished
+- a wait on a script whose host stopped never reaches a script the next host started
+- a yielded script cut off by the run's end still tells the model what its calls finished
+- a yielded script cut off by a server stop still tells the resumed model what its calls finished
+- a script stopped mid-run still tells the model what its calls finished
+- a host that dies ends the calls its script was waiting on
+- a waited script stopped after another script finished still tells what its calls finished
+- a host that dies ends the calls of every script it ran
+
 ## Gotchas
 
 - Code mode depends on the model's catalog entry, not on anything a person

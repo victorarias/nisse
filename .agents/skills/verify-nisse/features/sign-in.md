@@ -166,7 +166,7 @@ Preconditions:
 
 ## Contexts
 
-- **SSH.** The TUI and `nisse login` use a device code, because a browser elsewhere cannot reach port 1455.
+- **SSH.** OpenAI's sign-in from the TUI and `nisse login` uses a device code, because a browser elsewhere cannot reach port 1455. Claude has only its terminal sign-in.
 - **Second client.** Any client can start, follow, answer or cancel a sign-in.
 - **Idle.** The server exits 30 s after its last client leaves, even while a sign-in waits.
 

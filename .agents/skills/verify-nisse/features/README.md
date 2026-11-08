@@ -110,7 +110,7 @@ lists when a change touches them.
 - [Server lifecycle](./server-lifecycle.md) (people, agents, triggers): one server per home, started on
   demand, refusing a second, exiting when idle, replaced with `--restart`.
 - [Wire protocol](./wire-protocol.md) (people, agents): the JSON Schema clients build from,
-  `initialize`, and how a client that falls behind is dropped.
+  `initialize`, and how a subscription that falls behind is ended.
 - [Crash recovery](./crash-recovery.md) (triggers): a run cut off by a killed server
   finishes when the server comes back.
 - [Quiet when idle](./quiet-when-idle.md) (people): an idle TUI and server use no CPU.

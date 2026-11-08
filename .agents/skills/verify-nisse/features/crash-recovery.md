@@ -84,6 +84,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - a call cut off by a crashed server is recorded as interrupted and the run carries on
 - a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own
 - a run that keeps crashing the server stops after three tries instead of looping
+- a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off (skipped when the code-mode host is not installed)
 
 Provider, `packages/nisse/test/claude.test.ts`:
 

@@ -2,8 +2,8 @@
 
 Every client speaks newline-delimited JSON-RPC 2.0 over the home's
 `nisse.sock`. A new client starts from the schema Nisse prints and says hello
-with `initialize`. A client that stops reading is dropped so it can never slow
-the server.
+with `initialize`. A subscription whose client stops reading is ended so it can
+never slow the server.
 
 ## Sub-features
 
@@ -11,7 +11,8 @@ the server.
 - `wire-initialize` answers a client with the server's version and protocol.
 - `wire-malformed` answers a call with missing fields with an error that names
   the field.
-- `wire-dropped` drops a client that falls 4096 commits behind.
+- `wire-dropped` ends a subscription that falls 4096 commits behind with a
+  `FellBehind` error; the connection stays open.
 - `wire-unknown` says so when a client subscribes to a conversation that does
   not exist.
 
@@ -24,7 +25,7 @@ the server.
 ### Agents
 
 - Call `initialize` on the home's socket.
-- Build a client from `schema/nisse.schema.json`, as attn does.
+- Build a client from `schema/nisse.schema.json`.
 
 ## Driving it with drive.ts
 
@@ -55,7 +56,11 @@ Wire, `packages/nisse/test/wire.test.ts`:
 
 - `drive.ts` has no way to make a client stop reading, so `wire-dropped` is
   covered by its wire test only.
-- `initialize` does not refuse a client that sends another protocol number; the
-  client compares the answer.
+- `initialize` does not refuse a client that sends another protocol number; a
+  client has to compare the answer itself. Nisse's own TUI and `exec` do not
+  call `initialize`.
+- A client handles `FellBehind` by subscribing again with `sinceSeq` set to the
+  last commit it received. The socket does not close, so waiting for it to
+  close never notices.
 - After a protocol change, run `bun run schema` and commit
   `schema/nisse.schema.json`.
