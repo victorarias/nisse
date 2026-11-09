@@ -318,6 +318,7 @@ test.skipIf(codeModeHost === undefined)(
     await view.until((deliveries) =>
       bodies(deliveries).some((body) => body._tag === "tool_call" && body.tool === "Bash"),
     )
+    await deadline(fake.requested(2), 5000, "the model's answer to the yielded script")
     first.server.kill("SIGKILL")
     await first.server.exited
     first.client.close()

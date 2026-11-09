@@ -986,6 +986,7 @@ withCodeModeHost(
     await session.view.until((deliveries) =>
       resultsOf(deliveries).some((result) => result.call.startsWith("call_1/") && result.output.includes("[package]")),
     )
+    await deadline(fake.requested(2), 5000, "the model's answer to the yielded script")
     await session.client.call("conversation/interrupt", { conversation: session.conversation })
     await session.view.until(settled(1))
     await session.submit("what did it read?")
@@ -1013,6 +1014,7 @@ withCodeModeHost(
           (result) => result.call.startsWith("call_1/") && result.output.includes("[package]"),
         ),
       )
+      await deadline(fake.requested(2), 5000, "the model's answer to the yielded script")
       first.client.close()
       await first.server.stop()
 
