@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@nisse/env": "workspace:*",
     "@silvia-odwyer/photon": "0.3.3",
     "diff": "8.0.4",
     "quickjs-wasi": "3.6.2",
