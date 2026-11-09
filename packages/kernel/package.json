@@ -1,0 +1,13 @@
+{
+  "name": "@nisse/kernel",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@nisse/delta": "workspace:*",
+    "effect": "4.0.6"
+  }
+}
