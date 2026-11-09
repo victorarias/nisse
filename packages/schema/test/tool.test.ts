@@ -58,6 +58,13 @@ test("tool-argument-validation: a tool cannot tell a model it may send NaN", () 
   )
 })
 
+test.each(["default", "enum", "const", "examples"])(
+  "tool-argument-validation: a parameter named %s cannot hide a NaN projection",
+  (name) => {
+    expect(() => fromEffect(Schema.Struct({ [name]: Schema.Number }))).toThrow(/NaN.*Schema\.Finite/)
+  },
+)
+
 test('tool-argument-validation: a string parameter may still offer the word "NaN"', () => {
   const schema = fromEffect(
     Schema.Struct({ mode: Schema.Literals(["NaN", "normal"]), note: Schema.String.annotate({ default: "NaN" }) }),

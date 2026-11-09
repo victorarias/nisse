@@ -47,6 +47,9 @@ function isNonFiniteNumber(anyOf: unknown): boolean {
 	);
 }
 
+// Keywords whose value maps names to schemas: its keys are property or definition names, never keywords.
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+
 function refuseNonFinite(node: unknown, path: string): void {
 	if (Array.isArray(node)) {
 		node.forEach((item, index) => refuseNonFinite(item, `${path}/${index}`));
@@ -57,7 +60,10 @@ function refuseNonFinite(node: unknown, path: string): void {
 		throw new Error(`tool parameters at "${path || "/"}" accept NaN and the infinities; use Schema.Finite`);
 	}
 	for (const [key, value] of Object.entries(node)) {
-		if (!DATA_KEYWORDS.has(key)) refuseNonFinite(value, `${path}/${key}`);
+		if (DATA_KEYWORDS.has(key)) continue;
+		if (SCHEMA_MAPS.has(key) && typeof value === "object" && value !== null) {
+			for (const [name, schema] of Object.entries(value)) refuseNonFinite(schema, `${path}/${key}/${name}`);
+		} else refuseNonFinite(value, `${path}/${key}`);
 	}
 }
 
