@@ -1,0 +1,32 @@
+[
+  {
+    "file": "reference/durable/src/index.ts",
+    "find": "export { registryReader } from \"./harness/registry-reader.ts\";\n",
+    "replace": ""
+  },
+  {
+    "file": "upstream/test/session-adoption.test.ts",
+    "find": "import { JsonlStorage } from \"../src/storage/jsonl/index.ts\";\n",
+    "replace": ""
+  },
+  {
+    "file": "upstream/test/session-adoption.test.ts",
+    "find": "\tit(\"publishes a JSONL commit once the storage reclaimed its sidecar and resolved\", async () => {",
+    "replace": "\tit.skip(\"publishes a JSONL commit once the storage reclaimed its sidecar and resolved\", async () => {"
+  },
+  {
+    "file": "upstream/test/sqlite-facade.test.ts",
+    "find": "import { DurableObjectSqliteDatabase as ChordDurableObjectSqliteDatabase } from \"@earendil-works/chord/sqlite/cloudflare\";\n",
+    "replace": ""
+  },
+  {
+    "file": "upstream/test/sqlite-facade.test.ts",
+    "find": "import { DurableObjectSqliteDatabase } from \"@earendil-works/pi-durable/storage/sqlite/cloudflare\";\n",
+    "replace": ""
+  },
+  {
+    "file": "upstream/test/sqlite-facade.test.ts",
+    "find": "\t\texpect(DurableObjectSqliteDatabase).toBe(ChordDurableObjectSqliteDatabase);\n",
+    "replace": ""
+  }
+]

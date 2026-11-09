@@ -1,0 +1,14 @@
+{
+  "name": "@nisse/conformance",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@silvia-odwyer/photon": "0.3.3",
+    "diff": "8.0.4",
+    "quickjs-wasi": "3.6.2",
+    "typebox": "1.3.27"
+  },
+  "devDependencies": {
+    "vitest": "4.1.12"
+  }
+}

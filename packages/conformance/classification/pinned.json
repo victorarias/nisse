@@ -1,0 +1,1262 @@
+[
+ {
+  "id": "upstream/test/harness-after-run.test.ts :: endRun > leaves a run it does not own alone, and ends an answered run without a failure",
+  "class": "amend",
+  "reason": "Drive a run that ends unanswered and assert pi.live run and runFailure through LiveDoc snapshots.",
+  "spec": "8.2",
+  "private": "endRun() from src/harness/live.ts with a fake Tx"
+ },
+ {
+  "id": "upstream/test/harness-after-run.test.ts :: endRun > copies a failed run's first entry into runFailure",
+  "class": "amend",
+  "reason": "Drive a run that ends unanswered and assert pi.live run and runFailure through LiveDoc snapshots.",
+  "spec": "8.2",
+  "private": "endRun() from src/harness/live.ts with a fake Tx"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > keeps about keepRecentTokens and cuts at the first candidate at or after the budget (spec §8.7 example)",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > cuts at a user entry",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > cuts at an assistant in the middle of one long run and never at a tool result",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > never cuts at a display-only entry where the budget is reached (#10407)",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > keeps a huge last tool result together with its assistant",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > never cuts at a system entry or an excluded error or aborted answer",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > follows edited contributions: an omitted entry adds nothing and is no candidate",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > does not cut at a user entry that a result of the preceding call still follows",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > finds nothing when the budget is never reached or only the marker precedes the cut",
+  "class": "amend",
+  "reason": "Run compaction over the same transcript and assert firstKept through the compaction hook or the placed summary marker.",
+  "spec": "8.7",
+  "private": "selectCut() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: range selection > summarizes an earlier summary marker first",
+  "class": "amend",
+  "reason": "Assert the summary request text the fake model receives instead of calling the serializer.",
+  "spec": "8.7",
+  "private": "selectCut()/serializeConversation() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-compaction.test.ts :: serialization > writes a transcript, truncates tool results, and omits system messages and thinking",
+  "class": "amend",
+  "reason": "Assert the summary request text the fake model receives instead of calling the serializer.",
+  "spec": "8.7",
+  "private": "selectCut()/serializeConversation() from src/harness/compaction.ts"
+ },
+ {
+  "id": "upstream/test/harness-context-range.test.ts :: kept context ranges > is not advanced when an entry was committed while its scan ran off the line",
+  "class": "exclude",
+  "reason": "A race between a scan off the line and the private range cache; the spec only promises tail-only scans, not this interleaving.",
+  "spec": null,
+  "private": "advanceRange()/readContextFrom() from src/harness/context.ts"
+ },
+ {
+  "id": "upstream/test/harness-generation.test.ts :: generation > retries a retryable error after a durable backoff and then answers",
+  "class": "amend",
+  "reason": "Collect pi.live publications with observeCommits() in place of the internal listener.",
+  "spec": "8.3",
+  "private": "followCommits() internal commit listener via livePublications helper"
+ },
+ {
+  "id": "upstream/test/harness-generation.test.ts :: generation > polls a deferred response until it is ready",
+  "class": "amend",
+  "reason": "Collect pi.live publications with observeCommits() in place of the internal listener.",
+  "spec": "8.3",
+  "private": "followCommits() internal commit listener via livePublications helper"
+ },
+ {
+  "id": "upstream/test/harness-generation.test.ts :: generation > commits partials no more often than progress.partialIntervalMs",
+  "class": "amend",
+  "reason": "Collect pi.live publications with observeCommits() in place of the internal listener.",
+  "spec": "8.3",
+  "private": "followCommits() internal commit listener via livePublications helper"
+ },
+ {
+  "id": "upstream/test/harness-generation.test.ts :: generation > commits no partial for a response that turns deferred after an empty start event",
+  "class": "amend",
+  "reason": "Collect pi.live publications with observeCommits() in place of the internal listener.",
+  "spec": "8.3",
+  "private": "followCommits() internal commit listener via livePublications helper"
+ },
+ {
+  "id": "upstream/test/harness-generation.test.ts :: generation > faults a run task, settling its inputs and converting the committed partial",
+  "class": "amend",
+  "reason": "Collect pi.live publications with observeCommits() in place of the internal listener.",
+  "spec": "8.3",
+  "private": "followCommits() internal commit listener via livePublications helper"
+ },
+ {
+  "id": "upstream/test/harness-generation.test.ts :: generation > resolves settings over the built-in defaults",
+  "class": "amend",
+  "reason": "Assert defaults through observable behavior or the settings a task receives (TaskRuntime.settings) rather than calling the resolver.",
+  "spec": "2.2",
+  "private": "resolveSettings() from src/harness/agent.ts"
+ },
+ {
+  "id": "upstream/test/harness-generation.test.ts :: generation > orphans a blocked run task with full run cleanup",
+  "class": "amend",
+  "reason": "Replace commitWith with the public commit; the Tx calls it makes are all public.",
+  "spec": "5.4",
+  "private": "SessionImpl.commitWith() via cast"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > settles a run end whose sweep drops the chain without a check of every scope",
+  "class": "exclude",
+  "reason": "Asserts that a sweep avoids a full idle check, a private cost counter with no spec promise.",
+  "spec": null,
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops a range past its retention when a task change makes it busy again, with background timers declined",
+  "class": "amend",
+  "reason": "With background timers declined, assert a later read scans the whole conversation through Storage scan counts.",
+  "spec": "5.1",
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops a range past its retention at a reconcile pass with nothing to do, with background timers declined (review)",
+  "class": "exclude",
+  "reason": "The reconcile pass with no work is a private scheduler step.",
+  "spec": null,
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > expires in idle order when the clock goes back",
+  "class": "exclude",
+  "reason": "Expiry order under a clock going backwards is not specified.",
+  "spec": null,
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops every idle range when retention becomes zero, also one that went idle after the clock's now (review)",
+  "class": "amend",
+  "reason": "Assert through Storage scan counts on the next read whether the kept range survived contextRetentionMs.",
+  "spec": "5.1",
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > applies a longer retention to idle ranges at an unrelated commit",
+  "class": "amend",
+  "reason": "Assert through Storage scan counts on the next read whether the kept range survived contextRetentionMs.",
+  "spec": "5.1",
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > applies a shorter retention to idle ranges at an unrelated commit",
+  "class": "amend",
+  "reason": "Assert through Storage scan counts on the next read whether the kept range survived contextRetentionMs.",
+  "spec": "5.1",
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > applies a zero retention to idle ranges at an unrelated commit",
+  "class": "amend",
+  "reason": "Assert through Storage scan counts on the next read whether the kept range survived contextRetentionMs.",
+  "spec": "5.1",
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops a range that goes idle with zero retention",
+  "class": "amend",
+  "reason": "Assert through Storage scan counts on the next read whether the kept range survived contextRetentionMs.",
+  "spec": "5.1",
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > keeps an idle range's expiry when another task reads it again",
+  "class": "amend",
+  "reason": "Keep the existing rowsOf assertions and drop the idleState counter check.",
+  "spec": "5.1",
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops a range from the expiry order when an entry commit finds it expired",
+  "class": "exclude",
+  "reason": "The expiry order is a private structure; no spec section describes it.",
+  "spec": null,
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops a range from the expiry order when an entry commit cannot extend it",
+  "class": "exclude",
+  "reason": "The expiry order is a private structure; no spec section describes it.",
+  "spec": null,
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-idle-scopes.test.ts :: incremental idle state > equals a full recompute after every step of random nested work",
+  "class": "exclude",
+  "reason": "Checks a private incremental index equals its private full recompute.",
+  "spec": null,
+  "private": "SCHEDULER_IDLE_STATE scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-inbox.test.ts :: usage > keeps tools named like object prototype keys in the ledger and the Session total",
+  "class": "amend",
+  "reason": "Run tools named __proto__ and constructor and read the ledger through UsageDoc.",
+  "spec": "8.6",
+  "private": "recordUsage() from src/harness/usage.ts"
+ },
+ {
+  "id": "upstream/test/harness-json.test.ts :: assignJson > does not merge a new __proto__ member into Object.prototype",
+  "class": "exclude",
+  "reason": "The spec has no rule for a __proto__ key inside streamed JSON, and the test calls a private helper on a Chord tracker.",
+  "spec": null,
+  "private": "assignJson() from src/harness/json.ts"
+ },
+ {
+  "id": "upstream/test/harness-lifecycle.test.ts :: Harness close > leaves no subscription behind a watch acquisition cancelled on the line",
+  "class": "amend",
+  "reason": "Keep the rejected acquisition and the fresh-mount assertions, force a cold load by reopening, and drop the subscription count.",
+  "spec": "9.1",
+  "private": "followCommits() patched on SessionImpl; unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/harness-live-deltas.test.ts :: pi.live deltas > appends head output and then only updates the dropped counts once the window is full",
+  "class": "amend",
+  "reason": "Read pi.live ops from observeCommits() instead of the internal listener.",
+  "spec": "8.2",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-live-deltas.test.ts :: pi.live deltas > slides a tail window as a front trim plus an append",
+  "class": "amend",
+  "reason": "Read pi.live ops from observeCommits() instead of the internal listener.",
+  "spec": "8.2",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-live-deltas.test.ts :: pi.live deltas > writes the whole window when Chord's overlap search cannot find the shared part",
+  "class": "amend",
+  "reason": "Read pi.live ops from observeCommits() instead of the internal listener.",
+  "spec": "8.2",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-live-deltas.test.ts :: pi.live deltas > diffs details leaf by leaf and appends diagnostics",
+  "class": "amend",
+  "reason": "Read pi.live ops from observeCommits() instead of the internal listener.",
+  "spec": "8.2",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-live-deltas.test.ts :: pi.live deltas > streams partial text as appends",
+  "class": "amend",
+  "reason": "Read pi.live ops from observeCommits() instead of the internal listener.",
+  "spec": "8.2",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-live-deltas.test.ts :: pi.live deltas > writes an aborted tool's slot with field-level ops",
+  "class": "amend",
+  "reason": "Read pi.live ops from observeCommits() instead of the internal listener.",
+  "spec": "8.2",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-nested-tools.test.ts :: nested tool calls > rejects a nested call of an aborted caller and leaves no document for it",
+  "class": "amend",
+  "reason": "Mark the caller with public abortTask() before the nested call.",
+  "spec": "7.3",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-observers.test.ts :: task documents > keeps no task document watch alive once its task ended",
+  "class": "amend",
+  "reason": "Assert the watch ended when its task ended and drop the attached counter.",
+  "spec": "3.2",
+  "private": "SessionImpl.documentCacheSizes"
+ },
+ {
+  "id": "upstream/test/harness-ownership.test.ts :: ownership > keeps ownership queries off finished subtrees",
+  "class": "exclude",
+  "reason": "Counts Set iterations to pin the cost of a private traversal; the spec states no such cost.",
+  "spec": null,
+  "private": "Set.prototype iterator instrumentation"
+ },
+ {
+  "id": "upstream/test/harness-ownership.test.ts :: ownership > finalizes many held siblings that end together in one pass",
+  "class": "exclude",
+  "reason": "Counts Set iterations to pin the cost of a private traversal; the spec states no such cost.",
+  "spec": null,
+  "private": "Set.prototype iterator instrumentation"
+ },
+ {
+  "id": "upstream/test/harness-ownership.test.ts :: ownership > derives marks a crash left unapplied below a held failed owner at open",
+  "class": "amend",
+  "reason": "Seed the crash-left task records with Storage writes before opening the Harness.",
+  "spec": "5.4",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-ownership.test.ts :: ownership > derives marks a crash left unapplied below an abort-marked owner at open",
+  "class": "amend",
+  "reason": "Seed the crash-left task records with Storage writes before opening the Harness.",
+  "spec": "5.4",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-ownership.test.ts :: ownership > cancels only the caller's wait, never the shared work",
+  "class": "amend",
+  "reason": "Produce the owner state through public abortTask() or by seeding Storage, then assert the same outcomes.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-ownership.test.ts :: ownership > aborts a waiting child whose awaited task completes in the commit that marks its owner",
+  "class": "amend",
+  "reason": "Produce the owner state through public abortTask() or by seeding Storage, then assert the same outcomes.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > commits tool-call arguments equal to the final parse, at every piece size and commit rhythm",
+  "class": "amend",
+  "reason": "Stream the same pieces from a fake model and assert the pi.live ops and final arguments from observeCommits().",
+  "spec": "8.2",
+  "private": "PartialChanges from src/harness/partial-changes.ts"
+ },
+ {
+  "id": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > handles a number ending and a string starting in one piece, and escapes split across pieces",
+  "class": "amend",
+  "reason": "Stream the same pieces from a fake model and assert the pi.live ops and final arguments from observeCommits().",
+  "spec": "8.2",
+  "private": "PartialChanges from src/harness/partial-changes.ts"
+ },
+ {
+  "id": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > appends growing argument and text strings instead of reassigning them",
+  "class": "amend",
+  "reason": "Stream the same pieces from a fake model and assert the pi.live ops and final arguments from observeCommits().",
+  "spec": "8.2",
+  "private": "PartialChanges from src/harness/partial-changes.ts"
+ },
+ {
+  "id": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > commits the final arguments after the call ends, and drops text appends when a block ends",
+  "class": "amend",
+  "reason": "Stream the same pieces from a fake model and assert the pi.live ops and final arguments from observeCommits().",
+  "spec": "8.2",
+  "private": "PartialChanges from src/harness/partial-changes.ts"
+ },
+ {
+  "id": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > applies the changes of a failed commit in the next one",
+  "class": "exclude",
+  "reason": "Recovery from a failed partial commit is a private class contract; a failed commit fails the Session publicly, so this path is unreachable through the API.",
+  "spec": null,
+  "private": "PartialChanges from src/harness/partial-changes.ts"
+ },
+ {
+  "id": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > re-applies a failed commit's changes even when it would have added the call",
+  "class": "exclude",
+  "reason": "Recovery from a failed partial commit is a private class contract; a failed commit fails the Session publicly, so this path is unreachable through the API.",
+  "spec": null,
+  "private": "PartialChanges from src/harness/partial-changes.ts"
+ },
+ {
+  "id": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > falls back to the snapshot when the committed message lost a call whose changes were committed",
+  "class": "exclude",
+  "reason": "Recovery from a failed partial commit is a private class contract; a failed commit fails the Session publicly, so this path is unreachable through the API.",
+  "spec": null,
+  "private": "PartialChanges from src/harness/partial-changes.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: system prompt preparation > renders sections in order with tags, omissions, wrappers, and failures",
+  "class": "amend",
+  "reason": "Install sections through the registry and assert the system entries and the model request.",
+  "spec": "7.4",
+  "private": "renderSections()/replaySections()/planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: system prompt preparation > propagates section errors after cancellation",
+  "class": "amend",
+  "reason": "Install sections through the registry and assert the system entries and the model request.",
+  "spec": "7.4",
+  "private": "renderSections()/replaySections()/planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: system prompt preparation > replays sections in place, deletes on null, and appends re-additions",
+  "class": "amend",
+  "reason": "Install sections through the registry and assert the system entries and the model request.",
+  "spec": "7.4",
+  "private": "renderSections()/replaySections()/planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: system prompt preparation > emits minimal value patches, removals, and additions",
+  "class": "amend",
+  "reason": "Install sections through the registry and assert the system entries and the model request.",
+  "spec": "7.4",
+  "private": "renderSections()/replaySections()/planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: system prompt preparation > rewrites order-only changes and re-additions as two entries",
+  "class": "amend",
+  "reason": "Install sections through the registry and assert the system entries and the model request.",
+  "spec": "7.4",
+  "private": "renderSections()/replaySections()/planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: system prompt preparation > rebaselines after a head marker, omitting retained deltas on both sides of it",
+  "class": "amend",
+  "reason": "Install sections through the registry and assert the system entries and the model request.",
+  "spec": "7.4",
+  "private": "renderSections()/replaySections()/planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: system prompt preparation > writes a complete post-head baseline even when replay already matches",
+  "class": "amend",
+  "reason": "Install sections through the registry and assert the system entries and the model request.",
+  "spec": "7.4",
+  "private": "renderSections()/replaySections()/planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: tool loadout preparation > adds, removes, replaces changed declarations, and rewrites the order when needed",
+  "class": "amend",
+  "reason": "Change installed tools between turns and assert the system entries carrying tool declarations.",
+  "spec": "7.4",
+  "private": "planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-prompt.test.ts :: tool loadout preparation > puts tool changes on the last section entry and re-declares every tool after a head cut",
+  "class": "amend",
+  "reason": "Change installed tools between turns and assert the system entries carrying tool declarations.",
+  "spec": "7.4",
+  "private": "planSystemEntries() from src/harness/prompt.ts"
+ },
+ {
+  "id": "upstream/test/harness-registry.test.ts :: settings > keeps the default of a progress interval given as undefined",
+  "class": "amend",
+  "reason": "Assert the defaulted interval through observed progress pacing or the settings a task receives.",
+  "spec": "2.2",
+  "private": "resolveSettings() from src/harness/agent.ts"
+ },
+ {
+  "id": "upstream/test/harness-registry.test.ts :: agent resolution > selects the default, an array, or the default edited by add and remove",
+  "class": "amend",
+  "reason": "Open a Harness with these registries and assert the tools, sections and hooks a generation uses.",
+  "spec": "7.1",
+  "private": "resolveAgent()/agentHooks() from src/harness/agent.ts"
+ },
+ {
+  "id": "upstream/test/harness-registry.test.ts :: agent resolution > skips uninstalled names and resolves them again once they are installed",
+  "class": "amend",
+  "reason": "Open a Harness with these registries and assert the tools, sections and hooks a generation uses.",
+  "spec": "7.1",
+  "private": "resolveAgent()/agentHooks() from src/harness/agent.ts"
+ },
+ {
+  "id": "upstream/test/harness-registry.test.ts :: agent resolution > replaces same-name tools in place, wraps the winner, then applies the filter",
+  "class": "amend",
+  "reason": "Open a Harness with these registries and assert the tools, sections and hooks a generation uses.",
+  "spec": "7.1",
+  "private": "resolveAgent()/agentHooks() from src/harness/agent.ts"
+ },
+ {
+  "id": "upstream/test/harness-registry.test.ts :: agent resolution > drops a tool or section whose wrapper throws or renames it and reports the failure",
+  "class": "amend",
+  "reason": "Open a Harness with these registries and assert the tools, sections and hooks a generation uses.",
+  "spec": "7.1",
+  "private": "resolveAgent()/agentHooks() from src/harness/agent.ts"
+ },
+ {
+  "id": "upstream/test/harness-registry.test.ts :: agent resolution > orders sections by extension, replaces same keys in place, and renders instructions last and unwrapped",
+  "class": "amend",
+  "reason": "Open a Harness with these registries and assert the tools, sections and hooks a generation uses.",
+  "spec": "7.1",
+  "private": "resolveAgent()/agentHooks() from src/harness/agent.ts"
+ },
+ {
+  "id": "upstream/test/harness-registry.test.ts :: agent resolution > collects hooks of the selected extensions in extension order and applies field defaults",
+  "class": "amend",
+  "reason": "Open a Harness with these registries and assert the tools, sections and hooks a generation uses.",
+  "spec": "7.1",
+  "private": "resolveAgent()/agentHooks() from src/harness/agent.ts"
+ },
+ {
+  "id": "upstream/test/harness-restart-failure.test.ts :: a generation interrupted while the model answers (#11139) > charges the attempt: keeps the partial, waits for the retry backoff, and answers on the next attempt",
+  "class": "amend",
+  "reason": "Read pi.live revisions from observeCommits() or LiveDoc snapshots.",
+  "spec": "8.3",
+  "private": "followCommits() internal commit listener via liveValues helper"
+ },
+ {
+  "id": "upstream/test/harness-restart-failure.test.ts :: crash edges (#11139) > charges a crash during a poll's fetch, then polls the same deferred response again",
+  "class": "amend",
+  "reason": "Read pi.live revisions from observeCommits() or LiveDoc snapshots.",
+  "spec": "8.3",
+  "private": "followCommits() internal commit listener via liveValues helper"
+ },
+ {
+  "id": "upstream/test/harness-restart-failure.test.ts :: crash edges (#11139) > charges a request once when a crash is followed by a clean close before the charge",
+  "class": "amend",
+  "reason": "Read pi.live revisions from observeCommits() or LiveDoc snapshots.",
+  "spec": "8.3",
+  "private": "followCommits() internal commit listener via liveValues helper"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-indexes.test.ts :: scheduler indexes > takes a cascade's reason from the nearest cancelling owner",
+  "class": "amend",
+  "reason": "Mark owners through public abortTask() or by seeding Storage and assert the cascade reason.",
+  "spec": "5.4",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > forgets ended subagent chains once their work ends",
+  "class": "exclude",
+  "reason": "Asserts private scheduler index sizes; the spec promises no size for these indexes.",
+  "spec": null,
+  "private": "SCHEDULER_INDEX_SIZES scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > drops what a rejected commit's chain load read, without a later publication",
+  "class": "exclude",
+  "reason": "Asserts private scheduler index sizes; the spec promises no size for these indexes.",
+  "spec": null,
+  "private": "SCHEDULER_INDEX_SIZES scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > drops what a read loaded after reopen, without a later publication",
+  "class": "exclude",
+  "reason": "Asserts private scheduler index sizes; the spec promises no size for these indexes.",
+  "spec": null,
+  "private": "SCHEDULER_INDEX_SIZES scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > forgets a 20,000-deep chain of ended tasks without recursion",
+  "class": "exclude",
+  "reason": "Asserts private scheduler index sizes; the spec promises no size for these indexes.",
+  "spec": null,
+  "private": "SCHEDULER_INDEX_SIZES scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > keeps no more after all work ended than a fresh reopen",
+  "class": "exclude",
+  "reason": "Asserts private scheduler index sizes; the spec promises no size for these indexes.",
+  "spec": null,
+  "private": "SCHEDULER_INDEX_SIZES scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > holds a live owner for work later created in a forgotten conversation, loading its chain again",
+  "class": "amend",
+  "reason": "Keep the holding assertions and drop the sizes bound.",
+  "spec": "5.4",
+  "private": "SCHEDULER_INDEX_SIZES scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > holds an owner for work its own terminal commit creates below a forgotten chain",
+  "class": "amend",
+  "reason": "Give the input at creation, or end the task from its own phase, and assert the same holding outcomes.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > keeps a chain when one commit ends its last task and creates new work below it",
+  "class": "amend",
+  "reason": "Give the input at creation, or end the task from its own phase, and assert the same holding outcomes.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > aborts work created in a forgotten conversation below an abort-marked owner before it runs",
+  "class": "amend",
+  "reason": "Mark the owner with public abortTask() and assert the late task aborts before running.",
+  "spec": "5.4",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > withdraws an input queued two ended levels below an owner whose intent appears later",
+  "class": "amend",
+  "reason": "Fail the owner from its own phase, wait on the submission status, and drop the sizes wait.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast; SCHEDULER_INDEX_SIZES scheduler counters"
+ },
+ {
+  "id": "upstream/test/harness-storage-failure.test.ts :: listener and report errors > keeps feeding the other observers of a view when one throws",
+  "class": "amend",
+  "reason": "Attach two observers through the public conversation watch and assert the survivor still advances.",
+  "spec": "9.3",
+  "private": "conversationViews() from src/harness/view.ts"
+ },
+ {
+  "id": "upstream/test/harness-storage-failure.test.ts :: a failed Storage call > fails it for a throw in its own commit listeners, which would leave memory behind storage",
+  "class": "exclude",
+  "reason": "A throw from the Session's own listeners is specified (section 4), but no public API can install such a listener, so it cannot be expressed.",
+  "spec": null,
+  "private": "followCommits() via cast"
+ },
+ {
+  "id": "upstream/test/harness-storage-failure.test.ts :: listener and report errors > contains a fulfilled thenable that calls only its fulfillment handler",
+  "class": "exclude",
+  "reason": "Thenable and cross-realm handling of a private containment helper; no spec section covers these shapes.",
+  "spec": null,
+  "private": "contained() from src/session/session.ts"
+ },
+ {
+  "id": "upstream/test/harness-storage-failure.test.ts :: listener and report errors > contains a rejected promise from another realm",
+  "class": "exclude",
+  "reason": "Thenable and cross-realm handling of a private containment helper; no spec section covers these shapes.",
+  "spec": null,
+  "private": "contained() from src/session/session.ts"
+ },
+ {
+  "id": "upstream/test/harness-storage-failure.test.ts :: listener and report errors > reports a throwing clock once, also when the report handler reads the clock again",
+  "class": "exclude",
+  "reason": "A private clock wrapper; the spec does not cover a throwing clock or report reentry.",
+  "spec": null,
+  "private": "safeNow() from src/harness/harness.ts"
+ },
+ {
+  "id": "upstream/test/harness-structured.test.ts :: recovery > resumes a parent whose awaited children finished before the crash",
+  "class": "amend",
+  "reason": "Seed the crash-left task records with Storage writes before opening the Harness.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-structured.test.ts :: recovery > marks failFast siblings a crash left unmarked",
+  "class": "amend",
+  "reason": "Seed the crash-left task records with Storage writes before opening the Harness.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-structured.test.ts :: recovery > finalizes a held outcome whose work drained before the crash, and keeps one whose work lives",
+  "class": "amend",
+  "reason": "Seed the crash-left task records with Storage writes before opening the Harness.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-structured.test.ts :: recovery > resumes a bottom-up abort a crash interrupted before the cascade",
+  "class": "amend",
+  "reason": "Seed the crash-left task records with Storage writes before opening the Harness.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-structured.test.ts :: recovery through ownership edges > shows an abort-marked owner waiting for work in its owned conversation before resume after reopen",
+  "class": "amend",
+  "reason": "Seed the crash-left task records with Storage writes before opening the Harness.",
+  "spec": "5.5",
+  "private": "Transaction.setTask() via cast"
+ },
+ {
+  "id": "upstream/test/harness-submissions.test.ts :: submissions > settles submissions by their current record in the transaction",
+  "class": "amend",
+  "reason": "Replace commitWith with the public commit; createSubmission and settleSubmission are on the public Tx.",
+  "spec": "3.3",
+  "private": "SessionImpl.commitWith() via cast"
+ },
+ {
+  "id": "upstream/test/harness-tasks.test.ts :: task phases > commits results with entries atomically, keeps memos until terminal, and retires task documents",
+  "class": "amend",
+  "reason": "Keep the atomicity assertions and show task documents retired through snapshots, dropping the counter.",
+  "spec": "3.2",
+  "private": "SessionImpl.documentCacheSizes"
+ },
+ {
+  "id": "upstream/test/harness-tasks.test.ts :: publication at adoption > fails the Session with the storage error when it rejects after adopting, and reports an observer's throw",
+  "class": "amend",
+  "reason": "Throw from an observeCommits() observer and keep the storage-failure and listener_error assertions.",
+  "spec": "4",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-tasks.test.ts :: publication at adoption > calls a host listener added on a Harness during a publication only when one was registered at it",
+  "class": "amend",
+  "reason": "Attach the later observer from inside an observeCommits() observer.",
+  "spec": "4",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-view-run.test.ts :: a run as the conversation view shows it > streams the answer as operations that rebuild every committed partial, then appends it",
+  "class": "amend",
+  "reason": "Rebuild partials from observeCommits() or the conversation view instead of the internal listener.",
+  "spec": "9.3",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-view-run.test.ts :: a run as the conversation view shows it > rebuilds every committed partial of thinking, text, and tool-call arguments from the view's operations",
+  "class": "amend",
+  "reason": "Rebuild partials from observeCommits() or the conversation view instead of the internal listener.",
+  "spec": "9.3",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-view-run.test.ts :: a run as the conversation view shows it > rebuilds a sliding tail window from output trims and appends",
+  "class": "amend",
+  "reason": "Rebuild partials from observeCommits() or the conversation view instead of the internal listener.",
+  "spec": "9.3",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-view-run.test.ts :: streamed partials > streams a tool-call partial as appends at its argument paths",
+  "class": "amend",
+  "reason": "Rebuild partials from observeCommits() or the conversation view instead of the internal listener.",
+  "spec": "9.3",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-view-run.test.ts :: streamed partials > commits a growing text and tool call at a cost that follows the new text, not the string lengths",
+  "class": "amend",
+  "reason": "Rebuild partials from observeCommits() or the conversation view instead of the internal listener.",
+  "spec": "9.3",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/harness-view-run.test.ts :: streamed partials > keeps a watcher's memory proportional to a long streamed text and tool call, not to their commits",
+  "class": "amend",
+  "reason": "Rebuild partials from observeCommits() or the conversation view instead of the internal listener.",
+  "spec": "9.3",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > takes the durability receipt inside the commit, and adopts once Storage resolved",
+  "class": "amend",
+  "reason": "Keep the Storage order assertion and drop the Transaction spy.",
+  "spec": "4",
+  "private": "Transaction.prototype.adopt spy"
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > fails the Session without discarding when Storage rejects after adoption",
+  "class": "amend",
+  "reason": "Keep the Storage fault, the rejection and the closed outcome, and drop the Transaction spy.",
+  "spec": "10.1",
+  "private": "Transaction.prototype.discard spy"
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > discards the staged changes when Storage rejects before adoption",
+  "class": "amend",
+  "reason": "Keep the Storage fault, the rejection and the closed outcome, and drop the Transaction spy.",
+  "spec": "10.1",
+  "private": "Transaction.prototype.discard spy"
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > fails the Session with its own adoption error, which never reaches Storage",
+  "class": "exclude",
+  "reason": "Injects a throw into a private method; no public input can make adoption throw.",
+  "spec": null,
+  "private": "Transaction.prototype.adopt mock"
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: publication after storage > runs its own observers once Storage resolved, and host listeners one microtask later",
+  "class": "exclude",
+  "reason": "Subject is the Session's own listeners, which no public API can install.",
+  "spec": null,
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: publication after storage > fails the Session after Storage returned for a throw of its own observers; the others and hosts got the commit",
+  "class": "exclude",
+  "reason": "Subject is the Session's own listeners, which no public API can install.",
+  "spec": null,
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: publication after storage > calls the host listeners registered when its dispatch runs, and none for a commit published without one",
+  "class": "amend",
+  "reason": "Attach observers with observeCommits(), including from inside a dispatch.",
+  "spec": "4",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: publication after storage > publishes a commit that Storage rejects after adopting it, then fails the Session",
+  "class": "amend",
+  "reason": "Observe with observeCommits() and keep the reject-after-adopt Storage fault.",
+  "spec": "10.1",
+  "private": "followCommits() internal commit listener"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document checkpoints > passes the stored delta count since the newest base, including after unload and version bases",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.5",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document checkpoints > persists repeated false decisions as deltas and replays the complete tail",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.5",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document checkpoints > keeps a prepared root replacement as a delta when the predicate is false",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.5",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document migrations > migrates read-only once per cold load, copies the callback result, and writes nothing",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document migrations > writes the required base on the first successful transaction, then writes deltas",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document migrations > rolls migration and edits back with the callback, then coalesces later edits into one base",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document migrations > strict-checks migration results before tracker ownership and remains usable after rejection",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document migrations > rejects newer stored versions and older versions without migration for snapshots and transactions",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document migrations > persists a required migration base before retirement without consulting the checkpoint predicate",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session document migrations > leaves unaccessed older documents and unavailable definitions untouched",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session historical document snapshots > migrates current and historical rewindable values independently and follows fork ancestry",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-checkpoints-migrations.test.ts :: Session tracker cache across definition versions > serves an older token from Storage after a newer token migrated only in memory",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.6",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-conversation-tails.test.ts :: conversation tails > reads once, then follows the commits",
+  "class": "exclude",
+  "reason": "Unit tests of a private cache class; the spec does not mention it.",
+  "spec": null,
+  "private": "ConversationTails from src/session/conversation-tails.ts"
+ },
+ {
+  "id": "upstream/test/session-conversation-tails.test.ts :: conversation tails > knows a new root conversation is empty, and a fork only once read or written",
+  "class": "exclude",
+  "reason": "Unit tests of a private cache class; the spec does not mention it.",
+  "spec": null,
+  "private": "ConversationTails from src/session/conversation-tails.ts"
+ },
+ {
+  "id": "upstream/test/session-conversation-tails.test.ts :: conversation tails > answers a cutoff from the newest marker only at or after it",
+  "class": "exclude",
+  "reason": "Unit tests of a private cache class; the spec does not mention it.",
+  "spec": null,
+  "private": "ConversationTails from src/session/conversation-tails.ts"
+ },
+ {
+  "id": "upstream/test/session-conversation-tails.test.ts :: conversation tails > keeps a bounded number of conversations, fewer with markers",
+  "class": "exclude",
+  "reason": "Unit tests of a private cache class; the spec does not mention it.",
+  "spec": null,
+  "private": "ConversationTails from src/session/conversation-tails.ts"
+ },
+ {
+  "id": "upstream/test/session-conversation-tails.test.ts :: conversation tails > freezes the markers it keeps",
+  "class": "exclude",
+  "reason": "Unit tests of a private cache class; the spec does not mention it.",
+  "spec": null,
+  "private": "ConversationTails from src/session/conversation-tails.ts"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > evicts an unattached document once its retention passed, and loads it again with the same value",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > evicts with retention 0 right after use, on the line",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > never evicts a document a watch observes, and evicts it once the last watch detaches",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > bounds a third-party family with a member per event",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > keeps the cache of a long-lived Session bounded across many conversations",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > evicts after a commit whose settlement fails",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > evicts promptly once the retention is shortened",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > pins only what is at the address a watch follows: nothing while retired, then the new incarnation",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > leaves no pin behind when an observer's load loses a race with close",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > treats a retention that is not a number of milliseconds as the default, and Infinity as never",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > keeps no timer where timers cannot be unreferenced, and evicts on commits",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > keeps a reloaded newer version cached while an observer of the older one is attached",
+  "class": "amend",
+  "reason": "Assert eviction through Storage document reads on the next access, and wait on a commit instead of readOnLine.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > writes after a reload continue the stored deltas and bases",
+  "class": "amend",
+  "reason": "Replace settleLine with an empty commit, which waits on the same line.",
+  "spec": "4",
+  "private": "SessionImpl.readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > keeps history and forks of rewindable documents after eviction",
+  "class": "amend",
+  "reason": "Replace settleLine with an empty commit, which waits on the same line.",
+  "spec": "4",
+  "private": "SessionImpl.readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > migrates a document again after its eviction",
+  "class": "amend",
+  "reason": "Replace settleLine with an empty commit, which waits on the same line.",
+  "spec": "4",
+  "private": "SessionImpl.readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > evicts on its timer without a commit, and tolerates a stop called twice",
+  "class": "amend",
+  "reason": "Fire a fake setTimer and assert the next access reads Storage.",
+  "spec": "5.6",
+  "private": "SessionImpl.documentCacheSizes"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > follows a Harness settings change at the next use",
+  "class": "amend",
+  "reason": "Change Harness settings and assert the next access reads Storage.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; setDefaultDocumentRetention(); readOnLine()"
+ },
+ {
+  "id": "upstream/test/session-document-retention.test.ts :: document cache retention > queues one sweep job, not one per document, while a commit holds the line",
+  "class": "exclude",
+  "reason": "Counts private sweep jobs; the spec promises eviction, not job counts.",
+  "spec": null,
+  "private": "SessionImpl.documentCacheSizes"
+ },
+ {
+  "id": "upstream/test/session-documents.test.ts :: Session document transactions > rejects a callback that succeeds with a pending acquisition and drains it",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.3",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-documents.test.ts :: Session document transactions > rejects with the callback error when it fails with a pending acquisition",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.3",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-documents.test.ts :: Session document transactions > retires documents and creates a new incarnation at the same address",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.3",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-documents.test.ts :: Session document transactions > retires without acquisition and recreates both existing and absent addresses",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.3",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-documents.test.ts :: Session document transactions > reloads an unloaded document from Storage",
+  "class": "amend",
+  "reason": "Use documentRetentionMs: 0 or a reopen and assert the Storage read.",
+  "spec": "4",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-documents.test.ts :: Session document transactions > rejects Tx use after the callback settles",
+  "class": "amend",
+  "reason": "Capture the Tx from public commit and drop the setTask line.",
+  "spec": "3.4",
+  "private": "SessionImpl.commitWith(); Transaction.setTask()"
+ },
+ {
+  "id": "upstream/test/session-documents.test.ts :: Session document transactions > rolls back prepared documents when batch assembly fails",
+  "class": "amend",
+  "reason": "Fail assembly with a public rule, such as a terminal owner judged on the final candidate.",
+  "spec": "3.3",
+  "private": "SessionImpl.commitWith(); Transaction.setTask()"
+ },
+ {
+  "id": "upstream/test/session-forks.test.ts :: Session conversation document forks > copies the stored value and version without consulting migration definitions or migrated caches",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session over the same Storage.",
+  "spec": "3.7",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc > returns undefined for an absent address and attaches nothing",
+  "class": "amend",
+  "reason": "Commit afterwards and assert the observer got nothing, dropping the attached counter.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc > rejects an attachment whose context is cancelled, and attaches nothing",
+  "class": "amend",
+  "reason": "Commit afterwards and assert the observer got nothing, dropping the attached counter.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc > gets nothing after detach, which is idempotent and unpins the document",
+  "class": "amend",
+  "reason": "With retention 0, assert the document reloads from Storage after detach, and read reports from the Harness report option where the test needs them.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; ReportingSession report override"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc detached during a commit > gets nothing more of the commit once it throws on the retirement, and pins nothing for the recreation",
+  "class": "amend",
+  "reason": "With retention 0, assert the document reloads from Storage after detach, and read reports from the Harness report option where the test needs them.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; ReportingSession report override"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc detached during a commit > gets nothing more of the commit once it detaches in the retirement call, and pins nothing",
+  "class": "amend",
+  "reason": "With retention 0, assert the document reloads from Storage after detach, and read reports from the Harness report option where the test needs them.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; ReportingSession report override"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc detached during a commit > gets nothing of the commit when another observer's call detached it first, and pins nothing",
+  "class": "amend",
+  "reason": "With retention 0, assert the document reloads from Storage after detach, and read reports from the Harness report option where the test needs them.",
+  "spec": "4",
+  "private": "SessionImpl.documentCacheSizes; ReportingSession report override"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc > reports a throwing observer, detaches it and ends it with the error; the commit and other observers go on",
+  "class": "amend",
+  "reason": "Use a Harness with the report option in place of the SessionImpl subclass.",
+  "spec": "4",
+  "private": "ReportingSession report override; SessionImpl.failure"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc throwing asynchronously > reports an observer whose call returns a rejected promise, then detaches it and ends it `listener_error`",
+  "class": "amend",
+  "reason": "Use a Harness with the report option in place of the SessionImpl subclass.",
+  "spec": "4",
+  "private": "ReportingSession report override; SessionImpl.failure"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeCommits > reports a throwing observer, detaches it and ends it `listener_error`; the others go on",
+  "class": "amend",
+  "reason": "Use a Harness with the report option in place of the SessionImpl subclass.",
+  "spec": "4",
+  "private": "ReportingSession report override; SessionImpl.failure"
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc > keeps no value of a document retired for good, while still attached",
+  "class": "amend",
+  "reason": "Use retention 0 in place of the explicit unload.",
+  "spec": "4",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-tables.test.ts :: Session transaction tables > creates a conversation with an explicitly staged task owner",
+  "class": "amend",
+  "reason": "Keep the public owner assertions and drop the private setTask refusal.",
+  "spec": "3.3",
+  "private": "SessionImpl.commitWith(); Transaction.setTask()"
+ },
+ {
+  "id": "upstream/test/session-tables.test.ts :: Session transaction tables > rejects missing, terminal, and abort-marked conversation owners atomically",
+  "class": "amend",
+  "reason": "Reach terminal and abort-marked owners through task phases and abortTask(), then assert the atomic refusal.",
+  "spec": "5.5",
+  "private": "SessionImpl.commitWith(); Transaction.setTask()"
+ },
+ {
+  "id": "upstream/test/session-tables.test.ts :: Session transaction tables > treats synchronous setTask as the first table write",
+  "class": "exclude",
+  "reason": "Subject is setTask, a private Transaction method.",
+  "spec": null,
+  "private": "SessionImpl.commitWith(); Transaction.setTask()"
+ },
+ {
+  "id": "upstream/test/session-tables.test.ts :: Session transaction tables > replaces task records completely",
+  "class": "exclude",
+  "reason": "Subject is setTask, a private Transaction method.",
+  "spec": null,
+  "private": "SessionImpl.commitWith(); Transaction.setTask()"
+ },
+ {
+  "id": "upstream/test/session-tables.test.ts :: Session transaction tables > rejects task documents after a terminal candidate",
+  "class": "amend",
+  "reason": "Reach the terminal candidate from a task's final phase commit and assert task-document access rejects.",
+  "spec": "3.3",
+  "private": "SessionImpl.commitWith(); Transaction.setTask()"
+ },
+ {
+  "id": "upstream/test/session-tables.test.ts :: Session transaction tables > retires task documents at terminal settlement, including documents created in the same transaction",
+  "class": "amend",
+  "reason": "Complete tasks through phases and assert their documents retire through Storage.",
+  "spec": "3.3",
+  "private": "SessionImpl.commitWith(); Transaction.setTask()"
+ },
+ {
+  "id": "upstream/test/session-watches.test.ts :: Session document watches > cancels acquisition without leaking a registered watch",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session or retention 0.",
+  "spec": "9.1",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-watches.test.ts :: Session document watches > hydrates migration without writing and observes the later exact edit",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session or retention 0.",
+  "spec": "9.1",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-watches.test.ts :: Session document watches > continues after the tracker cache unloads",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session or retention 0.",
+  "spec": "9.1",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-watches.test.ts :: Session document watches > keeps no earlier incarnation alive after a retirement and a recreation, while it goes on",
+  "class": "amend",
+  "reason": "Force the cold load by reopening a Session or retention 0.",
+  "spec": "9.1",
+  "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "id": "upstream/test/session-watches.test.ts :: Session document watches > ignores the same kind in another conversation and under another family key",
+  "class": "amend",
+  "reason": "Keep the delivery assertions and drop the attached counter.",
+  "spec": "9.1",
+  "private": "SessionImpl.documentCacheSizes"
+ }
+]
