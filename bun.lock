@@ -23,6 +23,10 @@
         "vitest": "4.1.12",
       },
     },
+    "packages/delta": {
+      "name": "@nisse/delta",
+      "version": "0.1.0",
+    },
     "packages/nisse": {
       "name": "nisse",
       "version": "0.1.0",
@@ -48,6 +52,13 @@
       },
       "peerDependencies": {
         "effect": "^4.0.6",
+      },
+    },
+    "packages/schema": {
+      "name": "@nisse/schema",
+      "version": "0.1.0",
+      "devDependencies": {
+        "effect": "4.0.6",
       },
     },
   },
@@ -150,7 +161,11 @@
 
     "@nisse/conformance": ["@nisse/conformance@workspace:packages/conformance"],
 
+    "@nisse/delta": ["@nisse/delta@workspace:packages/delta"],
+
     "@nisse/protocol": ["@nisse/protocol@workspace:packages/protocol"],
+
+    "@nisse/schema": ["@nisse/schema@workspace:packages/schema"],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.10.0", "", {}, "sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ=="],
 

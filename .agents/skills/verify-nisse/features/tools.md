@@ -40,7 +40,7 @@ Tools return separate channels for the model, programs and clients, are bounded 
 - `tool-write` [kernel, pending tools-package] `write` (R245-305): Create or replace a file
 - `tool-bash` [kernel, pending tools-package] `bash` with streaming and timeouts (R245-305): Run commands
 - `tool-bash-prefix` [kernel, pending harness-tools] `commandPrefix` and `prepare` on `bash` (`tools/bash.ts`): Set up shells or wrap commands per deployment
-- `tool-argument-validation` [kernel, pending tools-package] Argument coercion and validation (R245-305): A bad call returns a readable error
+- `tool-argument-validation` [kernel] Argument coercion and validation (R245-305): A bad call returns a readable error
 - `tool-crash-result` [kernel, pending harness-tools] A tool crash becomes an error result (§7.3): One broken tool doesn't kill the run
 - `tool-search-ranking` [kernel, pending tools-package] BM25 ranking and tokenizing order what `tool_search` finds.
 - `tool-image-preparation` [kernel, pending tools-package] Reading images resizes them, honours EXIF orientation and re-reads a file that changed.
