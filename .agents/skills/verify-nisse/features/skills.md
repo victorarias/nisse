@@ -15,14 +15,14 @@ scripted conversations list none and carry none.
 - `skills-list` answers a conversation's skills, sorted by name, each with its
   `name`, `description` and `path`; `[]` for `claude` and `script`;
   `NoSuchConversation` for an unknown id.
-- `skills-found` looks in `.agents/skills` and `.claude/skills` of each folder
+- `skills-found` [pending wire-complete] looks in `.agents/skills` and `.claude/skills` of each folder
   from the conversation's directory up to the folder holding `.git`, then in
   `NISSE_HOME/skills`. A directory outside any repository looks only in itself
   and the home.
-- `skills-nearest` keeps the nearest skill of a name: a deeper folder before a
+- `skills-nearest` [pending wire-complete] keeps the nearest skill of a name: a deeper folder before a
   shallower one, `.agents` before `.claude` in one folder, the project before
   the home.
-- `skills-frontmatter` takes `name` and `description` from the `SKILL.md`
+- `skills-frontmatter` [pending wire-complete] takes `name` and `description` from the `SKILL.md`
   frontmatter, folding a `>` or `|` description into one line and unquoting a
   quoted one; without a `name` the folder names the skill, and without a
   `description` it is `""`.
@@ -30,9 +30,9 @@ scripted conversations list none and carry none.
   order named, as `"skills": [{"name", "path", "text"}]` on the `user` entry:
   `/name` only at the message's start, `$name` anywhere. Trailing `.` or `:`
   is not part of the name, and a name nisse does not know carries nothing.
-- `skills-snapshot` keeps the `SKILL.md` text as it was when the message was
+- `skills-snapshot` [pending wire-complete] keeps the `SKILL.md` text as it was when the message was
   placed; editing the file later changes later messages only.
-- `skills-tui` shows `with <name>, <name>` under the message in every TUI and
+- `skills-tui` [pending tui-views] shows `with <name>, <name>` under the message in every TUI and
   after a reopen.
 - `start-instructions` keeps the instructions a conversation started with
   (`--instructions`, or `instructions` on `conversation/start`) on the
@@ -165,10 +165,10 @@ Preconditions:
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
-- ChatGPT is told the AGENTS.md files from home to the working directory, and the skills it can use
-- ChatGPT is told the instructions its conversation started with, after the AGENTS.md files
-- a skill named in a message comes with it, for the model and for everyone watching
-- every client can list the skills a conversation's model can use
+- agents-md: ChatGPT is told the AGENTS.md files from home to the working directory, and the skills it can use
+- start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files
+- skills-attach: a skill named in a message comes with it, for the model and for everyone watching
+- skills-list: every client can list the skills a conversation's model can use
 
 ## Gotchas
 

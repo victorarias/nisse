@@ -14,7 +14,7 @@ running server once its runs settle.
 - `server-idle-exit` exits the server 30 s after its last subscription closes
   and its last run settles.
 - `server-stop` stops it on `server/stop` once its runs settle.
-- `server-restart` replaces the running server with `nisse serve --restart`
+- `server-restart` [pending wire-complete] replaces the running server with `nisse serve --restart`
   once its runs settle.
 - `server-old-home` keeps working in a home a Rust version of Nisse used: its
   `nisse.sqlite` stays as it was, and this Nisse uses `store.sqlite` beside it.
@@ -90,16 +90,16 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- the server exits once no client is connected and nothing is running
-- stopping the server answers the caller, then the server exits
+- server-idle-exit: the server exits once no client is connected and nothing is running
+- server-stop: stopping the server answers the caller, then the server exits
 
 Stack, `packages/nisse/test/stack.test.ts`:
 
-- nisse exec starts a server when none runs, prints the answer and exits 0
-- a home the Rust version used still works and keeps its database
-- clients starting at the same moment share one server
-- nisse exec says why the server it started could not run
-- a second server for the same home refuses to start
+- answer-exec, server-on-demand: nisse exec starts a server when none runs, prints the answer and exits 0
+- server-old-home: a home the Rust version used still works and keeps its database
+- server-shared: clients starting at the same moment share one server
+- server-on-demand: nisse exec says why the server it started could not run
+- server-refuse: a second server for the same home refuses to start
 
 No committed test covers `nisse serve --restart`.
 

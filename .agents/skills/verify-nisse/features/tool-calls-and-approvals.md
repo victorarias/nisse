@@ -9,11 +9,12 @@ conversation was started with `--auto`, which runs every call without asking.
 
 ## Sub-features
 
+- `tool-grep-lines` `Grep` reports only the lines a file has, whatever its line endings.
 - `tool-read-only` runs a read-only call without asking and shows its output.
-- `approval-ask` shows `allow this call?` and `◆ WAITING` while a call waits.
+- `approval-ask` [pending wire-complete] shows `allow this call?` and `◆ WAITING` while a call waits.
 - `approval-allow-tui` allows with `^Y`: `✓ allowed by ada`, then the call's
   output.
-- `approval-deny-tui` denies with `^N`: `✗ denied by ada` and the denial as
+- `approval-deny-tui` [pending tui-views] denies with `^N`: `✗ denied by ada` and the denial as
   the call's result; the run goes on.
 - `approval-wire` answers with `approval/resolve`; a second answer is not
   accepted.
@@ -136,22 +137,22 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- a call that changes files waits for a person's answer and runs once allowed
-- a denied call is reported to the model as denied and nothing changes
-- reading calls and conversations started with auto approvals run without asking
-- a running command's output streams live and ends as its result
-- a command's output keeps characters split across reads and between streams whole
-- a verbose command's live output stays a bounded tail
-- output a background process writes after its call ends never reaches the conversation
-- Grep reports only the lines a file has, whatever its line endings
+- approval-wire: a call that changes files waits for a person's answer and runs once allowed
+- approval-wire: a denied call is reported to the model as denied and nothing changes
+- tool-read-only, approval-auto: reading calls and conversations started with auto approvals run without asking
+- tool-output-live: a running command's output streams live and ends as its result
+- tool-output-live: a command's output keeps characters split across reads and between streams whole
+- tool-output-live: a verbose command's live output stays a bounded tail
+- tool-output-live: output a background process writes after its call ends never reaches the conversation
+- tool-grep-lines: Grep reports only the lines a file has, whatever its line endings
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- nisse asks before a command runs, ctrl+y allows it and its output shows under the call
+- approval-allow-tui: nisse asks before a command runs, ctrl+y allows it and its output shows under the call
 
 Stack, `packages/nisse/test/stack.test.ts`:
 
-- nisse exec shows the calls nisse makes and, without --auto, denies the ones that would change things
+- approval-exec-deny: nisse exec shows the calls nisse makes and, without --auto, denies the ones that would change things
 
 ## Gotchas
 

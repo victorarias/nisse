@@ -59,6 +59,7 @@ the fake OpenAI server.
 - The model is the seam. Tests script it (the `script` provider, `NISSE_MODEL_SCRIPT`)
   or replay a provider's recorded exchange; nothing else is faked.
 - Judge the TUI by its screen.
+- A test's title starts with the feature-map use case it covers: `test("queue-show: ...")`. `bun run coverage` fails on a test that names no use case or an unknown one. A new feature adds its id and its test in the same change; see the feature map's README.
 - The committed `schema/nisse.schema.json` is what clients build from. After a
   protocol change run `bun run schema`.
 - Wait on events with a deadline, never sleep. A flaky test is a bug: fix it,

@@ -7,9 +7,9 @@ never slow the server.
 
 ## Sub-features
 
-- `wire-schema` prints the protocol's JSON Schema and version.
-- `wire-initialize` answers a client with the server's version and protocol.
-- `wire-malformed` answers a call with missing fields with an error that names
+- `wire-schema` [pending wire-complete] prints the protocol's JSON Schema and version.
+- `wire-initialize` [pending wire-complete] answers a client with the server's version and protocol.
+- `wire-malformed` [pending wire-complete] answers a call with missing fields with an error that names
   the field.
 - `wire-dropped` ends a subscription that falls 4096 commits behind with a
   `FellBehind` error; the connection stays open.
@@ -52,8 +52,8 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- a client that stops reading is dropped while the others keep up
-- subscribing to a conversation that does not exist says so
+- wire-dropped: a client that stops reading is dropped while the others keep up
+- wire-unknown: subscribing to a conversation that does not exist says so
 
 ## Gotchas
 

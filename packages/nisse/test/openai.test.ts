@@ -67,7 +67,7 @@ const expectRequests = (fake: FakeOpenAi, expected: ReadonlyArray<unknown>) => {
   })
 }
 
-test("a ChatGPT answer is committed as nisse's message, asked for with the sign-in's headers", async () => {
+test("openai-answer: a ChatGPT answer is committed as nisse's message, asked for with the sign-in's headers", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("text_answer")
   await using session = await conversationWith(fake)
@@ -88,7 +88,7 @@ test("a ChatGPT answer is committed as nisse's message, asked for with the sign-
   )
 })
 
-test("a recorded ChatGPT exchange replays into the same answer", async () => {
+test("openai-answer: a recorded ChatGPT exchange replays into the same answer", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("recorded_text_answer")
   await using session = await conversationWith(fake)
@@ -101,7 +101,7 @@ test("a recorded ChatGPT exchange replays into the same answer", async () => {
   expectRequests(fake, expected)
 })
 
-test("nisse offers its tools, runs the call the model asks for and sends back the result", async () => {
+test("openai-tools: nisse offers its tools, runs the call the model asks for and sends back the result", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("tool_call")
   await using session = await conversationWith(fake)
@@ -132,7 +132,7 @@ test("nisse offers its tools, runs the call the model asks for and sends back th
   ])
 })
 
-test("a call the person denies reaches the model as denied", async () => {
+test("openai-tools: a call the person denies reaches the model as denied", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("tool_denied")
   await using session = await conversationWith(fake, { approvals: "ask" })
@@ -150,7 +150,7 @@ test("a call the person denies reaches the model as denied", async () => {
   expectRequests(fake, expected)
 })
 
-test("a steer sent while calls run reaches the model after all of them, before its next answer", async () => {
+test("steer-openai: a steer sent while calls run reaches the model after all of them, before its next answer", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("steer_after_parallel_calls")
   await using session = await conversationWith(fake, { approvals: "ask" })
@@ -179,7 +179,7 @@ test("a steer sent while calls run reaches the model after all of them, before i
   expectRequests(fake, expected)
 })
 
-test("an expired token is refreshed once, saved, and used from then on", async () => {
+test("openai-refresh: an expired token is refreshed once, saved, and used from then on", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("refresh")
   fake.issueTokens("second", 3600)
@@ -201,7 +201,7 @@ test("an expired token is refreshed once, saved, and used from then on", async (
   expect(saved).toMatchObject({ access_token: accessToken("second"), refresh_token: "second-refresh" })
 })
 
-test("a failed response, a cut stream and a reached usage limit each end the run with the reason", async () => {
+test("openai-failed: a failed response, a cut stream and a reached usage limit each end the run with the reason", async () => {
   for (const [fixture, message, kept] of [
     ["response_failed", "the response failed (server_error): The model crashed.", []],
     ["stream_cut", "the response stream ended before the response finished", [{ _tag: "message", text: "Hel" }]],
@@ -216,7 +216,7 @@ test("a failed response, a cut stream and a reached usage limit each end the run
   }
 })
 
-test("a conversation with ChatGPT before signing in says how to fix it", async () => {
+test("openai-signed-out: a conversation with ChatGPT before signing in says how to fix it", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, { signedIn: false })
   await session.submit("hello")
@@ -226,7 +226,7 @@ test("a conversation with ChatGPT before signing in says how to fix it", async (
   ])
 })
 
-test("an answer streams live, and interrupting it closes the request and keeps what was said", async () => {
+test("interrupt-wire: an answer streams live, and interrupting it closes the request and keeps what was said", async () => {
   await using fake = new FakeOpenAi()
   fake.reply({
     events: [
@@ -249,7 +249,7 @@ test("an answer streams live, and interrupting it closes the request and keeps w
   ])
 })
 
-test("an answer whose CRLF event separators arrive split across reads is read whole", async () => {
+test("openai-answer: an answer whose CRLF event separators arrive split across reads is read whole", async () => {
   await using fake = new FakeOpenAi()
   fake.reply({
     events: [
@@ -318,7 +318,7 @@ const callbackFor = (state: AuthState, code: string) => {
   return answer
 }
 
-test("signing in through a browser saves the tokens for this user only and names the account", async () => {
+test("signin-browser, openai-sign-in: signing in through a browser saves the tokens for this user only and names the account", async () => {
   await using fake = new FakeOpenAi()
   fake.issueTokens("first", 3600)
   await using setup = await setupWith(fake)
@@ -347,7 +347,7 @@ test("signing in through a browser saves the tokens for this user only and names
   expect((await setup.openai()).health).toMatchObject({ status: "ready", account: `${EMAIL} · ChatGPT Plus` })
 })
 
-test("the address a browser on another machine ends on, pasted back, finishes the sign-in", async () => {
+test("signin-paste: the address a browser on another machine ends on, pasted back, finishes the sign-in", async () => {
   await using fake = new FakeOpenAi()
   fake.issueTokens("first", 3600)
   await using setup = await setupWith(fake)
@@ -368,7 +368,7 @@ test("the address a browser on another machine ends on, pasted back, finishes th
 
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
-test("a device code sign-in shows the code to enter, then finishes once someone enters it", async () => {
+test("signin-device-code: a device code sign-in shows the code to enter, then finishes once someone enters it", async () => {
   await using fake = new FakeOpenAi()
   fake.issueTokens("first", 3600)
   await using setup = await setupWith(fake)
@@ -393,7 +393,7 @@ test("a device code sign-in shows the code to enter, then finishes once someone 
   expect(exchange.get("code_verifier")).toBe("device-verifier")
 }, 10_000)
 
-test("a cancelled sign-in ends for every connection and frees the callback port", async () => {
+test("signin-cancel: a cancelled sign-in ends for every connection and frees the callback port", async () => {
   await using fake = new FakeOpenAi()
   await using setup = await setupWith(fake)
   const started = (await setup.client.call("auth/start", { provider: "openai" })).result as AuthState
@@ -407,7 +407,7 @@ test("a cancelled sign-in ends for every connection and frees the callback port"
   expect(await fetch(callbackFor(waiting, "late")).catch(() => "refused")).toBe("refused")
 })
 
-test("a connection that starts watching after a sign-in ended still learns how it ended", async () => {
+test("signin-shared: a connection that starts watching after a sign-in ended still learns how it ended", async () => {
   await using fake = new FakeOpenAi()
   await using setup = await setupWith(fake)
   const started = (await setup.client.call("auth/start", { provider: "openai", method: "device_code" }))
@@ -422,7 +422,7 @@ test("a connection that starts watching after a sign-in ended still learns how i
   expect(auth.items[0]).toMatchObject({ provider: "openai", flow: started.flow, phase: "failed" })
 })
 
-test("signing out leaves the provider signed out and tells every connection", async () => {
+test("signout: signing out leaves the provider signed out and tells every connection", async () => {
   await using fake = new FakeOpenAi()
   await using setup = await setupWith(fake)
   await signIn(setup.server.home)
@@ -456,7 +456,7 @@ const modelList = (slug: string) => ({
 const openAiModels = async (client: RawClient) =>
   ((await client.call("models/list", {})).result as Array<ProviderModels>).find((list) => list.provider === "openai")!
 
-test("OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't", async () => {
+test("openai-models: OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't", async () => {
   await using fake = new FakeOpenAi()
   fake.modelList = modelList("gpt-test")
   const home = tempHome()
@@ -491,7 +491,7 @@ test("OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT
   }
 })
 
-test("a switched model and effort reach ChatGPT from the next run on", async () => {
+test("openai-model: a switched model and effort reach ChatGPT from the next run on", async () => {
   await using fake = new FakeOpenAi()
   fake.play("text_answer")
   fake.play("text_answer")
@@ -538,7 +538,7 @@ const project = (home: string) => {
   return join(repo, "app")
 }
 
-test("ChatGPT is told the AGENTS.md files from home to the working directory, and the skills it can use", async () => {
+test("agents-md: ChatGPT is told the AGENTS.md files from home to the working directory, and the skills it can use", async () => {
   await using fake = new FakeOpenAi()
   fake.play("text_answer")
   await using session = await conversationWith(fake, { cwd: project })
@@ -556,7 +556,7 @@ test("ChatGPT is told the AGENTS.md files from home to the working directory, an
   expect(instructions).toContain("- ship: Ship it carefully")
 })
 
-test("ChatGPT is told the instructions its conversation started with, after the AGENTS.md files", async () => {
+test("start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files", async () => {
   await using fake = new FakeOpenAi()
   fake.play("text_answer")
   await using session = await conversationWith(fake, { cwd: project, instructions: "Report with attn when done." })
@@ -569,7 +569,7 @@ test("ChatGPT is told the instructions its conversation started with, after the 
   )
 })
 
-test("a skill named in a message comes with it, for the model and for everyone watching", async () => {
+test("skills-attach: a skill named in a message comes with it, for the model and for everyone watching", async () => {
   await using fake = new FakeOpenAi()
   fake.play("text_answer")
   await using session = await conversationWith(fake, { cwd: project })
@@ -587,7 +587,7 @@ test("a skill named in a message comes with it, for the model and for everyone w
   expect(sent).toContain("<name>ship</name>")
 })
 
-test("a skill named in a steer comes with it for the model the run is using, even after a switch", async () => {
+test("skills-attach: a skill named in a steer comes with it for the model the run is using, even after a switch", async () => {
   await using fake = new FakeOpenAi()
   fake.play("tool_denied")
   await using session = await conversationWith(fake, { cwd: project, approvals: "ask" })
@@ -613,7 +613,7 @@ test("a skill named in a steer comes with it for the model the run is using, eve
   expect(JSON.stringify(JSON.parse(fake.responses()[1]!.body).input)).toContain("<name>review</name>")
 })
 
-test("every client can list the skills a conversation's model can use", async () => {
+test("skills-list: every client can list the skills a conversation's model can use", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, { cwd: project })
   const listed = await session.client.call("skills/list", { conversation: session.conversation })
@@ -656,29 +656,32 @@ const allowEach = async (session: Awaited<ReturnType<typeof conversationWith>>, 
   }
 }
 
-withCodeModeHost("a code-mode model is offered exec and wait, with nisse's tools declared inside exec", async () => {
-  await using fake = new FakeOpenAi()
-  fake.play("code_mode_script")
-  await using session = await conversationWith(fake, inCodeMode)
-  await session.submit("what does echo say?")
-  await session.view.until(settled(1))
-  const tools = JSON.parse(fake.responses()[0]!.body).tools
-  expect(tools.map((tool: { type: string; name: string }) => [tool.type, tool.name])).toEqual([
-    ["custom", "exec"],
-    ["function", "wait"],
-  ])
-  for (const declared of [
-    "Read(args: {",
-    "Write(args: {",
-    "Edit(args: {",
-    "Bash(args: {",
-    "Grep(args: {",
-    "Glob(args: {",
-  ])
-    expect(tools[0].description).toContain(declared)
-  expect(tools[0].description).toContain("apply_patch(input: string)")
-  expect(tools[0].description).toContain("  // The shell command to run.\n  command: string;")
-})
+withCodeModeHost(
+  "code-mode-tools: a code-mode model is offered exec and wait, with nisse's tools declared inside exec",
+  async () => {
+    await using fake = new FakeOpenAi()
+    fake.play("code_mode_script")
+    await using session = await conversationWith(fake, inCodeMode)
+    await session.submit("what does echo say?")
+    await session.view.until(settled(1))
+    const tools = JSON.parse(fake.responses()[0]!.body).tools
+    expect(tools.map((tool: { type: string; name: string }) => [tool.type, tool.name])).toEqual([
+      ["custom", "exec"],
+      ["function", "wait"],
+    ])
+    for (const declared of [
+      "Read(args: {",
+      "Write(args: {",
+      "Edit(args: {",
+      "Bash(args: {",
+      "Grep(args: {",
+      "Glob(args: {",
+    ])
+      expect(tools[0].description).toContain(declared)
+    expect(tools[0].description).toContain("apply_patch(input: string)")
+    expect(tools[0].description).toContain("  // The shell command to run.\n  command: string;")
+  },
+)
 
 const withExtension = (name: string, source: string) => {
   const home = tempHome()
@@ -687,7 +690,7 @@ const withExtension = (name: string, source: string) => {
   return home
 }
 
-test("an extension's request hook adds instructions and narrows the tools of each request to the model", async () => {
+test("request-hook: an extension's request hook adds instructions and narrows the tools of each request to the model", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("tool_call")
   const home = withExtension(
@@ -723,7 +726,7 @@ export default Extension.define((ctx) =>
   rmSync(home.dir, { recursive: true })
 })
 
-test("a request hook that fails is skipped with a toast, and the model gets the request as it was", async () => {
+test("hook-failure: a request hook that fails is skipped with a toast, and the model gets the request as it was", async () => {
   await using fake = new FakeOpenAi()
   fake.play("text_answer")
   const home = withExtension(
@@ -749,26 +752,29 @@ export default Extension.define((ctx) =>
   rmSync(home.dir, { recursive: true })
 })
 
-withCodeModeHost("a tool a request hook withholds is missing from a code-mode script's ALL_TOOLS too", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_all_tools")
-  const home = withExtension(
-    "focus",
-    `import { Extension } from "@nisse/extension"
+withCodeModeHost(
+  "code-mode-tools: a tool a request hook withholds is missing from a code-mode script's ALL_TOOLS too",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_all_tools")
+    const home = withExtension(
+      "focus",
+      `import { Extension } from "@nisse/extension"
 import { Effect } from "effect"
 export default Extension.define((ctx) =>
   ctx.request.hook((request) => Effect.sync(() => { request.tools = ["Read", "Bash"] })),
 )`,
-  )
-  await using session = await conversationWith(fake, { ...inCodeMode, home })
-  await session.submit("which tools can you call?")
-  await session.view.until(settled(1))
-  expectRequests(fake, expected)
-  expect(resultOf(session.view.deliveries, "call_1").output).toEndWith("Output:\nRead Bash")
-  rmSync(home.dir, { recursive: true })
-})
+    )
+    await using session = await conversationWith(fake, { ...inCodeMode, home })
+    await session.submit("which tools can you call?")
+    await session.view.until(settled(1))
+    expectRequests(fake, expected)
+    expect(resultOf(session.view.deliveries, "call_1").output).toEndWith("Output:\nRead Bash")
+    rmSync(home.dir, { recursive: true })
+  },
+)
 
-withCodeModeHost("a tool an extension removes is gone from a code-mode model's exec too", async () => {
+withCodeModeHost("code-mode-tools: a tool an extension removes is gone from a code-mode model's exec too", async () => {
   await using fake = new FakeOpenAi()
   fake.play("code_mode_script")
   const home = tempHome()
@@ -788,7 +794,7 @@ export default Extension.define((ctx) => ctx.tool.transform((tools) => tools.rem
 })
 
 withCodeModeHost(
-  "a script's nested call is committed under its script and asks first, and the model sees only the script",
+  "code-mode-calls: a script's nested call is committed under its script and asks first, and the model sees only the script",
   async () => {
     await using fake = new FakeOpenAi()
     const expected = fake.play("code_mode_script")
@@ -811,148 +817,166 @@ withCodeModeHost(
   },
 )
 
-withCodeModeHost("a script that yields is resumed by wait, and its cell ends when it does", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_wait")
-  await using session = await conversationWith(fake, inCodeMode)
-  await session.submit("count slowly")
-  await session.view.until(settled(1))
-  const [yielded, finished] = ["call_1", "call_2"].map((call) => resultOf(session.view.deliveries, call).output)
-  expect(yielded).toStartWith("Script running with cell ID call_1\n")
-  expect(yielded).toEndWith("started")
-  expect(finished).toStartWith("Script completed\n")
-  expect(finished).toEndWith("finished")
-  const cell = bodies(session.view.deliveries).find((body) => body._tag === "tool_call" && body.tool === "cell")
-  expect(cell).toMatchObject({ parent: "call_1", input: { cell_id: "call_1" } })
-  expect(resultOf(session.view.deliveries, (cell as { call: string }).call)).toMatchObject({
-    output: "Script completed",
-    error: false,
-  })
-  expectRequests(fake, expected)
-})
-
-withCodeModeHost("terminating a script ends the call it was waiting on before the model hears it stopped", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_terminate")
-  await using session = await conversationWith(fake, { ...inCodeMode, approvals: "ask" })
-  await session.submit("run it, then stop it")
-  await session.view.until(settled(1))
-  const entries = bodies(session.view.deliveries)
-  const bash = entries.find((body) => body._tag === "tool_call" && body.tool === "Bash") as { call: string }
-  const ended = entries.findIndex((body) => body._tag === "tool_result" && body.call === bash.call)
-  const waited = entries.findIndex((body) => body._tag === "tool_result" && body.call === "call_2")
-  expect(entries[ended]).toMatchObject({ output: "interrupted; it may or may not have taken effect", error: true })
-  expect(ended).toBeLessThan(waited)
-  const approval = entries.find((body) => body._tag === "approval") as { approval: string }
-  const late = await session.client.call("approval/resolve", {
-    conversation: session.conversation,
-    approval: approval.approval,
-    author: "ada",
-    allow: true,
-  })
-  expect(late.result).toEqual({ accepted: false })
-  expect(existsSync(join(session.server.home.dir, "late.txt"))).toBe(false)
-  expectRequests(fake, expected)
-})
-
-withCodeModeHost("a patch that moves a file to another spelling of its own path keeps the file", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_patch_same_path")
-  await using session = await conversationWith(fake, { ...inCodeMode, approvals: "auto" })
-  const notes = join(session.server.home.dir, "notes.txt")
-  writeFileSync(notes, "draft\n")
-  await session.submit("finalize the notes")
-  await session.view.until(settled(1))
-  const patched = resultsOf(session.view.deliveries).find((result) => result.call !== "call_1")!
-  expect(patched).toMatchObject({ error: false })
-  expect(readFileSync(notes, "utf8")).toBe("final\n")
-  expectRequests(fake, expected)
-})
-
-withCodeModeHost("a host that dies mid-script interrupts the script with the nested results so far", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_host_dies")
-  const launcher = mkdtempSync("/tmp/nisse-host-")
-  const pidFile = join(launcher, "host.pid")
-  const host = join(launcher, "host")
-  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
-  chmodSync(host, 0o755)
-  try {
-    await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
-    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-    await session.submit("read the manifest, then wait")
-    await session.view.until((deliveries) => resultsOf(deliveries).length > 0)
-    expect(resultsOf(session.view.deliveries)[0]!.output).toContain("[package]")
-    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
+withCodeModeHost(
+  "code-mode-cells: a script that yields is resumed by wait, and its cell ends when it does",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_wait")
+    await using session = await conversationWith(fake, inCodeMode)
+    await session.submit("count slowly")
     await session.view.until(settled(1))
-    const script = sent(fake, 1).find((item) => item.type === "custom_tool_call_output")
-    expect(script.output).toStartWith("interrupted: the code-mode host stopped")
-    expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
-    expect(script.output).toContain("[package]")
+    const [yielded, finished] = ["call_1", "call_2"].map((call) => resultOf(session.view.deliveries, call).output)
+    expect(yielded).toStartWith("Script running with cell ID call_1\n")
+    expect(yielded).toEndWith("started")
+    expect(finished).toStartWith("Script completed\n")
+    expect(finished).toEndWith("finished")
+    const cell = bodies(session.view.deliveries).find((body) => body._tag === "tool_call" && body.tool === "cell")
+    expect(cell).toMatchObject({ parent: "call_1", input: { cell_id: "call_1" } })
+    expect(resultOf(session.view.deliveries, (cell as { call: string }).call)).toMatchObject({
+      output: "Script completed",
+      error: false,
+    })
     expectRequests(fake, expected)
-  } finally {
-    rmSync(launcher, { recursive: true, force: true })
-  }
-})
-
-withCodeModeHost("a host that dies while the model waits tells the wait what the script finished", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_host_dies_in_wait")
-  const launcher = mkdtempSync("/tmp/nisse-host-")
-  const pidFile = join(launcher, "host.pid")
-  const host = join(launcher, "host")
-  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
-  chmodSync(host, 0o755)
-  try {
-    await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
-    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-    await session.submit("read the manifest in the background")
-    await session.view.until((deliveries) =>
-      bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_2"),
-    )
-    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
-    await session.view.until(settled(1))
-    expect(resultOf(session.view.deliveries, "call_2").output).toStartWith("interrupted: the code-mode host stopped")
-    const [note] = notesIn(sent(fake, 2))
-    expect(note).toStartWith("Cell call_1 stopped before its script finished.")
-    expect(note).toContain("The calls it made that finished:\n- Read (done):")
-    expect(note).toContain("[package]")
-    expectRequests(fake, expected)
-  } finally {
-    rmSync(launcher, { recursive: true, force: true })
-  }
-})
-
-withCodeModeHost("a wait on a script whose host stopped never reaches a script the next host started", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_wait_after_host_restart")
-  const launcher = mkdtempSync("/tmp/nisse-host-")
-  const pidFile = join(launcher, "host.pid")
-  const host = join(launcher, "host")
-  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
-  chmodSync(host, 0o755)
-  try {
-    await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
-    await session.submit("start a slow script, then another once its host stops")
-    await session.view.until((deliveries) =>
-      bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_2"),
-    )
-    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
-    await session.view.until(settled(1))
-    const [stopped, started, checked] = ["call_2", "call_3", "call_4"].map(
-      (call) => resultOf(session.view.deliveries, call).output,
-    )
-    expect(stopped).toStartWith("interrupted: the code-mode host stopped")
-    expect(started).toStartWith("Script running with cell ID call_3\n")
-    expect(checked).toStartWith("no running cell call_1")
-    expectRequests(fake, expected)
-  } finally {
-    rmSync(launcher, { recursive: true, force: true })
-  }
-})
+  },
+)
 
 withCodeModeHost(
-  "a yielded script cut off by the run's end still tells the model what its calls finished",
+  "code-mode-script: terminating a script ends the call it was waiting on before the model hears it stopped",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_terminate")
+    await using session = await conversationWith(fake, { ...inCodeMode, approvals: "ask" })
+    await session.submit("run it, then stop it")
+    await session.view.until(settled(1))
+    const entries = bodies(session.view.deliveries)
+    const bash = entries.find((body) => body._tag === "tool_call" && body.tool === "Bash") as { call: string }
+    const ended = entries.findIndex((body) => body._tag === "tool_result" && body.call === bash.call)
+    const waited = entries.findIndex((body) => body._tag === "tool_result" && body.call === "call_2")
+    expect(entries[ended]).toMatchObject({ output: "interrupted; it may or may not have taken effect", error: true })
+    expect(ended).toBeLessThan(waited)
+    const approval = entries.find((body) => body._tag === "approval") as { approval: string }
+    const late = await session.client.call("approval/resolve", {
+      conversation: session.conversation,
+      approval: approval.approval,
+      author: "ada",
+      allow: true,
+    })
+    expect(late.result).toEqual({ accepted: false })
+    expect(existsSync(join(session.server.home.dir, "late.txt"))).toBe(false)
+    expectRequests(fake, expected)
+  },
+)
+
+withCodeModeHost(
+  "code-mode-tools: a patch that moves a file to another spelling of its own path keeps the file",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_patch_same_path")
+    await using session = await conversationWith(fake, { ...inCodeMode, approvals: "auto" })
+    const notes = join(session.server.home.dir, "notes.txt")
+    writeFileSync(notes, "draft\n")
+    await session.submit("finalize the notes")
+    await session.view.until(settled(1))
+    const patched = resultsOf(session.view.deliveries).find((result) => result.call !== "call_1")!
+    expect(patched).toMatchObject({ error: false })
+    expect(readFileSync(notes, "utf8")).toBe("final\n")
+    expectRequests(fake, expected)
+  },
+)
+
+withCodeModeHost(
+  "code-mode-host-life: a host that dies mid-script interrupts the script with the nested results so far",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_host_dies")
+    const launcher = mkdtempSync("/tmp/nisse-host-")
+    const pidFile = join(launcher, "host.pid")
+    const host = join(launcher, "host")
+    writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
+    chmodSync(host, 0o755)
+    try {
+      await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
+      writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+      await session.submit("read the manifest, then wait")
+      await session.view.until((deliveries) => resultsOf(deliveries).length > 0)
+      expect(resultsOf(session.view.deliveries)[0]!.output).toContain("[package]")
+      process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
+      await session.view.until(settled(1))
+      const script = sent(fake, 1).find((item) => item.type === "custom_tool_call_output")
+      expect(script.output).toStartWith("interrupted: the code-mode host stopped")
+      expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
+      expect(script.output).toContain("[package]")
+      expectRequests(fake, expected)
+    } finally {
+      rmSync(launcher, { recursive: true, force: true })
+    }
+  },
+)
+
+withCodeModeHost(
+  "code-mode-host-life: a host that dies while the model waits tells the wait what the script finished",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_host_dies_in_wait")
+    const launcher = mkdtempSync("/tmp/nisse-host-")
+    const pidFile = join(launcher, "host.pid")
+    const host = join(launcher, "host")
+    writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
+    chmodSync(host, 0o755)
+    try {
+      await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
+      writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+      await session.submit("read the manifest in the background")
+      await session.view.until((deliveries) =>
+        bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_2"),
+      )
+      process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
+      await session.view.until(settled(1))
+      expect(resultOf(session.view.deliveries, "call_2").output).toStartWith("interrupted: the code-mode host stopped")
+      const [note] = notesIn(sent(fake, 2))
+      expect(note).toStartWith("Cell call_1 stopped before its script finished.")
+      expect(note).toContain("The calls it made that finished:\n- Read (done):")
+      expect(note).toContain("[package]")
+      expectRequests(fake, expected)
+    } finally {
+      rmSync(launcher, { recursive: true, force: true })
+    }
+  },
+)
+
+withCodeModeHost(
+  "code-mode-script: a wait on a script whose host stopped never reaches a script the next host started",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_wait_after_host_restart")
+    const launcher = mkdtempSync("/tmp/nisse-host-")
+    const pidFile = join(launcher, "host.pid")
+    const host = join(launcher, "host")
+    writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
+    chmodSync(host, 0o755)
+    try {
+      await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
+      await session.submit("start a slow script, then another once its host stops")
+      await session.view.until((deliveries) =>
+        bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_2"),
+      )
+      process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
+      await session.view.until(settled(1))
+      const [stopped, started, checked] = ["call_2", "call_3", "call_4"].map(
+        (call) => resultOf(session.view.deliveries, call).output,
+      )
+      expect(stopped).toStartWith("interrupted: the code-mode host stopped")
+      expect(started).toStartWith("Script running with cell ID call_3\n")
+      expect(checked).toStartWith("no running cell call_1")
+      expectRequests(fake, expected)
+    } finally {
+      rmSync(launcher, { recursive: true, force: true })
+    }
+  },
+)
+
+withCodeModeHost(
+  "code-mode-script: a yielded script cut off by the run's end still tells the model what its calls finished",
   async () => {
     await using fake = new FakeOpenAi()
     const expected = fake.play("code_mode_yielded_run_stopped")
@@ -975,7 +999,7 @@ withCodeModeHost(
 )
 
 withCodeModeHost(
-  "a yielded script cut off by a server stop still tells the resumed model what its calls finished",
+  "code-mode-script: a yielded script cut off by a server stop still tells the resumed model what its calls finished",
   async () => {
     await using fake = new FakeOpenAi()
     const expected = fake.play("code_mode_yielded_server_stopped")
@@ -1008,25 +1032,28 @@ withCodeModeHost(
   },
 )
 
-withCodeModeHost("a script stopped mid-run still tells the model what its calls finished", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_interrupted")
-  await using session = await conversationWith(fake, inCodeMode)
-  writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-  await session.submit("read the manifest slowly")
-  await session.view.until((deliveries) => resultsOf(deliveries).length > 0)
-  await session.client.call("conversation/interrupt", { conversation: session.conversation })
-  await session.view.until(settled(1))
-  await session.submit("what did it read?")
-  await session.view.until(settled(2))
-  const script = sent(fake, 1).find((item) => item.type === "custom_tool_call_output")
-  expect(script.output).toStartWith("interrupted; it may or may not have taken effect")
-  expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
-  expect(script.output).toContain("[package]")
-  expectRequests(fake, expected)
-})
+withCodeModeHost(
+  "code-mode-script: a script stopped mid-run still tells the model what its calls finished",
+  async () => {
+    await using fake = new FakeOpenAi()
+    const expected = fake.play("code_mode_interrupted")
+    await using session = await conversationWith(fake, inCodeMode)
+    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
+    await session.submit("read the manifest slowly")
+    await session.view.until((deliveries) => resultsOf(deliveries).length > 0)
+    await session.client.call("conversation/interrupt", { conversation: session.conversation })
+    await session.view.until(settled(1))
+    await session.submit("what did it read?")
+    await session.view.until(settled(2))
+    const script = sent(fake, 1).find((item) => item.type === "custom_tool_call_output")
+    expect(script.output).toStartWith("interrupted; it may or may not have taken effect")
+    expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
+    expect(script.output).toContain("[package]")
+    expectRequests(fake, expected)
+  },
+)
 
-withCodeModeHost("a host that dies ends the calls its script was waiting on", async () => {
+withCodeModeHost("code-mode-host-life: a host that dies ends the calls its script was waiting on", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("code_mode_host_dies_asking")
   const launcher = mkdtempSync("/tmp/nisse-host-")
@@ -1066,7 +1093,7 @@ withCodeModeHost("a host that dies ends the calls its script was waiting on", as
 })
 
 withCodeModeHost(
-  "a waited script stopped after another script finished still tells what its calls finished",
+  "code-mode-script: a waited script stopped after another script finished still tells what its calls finished",
   async () => {
     await using fake = new FakeOpenAi()
     const expected = fake.play("code_mode_two_scripts_interrupted")
@@ -1090,7 +1117,7 @@ withCodeModeHost(
   },
 )
 
-withCodeModeHost("a host that dies ends the calls of every script it ran", async () => {
+withCodeModeHost("code-mode-host-life: a host that dies ends the calls of every script it ran", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("code_mode_host_dies_two_scripts")
   const launcher = mkdtempSync("/tmp/nisse-host-")
@@ -1131,7 +1158,7 @@ withCodeModeHost("a host that dies ends the calls of every script it ran", async
   }
 })
 
-test("a code-mode model without the code-mode host says how to install it", async () => {
+test("code-mode-missing: a code-mode model without the code-mode host says how to install it", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, {
     model: CODE_MODE_MODEL,
@@ -1153,7 +1180,7 @@ const childOf = async (session: Awaited<ReturnType<typeof conversationWith>>) =>
   return listed.find((conversation) => conversation.lineage?.parent === session.conversation)!
 }
 
-test("a spawned agent starts from its parent's history, and its last answer reaches the parent", async () => {
+test("subagent-fork: a spawned agent starts from its parent's history, and its last answer reaches the parent", async () => {
   await using fake = new FakeOpenAi()
   fake.play("subagent")
   await using session = await conversationWith(fake)
@@ -1185,7 +1212,7 @@ test("a spawned agent starts from its parent's history, and its last answer reac
   expect(parentSaw.at(-2)).toEqual({ _tag: "message", text: "The scout says: under the floor." })
 })
 
-test("an agent of a type gets its instructions, and fork_turns none leaves the parent's history out", async () => {
+test("subagent-types: an agent of a type gets its instructions, and fork_turns none leaves the parent's history out", async () => {
   await using fake = new FakeOpenAi()
   fake.play("subagent_of_a_type")
   await using session = await conversationWith(fake, {

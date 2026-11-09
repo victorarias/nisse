@@ -19,9 +19,9 @@ cannot sign in ends the run failed with Claude Code's own message.
   `allow this call?`; `^Y` lets the call run, `^N` refuses it.
 - `claude-read` shows a call Claude Code allows on its own, such as a `Read`,
   with its result and no `allow this call?`.
-- `claude-exec-deny` makes `exec` refuse Claude's calls that would ask, unless
+- `claude-exec-deny` [pending wire-complete] makes `exec` refuse Claude's calls that would ask, unless
   `--auto`.
-- `claude-auto` lets every call run in a conversation started with `--auto`.
+- `claude-auto` [pending wire-complete] lets every call run in a conversation started with `--auto`.
 - `claude-resume` continues Claude Code's session in each new run, also after
   the server restarted.
 - `claude-session-gone` retells the conversation to a new Claude Code session
@@ -220,14 +220,14 @@ Preconditions:
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- Claude's answer through Claude Code is committed as nisse's message
-- Claude Code keeps its own system prompt, adds the conversation's instructions, and its commands know the conversation
-- a command Claude wants to run waits for a person, and Claude Code hears the answer
-- Claude reads files without asking and the read shows as a call and its result
-- each run resumes the Claude Code session where nisse's transcript ends
-- when Claude Code lost the session, a fresh one is given the conversation so far
-- a signed-out Claude Code fails the run with its own words
-- Claude Code says once how it is signed in and which models it offers, without asking Claude anything
+- claude-answer: Claude's answer through Claude Code is committed as nisse's message
+- claude-system-prompt: Claude Code keeps its own system prompt, adds the conversation's instructions, and its commands know the conversation
+- claude-approval: a command Claude wants to run waits for a person, and Claude Code hears the answer
+- claude-read: Claude reads files without asking and the read shows as a call and its result
+- claude-resume: each run resumes the Claude Code session where nisse's transcript ends
+- claude-session-gone: when Claude Code lost the session, a fresh one is given the conversation so far
+- claude-sign-in-error: a signed-out Claude Code fails the run with its own words
+- claude-health: Claude Code says once how it is signed in and which models it offers, without asking Claude anything
 
 ## Gotchas
 

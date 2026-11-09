@@ -28,7 +28,7 @@ const withoutUsers = (deliveries: ReadonlyArray<Delivery>) => bodies(deliveries)
 
 const workdir = () => mkdtempSync("/tmp/nisse-work-")
 
-test("every client of a conversation sees the prompt and the same answer", async () => {
+test("answer-wire, answer-shared: every client of a conversation sees the prompt and the same answer", async () => {
   await using server = await runningServer([{ text: "hello ada" }])
   const ada = await RawClient.connect(server.home.socket)
   const grace = await RawClient.connect(server.home.socket)
@@ -51,7 +51,7 @@ test("every client of a conversation sees the prompt and the same answer", async
   grace.close()
 })
 
-test("submitting again with the same request id is answered once", async () => {
+test("queue-idempotent: submitting again with the same request id is answered once", async () => {
   await using server = await runningServer([{ text: "once" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
@@ -66,7 +66,7 @@ test("submitting again with the same request id is answered once", async () => {
   client.close()
 })
 
-test("a client resuming from a seq receives exactly the commits it missed", async () => {
+test("resume-since: a client resuming from a seq receives exactly the commits it missed", async () => {
   await using server = await runningServer([{ text: "first" }, { text: "second" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
@@ -83,7 +83,7 @@ test("a client resuming from a seq receives exactly the commits it missed", asyn
   client.close()
 })
 
-test("prompts sent while nisse is working wait in a visible queue and run in order", async () => {
+test("queue-run, queue-shared: prompts sent while nisse is working wait in a visible queue and run in order", async () => {
   await using server = await runningServer([{ text: "slow answer here", delayMs: 100 }, { text: "quick" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
@@ -106,7 +106,7 @@ test("prompts sent while nisse is working wait in a visible queue and run in ord
   client.close()
 })
 
-test("interrupting keeps what nisse already said and marks the run interrupted", async () => {
+test("interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted", async () => {
   await using server = await runningServer([{ text: "one two three four five six seven eight", delayMs: 150 }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
@@ -123,7 +123,7 @@ test("interrupting keeps what nisse already said and marks the run interrupted",
   client.close()
 })
 
-test("a model failure is recorded after what was said and the conversation goes idle", async () => {
+test("answer-failed: a model failure is recorded after what was said and the conversation goes idle", async () => {
   await using server = await runningServer([{ text: "partial", fail: "provider went away" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
@@ -138,7 +138,7 @@ test("a model failure is recorded after what was said and the conversation goes 
   client.close()
 })
 
-test("a client that stops reading is dropped while the others keep up", async () => {
+test("wire-dropped: a client that stops reading is dropped while the others keep up", async () => {
   await using server = await runningServer(Array.from({ length: 1500 }, () => ({ text: "ok" })))
   const reader = await RawClient.connect(server.home.socket)
   const stalled = await RawClient.connect(server.home.socket, { ack: false })
@@ -157,7 +157,7 @@ test("a client that stops reading is dropped while the others keep up", async ()
   stalled.close()
 }, 30_000)
 
-test("subscribing to a conversation that does not exist says so", async () => {
+test("wire-unknown: subscribing to a conversation that does not exist says so", async () => {
   await using server = await runningServer()
   const client = await RawClient.connect(server.home.socket)
   const reply = await client.subscribe({ conversation: "nope" }).ended
@@ -165,7 +165,7 @@ test("subscribing to a conversation that does not exist says so", async () => {
   client.close()
 })
 
-test("the server exits once no client is connected and nothing is running", async () => {
+test("server-idle-exit: the server exits once no client is connected and nothing is running", async () => {
   const home = tempHome()
   const served = await deadline(servingUntilIdle(home, "200 millis"), 5000, "server listening")
   const client = await RawClient.connect(home.socket)
@@ -176,7 +176,7 @@ test("the server exits once no client is connected and nothing is running", asyn
   await deadline(served.exited, 5000, "server exit")
 })
 
-test("stopping the server answers the caller, then the server exits", async () => {
+test("server-stop: stopping the server answers the caller, then the server exits", async () => {
   const home = tempHome()
   const served = await deadline(servingUntilIdle(home, "1 hour"), 5000, "server listening")
   const client = await RawClient.connect(home.socket)
@@ -188,7 +188,7 @@ test("stopping the server answers the caller, then the server exits", async () =
 
 const writeCall = (path: string, content: string) => ({ tool: { name: "Write", input: { file_path: path, content } } })
 
-test("a call that changes files waits for a person's answer and runs once allowed", async () => {
+test("approval-wire: a call that changes files waits for a person's answer and runs once allowed", async () => {
   const cwd = workdir()
   await using server = await runningServer([writeCall(`${cwd}/note.txt`, "hi"), { text: "wrote it" }])
   const ada = await RawClient.connect(server.home.socket)
@@ -224,7 +224,7 @@ test("a call that changes files waits for a person's answer and runs once allowe
   rmSync(cwd, { recursive: true })
 })
 
-test("a denied call is reported to the model as denied and nothing changes", async () => {
+test("approval-wire: a denied call is reported to the model as denied and nothing changes", async () => {
   const cwd = workdir()
   await using server = await runningServer([writeCall(`${cwd}/note.txt`, "hi"), { text: "ok, I won't" }])
   const client = await RawClient.connect(server.home.socket)
@@ -241,7 +241,7 @@ test("a denied call is reported to the model as denied and nothing changes", asy
   rmSync(cwd, { recursive: true })
 })
 
-test("reading calls and conversations started with auto approvals run without asking", async () => {
+test("tool-read-only, approval-auto: reading calls and conversations started with auto approvals run without asking", async () => {
   const cwd = workdir()
   await Bun.write(`${cwd}/a.txt`, "alpha\n")
   await using server = await runningServer([
@@ -271,7 +271,7 @@ test("reading calls and conversations started with auto approvals run without as
   rmSync(cwd, { recursive: true })
 })
 
-test("a running command's output streams live and ends as its result", async () => {
+test("tool-output-live: a running command's output streams live and ends as its result", async () => {
   const cwd = workdir()
   await using server = await runningServer([
     { tool: { name: "Bash", input: { command: "echo first; sleep 0.3; echo second" } } },
@@ -295,7 +295,7 @@ test("a running command's output streams live and ends as its result", async () 
   rmSync(cwd, { recursive: true })
 })
 
-test("interrupting while nisse waits for an answer withdraws the question", async () => {
+test("approval-interrupt: interrupting while nisse waits for an answer withdraws the question", async () => {
   const cwd = workdir()
   await using server = await runningServer([writeCall(`${cwd}/note.txt`, "hi")])
   const client = await RawClient.connect(server.home.socket)
@@ -322,7 +322,7 @@ test("interrupting while nisse waits for an answer withdraws the question", asyn
   rmSync(cwd, { recursive: true })
 })
 
-test("a steering prompt reaches nisse during the run instead of after it", async () => {
+test("steer-wire, steer-place: a steering prompt reaches nisse during the run instead of after it", async () => {
   const cwd = workdir()
   await using server = await runningServer([
     { tool: { name: "Bash", input: { command: "sleep 0.5" } } },
@@ -347,7 +347,7 @@ test("a steering prompt reaches nisse during the run instead of after it", async
   rmSync(cwd, { recursive: true })
 })
 
-test("starting a conversation with a provider nisse does not have says so", async () => {
+test("provider-unknown: starting a conversation with a provider nisse does not have says so", async () => {
   await using server = await runningServer()
   const client = await RawClient.connect(server.home.socket)
   const reply = await client.call("conversation/start", { cwd: "/work", provider: "nope" })
@@ -362,7 +362,7 @@ const outputChanges = (deliveries: ReadonlyArray<Delivery>) =>
       : [],
   )
 
-test("a command's output keeps characters split across reads and between streams whole", async () => {
+test("tool-output-live: a command's output keeps characters split across reads and between streams whole", async () => {
   const cwd = workdir()
   await using server = await runningServer([
     {
@@ -382,7 +382,7 @@ test("a command's output keeps characters split across reads and between streams
   rmSync(cwd, { recursive: true })
 })
 
-test("a verbose command's live output stays a bounded tail", async () => {
+test("tool-output-live: a verbose command's live output stays a bounded tail", async () => {
   const cwd = workdir()
   await using server = await runningServer([
     { tool: { name: "Bash", input: { command: "head -c 2000000 /dev/zero | tr '\\0' x; sleep 0.3" } } },
@@ -400,7 +400,7 @@ test("a verbose command's live output stays a bounded tail", async () => {
   rmSync(cwd, { recursive: true })
 })
 
-test("output a background process writes after its call ends never reaches the conversation", async () => {
+test("tool-output-live: output a background process writes after its call ends never reaches the conversation", async () => {
   const cwd = workdir()
   await using server = await runningServer([
     { tool: { name: "Bash", input: { command: "(sleep 1.5; echo late) & echo now" } } },
@@ -417,7 +417,7 @@ test("output a background process writes after its call ends never reaches the c
   rmSync(cwd, { recursive: true })
 })
 
-test("Grep reports only the lines a file has, whatever its line endings", async () => {
+test("tool-grep-lines: Grep reports only the lines a file has, whatever its line endings", async () => {
   const cwd = workdir()
   await Bun.write(`${cwd}/notes.txt`, "alpha\n\nbeta\n")
   await Bun.write(`${cwd}/windows.txt`, "alpha\r\n\r\nbeta\r\n")
@@ -442,7 +442,7 @@ const modelOf = async (client: RawClient, conversation: string) => {
   return first._tag === "snapshot" ? first.conversation.model : undefined
 }
 
-test("a new conversation takes the project's default model, else the home's, else the one chosen last", async () => {
+test("model-default: a new conversation takes the project's default model, else the home's, else the one chosen last", async () => {
   const project = workdir()
   const inside = `${project}/src`
   await Bun.write(`${project}/.nisse/config.toml`, 'default_model = { provider = "script", effort = "low" }\n')
@@ -471,7 +471,7 @@ test("a new conversation takes the project's default model, else the home's, els
   }
 })
 
-test("switching models is an entry everyone sees, and a provider nisse does not have is refused", async () => {
+test("model-switch, model-switch-provider: switching models is an entry everyone sees, and a provider nisse does not have is refused", async () => {
   await using server = await runningServer()
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
@@ -500,7 +500,7 @@ test("switching models is an entry everyone sees, and a provider nisse does not 
   client.close()
 })
 
-test("the providers config.toml names can start conversations beside the built-in ones", async () => {
+test("provider-config: the providers config.toml names can start conversations beside the built-in ones", async () => {
   await using server = await runningServer([], {
     config: { providers: { "openai-work": { driver: "openai" }, "claude-personal": { driver: "claude" } } },
   })
@@ -523,7 +523,7 @@ const spawnStep = (task_name: string, message = "go") => ({
 })
 const waitStep = { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } }
 
-test("interrupting a conversation stops the runs of its subagents too", async () => {
+test("subagent-interrupt: interrupting a conversation stops the runs of its subagents too", async () => {
   await using server = await runningServer([
     spawnStep("slow"),
     waitStep,
@@ -547,7 +547,7 @@ test("interrupting a conversation stops the runs of its subagents too", async ()
   client.close()
 })
 
-test("a person interrupting a subagent wakes its parent's wait, which hears who stopped it", async () => {
+test("subagent-interrupt: a person interrupting a subagent wakes its parent's wait, which hears who stopped it", async () => {
   await using server = await runningServer([
     spawnStep("slow"),
     waitStep,
@@ -579,7 +579,7 @@ test("a person interrupting a subagent wakes its parent's wait, which hears who 
   client.close()
 })
 
-test("a subagent's answer lands in its idle parent's transcript without starting a run", async () => {
+test("subagent-answer: a subagent's answer lands in its idle parent's transcript without starting a run", async () => {
   await using server = await runningServer([
     spawnStep("kid", "look around"),
     { text: "asked the kid" },
@@ -607,7 +607,7 @@ test("a subagent's answer lands in its idle parent's transcript without starting
   client.close()
 })
 
-test("a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent", async () => {
+test("subagent-followup: a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent", async () => {
   await using server = await runningServer([
     spawnStep("kid", "count"),
     waitStep,
@@ -643,7 +643,7 @@ test("a follow-up task wakes an idle subagent, and each of its answers reaches t
   client.close()
 })
 
-test("a tree runs at most as many subagents at once as config.toml allows", async () => {
+test("subagent-limits: a tree runs at most as many subagents at once as config.toml allows", async () => {
   await using server = await runningServer(
     [spawnStep("a"), spawnStep("b"), { text: "tried" }, { agent: "/root/a", text: "a b c d e f g h", delayMs: 300 }],
     { config: { agents: { max_threads: 1 } } },
@@ -661,7 +661,7 @@ test("a tree runs at most as many subagents at once as config.toml allows", asyn
   client.close()
 })
 
-test("a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows", async () => {
+test("subagent-limits: a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows", async () => {
   await using server = await runningServer(
     [
       spawnStep("a"),
@@ -689,7 +689,7 @@ test("a follow-up task does not wake an idle subagent while the tree runs as man
   client.close()
 })
 
-test("starting a conversation with an id it already has answers with that conversation", async () => {
+test("start-with-id: starting a conversation with an id it already has answers with that conversation", async () => {
   await using server = await runningServer([])
   const client = await RawClient.connect(server.home.socket)
   const id = crypto.randomUUID()
@@ -708,7 +708,7 @@ type Trees = { _tag: "trees"; seq: number; trees: Array<Tree> } | Tree
 const treesOf = (items: ReadonlyArray<Trees>, conversation: string) =>
   items.filter((item): item is Tree => item._tag === "tree" && item.conversation === conversation)
 
-test("watching status follows each run of a tree and says how it ended", async () => {
+test("status-follow: watching status follows each run of a tree and says how it ended", async () => {
   await using server = await runningServer([{ text: "all done" }])
   const client = await RawClient.connect(server.home.socket)
   const watch = client.watch<Trees>("status/watch")
@@ -727,7 +727,7 @@ test("watching status follows each run of a tree and says how it ended", async (
   client.close()
 })
 
-test("a subagent waiting on a person shows as its whole tree waiting, to watchers then and later", async () => {
+test("status-subagent: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later", async () => {
   const cwd = workdir()
   await using server = await runningServer([
     spawnStep("writer"),
@@ -758,7 +758,7 @@ test("a subagent waiting on a person shows as its whole tree waiting, to watcher
   rmSync(cwd, { recursive: true })
 })
 
-test("commands a conversation runs, its subagents' included, know the conversation people started", async () => {
+test("subagent-root-env, tool-root-env: commands a conversation runs, its subagents' included, know the conversation people started", async () => {
   await using server = await runningServer([
     { tool: { name: "Bash", input: { command: 'echo "root sees $NISSE_ROOT_CONVERSATION"' } } },
     spawnStep("helper"),
@@ -785,7 +785,7 @@ test("commands a conversation runs, its subagents' included, know the conversati
   client.close()
 })
 
-test("a conversation keeps the instructions it started with, and its subagents start without them", async () => {
+test("start-instructions: a conversation keeps the instructions it started with, and its subagents start without them", async () => {
   await using server = await runningServer([
     spawnStep("helper"),
     waitStep,
@@ -805,7 +805,7 @@ test("a conversation keeps the instructions it started with, and its subagents s
   client.close()
 })
 
-test("a conversation tells a client that was not watching how its last run ended", async () => {
+test("conversation-ended: a conversation tells a client that was not watching how its last run ended", async () => {
   const cwd = workdir()
   await using server = await runningServer([
     { text: "all done" },
@@ -863,7 +863,7 @@ export default Extension.define((ctx) =>
 )
 `
 
-test("an extension's tool answers the model's calls, and a tool it removes is gone", async () => {
+test("tools-transform: an extension's tool answers the model's calls, and a tool it removes is gone", async () => {
   const home = homeWithExtensions({ "clock.ts": clockAndNoGlob }, `[extensions.clock]\ncity = "Oslo"\n`)
   await using server = await runningServer(
     [
@@ -914,7 +914,7 @@ export default Extension.define((ctx) =>
 )
 `
 
-test("an extension can refuse a call, change what runs and what the model sees, and tell people", async () => {
+test("execute-before: an extension can refuse a call, change what runs and what the model sees, and tell people", async () => {
   const cwd = workdir()
   const home = homeWithExtensions({ "guard.ts": guard })
   await using server = await runningServer(
@@ -954,7 +954,7 @@ test("an extension can refuse a call, change what runs and what the model sees, 
   rmSync(home.dir, { recursive: true })
 })
 
-test("an extension that fails to load is listed with why, while the others load and run", async () => {
+test("extensions-failed: an extension that fails to load is listed with why, while the others load and run", async () => {
   const home = homeWithExtensions(
     {
       "broken.ts": `export default 42`,
@@ -1007,7 +1007,7 @@ export default Extension.define((ctx) =>
   ctx.tool.hook("execute.after", (call) => call.conversation.status("${text}")),
 )`
 
-test("reloading runs the extensions as they are now, and no status outlives the code that set it", async () => {
+test("reload: reloading runs the extensions as they are now, and no status outlives the code that set it", async () => {
   const home = homeWithExtensions({ "lines.ts": statusSaying("first") })
   const script = [{ tool: { name: "Read", input: { file_path: "/etc/hostname" } } }, { text: "done" }]
   const statusIn = async (client: RawClient, conversation: string) => {
@@ -1055,7 +1055,7 @@ export default Extension.define((ctx) =>
   }),
 )`
 
-test("while extensions reload, the loaded ones keep guarding calls until their replacements are ready", async () => {
+test("reload: while extensions reload, the loaded ones keep guarding calls until their replacements are ready", async () => {
   const home = homeWithExtensions({ "guard.ts": refusingAfter("the old guard says no") })
   const script = [{ tool: { name: "Bash", input: { command: "echo hi" } } }, { text: "done" }]
   await using server = await runningServer([...script, ...script], { home })
@@ -1085,7 +1085,7 @@ test("while extensions reload, the loaded ones keep guarding calls until their r
   rmSync(home.dir, { recursive: true })
 })
 
-test("a hook still running when its extension is unloaded can't bring back a status line", async () => {
+test("status-line: a hook still running when its extension is unloaded can't bring back a status line", async () => {
   const home = homeWithExtensions({})
   const released = join(home.dir, "released")
   writeFileSync(

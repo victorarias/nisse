@@ -1,0 +1,71 @@
+# Tools
+
+Tools return separate channels for the model, programs and clients, are bounded and replay-safe, and can call each other under the same hooks.
+
+## Sub-features
+
+- `tool-output-channel` [kernel, pending harness-tools] Result channel `output` for the model, with text and images (R279): Model gets prepared content
+- `tool-structured-output` [kernel, pending tools-package] Result channel `structuredOutput` for programs (R279): Scripts and other tools get typed values, not parsed text
+- `tool-details` [kernel, pending harness-tools] Result channel `details` for UIs (R279, §7.3): A client draws a diff or a table without the model paying for it
+- `tool-diagnostics` [kernel, pending harness-tools] Diagnostics, delivered in a `<harness>` block (§7.3): Model learns output was cut or an image dropped, without polluting results
+- `tool-usage` [kernel, pending harness-tools] Usage on a tool result (§7.3, §8.6): A tool that calls a model has its cost counted
+- `tool-terminate` [kernel, pending harness-tools] `control.terminate` (§7.3): A tool ends the run with no further model call
+- `tool-add-tools` [kernel, pending harness-tools] `control.addTools` (§7.3): A tool makes more tools available at the next step
+- `tool-handoff` [kernel, pending harness-run-core] `control.handoff` (§7.3): A tool resets context and carries a brief
+- `tool-replay-policy` [kernel, pending tools-package] Replay policy safe or unsafe (§7.3, §8.4): Read-only calls rerun after a crash; the rest are marked interrupted
+- `tool-prepare-arguments` [kernel, pending tools-package] `prepareArguments` (§7.3): Normalize odd model arguments before validation and hooks
+- `tool-output-schema` [kernel, pending harness-tools] `structuredOutputSchema` validation (R279, §7.3): Programs can trust a declared shape
+- `tool-callers` [kernel, pending harness-tools] `callers`: who may call a tool (R333-349): A tool can be reachable only from scripts or only from the model
+- `tool-model-tools` [kernel, pending harness-tools] `modelTools`: offered versus callable (R333-349): Trim the prompt without removing a capability
+- `tool-deferred-search` [kernel, pending codemode-package] Deferred tools and `tool_search` with BM25 (R333-349, `tool-search`): Hundreds of tools without a huge prompt; loaded tools stay offered after compaction
+- `tool-parallel` [kernel, pending harness-tools] Parallel tool rounds (§8.5): Several read-only calls finish faster
+- `tool-execution-mode` [kernel, pending harness-tools] `executionMode` per tool (§7.3): A tool forces its call to run alone
+- `tool-output-limits` [kernel, pending harness-tools] Output limits per tool, default 50 KiB, 2000 lines, head or tail (§7.3): No tool can flood the context, and extension tools get it free
+- `tool-sanitize` [kernel, pending harness-tools] Output sanitizing (§7.3): Control characters and bad bytes never reach the model or terminal
+- `tool-truncated-file` [kernel, pending harness-tools] Truncated output saved to a file (§7.3): The model can still read what was cut
+- `tool-output-throttle` [kernel, pending harness-tools] Adaptive throttle on running output (§7.3): A chatty command doesn't overload storage
+- `tool-output-window` [kernel, pending harness-views] `outputWindow`, `skipped` count (§7.3, §8.2): Live view shows head, tail and how much was skipped
+- `tool-unavailable` [kernel, pending harness-tools] `tool_unavailable` when a call names a tool not offered (§7.3): A model can't call something withheld
+- `tool-retained-output` [kernel, pending harness-run-core] `retainedOutput` kept across a crash (§7.3): Output so far survives
+- `tool-api-env` [kernel, pending harness-tools] `api.env` in the tool API (§7.3): Tools work on whichever environment the conversation uses
+- `tool-api-commit` [kernel, pending harness-tools] `api.commit` and `api.memo` in tools (§7.3): A tool stores progress atomically and doesn't repeat steps after a crash
+- `tool-api-create` [kernel, pending harness-tools] `api.createTask`, `api.conversation` (§7.3, R772-797): A tool starts durable work or a conversation
+- `tool-execute-tool` [kernel, pending harness-tools] `executeTool`: tools calling tools (R307-331): Compose tools with the same hooks and approvals
+- `tool-nested-live` [kernel, pending harness-tools] Live view of nested calls, `nestedTools` (§7.3, §8.2): People see what a script or tool is doing inside
+- `tool-nested-key` [kernel, pending harness-tools] Nested call key and reattach, `NestedCallDoc` (§7.3): A restarted tool finds its running nested call and does not start a new one
+- `tool-abandon-on-restart` [kernel, pending harness-tools] `abandonOnRestart` (R351-353, §5.4): A long-lived server-type tool is dropped on restart, not rerun
+- `tool-file-queue` [kernel, pending tools-package] Per-file mutation queue (§7.3, `file-mutation-queue`): Two parallel edits to a file don't overwrite each other
+- `tool-edit` [kernel, pending tools-package] Edit details: fuzzy matching, line endings, a diff (`edit-diff`): Fewer failed edits and a diff to show
+- `tool-read` [kernel, pending tools-package] `read` with text and images (R245-305): Reads handle pictures
+- `tool-write` [kernel, pending tools-package] `write` (R245-305): Create or replace a file
+- `tool-bash` [kernel, pending tools-package] `bash` with streaming and timeouts (R245-305): Run commands
+- `tool-bash-prefix` [kernel, pending harness-tools] `commandPrefix` and `prepare` on `bash` (`tools/bash.ts`): Set up shells or wrap commands per deployment
+- `tool-argument-validation` [kernel, pending tools-package] Argument coercion and validation (R245-305): A bad call returns a readable error
+- `tool-crash-result` [kernel, pending harness-tools] A tool crash becomes an error result (§7.3): One broken tool doesn't kill the run
+- `tool-search-ranking` [kernel, pending tools-package] BM25 ranking and tokenizing order what `tool_search` finds.
+- `tool-image-preparation` [kernel, pending tools-package] Reading images resizes them, honours EXIF orientation and re-reads a file that changed.
+- `tool-args-typebox` [kernel, pending harness-tools] Tool arguments declared with a TypeBox schema are validated the same way as JSON Schema.
+- `tool-powershell` [kernel, pending tools-package] `powershell` runs on Windows hosts.
+- `tool-streamed-output` [kernel, pending harness-tools] `api.output()` streams from a custom tool and becomes the result when `execute()` returns no output.
+
+## How to get to it
+
+### People
+
+None.
+
+### Agents
+
+None. These are kernel use cases, with no client path of their own and no `drive.ts` steps.
+
+## Sources
+
+Feature ledger area L: spec §5.4, §7.3, §8.2, §8.4, §8.5; README Tools, Calling tools from tools, Who may call a tool, Tasks a restart abandons; examples 16-coding-tools, 25-coding-agent, 29-tool-override.
+
+## Tests
+
+`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+
+## Gotchas
+
+None recorded yet.

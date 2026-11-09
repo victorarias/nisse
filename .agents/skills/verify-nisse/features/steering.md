@@ -9,7 +9,7 @@ run, instead of waiting for the run to end.
 
 - `steer-toggle` switches the prompt panel between `QUEUE · tab` and
   `STEER · tab` with `Tab` while Nisse works.
-- `steer-show` shows a waiting steer as `steering · <text>`, to every client.
+- `steer-show` [pending tui-views] shows a waiting steer as `steering · <text>`, to every client.
 - `steer-place` places the steer after the step that was running and goes on
   in the same run.
 - `steer-wire` steers with `conversation/submit` and `"steer": true`.
@@ -157,20 +157,20 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- a steering prompt reaches nisse during the run instead of after it
+- steer-wire, steer-place: a steering prompt reaches nisse during the run instead of after it
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- tab switches a prompt sent mid-run from queueing to steering the run
+- steer-toggle: tab switches a prompt sent mid-run from queueing to steering the run
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
-- a steer sent while calls run reaches the model after all of them, before its next answer
-- a skill named in a steer comes with it for the model the run is using, even after a switch
+- steer-openai: a steer sent while calls run reaches the model after all of them, before its next answer
+- skills-attach: a skill named in a steer comes with it for the model the run is using, even after a switch
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- a steer sent while Claude works reaches Claude Code in the same run
+- steer-claude: a steer sent while Claude works reaches Claude Code in the same run
 
 ## Gotchas
 

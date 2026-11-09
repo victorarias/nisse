@@ -8,9 +8,9 @@ server three times in a row ends instead of looping.
 
 ## Sub-features
 
-- `crash-tui` finishes the answer in the open TUI after the server is killed.
+- `crash-tui` [pending tui-views] finishes the answer in the open TUI after the server is killed.
 - `crash-exec` finishes the answer for a waiting `nisse exec`, which exits 0.
-- `crash-committed` commits the answer once, in a run that ends `answered`.
+- `crash-committed` [pending wire-complete] commits the answer once, in a run that ends `answered`.
 - `crash-call` records a running call as
   `interrupted; it may or may not have taken effect` and goes on.
 - `crash-limit` ends the run with `restart_limit` after the server stopped
@@ -18,7 +18,7 @@ server three times in a row ends instead of looping.
 - `crash-claude` resumes a Claude Code run whose server was killed while a
   subagent worked: the cut-off `Agent` call is recorded as interrupted, the
   subagent ends `interrupted`, and Claude Code is resumed to carry on.
-- `crash-claude-settled` does not run a finished Claude Code answer again when
+- `crash-claude-settled` [pending wire-complete] does not run a finished Claude Code answer again when
   the server dies after it.
 
 ## How to get to it
@@ -121,18 +121,18 @@ have taken effect`.
 
 Stack, `packages/nisse/test/stack.test.ts`:
 
-- a run cut off by a crashed server finishes after the server comes back
-- a call cut off by a crashed server is recorded as interrupted and the run carries on
-- a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own
-- a run that keeps crashing the server stops after three tries instead of looping
+- crash-exec: a run cut off by a crashed server finishes after the server comes back
+- crash-call: a call cut off by a crashed server is recorded as interrupted and the run carries on
+- crash-claude: a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own
+- crash-limit: a run that keeps crashing the server stops after three tries instead of looping
 
 This one needs the code-mode host, and is skipped when it is not installed:
 
-- a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off
+- code-mode-script: a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- a run cut off by a server stop resumes, and Claude Code is told which call was cut off
+- claude-cut-off: a run cut off by a server stop resumes, and Claude Code is told which call was cut off
 
 ## Gotchas
 

@@ -20,9 +20,9 @@ A provider `config.toml` names with
   it to `auth/openai.json`.
 - `openai-signed-out` fails the run with
   `not signed in to ChatGPT: could not read <path>`.
-- `openai-invalid` fails the run with `<path> is not valid` for a file that
+- `openai-invalid` [pending wire-complete] fails the run with `<path> is not valid` for a file that
   is not a sign-in.
-- `openai-expired` fails the run with
+- `openai-expired` [pending wire-complete] fails the run with
   `the ChatGPT sign-in expired; sign in again (token refresh failed (...))`
   when the refresh is turned down, and lists the provider `signed_out` with
   that message.
@@ -35,10 +35,10 @@ A provider `config.toml` names with
   one from the next run.
 - `openai-sign-in` signs in through a browser or a device code, in
   [Sign-in](./sign-in.md).
-- `openai-instructions` tells ChatGPT the `AGENTS.md` files and skills, and
+- `openai-instructions` [pending wire-complete] tells ChatGPT the `AGENTS.md` files and skills, and
   sends the skills a message names, in
   [Instructions and skills](./skills.md).
-- `openai-code-mode` runs code-mode models' scripts, in
+- `openai-code-mode` [pending codemode-package] runs code-mode models' scripts, in
   [Code mode](./code-mode.md).
 
 ## How to get to it
@@ -166,13 +166,13 @@ Preconditions:
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
-- a recorded ChatGPT exchange replays into the same answer
-- nisse offers its tools, runs the call the model asks for and sends back the result
-- a call the person denies reaches the model as denied
-- an expired token is refreshed once, saved, and used from then on
-- a failed response, a cut stream and a reached usage limit each end the run with the reason
-- an answer streams live, and interrupting it closes the request and keeps what was said
-- an answer whose CRLF event separators arrive split across reads is read whole
+- openai-answer: a recorded ChatGPT exchange replays into the same answer
+- openai-tools: nisse offers its tools, runs the call the model asks for and sends back the result
+- openai-tools: a call the person denies reaches the model as denied
+- openai-refresh: an expired token is refreshed once, saved, and used from then on
+- openai-failed: a failed response, a cut stream and a reached usage limit each end the run with the reason
+- interrupt-wire: an answer streams live, and interrupting it closes the request and keeps what was said
+- openai-answer: an answer whose CRLF event separators arrive split across reads is read whole
 
 ## Gotchas
 

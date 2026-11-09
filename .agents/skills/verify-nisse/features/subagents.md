@@ -13,13 +13,13 @@ and nisse commits each into a conversation of its own the same way.
 
 ## Sub-features
 
-- `subagent-spawn` starts a subagent from a `spawn_agent` call: the TUI shows
+- `subagent-spawn` [pending wire-complete] starts a subagent from a `spawn_agent` call: the TUI shows
   `▸ spawn_agent(<name>)`, then a `⧉ <name>` card, and `conversation/list`
   gains a conversation whose `lineage` names its `parent`, `root`, `call`,
   `task` and `title`.
 - `subagent-fork` gives a subagent its parent's history up to the spawn
   (`lineage.forkedAt`), or none with `"fork_turns": "none"`.
-- `subagent-model` runs a subagent on its parent's model, or on the `model`
+- `subagent-model` [pending wire-complete] runs a subagent on its parent's model, or on the `model`
   its `spawn_agent` names when the parent's provider lists it; an unlisted
   model fails the call.
 - `subagent-card` shows the card's state: `working`, `waiting on you` with the
@@ -28,10 +28,10 @@ and nisse commits each into a conversation of its own the same way.
 - `subagent-approve` answers a subagent's asked call with `^Y` or `^N` in the
   parent's TUI, or `approval/resolve` on the subagent's conversation. A call
   asked deeper in the tree shows on the card of the subagent above it.
-- `subagent-message` delivers a parent's `send_message` to a running subagent
+- `subagent-message` [pending wire-complete] delivers a parent's `send_message` to a running subagent
   at its next step, as a `user` entry with `"mail": {"kind": "message", ...}`
   inside the same run; it starts no run.
-- `subagent-agents` shows the tree with `list_agents` (each agent's name and
+- `subagent-agents` [pending wire-complete] shows the tree with `list_agents` (each agent's name and
   `running`, `interrupted`, `completed` or `errored`), and stops one
   subagent from its parent with `interrupt_agent`, answering its previous
   status.
@@ -469,39 +469,39 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- interrupting a conversation stops the runs of its subagents too
-- a person interrupting a subagent wakes its parent's wait, which hears who stopped it
-- a subagent's answer lands in its idle parent's transcript without starting a run
-- a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent
-- a tree runs at most as many subagents at once as config.toml allows
-- a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows
-- a subagent waiting on a person shows as its whole tree waiting, to watchers then and later
-- commands a conversation runs, its subagents' included, know the conversation people started
-- a conversation keeps the instructions it started with, and its subagents start without them
+- subagent-interrupt: interrupting a conversation stops the runs of its subagents too
+- subagent-interrupt: a person interrupting a subagent wakes its parent's wait, which hears who stopped it
+- subagent-answer: a subagent's answer lands in its idle parent's transcript without starting a run
+- subagent-followup: a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent
+- subagent-limits: a tree runs at most as many subagents at once as config.toml allows
+- subagent-limits: a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows
+- status-subagent: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later
+- subagent-root-env, tool-root-env: commands a conversation runs, its subagents' included, know the conversation people started
+- start-instructions: a conversation keeps the instructions it started with, and its subagents start without them
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- a subagent shows as a card under its parent, and ctrl+y answers the call it asks about
-- a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it
-- a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent
+- subagent-card: a subagent shows as a card under its parent, and ctrl+y answers the call it asks about
+- subagent-approve: a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it
+- subagent-card: a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent
 
 Stack, `packages/nisse/test/stack.test.ts`:
 
-- nisse exec without --auto denies the calls its subagents would ask about too
+- subagent-exec: nisse exec without --auto denies the calls its subagents would ask about too
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
-- a spawned agent starts from its parent's history, and its last answer reaches the parent
-- an agent of a type gets its instructions, and fork_turns none leaves the parent's history out
+- subagent-fork: a spawned agent starts from its parent's history, and its last answer reaches the parent
+- subagent-types: an agent of a type gets its instructions, and fork_turns none leaves the parent's history out
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- a Claude subagent works in a conversation of its own under the one that started it
-- a Claude subagent takes input only through its parent
-- a Claude subagent leaves the model a new conversation starts with as the person last chose it
-- a call a Claude subagent wants to make waits for a person in the subagent's conversation
-- stopping a Claude subagent stops only it, and its parent's run carries on
-- stopping a run ends the Claude subagents working under it
+- subagent-claude: a Claude subagent works in a conversation of its own under the one that started it
+- subagent-claude: a Claude subagent takes input only through its parent
+- subagent-claude: a Claude subagent leaves the model a new conversation starts with as the person last chose it
+- subagent-claude: a call a Claude subagent wants to make waits for a person in the subagent's conversation
+- subagent-interrupt: stopping a Claude subagent stops only it, and its parent's run carries on
+- subagent-interrupt: stopping a run ends the Claude subagents working under it
 
 ## Gotchas
 
