@@ -1,13 +1,13 @@
 import { afterEach, expect, test } from "bun:test"
 import type { Delivery } from "@nisse/protocol"
 import { Database } from "bun:sqlite"
-import { rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import { installedCodeModeHost } from "./support/code-mode-host.ts"
 import { FakeOpenAi, matches, signIn } from "./support/openai.ts"
 import { bodies, deadline, RawClient } from "./support/raw.ts"
-import { tempHome } from "./support/server.ts"
+import { homeAt, tempHome } from "./support/server.ts"
 import { nisse, nisseEnv, stopServer } from "./support/terminal.ts"
 
 const homes: Array<ReturnType<typeof tempHome>> = []
@@ -42,6 +42,22 @@ const withScript = async (nisseHome: ReturnType<typeof tempHome>, steps: unknown
 test("answer-exec, server-on-demand: nisse exec starts a server when none runs, prints the answer and exits 0", async () => {
   const result = await finished(nisse(["exec", "hello there"], nisseEnv(home())))
   expect(result).toMatchObject({ code: 0, stdout: "You said: hello there\n" })
+})
+
+test("extensions-load: a home named relative to the folder nisse runs in loads its extensions", async () => {
+  const folder = home()
+  const relative = homeAt(join(folder.dir, "h1"))
+  homes.unshift(relative)
+  mkdirSync(relative.extensions, { recursive: true })
+  writeFileSync(
+    join(relative.extensions, "clock.ts"),
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define(() => Effect.void)
+`,
+  )
+  const result = await finished(nisse(["extensions"], nisseEnv(relative, { NISSE_HOME: "h1" }), folder.dir))
+  expect(result).toMatchObject({ code: 0, stdout: `clock  loaded  ${relative.extensions}/clock.ts\n` })
 })
 
 test("server-old-home: a home the Rust version used still works and keeps its database", async () => {
