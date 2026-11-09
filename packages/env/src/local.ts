@@ -195,21 +195,24 @@ class LocalBinaryReader implements BinaryReader {
     this.#path = path
   }
 
+  /** Checked when an operation runs, not when its effect is built. */
   #open(): Effect.Effect<void, FileError> {
     return this.#closed ? Effect.fail(closed("Binary reader", this.#path)) : Effect.void
   }
 
   info(): Effect.Effect<FileInfo, FileError> {
-    return Effect.flatMap(this.#open(), () =>
-      Effect.flatMap(
-        attempt(this.#path, () => this.#file.stat()),
-        (stats) => {
-          const info = infoOf(this.#path, stats)
-          return info
-            ? Effect.succeed(info)
-            : Effect.fail(new FileError("invalid", "Unsupported file type", this.#path))
-        },
-      ),
+    return Effect.flatMap(
+      Effect.suspend(() => this.#open()),
+      () =>
+        Effect.flatMap(
+          attempt(this.#path, () => this.#file.stat()),
+          (stats) => {
+            const info = infoOf(this.#path, stats)
+            return info
+              ? Effect.succeed(info)
+              : Effect.fail(new FileError("invalid", "Unsupported file type", this.#path))
+          },
+        ),
     )
   }
 

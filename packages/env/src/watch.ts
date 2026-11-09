@@ -188,13 +188,23 @@ export class LocalFileWatcher implements FileWatcher {
         ? "polling"
         : "native")
     const watcher = new LocalFileWatcher(resolved, onChange, mode, options)
+    // The first scan holds the flush slot: an event during it marks the watcher dirty instead of starting a second
+    // scan that could reconcile watchers against an older snapshot.
+    const initial = watcher.#sync(false)
+    watcher.#running = initial.then(
+      () => undefined,
+      () => undefined,
+    )
     try {
-      await watcher.#sync(false)
+      await initial
     } catch (error) {
       watcher.#stop()
       if (error instanceof BudgetExceeded) throw new FileError("invalid", error.message)
       throw error
+    } finally {
+      watcher.#running = undefined
     }
+    if (watcher.#dirty) void watcher.#flush()
     watcher.#schedulePoll()
     return watcher
   }

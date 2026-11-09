@@ -199,6 +199,7 @@ class ProcessRun {
 
   /** Kill the command because the caller no longer wants it. */
   interrupt(): void {
+    if (this.#settled) return
     this.#interrupted = true
     this.#kill()
   }
@@ -246,7 +247,11 @@ class ProcessRun {
     child.stdout?.on("data", (chunk: Uint8Array) => this.#receive("stdout", chunk))
     child.stderr?.on("data", (chunk: Uint8Array) => this.#receive("stderr", chunk))
     waitForChild(child, () => this.#spillIsDraining()).then(
-      (exit) => void this.#exited(exit),
+      (exit) =>
+        this.#exited(exit).catch((error: unknown) => {
+          const cause = toError(error)
+          this.#settle(new ExecutionError("unknown", cause.message, cause))
+        }),
       (error: Error) => this.#settle(new ExecutionError("spawn_error", error.message, error)),
     )
   }
@@ -275,10 +280,15 @@ class ProcessRun {
     try {
       onOutput(text, { stream })
     } catch (error) {
-      const cause = toError(error)
-      this.#callbackError = new ExecutionError("callback_error", cause.message, cause)
-      this.#kill()
+      this.#failCallback(error)
     }
+  }
+
+  #failCallback(error: unknown): void {
+    if (this.#callbackError !== undefined) return
+    const cause = toError(error)
+    this.#callbackError = new ExecutionError("callback_error", cause.message, cause)
+    this.#kill()
   }
 
   #receive(stream: ShellOutputInfo["stream"], chunk: Uint8Array): void {
@@ -342,7 +352,11 @@ class ProcessRun {
     this.#spillStart = Effect.runPromise(this.#request.createSpillFile())
       .then((path) => {
         this.#spillPath = path
-        this.#request.options?.onSpill?.(path)
+        try {
+          this.#request.options?.onSpill?.(path)
+        } catch (error) {
+          this.#failCallback(error)
+        }
         this.#spillStream = createWriteStream(path, { flags: "a", highWaterMark: SPILL_HIGH_WATER_MARK })
         this.#spillStream.on("error", (error) => this.#failSpill(error))
         for (const queued of this.#spillQueue) this.#writeSpill(queued)

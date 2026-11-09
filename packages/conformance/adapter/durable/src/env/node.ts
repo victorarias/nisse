@@ -1,7 +1,7 @@
 import { type ExecutionEnv, ExecutionError, FileError } from "@nisse/env";
 import { LocalExecutionEnv, type LocalExecutionEnvOptions } from "@nisse/env/local";
 import { Cause, Effect, Exit } from "effect";
-import type { Context } from "../../../chord/src/context/index.ts";
+import { BACKGROUND_CONTEXT, type Context } from "../../../chord/src/context/index.ts";
 import { err, ok, type Result } from "./index.ts";
 
 /** Runs an env effect for a Promise-and-Context caller. An abort of the context interrupts the fiber. */
@@ -25,9 +25,10 @@ const file =
 	<A>(effect: Effect.Effect<A, FileError>) =>
 		run(effect, context, () => new FileError("aborted", "aborted"));
 
-const closing = (effect: Effect.Effect<void>, context: Context) => file(context)(effect).then(() => undefined);
+// Closing ignores the context, as upstream's does: a reader closed after a cancelled read must still close.
+const closing = (effect: Effect.Effect<void>, _context: Context) => Effect.runPromise(effect);
 
-/** Makes spill files come from the outer environment, where a subclass may override them. */
+/** Routes the env's own temp-file calls through the outer environment, where a subclass may override them. */
 class Bridged extends LocalExecutionEnv {
 	constructor(
 		options: LocalExecutionEnvOptions,
@@ -37,11 +38,16 @@ class Bridged extends LocalExecutionEnv {
 		super(options);
 	}
 
+	override createTempDir(prefix?: string) {
+		return fromResult(() => this.outer.createTempDir(prefix, this.context));
+	}
+
 	override createTempFile(options?: { prefix?: string; suffix?: string }) {
-		return Effect.flatMap(
-			Effect.promise(() => this.outer.createTempFile(options, this.context)),
-			(result) => (result.ok ? Effect.succeed(result.value) : Effect.fail(result.error)),
-		);
+		return fromResult(() => this.outer.createTempFile(options, this.context));
+	}
+
+	localTempDir(prefix?: string) {
+		return super.createTempDir(prefix);
 	}
 
 	localTempFile(options?: { prefix?: string; suffix?: string }) {
@@ -49,7 +55,8 @@ class Bridged extends LocalExecutionEnv {
 	}
 }
 
-const BACKGROUND = { abortSignal: undefined } as Context;
+const fromResult = <A>(call: () => Promise<Result<A, FileError>>) =>
+	Effect.flatMap(Effect.promise(call), (result) => (result.ok ? Effect.succeed(result.value) : Effect.fail(result.error)));
 
 export class NodeExecutionEnv {
 	readonly id: string;
@@ -57,7 +64,7 @@ export class NodeExecutionEnv {
 	readonly #env: Bridged;
 
 	constructor(options: { cwd: string; shellPath?: string; shellEnv?: NodeJS.ProcessEnv; watch?: LocalExecutionEnvOptions["watch"] }) {
-		this.#env = new Bridged(options, this, BACKGROUND);
+		this.#env = new Bridged(options, this, BACKGROUND_CONTEXT);
 		this.id = this.#env.id;
 		this.cwd = this.#env.cwd;
 	}
@@ -81,9 +88,12 @@ export class NodeExecutionEnv {
 		file(context)(this.#env.createDir(path, options));
 	remove = (path: string, options: { recursive?: boolean; force?: boolean } | undefined, context: Context) =>
 		file(context)(this.#env.remove(path, options));
-	createTempDir = (prefix: string | undefined, context: Context) => file(context)(this.#env.createTempDir(prefix));
+	// Methods, not fields, so that a subclass can override them.
+	createTempDir(prefix: string | undefined, context: Context): Promise<Result<string, FileError>> {
+		return file(context)(this.#env.localTempDir(prefix));
+	}
 
-	// A method, not a field, so that a subclass can override it.
+
 	createTempFile(options: { prefix?: string; suffix?: string } | undefined, context: Context): Promise<Result<string, FileError>> {
 		return file(context)(this.#env.localTempFile(options));
 	}
