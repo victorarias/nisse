@@ -15,7 +15,7 @@ Typed JSON documents are committed with entries, scoped, forked, migrated and wa
 - `doc-lifetime` [kernel, pending kernel-documents] Lifetimes and `retire` (§3): Old state is removed predictably
 - `doc-migration` [kernel, pending kernel-documents] Document migrations (§3.6): Old data opens on new versions
 - `doc-eviction` [kernel, pending harness-run-core] Document eviction, `documentRetentionMs` (§4): Memory stays bounded with many documents
-- `doc-ops` [kernel, pending kernel-documents] Chord ops: structured changes to JSON (§3, Chord): Small changes stay small, in storage and on the wire
+- `doc-ops` [kernel] Chord ops: structured changes to JSON (§3, Chord): Small changes stay small, in storage and on the wire
 - `doc-deltas` [kernel, pending kernel-documents] Document deltas to watchers (§9.1): A client updates a big document cheaply
 - `doc-provider` [kernel, pending kernel-documents] Built-in `pi.provider` (§2.2): Provider session survives forks and switches
 - `doc-definitions` [kernel, pending harness-shell] A document definition declares its version, scope and history, and bad definitions fail at definition time.

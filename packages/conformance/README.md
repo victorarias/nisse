@@ -66,10 +66,11 @@ Session close.
 | Stand-in                                                    | Owner                                                                    |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `pi-ai` root, `models`, `providers/faux`                    | `models-seam`, including the faux model's deferred polling and retry     |
-| `pi-schema` builders                                        | `pure-packages`                                                          |
+| `pi-schema`                                                 | re-exports `packages/schema`                                             |
 | `pi-telemetry` contexts                                     | `harness-compaction`, fed by an Effect tracer (D7)                       |
 | chord `context`                                             | copied here, in `adapter/chord/src/context`                              |
-| chord `json`, `delta`, `output`                             | `pure-packages`                                                          |
+| chord `json`, `delta`                                       | re-export `packages/delta`                                               |
+| chord `output`                                              | unassigned; still a stand-in, used by `harness-tools` and `tools-package` |
 | chord `sqlite`                                              | `kernel-storage`                                                         |
 | chord `watch`                                               | `kernel-documents`                                                       |
 | `pi-codemode`                                               | `codemode-package`                                                       |

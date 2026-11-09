@@ -1,0 +1,10 @@
+{
+  "name": "@nisse/delta",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/delta/index.ts",
+    "./json": "./src/json.ts"
+  }
+}

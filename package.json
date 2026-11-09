@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "tsc --noEmit && prettier --check . && bun test --timeout 30000 --path-ignore-patterns='packages/conformance/**' --reporter=junit --reporter-outfile=node_modules/.cache/coverage-junit.xml && bun scripts/coverage.ts --quiet node_modules/.cache/coverage-junit.xml && bun packages/conformance/check.ts",
+    "check": "tsc --noEmit && prettier --check . && bun scripts/boundaries.ts && bun test --timeout 30000 --path-ignore-patterns='packages/conformance/**' --reporter=junit --reporter-outfile=node_modules/.cache/coverage-junit.xml && bun scripts/coverage.ts --quiet node_modules/.cache/coverage-junit.xml && bun packages/conformance/check.ts",
     "coverage": "bun test --timeout 30000 --path-ignore-patterns='packages/conformance/**' --reporter=junit --reporter-outfile=node_modules/.cache/coverage-junit.xml && bun scripts/coverage.ts node_modules/.cache/coverage-junit.xml",
     "format": "prettier --write .",
     "schema": "bun packages/nisse/src/main.ts schema > schema/nisse.schema.json"
