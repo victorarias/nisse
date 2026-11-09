@@ -160,4 +160,5 @@ Stack, `packages/nisse/test/stack.test.ts`:
   over the wire with another `cwd`.
 - A script step with a `tool` calls it and the same run goes on to the next
   step; a step without one ends the run.
-- `^Y` and `^N` answer the oldest call waiting.
+- `^Y` and `^N` answer this conversation's oldest waiting call, or else the
+  oldest in the first subagent that has one.

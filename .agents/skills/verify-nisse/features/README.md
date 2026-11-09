@@ -94,7 +94,7 @@ lists when a change touches them.
   reaches the model at its next step, inside the same run; replayed for Claude
   (one and two steers, between parallel calls) and ChatGPT.
 - [Providers](./providers.md) (people, agents): `--provider` or `conversation/start` picks one,
-  `config.toml` adds more with their own `binary`, `env` and `args`, and
+  `config.toml` adds more, Claude ones with their own `binary`, `env` and `args`, and
   `NISSE_CLAUDE` names Claude Code; an unknown one is refused, a signed-out one
   fails the run.
 - [Claude](./claude.md) (people, agents): Claude Code's answers, approvals, reads that don't

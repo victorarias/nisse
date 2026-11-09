@@ -53,7 +53,7 @@ Preconditions:
   the tree `working`, then `waiting` once the subagent asks. The second ends
   after the parent calls `wait_agent`.
 - **Snapshot.** While it waits, run `drive.ts r watch-status`: its first line
-  lists the tree as `waiting`. Stop it with `^C`, or add `--until waiting`.
+  lists the tree as `waiting`. It returns after a second with no delivery.
 - **Ended.** Run
   `drive.ts r rpc conversation/interrupt '{"conversation": "11111111-1111-4111-8111-111111111111"}'`
   while `drive.ts r watch-status 11111111-1111-4111-8111-111111111111 --until idle`

@@ -224,8 +224,10 @@ Provider, `packages/nisse/test/claude.test.ts`:
 
 - The TUI follows only the sign-in it started; another client's sign-in does
   not open its panel.
-- A cancelled sign-in closes the TUI's panel. A failed one keeps it, showing
-  `✗ <reason>` with `^L  try again` and `esc  close`.
+- A cancelled sign-in closes the TUI's panel. A failed one keeps it, with
+  `^L  try again` and `esc  close`: a failure before any address appeared
+  shows `✗ <reason>`; today a failure after one keeps showing the address and
+  its hint, with no `✗` line.
 - One browser sign-in listens on port 1455 at a time; a second, from another
   home, fails at once, and `watch-auth` in that home shows
   `could not listen on 127.0.0.1:1455 for the browser's answer (is another sign-in running?); ...`.

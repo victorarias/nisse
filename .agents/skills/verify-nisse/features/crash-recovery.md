@@ -33,7 +33,7 @@ None.
 
 ### Triggers
 
-- The server dies (SIGKILL, power loss) while Nisse is answering, a call runs, or a Claude Code subagent works, with a TUI or `exec` waiting on it.
+- The server dies (SIGKILL, power loss) while Nisse is answering, a call runs, or a Claude Code subagent works. The run resumes when the next server starts for that home, whoever starts it.
 
 ## Driving it with drive.ts
 
@@ -125,7 +125,10 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - a call cut off by a crashed server is recorded as interrupted and the run carries on
 - a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own
 - a run that keeps crashing the server stops after three tries instead of looping
-- a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off (skipped when the code-mode host is not installed)
+
+This one needs the code-mode host, and is skipped when it is not installed:
+
+- a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off
 
 Provider, `packages/nisse/test/claude.test.ts`:
 

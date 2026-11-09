@@ -78,7 +78,7 @@ opens, and a run can use both, alongside a `--script`.
 
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its
-last client leaves. Start it yourself with `drive.ts r1 serve` when a journey
+last subscription closes and its last run settles. Start it yourself with `drive.ts r1 serve` when a journey
 needs it running first: before any `rpc` or `watch`, and to kill it on purpose.
 `serve` returns once the server holds the home's lock, and prints its pid.
 
@@ -108,7 +108,8 @@ to settle and stops it, and the next client starts one on the new code.
 ## Drive
 
 - **TUI.** `tui type <text>` types literally; `tui key <keys>` presses tmux
-  keys: `Enter` sends, `C-j` adds a line, `Escape` stops the run, `Tab`
+  keys: `Enter` sends, `S-Enter` or `M-Enter` adds a line (`C-j` sends today, a
+  known bug), `Escape` stops the run, `Tab`
   switches between queueing and steering while Nisse works, `C-y` allows the
   call Nisse asks about and `C-n` denies it, `C-l` signs in to a signed-out
   provider and `Escape` cancels it, `C-c` quits. Typing `/model` and `Enter`
@@ -141,8 +142,9 @@ to settle and stops it, and the next client starts one on the new code.
   `conversation/select_model`, `skills/list`, `providers/list`,
   `models/list`, `auth/start`, `auth/respond`, `auth/cancel`, `auth/logout`,
   `extensions/list`, `extensions/reload` and `server/stop`.
-  `conversation/list` and `server/stop` take no params. `providers/list`,
-  `models/list` and `skills/list` take an object, at least `'{}'`.
+  `conversation/list` and `server/stop` take no params. `providers/list` and
+  `models/list` take an object, at least `'{}'`; `skills/list` takes
+  `{"conversation": "<id>"}`.
   `conversation/start` needs a `cwd`, and `conversation/submit` a
   `requestId`; the schema in `schema/nisse.schema.json` has the rest.
   `drive.ts r1 watch <conversation>` subscribes as a second client and prints

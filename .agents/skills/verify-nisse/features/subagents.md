@@ -269,7 +269,7 @@ Preconditions:
   the parent as `root`. `drive.ts r watch <subagent id> --save root-env`
   holds a `tool_result` `root=<the parent's id>`.
 
-- **Exec denies a subagent's call.** With the same script, in a fresh run,
+- **Exec denies a subagent's call.** With the `Spawn, approve, answer` script, in a fresh run,
   `drive.ts r nisse exec delegate`: exit 0, stdout `the scribe is done`,
   stderr `› spawn_agent(scribe)`, `› wait_agent` and
   `denied Bash(echo scribbled): exec cannot ask, pass --auto to allow calls`.
@@ -438,8 +438,9 @@ Preconditions:
   result, a `message` and a `run_end` `answered`. `drive.ts r tui stop`, then
   `drive.ts r tui start --conversation <subagent id>` and
   `drive.ts r tui wait 'INPUT GOES THROUGH ITS PARENT'`: the same transcript.
-  The recording's prompt and answer name the checkout it was recorded in and
-  the recorded `notes.txt` text, which the fake does not read from your disk.
+  The recording's prompt and answer name your checkout, which replaces the
+  recording's `<workspace>` paths, and the recorded `notes.txt` text, which
+  the fake does not read from your disk.
 
 - **Claude subagent stopped over the wire** (`--fake-claude subagent_stopped`).
   Send the same prompt and wait for `(general-purpose) working`. Run
@@ -535,7 +536,7 @@ ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
   `⧉ scout done` and an answer naming `found it`.
 - **Another model.** Pick a model from `drive.ts r rpc models/list '{}'` other
   than the conversation's whose entry in `/tmp/nisse-verify/r/home/cache/openai-models.json`
-  has no `"tool_mode": "code_mode_only"`; if every other model has it, install
+  has no `"tool_mode":"code_mode_only"`; if every other model has it, install
   the host first with
   `NISSE_HOME=/tmp/nisse-verify/r/home scripts/code-mode-host.sh`. Then send
   `Start a subagent named ranger on the model <that id> that replies with exactly: found it. Wait for it, then tell me what it said.`

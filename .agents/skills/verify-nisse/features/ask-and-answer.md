@@ -9,7 +9,7 @@ printing the answer and exiting 0, or 1 when the run fails.
 
 - `answer-tui` sends a prompt from the TUI and shows it under `ADA` and the
   answer under `NISSE`.
-- `answer-newline` adds a line to the prompt with `⇧⏎` or `^J` and sends all
+- `answer-newline` adds a line to the prompt with `⇧⏎` or `⌥⏎` and sends all
   lines as one message with `⏎`.
 - `answer-exec` prints the answer on stdout and exits 0.
 - `answer-exec-fail` prints what was said, reports the failure on stderr and
@@ -17,18 +17,22 @@ printing the answer and exiting 0, or 1 when the run fails.
 - `answer-wire` submits over the protocol and sees the user entry, live text,
   the `message` entry and the `run_end` entry as commits.
 - `answer-shared` shows a run started in the TUI to a second client.
+- `answer-author` names the TUI's and `exec`'s messages after `USER`, or the
+  system's user name when `USER` is not set.
+- `answer-scroll` scrolls the transcript with the mouse wheel.
 
 ## How to get to it
 
 ### People
 
-- Type in the TUI's `PROMPT` and press Enter; `⇧⏎` or `^J` starts a new line
+- Type in the TUI's `PROMPT` and press Enter; `⇧⏎` or `⌥⏎` starts a new line
   instead.
+- Scroll the transcript with the mouse wheel.
 
 ### Agents
 
 - Run `nisse exec '<prompt>'`.
-- Call `conversation/submit` on the home's socket.
+- Call `conversation/submit` on the home's socket, naming its `author`.
 
 ## Driving it with drive.ts
 
@@ -60,6 +64,12 @@ Preconditions:
   Then, in a fresh run, type `aa`, press `drive.ts r tui key C-j`, type
   `bb`: the panel holds two lines and nothing was sent. This fails today:
   `C-j` sends `aa` at once.
+- **Scroll.** In a fresh run whose script is one `text` of 60 lines, `row1` to
+  `row60` joined with `\n`, run `drive.ts r tui start`,
+  `drive.ts r tui wait READY`, `drive.ts r tui type go`,
+  `drive.ts r tui key Enter`, `drive.ts r tui wait row60`, then three times
+  `drive.ts r tui type $'\e[<64;10;10M'`, a wheel-up as the terminal sends it,
+  and `drive.ts r tui wait --gone row60`: earlier rows show.
 - **Shared.** With the TUI still open, run `drive.ts r rpc conversation/list`
   and take the conversation's `id`, then
   `drive.ts r watch <id> --save shared`. The snapshot holds the `user` entry,
@@ -87,7 +97,6 @@ Preconditions:
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - every client of a conversation sees the prompt and the same answer
-- submitting again with the same request id is answered once
 - a model failure is recorded after what was said and the conversation goes idle
 
 Screen, `packages/nisse/test/screen.test.ts`:
@@ -99,8 +108,11 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - nisse exec exits 1 and reports the failure when the run fails
 - nisse exec finishes when nisse answers with nothing
 
+No committed test covers scrolling with the mouse wheel.
+
 ## Gotchas
 
+- `drive.ts` sets `USER=ada`, which is why messages read `ADA`.
 - tmux sends `⇧⏎` as `S-Enter` and `⌥⏎` as `M-Enter`; both add a line.
 - `exec` starts a new conversation each time unless given
   `--conversation <id>`.

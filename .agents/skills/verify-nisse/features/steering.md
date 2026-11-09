@@ -187,7 +187,8 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - The Claude and OpenAI steps hold the run at an approval or a hook so that
   the steer lands inside the run; the fakes wait for a steer the recording
   has, whatever the timing, so a steer sent late stalls the run.
-- `Tab` does nothing while Nisse is ready; the panel then reads `PROMPT`.
+- `Tab` does nothing while Nisse is ready; the panel then reads `PROMPT`. A
+  switch to steering lasts across runs in that TUI, until `Tab` again.
 
 ## With a real account
 

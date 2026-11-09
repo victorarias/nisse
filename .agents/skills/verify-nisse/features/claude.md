@@ -47,7 +47,7 @@ cannot sign in ends the run failed with Claude Code's own message.
 
 ### People
 
-- Run `nisse --provider claude`, or `nisse` with no `NISSE_MODEL_SCRIPT`.
+- Run `nisse --provider claude`, or `nisse` with no `NISSE_MODEL_SCRIPT` when no `default_model` or earlier model choice names another provider.
 - Switch a conversation to Claude, or to another Claude model, with `/model`.
 
 ### Agents

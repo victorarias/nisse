@@ -3,7 +3,7 @@
 One server serves a home, shared by every client. The first client to need it
 starts it, clients starting at the same moment share it, a second server for
 the same home refuses to start, and the server exits 30 s after its last
-client leaves and its last run settles. `nisse serve --restart` replaces a
+subscription closes and its last run settles. `nisse serve --restart` replaces a
 running server once its runs settle.
 
 ## Sub-features
@@ -11,10 +11,13 @@ running server once its runs settle.
 - `server-on-demand` starts a server for the first `exec` or TUI.
 - `server-shared` lets clients that start together share one server.
 - `server-refuse` makes `nisse serve` refuse a home that already has a server.
-- `server-idle-exit` exits the server 30 s after its last client leaves.
+- `server-idle-exit` exits the server 30 s after its last subscription closes
+  and its last run settles.
 - `server-stop` stops it on `server/stop` once its runs settle.
 - `server-restart` replaces the running server with `nisse serve --restart`
   once its runs settle.
+- `server-old-home` keeps working in a home a Rust version of Nisse used: its
+  `nisse.sqlite` stays as it was, and this Nisse uses `store.sqlite` beside it.
 
 ## How to get to it
 
@@ -30,7 +33,7 @@ running server once its runs settle.
 
 ### Triggers
 
-- The home has no clients and no running run for 30 s.
+- The home has no open `conversation/subscribe`, `status/watch` or `auth/watch` stream and no running run for 30 s. A connection making only single calls does not keep the server alive.
 
 ## Driving it with drive.ts
 
@@ -98,10 +101,14 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - nisse exec says why the server it started could not run
 - a second server for the same home refuses to start
 
+No committed test covers `nisse serve --restart`.
+
 ## Gotchas
 
 - A server started with `drive.ts r serve` also exits 30 s after it goes idle.
   Start it just before the journey needs it.
+- `server-old-home` is covered by its stack test only: making a Rust home by
+  hand is not a user path `drive.ts` can drive.
 - The idle exit is the one journey that waits on time; give `doctor` 40 s.
 - `rpc server/stop` with a run still working waits for it, so the call times
   out after 5 s; start the stop once the run has ended.

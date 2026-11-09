@@ -17,11 +17,11 @@ resubscribes from the last commit it saw and misses nothing.
 
 ### People
 
-- Press `^C` in the TUI, then run `nisse --conversation <id>`.
+- Press `^C` in the TUI, then run `nisse --conversation <id>`, or `nisse -c <id>`.
 
 ### Agents
 
-- Run `nisse exec --conversation <id> '<prompt>'`.
+- Run `nisse exec --conversation <id> '<prompt>'`, or `-c <id>`.
 - Call `conversation/subscribe` with `sinceSeq`.
 - Run `nisse --conversation <new id> '<prompt>'`, as attn does.
 
