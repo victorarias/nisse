@@ -7,9 +7,11 @@ printing the answer and exiting 0, or 1 when the run fails.
 
 ## Sub-features
 
+- `tui-hangup` closing the terminal ends `nisse` instead of leaving it running unseen.
+- `answer-failed` a model failure is recorded after what was said, and the conversation goes idle.
 - `answer-tui` sends a prompt from the TUI and shows it under `ADA` and the
   answer under `NISSE`.
-- `answer-newline` adds a line to the prompt with `⇧⏎` or `⌥⏎` and sends all
+- `answer-newline` [pending tui-views] adds a line to the prompt with `⇧⏎` or `⌥⏎` and sends all
   lines as one message with `⏎`.
 - `answer-exec` prints the answer on stdout and exits 0.
 - `answer-exec-fail` prints what was said, reports the failure on stderr and
@@ -17,9 +19,9 @@ printing the answer and exiting 0, or 1 when the run fails.
 - `answer-wire` submits over the protocol and sees the user entry, live text,
   the `message` entry and the `run_end` entry as commits.
 - `answer-shared` shows a run started in the TUI to a second client.
-- `answer-author` names the TUI's and `exec`'s messages after `USER`, or the
+- `answer-author` [pending tui-views] names the TUI's and `exec`'s messages after `USER`, or the
   system's user name when `USER` is not set.
-- `answer-scroll` scrolls the transcript with the mouse wheel.
+- `answer-scroll` [pending tui-views] scrolls the transcript with the mouse wheel.
 
 ## How to get to it
 
@@ -96,17 +98,17 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- every client of a conversation sees the prompt and the same answer
-- a model failure is recorded after what was said and the conversation goes idle
+- answer-wire, answer-shared: every client of a conversation sees the prompt and the same answer
+- answer-failed: a model failure is recorded after what was said and the conversation goes idle
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- a person types a prompt, presses enter and reads the answer under their name
+- answer-tui: a person types a prompt, presses enter and reads the answer under their name
 
 Stack, `packages/nisse/test/stack.test.ts`:
 
-- nisse exec exits 1 and reports the failure when the run fails
-- nisse exec finishes when nisse answers with nothing
+- answer-exec-fail: nisse exec exits 1 and reports the failure when the run fails
+- answer-exec: nisse exec finishes when nisse answers with nothing
 
 No committed test covers scrolling with the mouse wheel.
 

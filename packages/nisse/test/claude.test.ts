@@ -62,7 +62,7 @@ const conversationWith = async (claude: FakeClaude, options: StartWith & ServerO
   }
 }
 
-test("Claude's answer through Claude Code is committed as nisse's message", async () => {
+test("claude-answer: Claude's answer through Claude Code is committed as nisse's message", async () => {
   using claude = new FakeClaude("text")
   await using session = await conversationWith(claude)
   await session.submit("Reply with exactly: fixture text ok")
@@ -74,7 +74,7 @@ test("Claude's answer through Claude Code is committed as nisse's message", asyn
   expect(claude.userTexts()).toEqual([["Reply with exactly: fixture text ok"]])
 })
 
-test("Claude Code keeps its own system prompt, adds the conversation's instructions, and its commands know the conversation", async () => {
+test("claude-system-prompt: Claude Code keeps its own system prompt, adds the conversation's instructions, and its commands know the conversation", async () => {
   using claude = new FakeClaude("text")
   await using session = await conversationWith(claude, { instructions: "Report with attn when done." })
   await session.submit("Reply with exactly: fixture text ok")
@@ -85,7 +85,7 @@ test("Claude Code keeps its own system prompt, adds the conversation's instructi
   expect(claude.log().find((entry) => entry.argv)?.rootConversation).toBe(session.conversation)
 })
 
-test("a command Claude wants to run waits for a person, and Claude Code hears the answer", async () => {
+test("claude-approval: a command Claude wants to run waits for a person, and Claude Code hears the answer", async () => {
   for (const [fixture, allow, reply] of [
     ["bash_allowed", true, "made"],
     ["bash_declined", false, undefined],
@@ -106,7 +106,7 @@ test("a command Claude wants to run waits for a person, and Claude Code hears th
   }
 })
 
-test("Claude reads files without asking and the read shows as a call and its result", async () => {
+test("claude-read: Claude reads files without asking and the read shows as a call and its result", async () => {
   using claude = new FakeClaude("read")
   await using session = await conversationWith(claude)
   await session.submit("read it")
@@ -120,7 +120,7 @@ test("Claude reads files without asking and the read shows as a call and its res
   ])
 })
 
-test("a steer sent while Claude works reaches Claude Code in the same run", async () => {
+test("steer-claude: a steer sent while Claude works reaches Claude Code in the same run", async () => {
   using claude = new FakeClaude("steer")
   await using session = await conversationWith(claude)
   await session.submit("Run the bash command `touch steered.txt` with the Bash tool, then reply with exactly: done")
@@ -140,7 +140,7 @@ test("a steer sent while Claude works reaches Claude Code in the same run", asyn
   expect(bodies(session.view.deliveries).filter((body) => body._tag === "run_end")).toHaveLength(1)
 })
 
-test("each run resumes the Claude Code session where nisse's transcript ends", async () => {
+test("claude-resume: each run resumes the Claude Code session where nisse's transcript ends", async () => {
   using claude = new FakeClaude("died_while_idle")
   await using session = await conversationWith(claude)
   await session.submit("Remember the word PLUM. Reply with exactly: noted")
@@ -156,7 +156,7 @@ test("each run resumes the Claude Code session where nisse's transcript ends", a
   expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "PLUM" })
 })
 
-test("when Claude Code lost the session, a fresh one is given the conversation so far", async () => {
+test("claude-session-gone: when Claude Code lost the session, a fresh one is given the conversation so far", async () => {
   using claude = new FakeClaude("session_gone")
   await using session = await conversationWith(claude)
   await session.submit("Remember the word PLUM. Reply with exactly: noted")
@@ -177,7 +177,7 @@ test("when Claude Code lost the session, a fresh one is given the conversation s
   ])
 })
 
-test("a signed-out Claude Code fails the run with its own words", async () => {
+test("claude-sign-in-error: a signed-out Claude Code fails the run with its own words", async () => {
   using claude = new FakeClaude("auth_failed")
   await using session = await conversationWith(claude)
   await session.submit("hello")
@@ -187,7 +187,7 @@ test("a signed-out Claude Code fails the run with its own words", async () => {
   ])
 })
 
-test("a run cut off by a server stop resumes, and Claude Code is told which call was cut off", async () => {
+test("claude-cut-off: a run cut off by a server stop resumes, and Claude Code is told which call was cut off", async () => {
   using claude = new FakeClaude("resume_after_kill")
   const first = await conversationWith(claude)
   const prompt =
@@ -229,7 +229,7 @@ const subagentOf = async (session: Awaited<ReturnType<typeof conversationWith>>)
 const ended = (deliveries: ReadonlyArray<Delivery>) =>
   bodies(deliveries).some((body) => body._tag === "run_end") && deliveries.at(-1)?.status === "idle"
 
-test("a Claude subagent works in a conversation of its own under the one that started it", async () => {
+test("subagent-claude: a Claude subagent works in a conversation of its own under the one that started it", async () => {
   using claude = new FakeClaude("subagent")
   await using session = await conversationWith(claude)
   await session.submit("go")
@@ -267,7 +267,7 @@ test("a Claude subagent works in a conversation of its own under the one that st
   )
 })
 
-test("a Claude subagent takes input only through its parent", async () => {
+test("subagent-claude: a Claude subagent takes input only through its parent", async () => {
   using claude = new FakeClaude("subagent")
   await using session = await conversationWith(claude)
   await session.submit("go")
@@ -290,7 +290,7 @@ test("a Claude subagent takes input only through its parent", async () => {
   expect(claude.spawns()).toHaveLength(1)
 })
 
-test("a Claude subagent leaves the model a new conversation starts with as the person last chose it", async () => {
+test("subagent-claude: a Claude subagent leaves the model a new conversation starts with as the person last chose it", async () => {
   using claude = new FakeClaude("subagent")
   await using session = await conversationWith(claude, { model: "opus", effort: "high" })
   await session.submit("go")
@@ -301,7 +301,7 @@ test("a Claude subagent leaves the model a new conversation starts with as the p
   expect(next.result.model).toEqual({ provider: "claude", model: "opus", effort: "high" })
 })
 
-test("a call a Claude subagent wants to make waits for a person in the subagent's conversation", async () => {
+test("subagent-claude: a call a Claude subagent wants to make waits for a person in the subagent's conversation", async () => {
   using claude = new FakeClaude("subagent_asks")
   await using session = await conversationWith(claude)
   await session.submit("go")
@@ -334,7 +334,7 @@ test("a call a Claude subagent wants to make waits for a person in the subagent'
   expect(bodies(child.view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "answered" })
 })
 
-test("stopping a Claude subagent stops only it, and its parent's run carries on", async () => {
+test("subagent-interrupt: stopping a Claude subagent stops only it, and its parent's run carries on", async () => {
   using claude = new FakeClaude("subagent_stopped")
   await using session = await conversationWith(claude)
   await session.submit("go")
@@ -353,7 +353,7 @@ test("stopping a Claude subagent stops only it, and its parent's run carries on"
   expect(claude.log().some((entry) => entry.received?.request?.subtype === "stop_task")).toBe(true)
 })
 
-test("stopping a run ends the Claude subagents working under it", async () => {
+test("subagent-interrupt: stopping a run ends the Claude subagents working under it", async () => {
   using claude = new FakeClaude("subagent_working")
   await using session = await conversationWith(claude)
   await session.submit("go")
@@ -368,7 +368,7 @@ test("stopping a run ends the Claude subagents working under it", async () => {
   expect(bodies(child.view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "interrupted" })
 })
 
-test("Claude Code says once how it is signed in and which models it offers, without asking Claude anything", async () => {
+test("claude-health: Claude Code says once how it is signed in and which models it offers, without asking Claude anything", async () => {
   using claude = new FakeClaude("models")
   await using server = await runningServer([], { claude: claude.options })
   const client = await RawClient.connect(server.home.socket)
@@ -395,7 +395,7 @@ test("Claude Code says once how it is signed in and which models it offers, with
   expect(claude.spawns()).toHaveLength(0)
 })
 
-test("signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account", async () => {
+test("claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account", async () => {
   using claude = new FakeClaude("terminal_sign_in")
   await using server = await runningServer([], { claude: claude.options })
   const client = await RawClient.connect(server.home.socket)
@@ -424,7 +424,7 @@ test("signing in to Claude runs Claude Code's own sign-in in a terminal with the
   expect(auth.items.at(-1)?.message).toBe("person@example.com · Claude Max")
 }, 40_000)
 
-test("the conversation's model and effort reach Claude Code", async () => {
+test("claude-model: the conversation's model and effort reach Claude Code", async () => {
   using claude = new FakeClaude("text")
   await using session = await conversationWith(claude, { model: "opus", effort: "high" })
   await session.submit("Reply with exactly: fixture text ok")
@@ -432,7 +432,7 @@ test("the conversation's model and effort reach Claude Code", async () => {
   expect(claude.spawns()[0]).toMatchObject({ "--model": "opus", "--effort": "high" })
 })
 
-test("switching to Claude from another provider retells the conversation to a new Claude Code session", async () => {
+test("claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session", async () => {
   using claude = new FakeClaude("text")
   await using session = await conversationWith(claude, { provider: "script" })
   await session.submit("first words")
@@ -460,7 +460,7 @@ test("switching to Claude from another provider retells the conversation to a ne
   })
 })
 
-test("retelling a long conversation to Claude keeps its first prompt and the one being answered", async () => {
+test("claude-switch: retelling a long conversation to Claude keeps its first prompt and the one being answered", async () => {
   using claude = new FakeClaude("text")
   await using session = await conversationWith(claude, { provider: "script" })
   const long = (word: string) => `${word} ${"x".repeat(20_000)} `
@@ -490,7 +490,7 @@ const withExtension = (name: string, source: string) => {
   return home
 }
 
-test("an extension's tool reaches Claude through nisse's own MCP server, and a tool it removes is withheld", async () => {
+test("claude-extensions: an extension's tool reaches Claude through nisse's own MCP server, and a tool it removes is withheld", async () => {
   using claude = new FakeClaude("own_tool")
   const home = withExtension(
     "clock",
@@ -541,7 +541,7 @@ export default Extension.define((ctx) =>
   ),
 )`
 
-test("an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why", async () => {
+test("claude-extensions: an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why", async () => {
   using claude = new FakeClaude("bash_hook_denied")
   await using session = await conversationWith(claude, { home: withExtension("guard", guard) })
   await session.submit("touch it")
@@ -557,7 +557,7 @@ test("an extension refuses a call Claude wants, in nisse's words, and Claude Cod
   ])
 })
 
-test("an extension's rewrite of a call is what Claude Code runs and what the transcript shows", async () => {
+test("claude-extensions: an extension's rewrite of a call is what Claude Code runs and what the transcript shows", async () => {
   using claude = new FakeClaude("bash_hook_rewritten")
   await using session = await conversationWith(claude, { home: withExtension("guard", guard) })
   await session.submit("echo it")
@@ -578,7 +578,7 @@ test("an extension's rewrite of a call is what Claude Code runs and what the tra
   ])
 })
 
-test("an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation", async () => {
+test("claude-extensions: an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation", async () => {
   using claude = new FakeClaude("subagent_hooked")
   await using session = await conversationWith(claude, { home: withExtension("guard", guard) })
   await session.submit("find the gnome")
@@ -596,7 +596,7 @@ test("an extension's hooks reach the calls of Claude's subagents, in the subagen
   ])
 })
 
-test("execute.after sees what Claude Code's tools return, and says so when it can't change it", async () => {
+test("execute-after: execute.after sees what Claude Code's tools return, and says so when it can't change it", async () => {
   using claude = new FakeClaude("read")
   const home = withExtension(
     "loud",

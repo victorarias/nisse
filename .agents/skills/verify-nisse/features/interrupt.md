@@ -54,12 +54,12 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- interrupting keeps what nisse already said and marks the run interrupted
-- interrupting while nisse waits for an answer withdraws the question
+- interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted
+- approval-interrupt: interrupting while nisse waits for an answer withdraws the question
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- escape stops nisse mid-answer and the answer shows it was interrupted
+- interrupt-tui: escape stops nisse mid-answer and the answer shows it was interrupted
 
 ## Gotchas
 

@@ -39,12 +39,12 @@ const withScript = async (nisseHome: ReturnType<typeof tempHome>, steps: unknown
   return nisseEnv(nisseHome, { NISSE_MODEL_SCRIPT: script })
 }
 
-test("nisse exec starts a server when none runs, prints the answer and exits 0", async () => {
+test("answer-exec, server-on-demand: nisse exec starts a server when none runs, prints the answer and exits 0", async () => {
   const result = await finished(nisse(["exec", "hello there"], nisseEnv(home())))
   expect(result).toMatchObject({ code: 0, stdout: "You said: hello there\n" })
 })
 
-test("a home the Rust version used still works and keeps its database", async () => {
+test("server-old-home: a home the Rust version used still works and keeps its database", async () => {
   const nisseHome = home()
   const rust = new Database(`${nisseHome.dir}/nisse.sqlite`)
   rust.run("CREATE TABLE commits (seq INTEGER PRIMARY KEY, data TEXT)")
@@ -57,7 +57,7 @@ test("a home the Rust version used still works and keeps its database", async ()
   kept.close()
 })
 
-test("nisse exec exits 1 and reports the failure when the run fails", async () => {
+test("answer-exec-fail: nisse exec exits 1 and reports the failure when the run fails", async () => {
   const env = await withScript(home(), [{ text: "half an ", fail: "provider went away" }])
   const result = await finished(nisse(["exec", "go"], env))
   expect(result.code).toBe(1)
@@ -65,19 +65,19 @@ test("nisse exec exits 1 and reports the failure when the run fails", async () =
   expect(result.stderr).toContain("provider went away")
 })
 
-test("nisse exec finishes when nisse answers with nothing", async () => {
+test("answer-exec: nisse exec finishes when nisse answers with nothing", async () => {
   const env = await withScript(home(), [{ text: "" }])
   const result = await finished(nisse(["exec", "say nothing"], env))
   expect(result).toMatchObject({ code: 0, stdout: "" })
 })
 
-test("clients starting at the same moment share one server", async () => {
+test("server-shared: clients starting at the same moment share one server", async () => {
   const env = nisseEnv(home())
   const results = await Promise.all(Array.from({ length: 4 }, (_, i) => finished(nisse(["exec", `client ${i}`], env))))
   results.forEach((result, i) => expect(result).toMatchObject({ code: 0, stdout: `You said: client ${i}\n` }))
 })
 
-test("nisse exec says why the server it started could not run", async () => {
+test("server-on-demand: nisse exec says why the server it started could not run", async () => {
   const nisseHome = home()
   await Bun.write(`${nisseHome.dir}/config.toml`, '[providers.gem]\ndriver = "gemini"\n')
   const result = await finished(nisse(["exec", "hi"], nisseEnv(nisseHome)))
@@ -86,7 +86,7 @@ test("nisse exec says why the server it started could not run", async () => {
   expect(result.stderr).toContain(`${nisseHome.dir}/config.toml`)
 })
 
-test("a second server for the same home refuses to start", async () => {
+test("server-refuse: a second server for the same home refuses to start", async () => {
   const nisseHome = home()
   const env = nisseEnv(nisseHome)
   await finished(nisse(["exec", "start one"], env))
@@ -94,7 +94,7 @@ test("a second server for the same home refuses to start", async () => {
   expect(second).toMatchObject({ code: 1, stderr: `another server already serves ${nisseHome.dir}\n` })
 })
 
-test("a run cut off by a crashed server finishes after the server comes back", async () => {
+test("crash-exec: a run cut off by a crashed server finishes after the server comes back", async () => {
   const nisseHome = home()
   const env = await withScript(nisseHome, [{ text: "one two three four five six seven eight nine ten", delayMs: 100 }])
   const server = nisse(["serve"], env)
@@ -152,7 +152,7 @@ const serving = async (env: Record<string, string | undefined>, nisseHome: Retur
 const calls = (deliveries: ReadonlyArray<Delivery>) =>
   deliveries.flatMap((delivery) => delivery.entries).filter((entry) => entry.body._tag === "tool_call").length
 
-test("nisse exec shows the calls nisse makes and, without --auto, denies the ones that would change things", async () => {
+test("approval-exec-deny: nisse exec shows the calls nisse makes and, without --auto, denies the ones that would change things", async () => {
   const nisseHome = home()
   const env = await withScript(nisseHome, [
     { tool: { name: "Bash", input: { command: "echo ran" } } },
@@ -170,7 +170,7 @@ test("nisse exec shows the calls nisse makes and, without --auto, denies the one
   expect(results.map((entry) => entry.body)).toMatchObject([{ output: "ran\n", error: false }])
 }, 30_000)
 
-test("nisse exec without --auto denies the calls its subagents would ask about too", async () => {
+test("subagent-exec: nisse exec without --auto denies the calls its subagents would ask about too", async () => {
   const nisseHome = home()
   const env = await withScript(nisseHome, [
     { tool: { name: "spawn_agent", input: { task_name: "kid", message: "go" } } },
@@ -184,7 +184,7 @@ test("nisse exec without --auto denies the calls its subagents would ask about t
   expect(result.stderr).toContain("denied Bash(echo ran): exec cannot ask")
 })
 
-test("a call cut off by a crashed server is recorded as interrupted and the run carries on", async () => {
+test("crash-call: a call cut off by a crashed server is recorded as interrupted and the run carries on", async () => {
   const nisseHome = home()
   const script = `${nisseHome.dir}/script.json`
   await Bun.write(script, JSON.stringify([{ tool: { name: "Bash", input: { command: "sleep 60" } } }]))
@@ -211,7 +211,7 @@ test("a call cut off by a crashed server is recorded as interrupted and the run 
   second.client.close()
 }, 30_000)
 
-test("a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own", async () => {
+test("crash-claude: a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own", async () => {
   const nisseHome = home()
   using claude = new FakeClaude("subagent_working")
   const env = nisseEnv(nisseHome, { NISSE_CLAUDE: claude.options.executable!, ...claude.options.env })
@@ -245,7 +245,7 @@ test("a Claude subagent cut off by a crashed server ends interrupted, and nothin
   second.client.close()
 }, 30_000)
 
-test("a run that keeps crashing the server stops after three tries instead of looping", async () => {
+test("crash-limit: a run that keeps crashing the server stops after three tries instead of looping", async () => {
   const nisseHome = home()
   const env = await withScript(nisseHome, [{ tool: { name: "Bash", input: { command: "sleep 60" } } }])
   let conversation: string | undefined
@@ -275,7 +275,7 @@ test("a run that keeps crashing the server stops after three tries instead of lo
 const codeModeHost = installedCodeModeHost()
 
 test.skipIf(codeModeHost === undefined)(
-  "a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off",
+  "code-mode-script: a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off",
   async () => {
     const nisseHome = home()
     await using fake = new FakeOpenAi()

@@ -19,7 +19,7 @@ time, and every connection sees it end as `succeeded`, `failed` or
 - `signin-paste` takes the address a browser on another machine ended on,
   typed into the TUI's prompt, pasted into `nisse login`, or sent with
   `auth/respond`.
-- `signin-refused` answers a callback for another sign-in with 400, and fails
+- `signin-refused` [pending wire-complete] answers a callback for another sign-in with 400, and fails
   a sign-in the browser refused with `ChatGPT refused the sign-in: <reason>`.
 - `signin-device-code` shows a URL and a code to enter on any device, with
   `--device-code`, over SSH, or `"method": "device_code"`.
@@ -32,9 +32,9 @@ time, and every connection sees it end as `succeeded`, `failed` or
 - `signout` signs out with `nisse logout <provider>` or `auth/logout`, cancels
   a sign-in still running for that provider, and tells every `auth/watch` with
   `"phase": "signed_out"`, so open TUIs show the provider signed out.
-- `signin-cannot` refuses an unknown provider, one with nothing to sign in to,
+- `signin-cannot` [pending wire-complete] refuses an unknown provider, one with nothing to sign in to,
   and a method the provider does not offer.
-- `signin-real` finishes a ChatGPT or Claude sign-in and names the account.
+- `signin-real` [pending zero-pending] finishes a ChatGPT or Claude sign-in and names the account.
 
 ## How to get to it
 
@@ -199,26 +199,26 @@ Preconditions:
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- the splash lists every provider and how it is signed in
-- ^L signs in to a signed-out Claude by running its own sign-in in the terminal
-- a sign-in cancelled from another connection stops Claude's sign-in in the terminal
-- an open TUI shows a sign-in another connection finished
-- nisse login hands what the person types to Claude's own sign-in
+- signin-status: the splash lists every provider and how it is signed in
+- signin-terminal: ^L signs in to a signed-out Claude by running its own sign-in in the terminal
+- signin-cancel: a sign-in cancelled from another connection stops Claude's sign-in in the terminal
+- signin-shared: an open TUI shows a sign-in another connection finished
+- signin-terminal: nisse login hands what the person types to Claude's own sign-in
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
-- a ChatGPT answer is committed as nisse's message, asked for with the sign-in's headers
-- a conversation with ChatGPT before signing in says how to fix it
-- signing in through a browser saves the tokens for this user only and names the account
-- the address a browser on another machine ends on, pasted back, finishes the sign-in
-- a device code sign-in shows the code to enter, then finishes once someone enters it
-- a cancelled sign-in ends for every connection and frees the callback port
-- a connection that starts watching after a sign-in ended still learns how it ended
-- signing out leaves the provider signed out and tells every connection
+- openai-answer: a ChatGPT answer is committed as nisse's message, asked for with the sign-in's headers
+- openai-signed-out: a conversation with ChatGPT before signing in says how to fix it
+- signin-browser, openai-sign-in: signing in through a browser saves the tokens for this user only and names the account
+- signin-paste: the address a browser on another machine ends on, pasted back, finishes the sign-in
+- signin-device-code: a device code sign-in shows the code to enter, then finishes once someone enters it
+- signin-cancel: a cancelled sign-in ends for every connection and frees the callback port
+- signin-shared: a connection that starts watching after a sign-in ended still learns how it ended
+- signout: signing out leaves the provider signed out and tells every connection
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account
+- claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account
 
 ## Gotchas
 

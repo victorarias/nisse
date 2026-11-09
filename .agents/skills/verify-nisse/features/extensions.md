@@ -11,7 +11,7 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
 
 ## Sub-features
 
-- `extensions-load` loads `extensions/<name>.ts` and `extensions/<name>/index.ts`
+- `extensions-load` [pending wire-complete] loads `extensions/<name>.ts` and `extensions/<name>/index.ts`
   in name order, with `[extensions.<name>]` from `config.toml` as
   `ctx.options`; `enabled = false` there lists it as `disabled`.
 - `extensions-failed` lists an extension that fails to load, or takes over
@@ -392,29 +392,29 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- an extension's tool answers the model's calls, and a tool it removes is gone
-- an extension can refuse a call, change what runs and what the model sees, and tell people
-- an extension that fails to load is listed with why, while the others load and run
-- reloading runs the extensions as they are now, and no status outlives the code that set it
-- while extensions reload, the loaded ones keep guarding calls until their replacements are ready
-- a hook still running when its extension is unloaded can't bring back a status line
+- tools-transform: an extension's tool answers the model's calls, and a tool it removes is gone
+- execute-before: an extension can refuse a call, change what runs and what the model sees, and tell people
+- extensions-failed: an extension that fails to load is listed with why, while the others load and run
+- reload: reloading runs the extensions as they are now, and no status outlives the code that set it
+- reload: while extensions reload, the loaded ones keep guarding calls until their replacements are ready
+- status-line: a hook still running when its extension is unloaded can't bring back a status line
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- a person sees what extensions say in the footer and the transcript, and which failed to load
+- status-line, toast, extensions-failed: a person sees what extensions say in the footer and the transcript, and which failed to load
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
-- an extension's request hook adds instructions and narrows the tools of each request to the model
-- a request hook that fails is skipped with a toast, and the model gets the request as it was
+- request-hook: an extension's request hook adds instructions and narrows the tools of each request to the model
+- hook-failure: a request hook that fails is skipped with a toast, and the model gets the request as it was
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- an extension's tool reaches Claude through nisse's own MCP server, and a tool it removes is withheld
-- an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why
-- an extension's rewrite of a call is what Claude Code runs and what the transcript shows
-- an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
-- execute.after sees what Claude Code's tools return, and says so when it can't change it
+- claude-extensions: an extension's tool reaches Claude through nisse's own MCP server, and a tool it removes is withheld
+- claude-extensions: an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why
+- claude-extensions: an extension's rewrite of a call is what Claude Code runs and what the transcript shows
+- claude-extensions: an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
+- execute-after: execute.after sees what Claude Code's tools return, and says so when it can't change it
 
 ## Gotchas
 

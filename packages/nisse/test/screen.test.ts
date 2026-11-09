@@ -20,7 +20,7 @@ afterEach(async () => {
   }
 })
 
-test("a person types a prompt, presses enter and reads the answer under their name", async () => {
+test("answer-tui: a person types a prompt, presses enter and reads the answer under their name", async () => {
   const session = screenSession([], nisseEnv(home()))
   await session.waitFor((screen) => screen.includes("PROMPT") && screen.includes("READY"))
   session.type("hello nisse")
@@ -33,14 +33,14 @@ test("a person types a prompt, presses enter and reads the answer under their na
   expect(await session.exited).toBe(0)
 })
 
-test("closing the terminal ends nisse instead of leaving it running unseen", async () => {
+test("tui-hangup: closing the terminal ends nisse instead of leaving it running unseen", async () => {
   const session = screenSession([], nisseEnv(home()))
   await session.waitFor((screen) => screen.includes("READY"))
   session.hangUp()
   await deadline(session.exited, 5000, "nisse exited")
 })
 
-test("quitting prints the command that reopens the conversation", async () => {
+test("reopen-hint: quitting prints the command that reopens the conversation", async () => {
   const nisseHome = home()
   const first = screenSession([], nisseEnv(nisseHome))
   await first.waitFor((screen) => screen.includes("READY"))
@@ -56,7 +56,7 @@ test("quitting prints the command that reopens the conversation", async () => {
   await second.exited
 })
 
-test("a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation", async () => {
+test("start-with-id: a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation", async () => {
   const nisseHome = home()
   const first = screenSession(["--conversation", "chosen-by-attn", "first words"], nisseEnv(nisseHome))
   await first.waitFor((screen) => screen.includes("You said: first words"))
@@ -70,7 +70,7 @@ test("a launcher opens nisse on an id it chose with a first prompt, and that id 
   await second.exited
 })
 
-test("escape stops nisse mid-answer and the answer shows it was interrupted", async () => {
+test("interrupt-tui: escape stops nisse mid-answer and the answer shows it was interrupted", async () => {
   const nisseHome = home()
   const script = `${nisseHome.dir}/script.json`
   await Bun.write(script, JSON.stringify([{ text: "one two three four five six seven eight nine ten", delayMs: 300 }]))
@@ -85,7 +85,7 @@ test("escape stops nisse mid-answer and the answer shows it was interrupted", as
   await session.exited
 })
 
-test("a prompt sent while nisse works waits in the queue, then runs", async () => {
+test("queue-show: a prompt sent while nisse works waits in the queue, then runs", async () => {
   const nisseHome = home()
   const script = `${nisseHome.dir}/script.json`
   await Bun.write(script, JSON.stringify([{ text: "slow one two three", delayMs: 300 }, { text: "fast reply" }]))
@@ -107,7 +107,7 @@ const scripted = async (nisseHome: ReturnType<typeof tempHome>, steps: unknown) 
   return nisseEnv(nisseHome, { NISSE_MODEL_SCRIPT: script })
 }
 
-test("nisse asks before a command runs, ctrl+y allows it and its output shows under the call", async () => {
+test("approval-allow-tui: nisse asks before a command runs, ctrl+y allows it and its output shows under the call", async () => {
   const nisseHome = home()
   const env = await scripted(nisseHome, [
     { tool: { name: "Bash", input: { command: "echo hello-from-bash" } } },
@@ -131,7 +131,7 @@ test("nisse asks before a command runs, ctrl+y allows it and its output shows un
   await session.exited
 })
 
-test("tab switches a prompt sent mid-run from queueing to steering the run", async () => {
+test("steer-toggle: tab switches a prompt sent mid-run from queueing to steering the run", async () => {
   const nisseHome = home()
   const env = await scripted(nisseHome, [
     { tool: { name: "Bash", input: { command: "sleep 1" } } },
@@ -152,7 +152,7 @@ test("tab switches a prompt sent mid-run from queueing to steering the run", asy
   await session.exited
 })
 
-test("the splash lists every provider and how it is signed in", async () => {
+test("signin-status: the splash lists every provider and how it is signed in", async () => {
   const session = screenSession([], nisseEnv(home()))
   const screen = await session.waitFor(
     (screen) => screen.includes("person@example.com · Claude Max") && screen.includes("signed out"),
@@ -164,7 +164,7 @@ test("the splash lists every provider and how it is signed in", async () => {
   await session.exited
 })
 
-test("/model lists every provider's models, and enter switches the conversation's model for everyone", async () => {
+test("model-list: /model lists every provider's models, and enter switches the conversation's model for everyone", async () => {
   const session = screenSession([], nisseEnv(home()))
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("/model\r")
@@ -181,7 +181,7 @@ test("/model lists every provider's models, and enter switches the conversation'
   await session.exited
 }, 20_000)
 
-test("^L signs in to a signed-out Claude by running its own sign-in in the terminal", async () => {
+test("signin-terminal: ^L signs in to a signed-out Claude by running its own sign-in in the terminal", async () => {
   const nisseHome = home()
   const session = screenSession(
     [],
@@ -198,7 +198,7 @@ test("^L signs in to a signed-out Claude by running its own sign-in in the termi
   await session.exited
 }, 40_000)
 
-test("a sign-in cancelled from another connection stops Claude's sign-in in the terminal", async () => {
+test("signin-cancel: a sign-in cancelled from another connection stops Claude's sign-in in the terminal", async () => {
   const nisseHome = home()
   const session = screenSession(
     [],
@@ -236,7 +236,7 @@ test("a sign-in cancelled from another connection stops Claude's sign-in in the 
   await session.exited
 }, 40_000)
 
-test("an open TUI shows a sign-in another connection finished", async () => {
+test("signin-shared: an open TUI shows a sign-in another connection finished", async () => {
   const nisseHome = home()
   const session = screenSession(
     [],
@@ -262,7 +262,7 @@ test("an open TUI shows a sign-in another connection finished", async () => {
   await session.exited
 }, 40_000)
 
-test("nisse login hands what the person types to Claude's own sign-in", async () => {
+test("signin-terminal: nisse login hands what the person types to Claude's own sign-in", async () => {
   const nisseHome = home()
   const session = screenSession(
     ["login", "claude"],
@@ -278,7 +278,7 @@ test("nisse login hands what the person types to Claude's own sign-in", async ()
   expect(readFileSync(join(nisseHome.dir, "fake-claude", "log.ndjson"), "utf8")).toContain('"authAnswer":"the-code"')
 }, 40_000)
 
-test("a subagent shows as a card under its parent, and ctrl+y answers the call it asks about", async () => {
+test("subagent-card: a subagent shows as a card under its parent, and ctrl+y answers the call it asks about", async () => {
   const nisseHome = home()
   const env = await scripted(nisseHome, [
     { tool: { name: "spawn_agent", input: { task_name: "scribe", message: "write it down" } } },
@@ -306,7 +306,7 @@ test("a subagent shows as a card under its parent, and ctrl+y answers the call i
   await session.exited
 })
 
-test("a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it", async () => {
+test("subagent-approve: a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it", async () => {
   const nisseHome = home()
   await Bun.write(join(nisseHome.dir, "config.toml"), "[agents]\nmax_depth = 2\n")
   const env = await scripted(nisseHome, [
@@ -329,7 +329,7 @@ test("a call a subagent's subagent asks about shows on the card above it, and ct
   await session.exited
 }, 30_000)
 
-test("a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent", async () => {
+test("subagent-card: a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent", async () => {
   const nisseHome = home()
   const env = nisseEnv(nisseHome, {
     FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/subagent.ndjson"),
@@ -358,7 +358,7 @@ test("a Claude subagent shows as a card in place of its call's result, and its o
   await own.exited
 }, 40_000)
 
-test("a person sees what extensions say in the footer and the transcript, and which failed to load", async () => {
+test("status-line, toast, extensions-failed: a person sees what extensions say in the footer and the transcript, and which failed to load", async () => {
   const nisseHome = home()
   const script = `${nisseHome.dir}/script.json`
   await Bun.write(

@@ -72,12 +72,12 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- prompts sent while nisse is working wait in a visible queue and run in order
-- submitting again with the same request id is answered once
+- queue-run, queue-shared: prompts sent while nisse is working wait in a visible queue and run in order
+- queue-idempotent: submitting again with the same request id is answered once
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- a prompt sent while nisse works waits in the queue, then runs
+- queue-show: a prompt sent while nisse works waits in the queue, then runs
 
 ## Gotchas
 

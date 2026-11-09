@@ -7,10 +7,10 @@ resubscribes from the last commit it saw and misses nothing.
 ## Sub-features
 
 - `reopen-hint` prints `resume with: nisse --conversation <id>` on `^C`.
-- `reopen-tui` reopens the conversation with its transcript.
-- `reopen-continue` continues a reopened conversation with a new prompt.
+- `reopen-tui` [pending tui-views] reopens the conversation with its transcript.
+- `reopen-continue` [pending wire-complete] continues a reopened conversation with a new prompt.
 - `resume-since` resubscribes with `sinceSeq` and gets only later commits.
-- `chosen-id` opens the TUI on an id that names no conversation yet, starting
+- `chosen-id` [pending wire-complete] opens the TUI on an id that names no conversation yet, starting
   one with that id, and sends a prompt given on the command line.
 
 ## How to get to it
@@ -63,12 +63,12 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- a client resuming from a seq receives exactly the commits it missed
+- resume-since: a client resuming from a seq receives exactly the commits it missed
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- quitting prints the command that reopens the conversation
-- a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation
+- reopen-hint: quitting prints the command that reopens the conversation
+- start-with-id: a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation
 
 ## Gotchas
 

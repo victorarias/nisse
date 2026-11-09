@@ -1,0 +1,2081 @@
+[
+  {
+    "id": "A1",
+    "area": "A",
+    "feature": "One mutation line, each commit atomic with a `seq` (\u00a71, \u00a74)",
+    "verdict": "bring",
+    "useCases": ["commit-atomic"]
+  },
+  {
+    "id": "A2",
+    "area": "A",
+    "feature": "Published only after stored (\u00a71)",
+    "verdict": "bring",
+    "useCases": ["commit-published-after-store"]
+  },
+  {
+    "id": "A3",
+    "area": "A",
+    "feature": "Multi-record commit open to extensions: the `Tx` API (R816, \u00a74)",
+    "verdict": "adapt",
+    "useCases": ["commit-tx-api"]
+  },
+  {
+    "id": "A4",
+    "area": "A",
+    "feature": "Reads inside a transaction, `Tx.submission(id)` (Unreleased)",
+    "verdict": "bring",
+    "useCases": ["commit-tx-read"]
+  },
+  {
+    "id": "A5",
+    "area": "A",
+    "feature": "Immutable entries (\u00a72)",
+    "verdict": "bring",
+    "useCases": ["entry-immutable"]
+  },
+  {
+    "id": "A6",
+    "area": "A",
+    "feature": "Custom entry kinds with `defineEntry` (\u00a78.1, R816)",
+    "verdict": "adapt",
+    "useCases": ["entry-custom"]
+  },
+  {
+    "id": "A7",
+    "area": "A",
+    "feature": "Reserved `root` conversation (\u00a72.2)",
+    "verdict": "adapt",
+    "useCases": ["conversation-root"]
+  },
+  {
+    "id": "A8",
+    "area": "A",
+    "feature": "`conversationCreated` hook (R816-853)",
+    "verdict": "bring",
+    "useCases": ["conversation-created-hook"]
+  },
+  {
+    "id": "A9",
+    "area": "A",
+    "feature": "Session `init` on first open (\u00a72.2)",
+    "verdict": "adapt",
+    "useCases": ["session-init"]
+  },
+  {
+    "id": "A10",
+    "area": "A",
+    "feature": "Group commit (\u00a74, docs/group-commit.md)",
+    "verdict": "leave out",
+    "exclusion": "D5"
+  },
+  {
+    "id": "A11",
+    "area": "A",
+    "feature": "Deferred commits (\u00a74.1, R816-853)",
+    "verdict": "leave out",
+    "exclusion": "D5"
+  },
+  {
+    "id": "A12",
+    "area": "A",
+    "feature": "Read-after-write rule while commits are in flight (\u00a74)",
+    "verdict": "bring",
+    "useCases": ["commit-read-after-write"]
+  },
+  {
+    "id": "A13",
+    "area": "A",
+    "feature": "Admission bound of 256 jobs on the line (\u00a74)",
+    "verdict": "leave out",
+    "exclusion": "D5"
+  },
+  {
+    "id": "A14",
+    "area": "A",
+    "feature": "Session failure on storage error: `SessionFailed`, `closed` promise (\u00a710.1, R923-939)",
+    "verdict": "adapt",
+    "useCases": ["session-failed"]
+  },
+  {
+    "id": "A15",
+    "area": "A",
+    "feature": "Three-rule error model (R923-939)",
+    "verdict": "adapt",
+    "useCases": ["error-model"]
+  },
+  {
+    "id": "A16",
+    "area": "A",
+    "feature": "`resume()` as an explicit start of scheduling (R115-138)",
+    "verdict": "adapt",
+    "useCases": ["session-resume-explicit"]
+  },
+  {
+    "id": "A17",
+    "area": "A",
+    "feature": "Read-only open (R115-138, \u00a72.2)",
+    "verdict": "adapt",
+    "useCases": ["session-read-only", "serve-read-only"]
+  },
+  {
+    "id": "A18",
+    "area": "A",
+    "feature": "Injected clock, `now` and `setTimer` (R140-212)",
+    "verdict": "adapt",
+    "useCases": ["session-clock"]
+  },
+  {
+    "id": "A19",
+    "area": "A",
+    "feature": "`setTimer` may decline, for host alarms (R140-212)",
+    "verdict": "leave out",
+    "exclusion": "D5"
+  },
+  {
+    "id": "A20",
+    "area": "A",
+    "feature": "Provider session id, stable per conversation (R115-138)",
+    "verdict": "bring",
+    "useCases": ["provider-session-id"]
+  },
+  {
+    "id": "A21",
+    "area": "A",
+    "feature": "Explicit `Harness` close without counting a crash (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["session-clean-close"]
+  },
+  {
+    "id": "A22",
+    "area": "A",
+    "feature": "JSONL storage backend (R863-921, \u00a711)",
+    "verdict": "adapt",
+    "exclusion": "D5"
+  },
+  {
+    "id": "A23",
+    "area": "A",
+    "feature": "IndexedDB backend (R863-921)",
+    "verdict": "leave out",
+    "exclusion": "D5"
+  },
+  {
+    "id": "A24",
+    "area": "A",
+    "feature": "Cloudflare Durable Object SQLite backend and adapter (R863-921)",
+    "verdict": "leave out",
+    "exclusion": "D5"
+  },
+  {
+    "id": "B1",
+    "area": "B",
+    "feature": "Context derived from entries by written rules (\u00a72.1, rules 1-10)",
+    "verdict": "bring",
+    "useCases": ["context-derived"]
+  },
+  {
+    "id": "B2",
+    "area": "B",
+    "feature": "Context edit: omit an entry (\u00a72.1)",
+    "verdict": "bring",
+    "useCases": ["context-omit"]
+  },
+  {
+    "id": "B3",
+    "area": "B",
+    "feature": "Context edit: replace an entry (\u00a72.1)",
+    "verdict": "bring",
+    "useCases": ["context-replace"]
+  },
+  {
+    "id": "B4",
+    "area": "B",
+    "feature": "Head markers (\u00a72.1)",
+    "verdict": "bring",
+    "useCases": ["context-head"]
+  },
+  {
+    "id": "B5",
+    "area": "B",
+    "feature": "Synthesize missing tool results (\u00a72.1)",
+    "verdict": "bring",
+    "useCases": ["context-synthesized-results", "claude-cut-off"]
+  },
+  {
+    "id": "B6",
+    "area": "B",
+    "feature": "`Conversation.context(at)` (\u00a72.2)",
+    "verdict": "adapt",
+    "useCases": ["context-at-entry", "context-rpc"]
+  },
+  {
+    "id": "B7",
+    "area": "B",
+    "feature": "Entries read with paging (\u00a72.2)",
+    "verdict": "bring",
+    "useCases": ["entries-paged", "entries-rpc"]
+  },
+  {
+    "id": "B8",
+    "area": "B",
+    "feature": "Stale head check (\u00a76)",
+    "verdict": "bring",
+    "useCases": ["context-stale-head"]
+  },
+  {
+    "id": "C1",
+    "area": "C",
+    "feature": "Create a conversation with options (\u00a72.2)",
+    "verdict": "adapt",
+    "useCases": ["conversation-options"]
+  },
+  {
+    "id": "C2",
+    "area": "C",
+    "feature": "Ownership kinds (\u00a72, \u00a73)",
+    "verdict": "bring",
+    "useCases": ["conversation-owner"]
+  },
+  {
+    "id": "C3",
+    "area": "C",
+    "feature": "Fork at any entry (R716-723, \u00a73.7)",
+    "verdict": "bring",
+    "useCases": ["fork-at-entry", "fork-rpc"]
+  },
+  {
+    "id": "C4",
+    "area": "C",
+    "feature": "Fork document policies: asOf, current, initial (\u00a73.7)",
+    "verdict": "bring",
+    "useCases": ["fork-document-policy"]
+  },
+  {
+    "id": "C5",
+    "area": "C",
+    "feature": "Each fork has its own provider session identity (\u00a73.7, R716)",
+    "verdict": "bring",
+    "useCases": ["fork-provider-identity"]
+  },
+  {
+    "id": "C6",
+    "area": "C",
+    "feature": "Conversation list (\u00a72.2)",
+    "verdict": "bring",
+    "useCases": ["conversation-list"]
+  },
+  {
+    "id": "C7",
+    "area": "C",
+    "feature": "Reopen by id and continue (\u00a72.2)",
+    "verdict": "bring",
+    "useCases": ["conversation-reopen", "reopen-continue"]
+  },
+  {
+    "id": "D1",
+    "area": "D",
+    "feature": "`reset()` (R593-604)",
+    "verdict": "bring",
+    "useCases": ["reset-context", "reset-rpc"]
+  },
+  {
+    "id": "D2",
+    "area": "D",
+    "feature": "Handoff text on reset (R593-604)",
+    "verdict": "bring",
+    "useCases": ["reset-handoff"]
+  },
+  {
+    "id": "D3",
+    "area": "D",
+    "feature": "Reset while busy applies at a boundary (\u00a76)",
+    "verdict": "bring",
+    "useCases": ["reset-at-boundary"]
+  },
+  {
+    "id": "E1",
+    "area": "E",
+    "feature": "Manual compact (R606-657, \u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-manual", "compact-rpc"]
+  },
+  {
+    "id": "E2",
+    "area": "E",
+    "feature": "Automatic compaction at a threshold, blocking the next request (\u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-blocking"]
+  },
+  {
+    "id": "E3",
+    "area": "E",
+    "feature": "Background compaction (\u00a78.7, default 32768 tokens)",
+    "verdict": "bring",
+    "useCases": ["compaction-background"]
+  },
+  {
+    "id": "E4",
+    "area": "E",
+    "feature": "Overflow retry: compact on a context-limit error and retry (\u00a78.3, \u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-overflow"]
+  },
+  {
+    "id": "E5",
+    "area": "E",
+    "feature": "Policy settings: reserve 16384, keepRecent 20000 (\u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-policy"]
+  },
+  {
+    "id": "E6",
+    "area": "E",
+    "feature": "Per-model overrides (R606-657)",
+    "verdict": "bring",
+    "useCases": ["compaction-per-model"]
+  },
+  {
+    "id": "E7",
+    "area": "E",
+    "feature": "Per-conversation compaction settings, inherited by children and forks (Unreleased)",
+    "verdict": "bring",
+    "useCases": ["compaction-per-conversation"]
+  },
+  {
+    "id": "E8",
+    "area": "E",
+    "feature": "Range selection that never splits a tool round (\u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-range"]
+  },
+  {
+    "id": "E9",
+    "area": "E",
+    "feature": "Summary prompts and summary model (\u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-summary-prompt"]
+  },
+  {
+    "id": "E10",
+    "area": "E",
+    "feature": "Compaction recorded in the transcript with placement (\u00a78.1, \u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-recorded"]
+  },
+  {
+    "id": "E11",
+    "area": "E",
+    "feature": "`beforeCompact` hook (\u00a77.2)",
+    "verdict": "adapt",
+    "useCases": ["compaction-hook"]
+  },
+  {
+    "id": "E12",
+    "area": "E",
+    "feature": "Compaction usage is counted (\u00a78.6, \u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-usage"]
+  },
+  {
+    "id": "E13",
+    "area": "E",
+    "feature": "Stale ordering: late background results are discarded or placed correctly (\u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-stale"]
+  },
+  {
+    "id": "E14",
+    "area": "E",
+    "feature": "Live compaction status and last failure (\u00a78.2)",
+    "verdict": "bring",
+    "useCases": ["compaction-live-status"]
+  },
+  {
+    "id": "E15",
+    "area": "E",
+    "feature": "Cancelling a compaction without losing the run (\u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["compaction-abort"]
+  },
+  {
+    "id": "F1",
+    "area": "F",
+    "feature": "`requestId` deduplication (R529-591)",
+    "verdict": "bring",
+    "useCases": ["submission-dedupe", "queue-idempotent"]
+  },
+  {
+    "id": "F2",
+    "area": "F",
+    "feature": "`whenBusy: steer` (R529-591)",
+    "verdict": "bring",
+    "useCases": ["submission-steer", "steer-wire"]
+  },
+  {
+    "id": "F3",
+    "area": "F",
+    "feature": "`whenBusy: followUp` (R529-591)",
+    "verdict": "bring",
+    "useCases": ["submission-follow-up", "queue-run"]
+  },
+  {
+    "id": "F4",
+    "area": "F",
+    "feature": "`whenBusy: reject` (R529-591)",
+    "verdict": "bring",
+    "useCases": ["submission-busy-reject"]
+  },
+  {
+    "id": "F5",
+    "area": "F",
+    "feature": "`whenIdle: reject` (R529-591)",
+    "verdict": "bring",
+    "useCases": ["submission-idle-reject"]
+  },
+  {
+    "id": "F6",
+    "area": "F",
+    "feature": "Write entries without a run (R529-591, \u00a76)",
+    "verdict": "bring",
+    "useCases": ["submission-write"]
+  },
+  {
+    "id": "F7",
+    "area": "F",
+    "feature": "Display-only writes (\u00a76)",
+    "verdict": "adapt",
+    "useCases": ["submission-display-only"]
+  },
+  {
+    "id": "F8",
+    "area": "F",
+    "feature": "`continue` (R529-591, \u00a76)",
+    "verdict": "bring",
+    "useCases": ["submission-continue", "continue-rpc"]
+  },
+  {
+    "id": "F9",
+    "area": "F",
+    "feature": "Withdraw a queued input, `Submission.abort` (R529-591)",
+    "verdict": "bring",
+    "useCases": ["submission-withdraw", "withdraw-rpc"]
+  },
+  {
+    "id": "F10",
+    "area": "F",
+    "feature": "`Submission.status`, `wait`, reacquire by id (R529-591)",
+    "verdict": "bring",
+    "useCases": ["submission-status"]
+  },
+  {
+    "id": "F11",
+    "area": "F",
+    "feature": "Submit inside a commit, `submit(tx, draft)` (R529-591, example 34)",
+    "verdict": "bring",
+    "useCases": ["submission-in-commit"]
+  },
+  {
+    "id": "F12",
+    "area": "F",
+    "feature": "Custom input entry (R529-591)",
+    "verdict": "adapt",
+    "useCases": ["submission-custom-entry"]
+  },
+  {
+    "id": "F13",
+    "area": "F",
+    "feature": "`steeringMode`, `followUpMode`: all or one at a time (\u00a76)",
+    "verdict": "bring",
+    "useCases": ["submission-queue-modes"]
+  },
+  {
+    "id": "F14",
+    "area": "F",
+    "feature": "`afterFailedRun` (R214-222, \u00a76)",
+    "verdict": "bring",
+    "useCases": ["submission-after-failed-run"]
+  },
+  {
+    "id": "F15",
+    "area": "F",
+    "feature": "Settlement records, answered or unanswered with reason (\u00a76)",
+    "verdict": "bring",
+    "useCases": ["submission-settled"]
+  },
+  {
+    "id": "F16",
+    "area": "F",
+    "feature": "Run failure reasons (\u00a78.2)",
+    "verdict": "bring",
+    "useCases": ["run-failure-reasons"]
+  },
+  {
+    "id": "F17",
+    "area": "F",
+    "feature": "Admission table for each state and input kind (\u00a76)",
+    "verdict": "bring",
+    "useCases": ["submission-admission"]
+  },
+  {
+    "id": "F18",
+    "area": "F",
+    "feature": "Input boundaries: postTools and final (\u00a76)",
+    "verdict": "bring",
+    "useCases": ["submission-boundaries"]
+  },
+  {
+    "id": "G1",
+    "area": "G",
+    "feature": "Turn limit, `maxTurns` (R380-404)",
+    "verdict": "bring",
+    "useCases": ["run-turn-limit"]
+  },
+  {
+    "id": "G2",
+    "area": "G",
+    "feature": "Durable retry with backoff, default 3 tries, 2 s to 60 s (\u00a78.3)",
+    "verdict": "bring",
+    "useCases": ["run-retry"]
+  },
+  {
+    "id": "G3",
+    "area": "G",
+    "feature": "Retry visible live (\u00a78.2, \u00a78.3)",
+    "verdict": "bring",
+    "useCases": ["run-retry-live"]
+  },
+  {
+    "id": "G4",
+    "area": "G",
+    "feature": "Stream options: timeouts, headers, cache retention (\u00a78.3)",
+    "verdict": "adapt",
+    "useCases": ["run-stream-options"]
+  },
+  {
+    "id": "G5",
+    "area": "G",
+    "feature": "Restart limit (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["run-restart-limit", "crash-limit"]
+  },
+  {
+    "id": "G6",
+    "area": "G",
+    "feature": "Crash count resets on progress (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["run-crash-count-resets"]
+  },
+  {
+    "id": "G7",
+    "area": "G",
+    "feature": "Partial answer preserved on abort or crash (\u00a78.3)",
+    "verdict": "bring",
+    "useCases": ["run-partial-kept", "interrupt-wire"]
+  },
+  {
+    "id": "G8",
+    "area": "G",
+    "feature": "Failed attempt recorded as an entry (\u00a78.3)",
+    "verdict": "bring",
+    "useCases": ["run-failed-attempt"]
+  },
+  {
+    "id": "G9",
+    "area": "G",
+    "feature": "Abort commits a mark before stopping (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["run-abort-mark"]
+  },
+  {
+    "id": "G10",
+    "area": "G",
+    "feature": "Generation phases stored: prepare, request, retry, poll, tools, finish, drain (\u00a78.3)",
+    "verdict": "bring",
+    "useCases": ["run-phases"]
+  },
+  {
+    "id": "G11",
+    "area": "G",
+    "feature": "Deferred responses and polling (\u00a78.3)",
+    "verdict": "adapt",
+    "useCases": ["run-deferred"]
+  },
+  {
+    "id": "G12",
+    "area": "G",
+    "feature": "Provider error classification: retryable, overflow, fatal (\u00a78.3)",
+    "verdict": "bring",
+    "useCases": ["run-error-classes"]
+  },
+  {
+    "id": "H1",
+    "area": "H",
+    "feature": "`pi.agent` document holding a conversation's configuration (R380-404)",
+    "verdict": "bring",
+    "useCases": ["agent-document"]
+  },
+  {
+    "id": "H2",
+    "area": "H",
+    "feature": "`configure()`: instructions change later (R380-404)",
+    "verdict": "bring",
+    "useCases": ["agent-instructions", "configure-rpc"]
+  },
+  {
+    "id": "H3",
+    "area": "H",
+    "feature": "`configure()`: working directory change (R380-404)",
+    "verdict": "bring",
+    "useCases": ["agent-cwd"]
+  },
+  {
+    "id": "H4",
+    "area": "H",
+    "feature": "`configure()`: model (R380-404)",
+    "verdict": "bring",
+    "useCases": ["agent-model", "model-switch"]
+  },
+  {
+    "id": "H5",
+    "area": "H",
+    "feature": "`configure()`: thinking level (R380-404)",
+    "verdict": "bring",
+    "useCases": ["agent-thinking", "model-flags"]
+  },
+  {
+    "id": "H6",
+    "area": "H",
+    "feature": "`configure()`: tools filter (R380-404)",
+    "verdict": "bring",
+    "useCases": ["agent-tools-filter"]
+  },
+  {
+    "id": "H7",
+    "area": "H",
+    "feature": "Children and forks inherit agent settings (\u00a73.7)",
+    "verdict": "bring",
+    "useCases": ["agent-inherit"]
+  },
+  {
+    "id": "H8",
+    "area": "H",
+    "feature": "Agent changes visible on the watch and rewindable (\u00a72.2)",
+    "verdict": "bring",
+    "useCases": ["agent-visible"]
+  },
+  {
+    "id": "H9",
+    "area": "H",
+    "feature": "Live harness settings (R406-428)",
+    "verdict": "bring",
+    "useCases": ["settings-live"]
+  },
+  {
+    "id": "H10",
+    "area": "H",
+    "feature": "Default extension selection (R406-428)",
+    "verdict": "bring",
+    "useCases": ["settings-default-extensions"]
+  },
+  {
+    "id": "H11",
+    "area": "H",
+    "feature": "`toolExecution`: parallel or sequential (R406-428, \u00a78.5)",
+    "verdict": "bring",
+    "useCases": ["settings-tool-execution"]
+  },
+  {
+    "id": "H12",
+    "area": "H",
+    "feature": "Output progress intervals (\u00a78.2)",
+    "verdict": "adapt",
+    "useCases": ["settings-progress-intervals"]
+  },
+  {
+    "id": "I1",
+    "area": "I",
+    "feature": "Named sections contributed by extensions (R370-378, \u00a77.1)",
+    "verdict": "bring",
+    "useCases": ["section-contributed"]
+  },
+  {
+    "id": "I2",
+    "area": "I",
+    "feature": "System prompt stored as positional `pi.system` entries (\u00a77.4)",
+    "verdict": "bring",
+    "useCases": ["section-positional"]
+  },
+  {
+    "id": "I3",
+    "area": "I",
+    "feature": "Deltas after a baseline keep the prompt cache intact (\u00a77.4)",
+    "verdict": "bring",
+    "useCases": ["section-deltas"]
+  },
+  {
+    "id": "I4",
+    "area": "I",
+    "feature": "New baseline after a head (\u00a77.4)",
+    "verdict": "bring",
+    "useCases": ["section-new-baseline"]
+  },
+  {
+    "id": "I5",
+    "area": "I",
+    "feature": "Section ordering rules (\u00a77.4)",
+    "verdict": "bring",
+    "useCases": ["section-order"]
+  },
+  {
+    "id": "I6",
+    "area": "I",
+    "feature": "`wrapSection` (\u00a77.1)",
+    "verdict": "bring",
+    "useCases": ["section-wrap"]
+  },
+  {
+    "id": "I7",
+    "area": "I",
+    "feature": "Harness base instructions (R370-378)",
+    "verdict": "bring",
+    "useCases": ["section-base", "start-instructions"]
+  },
+  {
+    "id": "J1",
+    "area": "J",
+    "feature": "Extension shape with tools, hooks, sections, tasks, entries, documents (R224-243, \u00a77.1)",
+    "verdict": "bring",
+    "useCases": ["extension-shape", "extensions-load"]
+  },
+  {
+    "id": "J2",
+    "area": "J",
+    "feature": "Registry install and uninstall at runtime (\u00a77.1, example 37)",
+    "verdict": "bring",
+    "useCases": ["extension-install"]
+  },
+  {
+    "id": "J3",
+    "area": "J",
+    "feature": "Replace one extension in place (\u00a77.1)",
+    "verdict": "bring",
+    "useCases": ["extension-replace"]
+  },
+  {
+    "id": "J4",
+    "area": "J",
+    "feature": "Per-conversation extension selection (\u00a77.1)",
+    "verdict": "bring",
+    "useCases": ["extension-per-conversation"]
+  },
+  {
+    "id": "J5",
+    "area": "J",
+    "feature": "Reload semantics: running work finishes on old code, boundaries switch (R465-475, \u00a77.5)",
+    "verdict": "bring",
+    "useCases": ["extension-reload", "reload"]
+  },
+  {
+    "id": "J6",
+    "area": "J",
+    "feature": "Same-name tool override (R245-305)",
+    "verdict": "bring",
+    "useCases": ["extension-tool-override", "tools-transform"]
+  },
+  {
+    "id": "J7",
+    "area": "J",
+    "feature": "`wrapTool` (\u00a77.1)",
+    "verdict": "bring",
+    "useCases": ["extension-wrap-tool"]
+  },
+  {
+    "id": "J8",
+    "area": "J",
+    "feature": "Typed tool metadata in the registry (\u00a77.1)",
+    "verdict": "bring",
+    "useCases": ["extension-tool-metadata"]
+  },
+  {
+    "id": "J9",
+    "area": "J",
+    "feature": "Extension-owned durable state via documents (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["extension-state"]
+  },
+  {
+    "id": "J10",
+    "area": "J",
+    "feature": "Extension access to its conversation (\u00a77.2, \u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["extension-conversation-access"]
+  },
+  {
+    "id": "K1",
+    "area": "K",
+    "feature": "`beforeRequest` (\u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-before-request", "request-hook"]
+  },
+  {
+    "id": "K2",
+    "area": "K",
+    "feature": "`beforeProviderRequest` (\u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-before-provider-request"]
+  },
+  {
+    "id": "K3",
+    "area": "K",
+    "feature": "`afterResponse` (\u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-after-response"]
+  },
+  {
+    "id": "K4",
+    "area": "K",
+    "feature": "`onYield` (\u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-on-yield"]
+  },
+  {
+    "id": "K5",
+    "area": "K",
+    "feature": "`afterTools` (\u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-after-tools"]
+  },
+  {
+    "id": "K6",
+    "area": "K",
+    "feature": "`afterRun` (\u00a77.2, R659-714)",
+    "verdict": "bring",
+    "useCases": ["hook-after-run"]
+  },
+  {
+    "id": "K7",
+    "area": "K",
+    "feature": "`beforeTool`: block or rewrite (\u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-before-tool", "execute-before"]
+  },
+  {
+    "id": "K8",
+    "area": "K",
+    "feature": "`afterTool` (\u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-after-tool", "execute-after"]
+  },
+  {
+    "id": "K9",
+    "area": "K",
+    "feature": "Hook API: read state, write entries, memos (\u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-api"]
+  },
+  {
+    "id": "K10",
+    "area": "K",
+    "feature": "Hooks replay safely after a crash through memos (\u00a75, \u00a77.2)",
+    "verdict": "bring",
+    "useCases": ["hook-replay"]
+  },
+  {
+    "id": "L1",
+    "area": "L",
+    "feature": "Result channel `output` for the model, with text and images (R279)",
+    "verdict": "bring",
+    "useCases": ["tool-output-channel"]
+  },
+  {
+    "id": "L2",
+    "area": "L",
+    "feature": "Result channel `structuredOutput` for programs (R279)",
+    "verdict": "bring",
+    "useCases": ["tool-structured-output"]
+  },
+  {
+    "id": "L3",
+    "area": "L",
+    "feature": "Result channel `details` for UIs (R279, \u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-details"]
+  },
+  {
+    "id": "L4",
+    "area": "L",
+    "feature": "Diagnostics, delivered in a `<harness>` block (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-diagnostics"]
+  },
+  {
+    "id": "L5",
+    "area": "L",
+    "feature": "Usage on a tool result (\u00a77.3, \u00a78.6)",
+    "verdict": "bring",
+    "useCases": ["tool-usage"]
+  },
+  {
+    "id": "L6",
+    "area": "L",
+    "feature": "`control.terminate` (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-terminate"]
+  },
+  {
+    "id": "L7",
+    "area": "L",
+    "feature": "`control.addTools` (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-add-tools"]
+  },
+  {
+    "id": "L8",
+    "area": "L",
+    "feature": "`control.handoff` (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-handoff"]
+  },
+  {
+    "id": "L9",
+    "area": "L",
+    "feature": "Replay policy safe or unsafe (\u00a77.3, \u00a78.4)",
+    "verdict": "bring",
+    "useCases": ["tool-replay-policy"]
+  },
+  {
+    "id": "L10",
+    "area": "L",
+    "feature": "`prepareArguments` (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-prepare-arguments"]
+  },
+  {
+    "id": "L11",
+    "area": "L",
+    "feature": "`structuredOutputSchema` validation (R279, \u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-output-schema"]
+  },
+  {
+    "id": "L12",
+    "area": "L",
+    "feature": "`callers`: who may call a tool (R333-349)",
+    "verdict": "bring",
+    "useCases": ["tool-callers"]
+  },
+  {
+    "id": "L13",
+    "area": "L",
+    "feature": "`modelTools`: offered versus callable (R333-349)",
+    "verdict": "bring",
+    "useCases": ["tool-model-tools"]
+  },
+  {
+    "id": "L14",
+    "area": "L",
+    "feature": "Deferred tools and `tool_search` with BM25 (R333-349, `tool-search`)",
+    "verdict": "bring",
+    "useCases": ["tool-deferred-search"]
+  },
+  {
+    "id": "L15",
+    "area": "L",
+    "feature": "Parallel tool rounds (\u00a78.5)",
+    "verdict": "bring",
+    "useCases": ["tool-parallel"]
+  },
+  {
+    "id": "L16",
+    "area": "L",
+    "feature": "`executionMode` per tool (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-execution-mode"]
+  },
+  {
+    "id": "L17",
+    "area": "L",
+    "feature": "Output limits per tool, default 50 KiB, 2000 lines, head or tail (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-output-limits"]
+  },
+  {
+    "id": "L18",
+    "area": "L",
+    "feature": "Output sanitizing (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-sanitize"]
+  },
+  {
+    "id": "L19",
+    "area": "L",
+    "feature": "Truncated output saved to a file (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-truncated-file"]
+  },
+  {
+    "id": "L20",
+    "area": "L",
+    "feature": "Adaptive throttle on running output (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-output-throttle"]
+  },
+  {
+    "id": "L21",
+    "area": "L",
+    "feature": "`outputWindow`, `skipped` count (\u00a77.3, \u00a78.2)",
+    "verdict": "bring",
+    "useCases": ["tool-output-window"]
+  },
+  {
+    "id": "L22",
+    "area": "L",
+    "feature": "`tool_unavailable` when a call names a tool not offered (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-unavailable"]
+  },
+  {
+    "id": "L23",
+    "area": "L",
+    "feature": "`retainedOutput` kept across a crash (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-retained-output"]
+  },
+  {
+    "id": "L24",
+    "area": "L",
+    "feature": "`api.env` in the tool API (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-api-env"]
+  },
+  {
+    "id": "L25",
+    "area": "L",
+    "feature": "`api.commit` and `api.memo` in tools (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-api-commit"]
+  },
+  {
+    "id": "L26",
+    "area": "L",
+    "feature": "`api.createTask`, `api.conversation` (\u00a77.3, R772-797)",
+    "verdict": "bring",
+    "useCases": ["tool-api-create"]
+  },
+  {
+    "id": "L27",
+    "area": "L",
+    "feature": "`executeTool`: tools calling tools (R307-331)",
+    "verdict": "bring",
+    "useCases": ["tool-execute-tool"]
+  },
+  {
+    "id": "L28",
+    "area": "L",
+    "feature": "Live view of nested calls, `nestedTools` (\u00a77.3, \u00a78.2)",
+    "verdict": "bring",
+    "useCases": ["tool-nested-live"]
+  },
+  {
+    "id": "L29",
+    "area": "L",
+    "feature": "Nested call key and reattach, `NestedCallDoc` (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-nested-key"]
+  },
+  {
+    "id": "L30",
+    "area": "L",
+    "feature": "`abandonOnRestart` (R351-353, \u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["tool-abandon-on-restart"]
+  },
+  {
+    "id": "L31",
+    "area": "L",
+    "feature": "Per-file mutation queue (\u00a77.3, `file-mutation-queue`)",
+    "verdict": "bring",
+    "useCases": ["tool-file-queue"]
+  },
+  {
+    "id": "L32",
+    "area": "L",
+    "feature": "Edit details: fuzzy matching, line endings, a diff (`edit-diff`)",
+    "verdict": "bring",
+    "useCases": ["tool-edit"]
+  },
+  {
+    "id": "L33",
+    "area": "L",
+    "feature": "`read` with text and images (R245-305)",
+    "verdict": "bring",
+    "useCases": ["tool-read"]
+  },
+  {
+    "id": "L34",
+    "area": "L",
+    "feature": "`write` (R245-305)",
+    "verdict": "bring",
+    "useCases": ["tool-write"]
+  },
+  {
+    "id": "L35",
+    "area": "L",
+    "feature": "`bash` with streaming and timeouts (R245-305)",
+    "verdict": "bring",
+    "useCases": ["tool-bash", "tool-output-live"]
+  },
+  {
+    "id": "L36",
+    "area": "L",
+    "feature": "`commandPrefix` and `prepare` on `bash` (`tools/bash.ts`)",
+    "verdict": "bring",
+    "useCases": ["tool-bash-prefix"]
+  },
+  {
+    "id": "L37",
+    "area": "L",
+    "feature": "Argument coercion and validation (R245-305)",
+    "verdict": "bring",
+    "useCases": ["tool-argument-validation"]
+  },
+  {
+    "id": "L38",
+    "area": "L",
+    "feature": "A tool crash becomes an error result (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["tool-crash-result"]
+  },
+  {
+    "id": "M1",
+    "area": "M",
+    "feature": "One `codemode` tool taking a script (\u00a77.6, R355-368)",
+    "verdict": "adapt",
+    "useCases": ["codemode-tool"]
+  },
+  {
+    "id": "M2",
+    "area": "M",
+    "feature": "Deterministic QuickJS sandbox (\u00a77.6, pi-codemode)",
+    "verdict": "bring",
+    "useCases": ["codemode-sandbox"]
+  },
+  {
+    "id": "M3",
+    "area": "M",
+    "feature": "Journal and replay after a restart (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-replay"]
+  },
+  {
+    "id": "M4",
+    "area": "M",
+    "feature": "Divergence detection (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-divergence"]
+  },
+  {
+    "id": "M5",
+    "area": "M",
+    "feature": "Nested calls pass hooks and approvals (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-nested-policy", "code-mode-approvals"]
+  },
+  {
+    "id": "M6",
+    "area": "M",
+    "feature": "Tools as namespaces in the script (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-namespaces"]
+  },
+  {
+    "id": "M7",
+    "area": "M",
+    "feature": "`searchTools`, `describeTool`, `describeNamespace`, `ALL_TOOLS` (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-discovery"]
+  },
+  {
+    "id": "M8",
+    "area": "M",
+    "feature": "Tool description section with a 3000-token budget (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-description"]
+  },
+  {
+    "id": "M9",
+    "area": "M",
+    "feature": "`store` values per conversation (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-store"]
+  },
+  {
+    "id": "M10",
+    "area": "M",
+    "feature": "Result format and `max_output_tokens` (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-result"]
+  },
+  {
+    "id": "M11",
+    "area": "M",
+    "feature": "Images in script results (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-images"]
+  },
+  {
+    "id": "M12",
+    "area": "M",
+    "feature": "`models.*` catalog (\u00a77.6, codemode/models.ts)",
+    "verdict": "adapt",
+    "useCases": ["codemode-models-catalog"]
+  },
+  {
+    "id": "M13",
+    "area": "M",
+    "feature": "`models.classify` (\u00a77.6)",
+    "verdict": "adapt",
+    "useCases": ["codemode-classify"]
+  },
+  {
+    "id": "M14",
+    "area": "M",
+    "feature": "`models.generateImages` (\u00a77.6)",
+    "verdict": "adapt",
+    "useCases": ["codemode-generate-images"]
+  },
+  {
+    "id": "M15",
+    "area": "M",
+    "feature": "Lark grammar for constrained sampling (\u00a77.6)",
+    "verdict": "adapt",
+    "useCases": ["codemode-grammar"]
+  },
+  {
+    "id": "M16",
+    "area": "M",
+    "feature": "Temporary files for large outputs (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-temp-files"]
+  },
+  {
+    "id": "M17",
+    "area": "M",
+    "feature": "`CodemodeToolDetails` for UIs (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-details"]
+  },
+  {
+    "id": "M18",
+    "area": "M",
+    "feature": "Documents `pi.codemode.run`, `journal`, `store` (\u00a77.6)",
+    "verdict": "bring",
+    "useCases": ["codemode-documents"]
+  },
+  {
+    "id": "N1",
+    "area": "N",
+    "feature": "`env` factory per conversation (R430-463, example 28)",
+    "verdict": "bring",
+    "useCases": ["env-per-conversation"]
+  },
+  {
+    "id": "N2",
+    "area": "N",
+    "feature": "`ExecutionEnv` interface (R430-463, `env/index.ts`)",
+    "verdict": "bring",
+    "useCases": ["env-interface"]
+  },
+  {
+    "id": "N3",
+    "area": "N",
+    "feature": "`exec` with argv, no shell (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["env-exec"]
+  },
+  {
+    "id": "N4",
+    "area": "N",
+    "feature": "Binary reader and `scanLines` (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["env-binary-reader"]
+  },
+  {
+    "id": "N5",
+    "area": "N",
+    "feature": "Directory reader and `listFiles` (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["env-directory-reader"]
+  },
+  {
+    "id": "N6",
+    "area": "N",
+    "feature": "File `watch` (\u00a77.3, `env/node-watch`)",
+    "verdict": "bring",
+    "useCases": ["env-watch"]
+  },
+  {
+    "id": "N7",
+    "area": "N",
+    "feature": "File work serialized by environment id (\u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["env-file-serialization"]
+  },
+  {
+    "id": "N8",
+    "area": "N",
+    "feature": "Environment conformance suite (`testing/env-conformance`, 633 lines)",
+    "verdict": "adapt",
+    "useCases": ["env-conformance"]
+  },
+  {
+    "id": "N9",
+    "area": "N",
+    "feature": "Environment variables to commands (R430-463)",
+    "verdict": "bring",
+    "useCases": ["env-variables", "tool-root-env"]
+  },
+  {
+    "id": "O1",
+    "area": "O",
+    "feature": "Images in user input (R245-305)",
+    "verdict": "bring",
+    "useCases": ["image-input"]
+  },
+  {
+    "id": "O2",
+    "area": "O",
+    "feature": "Images in tool results (R279, \u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["image-tool-result"]
+  },
+  {
+    "id": "O3",
+    "area": "O",
+    "feature": "Image preparation in a worker, node variant (R245-305, `images/node`)",
+    "verdict": "adapt",
+    "useCases": ["image-worker"]
+  },
+  {
+    "id": "O4",
+    "area": "O",
+    "feature": "Browser and Cloudflare image variants (`images/cloudflare`)",
+    "verdict": "leave out",
+    "exclusion": "D5"
+  },
+  {
+    "id": "O5",
+    "area": "O",
+    "feature": "Placeholder for a model without image input (R245-305)",
+    "verdict": "bring",
+    "useCases": ["image-placeholder"]
+  },
+  {
+    "id": "O6",
+    "area": "O",
+    "feature": "Image attachments in the TUI and wire (R245-305)",
+    "verdict": "adapt",
+    "useCases": ["image-attach"]
+  },
+  {
+    "id": "P1",
+    "area": "P",
+    "feature": "Conversation watch (R477-527, \u00a79)",
+    "verdict": "bring",
+    "useCases": ["view-watch", "answer-shared"]
+  },
+  {
+    "id": "P2",
+    "area": "P",
+    "feature": "Resume a watch from a position (\u00a79.3)",
+    "verdict": "bring",
+    "useCases": ["view-resume", "resume-since"]
+  },
+  {
+    "id": "P3",
+    "area": "P",
+    "feature": "Conversation view with a window, minimum 50, up to twice (\u00a79.3)",
+    "verdict": "bring",
+    "useCases": ["view-window", "watch-rpc"]
+  },
+  {
+    "id": "P4",
+    "area": "P",
+    "feature": "`ConversationTranscript` items (\u00a79.3)",
+    "verdict": "adapt",
+    "useCases": ["view-transcript"]
+  },
+  {
+    "id": "P5",
+    "area": "P",
+    "feature": "Transcript gap marker (\u00a79.3)",
+    "verdict": "bring",
+    "useCases": ["view-gap"]
+  },
+  {
+    "id": "P6",
+    "area": "P",
+    "feature": "`earlier`, `loadEarlier` (\u00a79.3)",
+    "verdict": "bring",
+    "useCases": ["view-load-earlier", "tui-load-earlier"]
+  },
+  {
+    "id": "P7",
+    "area": "P",
+    "feature": "`fillGap` (\u00a79.3)",
+    "verdict": "bring",
+    "useCases": ["view-fill-gap"]
+  },
+  {
+    "id": "P8",
+    "area": "P",
+    "feature": "Watch a document, `watchDoc` (R816-853, \u00a79.1)",
+    "verdict": "bring",
+    "useCases": ["doc-watch"]
+  },
+  {
+    "id": "P9",
+    "area": "P",
+    "feature": "Documents on the conversation view (\u00a79)",
+    "verdict": "bring",
+    "useCases": ["view-documents"]
+  },
+  {
+    "id": "P10",
+    "area": "P",
+    "feature": "Observers for in-process code (\u00a79.2)",
+    "verdict": "bring",
+    "useCases": ["observer-conversation"]
+  },
+  {
+    "id": "P11",
+    "area": "P",
+    "feature": "`observeCommits` (\u00a74)",
+    "verdict": "bring",
+    "useCases": ["observer-commits"]
+  },
+  {
+    "id": "P12",
+    "area": "P",
+    "feature": "Slow-watcher folding and 10,000-op root replacement (\u00a79.2)",
+    "verdict": "leave out",
+    "useCases": ["view-slow-folding"]
+  },
+  {
+    "id": "P13",
+    "area": "P",
+    "feature": "Live state, `pi.live` (\u00a78.2)",
+    "verdict": "bring",
+    "useCases": ["view-live"]
+  },
+  {
+    "id": "P14",
+    "area": "P",
+    "feature": "Reasoning streamed live (\u00a78.2)",
+    "verdict": "bring",
+    "useCases": ["view-reasoning"]
+  },
+  {
+    "id": "P15",
+    "area": "P",
+    "feature": "Partial tool arguments streamed (`harness/partial-changes`)",
+    "verdict": "bring",
+    "useCases": ["view-partial-arguments"]
+  },
+  {
+    "id": "Q1",
+    "area": "Q",
+    "feature": "Child conversation under a parent (R725-770)",
+    "verdict": "bring",
+    "useCases": ["child-conversation", "subagent-spawn"]
+  },
+  {
+    "id": "Q2",
+    "area": "Q",
+    "feature": "Foreground: the parent's turn waits on the child through a task (R725-770)",
+    "verdict": "bring",
+    "useCases": ["child-foreground"]
+  },
+  {
+    "id": "Q3",
+    "area": "Q",
+    "feature": "Background: a reporter delivers the result (R725-770, \u00a77.3)",
+    "verdict": "bring",
+    "useCases": ["child-background"]
+  },
+  {
+    "id": "Q4",
+    "area": "Q",
+    "feature": "Abort cascades to children (R725-770, \u00a75.5)",
+    "verdict": "bring",
+    "useCases": ["child-abort-cascade", "subagent-interrupt"]
+  },
+  {
+    "id": "Q5",
+    "area": "Q",
+    "feature": "`abort({ background })` (R725-770)",
+    "verdict": "bring",
+    "useCases": ["child-abort-background"]
+  },
+  {
+    "id": "Q6",
+    "area": "Q",
+    "feature": "Subagent tools for the model: spawn, send, follow up, wait, list, interrupt",
+    "verdict": "bring",
+    "useCases": ["child-tools"]
+  },
+  {
+    "id": "R1",
+    "area": "R",
+    "feature": "Task definitions and registry (\u00a75, R772-814)",
+    "verdict": "bring",
+    "useCases": ["task-definition"]
+  },
+  {
+    "id": "R2",
+    "area": "R",
+    "feature": "Phases (\u00a75)",
+    "verdict": "bring",
+    "useCases": ["task-phases"]
+  },
+  {
+    "id": "R3",
+    "area": "R",
+    "feature": "Checkpoints (\u00a75)",
+    "verdict": "bring",
+    "useCases": ["task-checkpoint"]
+  },
+  {
+    "id": "R4",
+    "area": "R",
+    "feature": "Memos (\u00a75.1)",
+    "verdict": "bring",
+    "useCases": ["task-memo"]
+  },
+  {
+    "id": "R5",
+    "area": "R",
+    "feature": "Effect sandwich: intent, effect, record (\u00a75.2)",
+    "verdict": "bring",
+    "useCases": ["task-effect-sandwich"]
+  },
+  {
+    "id": "R6",
+    "area": "R",
+    "feature": "Terminal outcomes and results (\u00a75.3)",
+    "verdict": "bring",
+    "useCases": ["task-terminal"]
+  },
+  {
+    "id": "R7",
+    "area": "R",
+    "feature": "Scheduler (\u00a75.4, 3,164 lines upstream)",
+    "verdict": "adapt",
+    "useCases": ["task-scheduler"]
+  },
+  {
+    "id": "R8",
+    "area": "R",
+    "feature": "Waiting on another task (\u00a75.5)",
+    "verdict": "bring",
+    "useCases": ["task-wait"]
+  },
+  {
+    "id": "R9",
+    "area": "R",
+    "feature": "Durable `sleep` (R140-212, \u00a75.6)",
+    "verdict": "adapt",
+    "useCases": ["task-sleep"]
+  },
+  {
+    "id": "R10",
+    "area": "R",
+    "feature": "Durable timers and `wake` (\u00a75.6)",
+    "verdict": "adapt",
+    "useCases": ["task-wake"]
+  },
+  {
+    "id": "R11",
+    "area": "R",
+    "feature": "`onWake` for host alarms (R140-212)",
+    "verdict": "leave out",
+    "exclusion": "D5"
+  },
+  {
+    "id": "R12",
+    "area": "R",
+    "feature": "Completing state (\u00a75.5)",
+    "verdict": "bring",
+    "useCases": ["task-completing"]
+  },
+  {
+    "id": "R13",
+    "area": "R",
+    "feature": "`failFast` and `allSettled` (\u00a75.5)",
+    "verdict": "bring",
+    "useCases": ["task-fail-fast"]
+  },
+  {
+    "id": "R14",
+    "area": "R",
+    "feature": "Cycle check (\u00a75.5)",
+    "verdict": "bring",
+    "useCases": ["task-cycle-check"]
+  },
+  {
+    "id": "R15",
+    "area": "R",
+    "feature": "Abort bottom-up (\u00a75.5)",
+    "verdict": "bring",
+    "useCases": ["task-abort-bottom-up"]
+  },
+  {
+    "id": "R16",
+    "area": "R",
+    "feature": "Orphaned tasks (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-orphaned"]
+  },
+  {
+    "id": "R17",
+    "area": "R",
+    "feature": "Blocked tasks and reports (R214-222, \u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-blocked"]
+  },
+  {
+    "id": "R18",
+    "area": "R",
+    "feature": "Task migrations (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-migration"]
+  },
+  {
+    "id": "R19",
+    "area": "R",
+    "feature": "Task handover (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-handover"]
+  },
+  {
+    "id": "R20",
+    "area": "R",
+    "feature": "Restarts counted per task (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-restart-count"]
+  },
+  {
+    "id": "R21",
+    "area": "R",
+    "feature": "`inspect` (\u00a72.2)",
+    "verdict": "bring",
+    "useCases": ["task-inspect"]
+  },
+  {
+    "id": "R22",
+    "area": "R",
+    "feature": "`abortTask` (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-abort"]
+  },
+  {
+    "id": "R23",
+    "area": "R",
+    "feature": "`waitForTask` (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-wait-for"]
+  },
+  {
+    "id": "R24",
+    "area": "R",
+    "feature": "`waitForIdle` (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-wait-for-idle"]
+  },
+  {
+    "id": "R25",
+    "area": "R",
+    "feature": "`ownedTasks` (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-owned"]
+  },
+  {
+    "id": "R26",
+    "area": "R",
+    "feature": "Lifecycle times and outcomes stored (\u00a75.3)",
+    "verdict": "bring",
+    "useCases": ["task-lifecycle-times"]
+  },
+  {
+    "id": "R27",
+    "area": "R",
+    "feature": "Extension-defined tasks (\u00a77.1, R772-797)",
+    "verdict": "bring",
+    "useCases": ["task-extension-defined"]
+  },
+  {
+    "id": "R28",
+    "area": "R",
+    "feature": "After-run tasks (R659-714)",
+    "verdict": "bring",
+    "useCases": ["task-after-run"]
+  },
+  {
+    "id": "R29",
+    "area": "R",
+    "feature": "Child tasks from tools (R772-797)",
+    "verdict": "bring",
+    "useCases": ["task-children-from-tools"]
+  },
+  {
+    "id": "R30",
+    "area": "R",
+    "feature": "Built-in tasks `pi.generation`, `pi.tool`, `pi.compaction` (\u00a78.3, \u00a78.4, \u00a78.7)",
+    "verdict": "bring",
+    "useCases": ["task-builtin"]
+  },
+  {
+    "id": "R31",
+    "area": "R",
+    "feature": "Task graph view (R799-814, \u00a79.4)",
+    "verdict": "bring",
+    "useCases": ["task-graph", "task-graph-rpc"]
+  },
+  {
+    "id": "R32",
+    "area": "R",
+    "feature": "Tool rounds as tasks (\u00a78.5)",
+    "verdict": "bring",
+    "useCases": ["task-tool-rounds"]
+  },
+  {
+    "id": "R33",
+    "area": "R",
+    "feature": "Scheduling ownership on one process (\u00a75.4)",
+    "verdict": "bring",
+    "useCases": ["task-scheduling-ownership"]
+  },
+  {
+    "id": "S1",
+    "area": "S",
+    "feature": "`pi.inbox` document (\u00a76)",
+    "verdict": "adapt",
+    "useCases": ["inbox-document"]
+  },
+  {
+    "id": "T1",
+    "area": "T",
+    "feature": "Typed JSON documents committed with entries (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-commit"]
+  },
+  {
+    "id": "T2",
+    "area": "T",
+    "feature": "Session scope (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-session-scope"]
+  },
+  {
+    "id": "T3",
+    "area": "T",
+    "feature": "Conversation scope (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-conversation-scope"]
+  },
+  {
+    "id": "T4",
+    "area": "T",
+    "feature": "Task scope (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-task-scope"]
+  },
+  {
+    "id": "T5",
+    "area": "T",
+    "feature": "Families of documents (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-families"]
+  },
+  {
+    "id": "T6",
+    "area": "T",
+    "feature": "History modes: latest, rewindable (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-history"]
+  },
+  {
+    "id": "T7",
+    "area": "T",
+    "feature": "`snapshotAsOf` (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-snapshot-as-of"]
+  },
+  {
+    "id": "T8",
+    "area": "T",
+    "feature": "`checkpointWhen` (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-checkpoint"]
+  },
+  {
+    "id": "T9",
+    "area": "T",
+    "feature": "Lifetimes and `retire` (\u00a73)",
+    "verdict": "bring",
+    "useCases": ["doc-lifetime"]
+  },
+  {
+    "id": "T10",
+    "area": "T",
+    "feature": "Document migrations (\u00a73.6)",
+    "verdict": "bring",
+    "useCases": ["doc-migration"]
+  },
+  {
+    "id": "T11",
+    "area": "T",
+    "feature": "Document eviction, `documentRetentionMs` (\u00a74)",
+    "verdict": "bring",
+    "useCases": ["doc-eviction"]
+  },
+  {
+    "id": "T12",
+    "area": "T",
+    "feature": "Chord ops: structured changes to JSON (\u00a73, Chord)",
+    "verdict": "adapt",
+    "useCases": ["doc-ops"]
+  },
+  {
+    "id": "T13",
+    "area": "T",
+    "feature": "Document deltas to watchers (\u00a79.1)",
+    "verdict": "adapt",
+    "useCases": ["doc-deltas"]
+  },
+  {
+    "id": "T14",
+    "area": "T",
+    "feature": "Built-in `pi.provider` (\u00a72.2)",
+    "verdict": "bring",
+    "useCases": ["doc-provider"]
+  },
+  {
+    "id": "U1",
+    "area": "U",
+    "feature": "`pi.usage` per conversation (\u00a78.6, R855-861)",
+    "verdict": "bring",
+    "useCases": ["usage-conversation", "usage-rpc"]
+  },
+  {
+    "id": "U2",
+    "area": "U",
+    "feature": "Per-model breakdown (\u00a78.6)",
+    "verdict": "bring",
+    "useCases": ["usage-per-model"]
+  },
+  {
+    "id": "U3",
+    "area": "U",
+    "feature": "Per-tool usage (\u00a78.6)",
+    "verdict": "adapt",
+    "useCases": ["usage-per-tool"]
+  },
+  {
+    "id": "U4",
+    "area": "U",
+    "feature": "`Harness.usage` totals (R855-861)",
+    "verdict": "bring",
+    "useCases": ["usage-total"]
+  },
+  {
+    "id": "U5",
+    "area": "U",
+    "feature": "Cost in currency (\u00a78.6)",
+    "verdict": "adapt",
+    "useCases": ["usage-cost"]
+  },
+  {
+    "id": "U6",
+    "area": "U",
+    "feature": "Context used, for live display (\u00a78.2)",
+    "verdict": "bring",
+    "useCases": ["usage-context-live"]
+  },
+  {
+    "id": "U7",
+    "area": "U",
+    "feature": "Spending limit",
+    "verdict": "adapt",
+    "useCases": ["usage-spending-limit"]
+  },
+  {
+    "id": "V1",
+    "area": "V",
+    "feature": "Spans for runs, requests and tools (R78-90, `harness/telemetry`)",
+    "verdict": "adapt",
+    "useCases": ["telemetry-spans"]
+  },
+  {
+    "id": "V2",
+    "area": "V",
+    "feature": "Metrics (R78-90)",
+    "verdict": "adapt",
+    "useCases": ["telemetry-metrics"]
+  },
+  {
+    "id": "V3",
+    "area": "V",
+    "feature": "Trace carriers across calls (R78-90)",
+    "verdict": "adapt",
+    "useCases": ["telemetry-trace-carriers"]
+  },
+  {
+    "id": "V4",
+    "area": "V",
+    "feature": "Identity on Context (R78-90)",
+    "verdict": "adapt",
+    "useCases": ["telemetry-identity"]
+  },
+  {
+    "id": "V5",
+    "area": "V",
+    "feature": "`onReport` kinds (\u00a72.2, R214-222)",
+    "verdict": "adapt",
+    "useCases": ["report-kinds"]
+  },
+  {
+    "id": "V6",
+    "area": "V",
+    "feature": "Crash-loop reports (R214-222)",
+    "verdict": "bring",
+    "useCases": ["report-crash-loop"]
+  },
+  {
+    "id": "W1",
+    "area": "W",
+    "feature": "SQLite backend (\u00a711)",
+    "verdict": "bring",
+    "useCases": ["storage-sqlite"]
+  },
+  {
+    "id": "W2",
+    "area": "W",
+    "feature": "Storage interface, custom backend (R863-921, \u00a710)",
+    "verdict": "adapt",
+    "useCases": ["storage-port"]
+  },
+  {
+    "id": "W3",
+    "area": "W",
+    "feature": "Memory backend (R863-921)",
+    "verdict": "adapt",
+    "useCases": ["storage-test-double"]
+  },
+  {
+    "id": "W4",
+    "area": "W",
+    "feature": "Store adapter, `StoreStorage` (`storage/store`)",
+    "verdict": "adapt",
+    "exclusion": "D5"
+  },
+  {
+    "id": "W5",
+    "area": "W",
+    "feature": "Table prefix (R863-921)",
+    "verdict": "adapt",
+    "exclusion": "D5"
+  },
+  {
+    "id": "W6",
+    "area": "W",
+    "feature": "Cursors and scans in the contract (\u00a710)",
+    "verdict": "bring",
+    "useCases": ["storage-cursors"]
+  },
+  {
+    "id": "W7",
+    "area": "W",
+    "feature": "Id minting that always increases, also across reopen (\u00a710, 1.5.0)",
+    "verdict": "bring",
+    "useCases": ["storage-id-minting"]
+  },
+  {
+    "id": "W8",
+    "area": "W",
+    "feature": "Storage conformance suite (`testing/storage-conformance`, 2,099 lines)",
+    "verdict": "adapt",
+    "useCases": ["storage-conformance"]
+  },
+  {
+    "id": "W9",
+    "area": "W",
+    "feature": "Cached storage layer (`session/cached-storage`, 379 lines)",
+    "verdict": "adapt",
+    "exclusion": "D5"
+  },
+  {
+    "id": "W10",
+    "area": "W",
+    "feature": "Copy sources for forks (\u00a710)",
+    "verdict": "bring",
+    "useCases": ["storage-fork-copy-sources"]
+  },
+  {
+    "id": "W11",
+    "area": "W",
+    "feature": "`commitWrites` test helper (`testing`)",
+    "verdict": "adapt",
+    "useCases": ["storage-commit-writes"]
+  },
+  {
+    "id": "W12",
+    "area": "W",
+    "feature": "Storage benchmark (`testing/storage-benchmark`, 500 lines)",
+    "verdict": "adapt",
+    "exclusion": "D5"
+  },
+  {
+    "id": "Y1",
+    "area": "Y",
+    "feature": "Print mode (example 17)",
+    "verdict": "bring",
+    "useCases": ["mode-print", "answer-exec"]
+  },
+  {
+    "id": "Y2",
+    "area": "Y",
+    "feature": "JSON mode (example 18)",
+    "verdict": "adapt",
+    "useCases": ["mode-json", "exec-json"]
+  },
+  {
+    "id": "Y3",
+    "area": "Y",
+    "feature": "Plan mode (example 26)",
+    "verdict": "adapt",
+    "useCases": ["mode-plan"]
+  },
+  {
+    "id": "Y4",
+    "area": "Y",
+    "feature": "Reviewer extension (example 27)",
+    "verdict": "bring",
+    "useCases": ["mode-reviewer"]
+  },
+  {
+    "id": "Y5",
+    "area": "Y",
+    "feature": "Sandbox per conversation (example 28)",
+    "verdict": "bring",
+    "useCases": ["mode-sandbox"]
+  },
+  {
+    "id": "Y6",
+    "area": "Y",
+    "feature": "Model layer with many providers through pi-ai (R94-104, dependencies)",
+    "verdict": "adapt",
+    "useCases": ["mode-model-layer"]
+  }
+]

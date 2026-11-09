@@ -13,7 +13,7 @@ next run. Switching providers keeps the conversation.
 - `model-list` lists each provider's models, best first, with their efforts:
   Claude Code's models and `its own choice`, ChatGPT's from ChatGPT, else the
   list it sent last, else the one nisse ships.
-- `model-flags` starts a conversation with `--model` and `--effort` from the
+- `model-flags` [pending wire-complete] starts a conversation with `--model` and `--effort` from the
   TUI or `exec`, or `model` and `effort` on `conversation/start`. A model
   named without a provider goes to the default model's provider.
 - `model-default` takes the project's `default_model`, then the home's, then
@@ -22,7 +22,7 @@ next run. Switching providers keeps the conversation.
   switch, `Esc` close) or `conversation/select_model`, commits a `model`
   entry shown as `◆ <name> switched to <provider> · <model> · <effort>`, and
   refuses a provider nisse does not have.
-- `model-status` shows the conversation's model at the right of the status
+- `model-status` [pending tui-views] shows the conversation's model at the right of the status
   bar, from its start and after every switch, in every TUI.
 - `model-switch-provider` keeps the conversation across providers: the new
   provider is told what was said.
@@ -143,23 +143,23 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- a new conversation takes the project's default model, else the home's, else the one chosen last
-- switching models is an entry everyone sees, and a provider nisse does not have is refused
+- model-default: a new conversation takes the project's default model, else the home's, else the one chosen last
+- model-switch, model-switch-provider: switching models is an entry everyone sees, and a provider nisse does not have is refused
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- /model lists every provider's models, and enter switches the conversation's model for everyone
+- model-list: /model lists every provider's models, and enter switches the conversation's model for everyone
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
-- OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't
-- a switched model and effort reach ChatGPT from the next run on
+- openai-models: OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't
+- openai-model: a switched model and effort reach ChatGPT from the next run on
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- the conversation's model and effort reach Claude Code
-- switching to Claude from another provider retells the conversation to a new Claude Code session
-- retelling a long conversation to Claude keeps its first prompt and the one being answered
+- claude-model: the conversation's model and effort reach Claude Code
+- claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session
+- claude-switch: retelling a long conversation to Claude keeps its first prompt and the one being answered
 
 ## Gotchas
 

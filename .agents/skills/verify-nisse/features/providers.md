@@ -10,23 +10,23 @@ failed with a message saying why, in every client.
 
 ## Sub-features
 
-- `provider-choose` starts a conversation with `--provider <name>` from the
+- `provider-choose` [pending wire-complete] starts a conversation with `--provider <name>` from the
   TUI or `exec`, or `provider` on `conversation/start`.
-- `provider-default` starts with the default model's provider when none is
+- `provider-default` [pending wire-complete] starts with the default model's provider when none is
   named: the project's, the home's, the one chosen last, then Claude, or the
   scripted provider when `NISSE_MODEL_SCRIPT` is set.
 - `provider-unknown` refuses an unknown provider by name, exit 1.
-- `provider-signed-out` ends a run failed with the provider's sign-in error.
+- `provider-signed-out` [pending wire-complete] ends a run failed with the provider's sign-in error.
 - `provider-config` adds the providers `config.toml` names under
   `[providers.<id>]`, with `driver = "claude"` or `"openai"`, beside the
   built-in ones; each lists, signs in and starts conversations on its own.
-- `provider-binary` runs a Claude provider's Claude Code from `binary`,
+- `provider-binary` [pending wire-complete] runs a Claude provider's Claude Code from `binary`,
   with `env` added to its environment and `args` added to each run's command
   line; `NISSE_CLAUDE` names the `claude` every Claude provider without a
   `binary` runs. One that does not start is `unavailable`, saying why.
-- `provider-config-invalid` refuses to serve a home whose `config.toml` does
+- `provider-config-invalid` [pending wire-complete] refuses to serve a home whose `config.toml` does
   not read, naming the file and the field.
-- `provider-claude` and `provider-openai` are the real journeys, in
+- `provider-claude` [pending wire-complete] and `provider-openai` are the real journeys, in
   [Claude](./claude.md) and [OpenAI](./openai.md); signing in is in
   [Sign-in](./sign-in.md).
 
@@ -162,8 +162,8 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- starting a conversation with a provider nisse does not have says so
-- the providers config.toml names can start conversations beside the built-in ones
+- provider-unknown: starting a conversation with a provider nisse does not have says so
+- provider-config: the providers config.toml names can start conversations beside the built-in ones
 
 ## Gotchas
 

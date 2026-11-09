@@ -10,12 +10,12 @@ conversation. attn uses these to run Nisse sessions.
 
 ## Sub-features
 
-- `status-snapshot` opens with every tree that is not idle; the rest are idle.
+- `status-snapshot` [pending wire-complete] opens with every tree that is not idle; the rest are idle.
 - `status-follow` reports `working`, `waiting` and `idle` for each tree, in
   `seq` order.
 - `status-subagent` shows a subagent waiting on a person as its whole tree
   `waiting`.
-- `status-ended` carries the outcome of the root's run and its last message.
+- `status-ended` [pending wire-complete] carries the outcome of the root's run and its last message.
 - `conversation-ended` shows how a conversation's last run ended, as `ended`
   on it in `conversation/list`, on a start with an existing id and in a
   subscription's snapshot; a conversation that never ran has none.
@@ -71,9 +71,9 @@ Preconditions:
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- starting a conversation with an id it already has answers with that conversation
-- watching status follows each run of a tree and says how it ended
-- a conversation tells a client that was not watching how its last run ended
+- start-with-id: starting a conversation with an id it already has answers with that conversation
+- status-follow: watching status follows each run of a tree and says how it ended
+- conversation-ended: a conversation tells a client that was not watching how its last run ended
 
 ## Gotchas
 

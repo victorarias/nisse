@@ -62,6 +62,45 @@ with the steps that only a real signed-in account can prove, written so an
 agent that has one can run them cold. Keep implementation out; name user
 paths, handles, state, commands and proof.
 
+## Use cases and coverage
+
+Each sub-feature id is one use case, and the map is what `bun run coverage`
+(part of `bun run check`) measures. A sub-feature line is:
+
+```text
+- `fork-at-entry` [kernel, pending harness-views] one line on what it does
+- `queue-show` shows a waiting prompt ...
+```
+
+The bracket is optional. No bracket means a covered `client` use case. `kernel`
+marks one with no client path. `pending <child step>` names the step of the
+kernel rebuild that adds its test; remove it when the test lands. The check
+fails on a pending kernel use case that is already covered.
+
+- A test covers a use case by starting its title with the id:
+  `test("fork-at-entry: a fork sees only entries up to its fork point", ...)`.
+  One test can name several: `test("queue-run, queue-shared: ...")`. Every
+  test must name at least one known id. Skipped tests do not count.
+- A `client` use case needs a test in `packages/nisse/test` that names it.
+- A `kernel` use case needs a test that names it, or a mapped upstream row
+  settled to `pass`.
+- `use-cases.json` maps each `packages/conformance/expected.json` row to the
+  use cases it proves, because upstream titles cannot change. Every row that
+  is not excluded must be mapped.
+- `ledger.json` holds the feature ledger: each row lists its use cases or the
+  decision that excludes it.
+
+A new feature adds its id and its test in the same change.
+
+### Kernel use cases
+
+A feature file made of kernel use cases, or whose client path is not built yet,
+keeps the entry contract's order but has no `drive.ts` steps: `How to get to it`
+says `None.` or names the step that adds the path, `Sources` names the ledger
+area, the spec sections and the examples, and `Tests` points at `bun run
+coverage`. When the owning step adds a client path, it adds the entry points and
+a `Driving it with drive.ts` recipe in the same change.
+
 ## Contexts
 
 Conditions a feature can behave differently under. Drive the ones its file
@@ -140,3 +179,32 @@ lists when a change touches them.
 - [Status and chosen ids](./status.md) (agents): `status/watch` follows every tree's
   status and how its runs end, a conversation says how its last run ended, and
   `conversation/start` takes a chosen `id`.
+
+## Kernel rebuild use cases
+
+The use cases of the kernel rebuild, one file per feature-ledger area.
+
+- [Commit line and session](./commit-line.md) (kernel): Every change to a conversation goes through one ordered, atomic store commit, and a session that cannot store fails once and loudly.
+- [Context the model sees](./context.md) (kernel): What the model sees is derived from the recorded entries by written rules, so it can be worked out exactly and edited without touching history.
+- [Conversations and forks](./conversations.md) (kernel): A conversation is created with its settings, listed, reopened, owned by a task or another conversation, and forked at any entry.
+- [Reset and handoff](./reset.md) (kernel): A reset starts over with an empty context in the same conversation, history kept, optionally carrying a brief.
+- [Compaction](./compaction.md) (kernel): Long conversations keep working: older context becomes a summary, automatically or on demand, and the raw history stays.
+- [Submissions](./submissions.md) (kernel): Every input handed to a conversation is admitted by written rules, deduplicated, placed at a defined boundary, and ends with a recorded fate.
+- [Run limits and resilience](./run-resilience.md) (kernel): A run stops at its limits with a named reason, survives provider hiccups and crashes, and keeps what was said.
+- [Per-conversation agent and settings](./agent-settings.md) (kernel): A conversation's configuration is durable, forkable and watchable, and harness settings change without a restart.
+- [System prompt and sections](./system-prompt.md) (kernel): Extensions contribute named prompt sections, and what the model was told is recorded in place so later changes keep the provider's cache.
+- [Extensions and registry](./registry.md) (kernel): Extensions package tools, hooks, sections, tasks, entries and documents, install and reload at runtime, and are selected per conversation.
+- [Hooks](./hooks.md) (kernel): Hooks let an extension shape requests, react to responses and tools, keep a run going, and start work at the end of a run, safely across restarts.
+- [Tools](./tools.md) (kernel): Tools return separate channels for the model, programs and clients, are bounded and replay-safe, and can call each other under the same hooks.
+- [Durable code mode](./durable-code-mode.md) (kernel): The model composes tool calls in a deterministic script that survives a server restart.
+- [Execution environments](./environments.md) (kernel): Tools work through an execution environment, per conversation, for commands, files and watches.
+- [Images](./images.md) (kernel): People and tools attach images; large ones are prepared off the server's line, and a model without image input still works.
+- [Watches and views](./views.md) (kernel): Clients and extensions follow conversations and documents through windowed views and in-process observers.
+- [Subagents on the kernel](./child-conversations.md) (kernel): Delegated work runs in a child conversation owned by the task or conversation that started it, foreground or background.
+- [Task kernel](./tasks.md) (kernel): Durable work is a task with phases and checkpoints, scheduled across restarts, waiting on other tasks, sleeping, and ending with a stored outcome.
+- [Inbox](./inbox.md) (kernel): The queue of inputs is durable state any client can read.
+- [Documents](./documents.md) (kernel): Typed JSON documents are committed with entries, scoped, forked, migrated and watched as small changes.
+- [Usage and cost](./usage.md) (kernel): Tokens and cost are counted per conversation, model and tool, and totalled for the home.
+- [Telemetry and reports](./telemetry-reports.md) (kernel): Runs, requests and tools emit spans and metrics, and problems nobody asked about reach someone as reports.
+- [Storage](./storage.md) (kernel): Durable state lives behind a storage contract with a SQLite backend, bounded reads and ids that always increase.
+- [Modes and patterns](./modes.md) (kernel): Whole-app patterns: print, JSON, plan mode, a reviewer, per-conversation sandboxes, and the model layer.
