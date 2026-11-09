@@ -1,0 +1,1982 @@
+{
+ "reviewed": {
+  "count": 394
+ },
+ "decisions": {
+  "D5": "Left-out features: deferred commits, group commit, IndexedDB, Cloudflare, alarms, JSONL, key-value store, table prefix, read cache.",
+  "D8": "pi-ai is not brought over; tests needing real providers and tokens do not run.",
+  "D14": "Pinned tests with no spec section behind them, and tests of pi-durable's own source layout."
+ },
+ "tests": [
+  {
+   "test": "upstream/test/harness-blocked.test.ts :: recovery at open > keeps the host's wake active until open's recovery pass has landed",
+   "decision": "D5",
+   "reason": "alarms: Asserts the sequence of onWake calls during recovery."
+  },
+  {
+   "test": "upstream/test/harness-context-range.test.ts :: kept context ranges > is not advanced when an entry was committed while its scan ran off the line",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: advanceRange()/readContextFrom() from src/harness/context.ts: A race between a scan off the line and the private range cache; the spec only promises tail-only scans, not this interleaving."
+  },
+  {
+   "test": "upstream/test/harness-deferred-progress.test.ts :: generation partials > converts a stored partial once through two crashes, before and after the conversion",
+   "decision": "D5",
+   "reason": "deferred commits: Asserts the resend's partials stay unstored until the crash."
+  },
+  {
+   "test": "upstream/test/harness-deferred-progress.test.ts :: generation partials > hold partials in memory and store them together, at most every persistWithinMs",
+   "decision": "D5",
+   "reason": "deferred commits: Asserts partials are held in memory and stored less often than shown."
+  },
+  {
+   "test": "upstream/test/harness-deferred-progress.test.ts :: generation partials > leaves no aborted entry for a stream that crashed before its first store",
+   "decision": "D5",
+   "reason": "deferred commits: Requires partials to be lost with the process; committed partials leave an aborted entry."
+  },
+  {
+   "test": "upstream/test/harness-deferred-progress.test.ts :: reading pi.live in a commit > stores the held partial a third-party task's commit read, with what it derived",
+   "decision": "D5",
+   "reason": "deferred commits: Tests a commit reading pi.live storing what was held."
+  },
+  {
+   "test": "upstream/test/harness-group-commit.test.ts :: group commit: reads on the line > reads no task record from Storage for more live and awaited tasks than the record cache's count",
+   "decision": "D5",
+   "reason": "read cache: Asserts the record cache serves all task reads."
+  },
+  {
+   "test": "upstream/test/harness-group-commit.test.ts :: group commit: records a decision copies > marks a child in a cascade from its current record, not one its pending commit replaces",
+   "decision": "D5",
+   "reason": "group commit: Needs a commit callback to run while another commit's storage call is in flight."
+  },
+  {
+   "test": "upstream/test/harness-group-commit.test.ts :: group commit: records a decision copies > marks the other tasks of a failFast wait from their current records",
+   "decision": "D5",
+   "reason": "group commit: Needs a commit callback to run while another commit's storage call is in flight."
+  },
+  {
+   "test": "upstream/test/harness-idle-scopes.test.ts :: incremental idle state > equals a full recompute after every step of random nested work",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_IDLE_STATE scheduler counters: Checks a private incremental index equals its private full recompute."
+  },
+  {
+   "test": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops a range from the expiry order when an entry commit cannot extend it",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_IDLE_STATE scheduler counters: The expiry order is a private structure; no spec section describes it."
+  },
+  {
+   "test": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops a range from the expiry order when an entry commit finds it expired",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_IDLE_STATE scheduler counters: The expiry order is a private structure; no spec section describes it."
+  },
+  {
+   "test": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > drops a range past its retention at a reconcile pass with nothing to do, with background timers declined (review)",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_IDLE_STATE scheduler counters: The reconcile pass with no work is a private scheduler step."
+  },
+  {
+   "test": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > expires in idle order when the clock goes back",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_IDLE_STATE scheduler counters: Expiry order under a clock going backwards is not specified."
+  },
+  {
+   "test": "upstream/test/harness-idle-scopes.test.ts :: kept context ranges > settles a run end whose sweep drops the chain without a check of every scope",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_IDLE_STATE scheduler counters: Asserts that a sweep avoids a full idle check, a private cost counter with no spec promise."
+  },
+  {
+   "test": "upstream/test/harness-json.test.ts :: assignJson > does not merge a new __proto__ member into Object.prototype",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: assignJson() from src/harness/json.ts: The spec has no rule for a __proto__ key inside streamed JSON, and the test calls a private helper on a Chord tracker."
+  },
+  {
+   "test": "upstream/test/harness-live-deltas.test.ts :: pi.live deltas > hands a generation over to its tool round and starts a tool with one field write each",
+   "decision": "D5",
+   "reason": "deferred commits: Exact ops encode deferred attempt and running status folded into later commits."
+  },
+  {
+   "test": "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > runs a handle operation queued behind the abort mark before the mark's publication, and the cascade aborts it",
+   "decision": "D5",
+   "reason": "group commit: Needs a job to start while the mark's storage call is in flight."
+  },
+  {
+   "test": "upstream/test/harness-ownership.test.ts :: ownership > finalizes many held siblings that end together in one pass",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: Set.prototype iterator instrumentation: Counts Set iterations to pin the cost of a private traversal; the spec states no such cost."
+  },
+  {
+   "test": "upstream/test/harness-ownership.test.ts :: ownership > keeps ownership queries off finished subtrees",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: Set.prototype iterator instrumentation: Counts Set iterations to pin the cost of a private traversal; the spec states no such cost."
+  },
+  {
+   "test": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > applies the changes of a failed commit in the next one",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: PartialChanges from src/harness/partial-changes.ts: Recovery from a failed partial commit is a private class contract; a failed commit fails the Session publicly, so this path is unreachable through the API."
+  },
+  {
+   "test": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > falls back to the snapshot when the committed message lost a call whose changes were committed",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: PartialChanges from src/harness/partial-changes.ts: Recovery from a failed partial commit is a private class contract; a failed commit fails the Session publicly, so this path is unreachable through the API."
+  },
+  {
+   "test": "upstream/test/harness-partial-changes.test.ts :: PartialChanges > re-applies a failed commit's changes even when it would have added the call",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: PartialChanges from src/harness/partial-changes.ts: Recovery from a failed partial commit is a private class contract; a failed commit fails the Session publicly, so this path is unreachable through the API."
+  },
+  {
+   "test": "upstream/test/harness-registry-reader.test.ts :: Durable's views from other objects (slice 8 §5, S1) > a follower of a contributed Harness fails when that Harness's Session closes, and follows the next one",
+   "decision": "D14",
+   "reason": "needs chord's root host and facets, which D5's removal of the store adapter takes out"
+  },
+  {
+   "test": "upstream/test/harness-registry-reader.test.ts :: registryReader > reads the composed snapshot; a listener is called synchronously, inside the batch that composed",
+   "decision": "D14",
+   "reason": "needs chord's root host and facets, which D5's removal of the store adapter takes out"
+  },
+  {
+   "test": "upstream/test/harness-registry-reader.test.ts :: registryReader > wakes a Harness's scheduler: a task blocked on its missing definition runs once a contribution brings it",
+   "decision": "D14",
+   "reason": "needs chord's root host and facets, which D5's removal of the store adapter takes out"
+  },
+  {
+   "test": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > drops what a read loaded after reopen, without a later publication",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_INDEX_SIZES scheduler counters: Asserts private scheduler index sizes; the spec promises no size for these indexes."
+  },
+  {
+   "test": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > drops what a rejected commit's chain load read, without a later publication",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_INDEX_SIZES scheduler counters: Asserts private scheduler index sizes; the spec promises no size for these indexes."
+  },
+  {
+   "test": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > forgets a 20,000-deep chain of ended tasks without recursion",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_INDEX_SIZES scheduler counters: Asserts private scheduler index sizes; the spec promises no size for these indexes."
+  },
+  {
+   "test": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > forgets ended subagent chains once their work ends",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_INDEX_SIZES scheduler counters: Asserts private scheduler index sizes; the spec promises no size for these indexes."
+  },
+  {
+   "test": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > keeps no more after all work ended than a fresh reopen",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_INDEX_SIZES scheduler counters: Asserts private scheduler index sizes; the spec promises no size for these indexes."
+  },
+  {
+   "test": "upstream/test/harness-sleep.test.ts :: sleeping tasks > arms a foreground timer the host declines with setTimeout, reporting it once",
+   "decision": "D5",
+   "reason": "alarms: Tests setTimer declining a timer."
+  },
+  {
+   "test": "upstream/test/harness-sleep.test.ts :: sleeping tasks > arms no timer for sleeps with onWake",
+   "decision": "D5",
+   "reason": "alarms: Tests the onWake alarm replacing the sleep timer."
+  },
+  {
+   "test": "upstream/test/harness-sleep.test.ts :: sleeping tasks > reports a throwing onWake and offers the same wake again at the next pass",
+   "decision": "D5",
+   "reason": "alarms: Tests onWake delivery and retry."
+  },
+  {
+   "test": "upstream/test/harness-storage-failure.test.ts :: a failed Storage call > fails it for a throw in its own commit listeners, which would leave memory behind storage",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: followCommits() via cast: A throw from the Session's own listeners is specified (section 4), but no public API can install such a listener, so it cannot be expressed."
+  },
+  {
+   "test": "upstream/test/harness-storage-failure.test.ts :: listener and report errors > contains a fulfilled thenable that calls only its fulfillment handler",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: contained() from src/session/session.ts: Thenable and cross-realm handling of a private containment helper; no spec section covers these shapes."
+  },
+  {
+   "test": "upstream/test/harness-storage-failure.test.ts :: listener and report errors > contains a rejected promise from another realm",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: contained() from src/session/session.ts: Thenable and cross-realm handling of a private containment helper; no spec section covers these shapes."
+  },
+  {
+   "test": "upstream/test/harness-storage-failure.test.ts :: listener and report errors > reports a throwing clock once, also when the report handler reads the clock again",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: safeNow() from src/harness/harness.ts: A private clock wrapper; the spec does not cover a throwing clock or report reentry."
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: commit > refuses a batch whose copy fails before it writes anything, keeping the batches before it",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: commit > rejects with nothing stored when IndexedDB fails during a batch's checks",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: commit > rejects with nothing stored when IndexedDB fails during a batch's writes",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: commit > resolves a copy against the state an earlier batch of the call left",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: commit > stores the batches before a refused one, and the storage goes on",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > commits batches in order, each with its seq, checked against the earlier ones",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > commits mixed table writes atomically and rolls all of them back on failure",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > continues an entry cursor below its last item after a newer commit",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > copies stored document bases independently and rejects ambiguous sources",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > detaches prototype-like JSON keys without changing object prototypes",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > detaches retained writes and every returned record",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > filters and pages conversations by durable owner edges",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > indexes entries committed out of ID order",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > indexes logical addresses and exact-scope scans independently",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > indexes request IDs per conversation and replaces complete submission records",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > keeps indexed string identities lossless",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > keeps one global record ID namespace and rejects exhausted ID minting",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > paginates conversations by opaque cursor in ascending ID order",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > receives a durable commit once before resolving, and never a refused one",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > reconstructs rewindable documents and preserves half-open incarnations",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > refuses a creation and a change of one document in one commit, in either order",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > refuses a later batch its own malformed actions fail, keeping the batches before it",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > rejects every operation after close",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > replaces complete task records and pages filtered task scans",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > reserves ID 1 for the immutable root conversation",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > resolves a batched copy against the state the earlier batches left",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > rolls back record tables and secondary indexes when a document command fails",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > scans deep fork history newest-first through every ancestor cap",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > scans tables in either ID order and continues a cursor in its order",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > stores and scans sleeping tasks by status",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > stores continue submissions, which have no entry and are never queued",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > stores owners and scans waiting and completing tasks by status",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > stores passive write submissions without input-only lifecycle states",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > stores the batches before the first one refused, and none after it",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > streams long document tails across root replacement deltas",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage > uses bases for version transitions and rejects historical reads of current-only documents",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > commits batches in order, each with its seq, checked against the earlier ones",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > commits mixed table writes atomically and rolls all of them back on failure",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > continues an entry cursor below its last item after a newer commit",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > copies stored document bases independently and rejects ambiguous sources",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > detaches prototype-like JSON keys without changing object prototypes",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > detaches retained writes and every returned record",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > filters and pages conversations by durable owner edges",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > indexes entries committed out of ID order",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > indexes logical addresses and exact-scope scans independently",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > indexes request IDs per conversation and replaces complete submission records",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > keeps indexed string identities lossless",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > keeps one global record ID namespace and rejects exhausted ID minting",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > paginates conversations by opaque cursor in ascending ID order",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > receives a durable commit once before resolving, and never a refused one",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > reconstructs rewindable documents and preserves half-open incarnations",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > refuses a creation and a change of one document in one commit, in either order",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > refuses a later batch its own malformed actions fail, keeping the batches before it",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > rejects every operation after close",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > replaces complete task records and pages filtered task scans",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > reserves ID 1 for the immutable root conversation",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > resolves a batched copy against the state the earlier batches left",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > rolls back record tables and secondary indexes when a document command fails",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > scans deep fork history newest-first through every ancestor cap",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > scans tables in either ID order and continues a cursor in its order",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > stores and scans sleeping tasks by status",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > stores continue submissions, which have no entry and are never queued",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > stores owners and scans waiting and completing tasks by status",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > stores passive write submissions without input-only lifecycle states",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > stores the batches before the first one refused, and none after it",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > streams long document tails across root replacement deltas",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: IndexedDbStorage across reopen > uses bases for version transitions and rejects historical reads of current-only documents",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: keeps one readwrite transaction active through many mixed writes",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: persists minted IDs across reopen",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: rolls back table writes when a later document copy fails",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/indexeddb-storage.test.ts :: scans entries and head markers through fork ancestry",
+   "decision": "D5",
+   "reason": "IndexedDB"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > commits batches in order, each with its seq, checked against the earlier ones",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > commits mixed table writes atomically and rolls all of them back on failure",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > continues an entry cursor below its last item after a newer commit",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > copies stored document bases independently and rejects ambiguous sources",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > detaches prototype-like JSON keys without changing object prototypes",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > detaches retained writes and every returned record",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > filters and pages conversations by durable owner edges",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > indexes entries committed out of ID order",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > indexes logical addresses and exact-scope scans independently",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > indexes request IDs per conversation and replaces complete submission records",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > keeps indexed string identities lossless",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > keeps one global record ID namespace and rejects exhausted ID minting",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > paginates conversations by opaque cursor in ascending ID order",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > receives a durable commit once before resolving, and never a refused one",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > reconstructs rewindable documents and preserves half-open incarnations",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > refuses a creation and a change of one document in one commit, in either order",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > refuses a later batch its own malformed actions fail, keeping the batches before it",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > rejects every operation after close",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > replaces complete task records and pages filtered task scans",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > reserves ID 1 for the immutable root conversation",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > resolves a batched copy against the state the earlier batches left",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > rolls back record tables and secondary indexes when a document command fails",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > scans deep fork history newest-first through every ancestor cap",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > scans tables in either ID order and continues a cursor in its order",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > stores and scans sleeping tasks by status",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > stores continue submissions, which have no entry and are never queued",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > stores owners and scans waiting and completing tasks by status",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > stores passive write submissions without input-only lifecycle states",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > stores the batches before the first one refused, and none after it",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > streams long document tails across root replacement deltas",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage > uses bases for version transitions and rejects historical reads of current-only documents",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > commits batches in order, each with its seq, checked against the earlier ones",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > commits mixed table writes atomically and rolls all of them back on failure",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > continues an entry cursor below its last item after a newer commit",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > copies stored document bases independently and rejects ambiguous sources",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > detaches prototype-like JSON keys without changing object prototypes",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > detaches retained writes and every returned record",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > filters and pages conversations by durable owner edges",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > indexes entries committed out of ID order",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > indexes logical addresses and exact-scope scans independently",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > indexes request IDs per conversation and replaces complete submission records",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > keeps indexed string identities lossless",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > keeps one global record ID namespace and rejects exhausted ID minting",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > paginates conversations by opaque cursor in ascending ID order",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > receives a durable commit once before resolving, and never a refused one",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > reconstructs rewindable documents and preserves half-open incarnations",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > refuses a creation and a change of one document in one commit, in either order",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > refuses a later batch its own malformed actions fail, keeping the batches before it",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > rejects every operation after close",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > replaces complete task records and pages filtered task scans",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > reserves ID 1 for the immutable root conversation",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > resolves a batched copy against the state the earlier batches left",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > rolls back record tables and secondary indexes when a document command fails",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > scans deep fork history newest-first through every ancestor cap",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > scans tables in either ID order and continues a cursor in its order",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > stores and scans sleeping tasks by status",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > stores continue submissions, which have no entry and are never queued",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > stores owners and scans waiting and completing tasks by status",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > stores passive write submissions without input-only lifecycle states",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > stores the batches before the first one refused, and none after it",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > streams long document tails across root replacement deltas",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage across reopen > uses bases for version transitions and rejects historical reads of current-only documents",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: JsonlStorage batches > appends a batch's markers in one write and recovers a shorter prefix from a torn one",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > appends later deltas to the replacement sidecar after a current-only base",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > defers reclamation after authorizing-main flush after failure",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > defers reclamation after authorizing-main flush before failure",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > fails open when confirmed sidecar data is missing",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > keeps a committed base usable after reclaim-temp flush after failure",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > keeps a committed base usable after reclaim-temp flush before failure",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > never reclaims rewindable document history, including after a base and retirement",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > opens through the Node adapter",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > orders multiple live-task replacements in one sidecar by commit ordinal",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > orders publication flushes exactly and flushes main only to authorize reclamation",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after after failure at append 1 and recovers only confirmed state",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after after failure at append 2 and recovers only confirmed state",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after after failure at append 3 and recovers only confirmed state",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after after failure at flush 1 and never writes a marker",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after after failure at flush 2 and never writes a marker",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after before failure at append 1 and recovers only confirmed state",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after before failure at append 2 and recovers only confirmed state",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after before failure at append 3 and recovers only confirmed state",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after before failure at flush 1 and never writes a marker",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after before failure at flush 2 and never writes a marker",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after short failure at append 1 and recovers only confirmed state",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons after short failure at append 3 and recovers only confirmed state",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > poisons the storage when an append fails after its batches applied, before a waiting read goes on (review)",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > publishes every commit before reclaiming current-only document and terminal-task sidecars",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > reclaims retired task-, session-, and latest-conversation document sidecars",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers a committed base across reclaim rename after",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers a committed base across reclaim rename before",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers a committed base across reclaim write after",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers a committed base across reclaim write before",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers a committed base across reclaim write short",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers document-retirement reclamation across remove after",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers document-retirement reclamation across remove before",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers terminal-task reclamation across remove after",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > recovers terminal-task reclamation across remove before",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > rejects a confirmed record after an unconfirmed sidecar record",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > rejects malformed complete main and sidecar lines",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > rejects non-increasing main commit sequences",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > rejects structurally invalid confirmed document content",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > removes a complete-plus-torn unconfirmed multi-record sidecar append",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > removes complete unconfirmed sidecar tails without resurrecting terminal tasks",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > serializes the complete candidate before I/O and leaves preparation failures usable",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/jsonl-storage.test.ts :: Pico JsonlStorage publication and recovery > truncates torn UTF-8 tails at exact byte offsets and reuses the unconfirmed sequence",
+   "decision": "D5",
+   "reason": "JSONL backend"
+  },
+  {
+   "test": "upstream/test/provider-session-cache-e2e.test.ts :: Durable provider session cache e2e > reuses the Codex prompt cache across Durable turns",
+   "decision": "D8",
+   "reason": "real ChatGPT token and pi-ai's provider code (D8)"
+  },
+  {
+   "test": "upstream/test/session-adoption.test.ts :: publication after storage > fails the Session after Storage returned for a throw of its own observers; the others and hosts got the commit",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: followCommits() internal commit listener: Subject is the Session's own listeners, which no public API can install."
+  },
+  {
+   "test": "upstream/test/session-adoption.test.ts :: publication after storage > keeps what host listeners get: exactly what was stored, held changes included",
+   "decision": "D5",
+   "reason": "deferred commits: Tests publication of held changes."
+  },
+  {
+   "test": "upstream/test/session-adoption.test.ts :: publication after storage > publishes a JSONL commit once the storage reclaimed its sidecar and resolved",
+   "decision": "D5",
+   "reason": "JSONL backend: Drives JsonlStorage, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-adoption.test.ts :: publication after storage > publishes a store of held changes that Storage rejects after adopting it, then fails the Session",
+   "decision": "D5",
+   "reason": "deferred commits: Tests a failed store of held changes."
+  },
+  {
+   "test": "upstream/test/session-adoption.test.ts :: publication after storage > publishes a store of held changes to host listeners once Storage resolved",
+   "decision": "D5",
+   "reason": "deferred commits: Tests publication of a store of held changes."
+  },
+  {
+   "test": "upstream/test/session-adoption.test.ts :: publication after storage > runs its own observers once Storage resolved, and host listeners one microtask later",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: followCommits() internal commit listener: Subject is the Session's own listeners, which no public API can install."
+  },
+  {
+   "test": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > fails the Session with its own adoption error, which never reaches Storage",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: Transaction.prototype.adopt mock: Injects a throw into a private method; no public input can make adoption throw."
+  },
+  {
+   "test": "upstream/test/session-cached-storage.test.ts :: cached storage > applies a batch stored with commit when it is published, not at its receipt",
+   "decision": "D5",
+   "reason": "read cache: Unit test of CachedStorage, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-cached-storage.test.ts :: cached storage > drops a read a publication of its record overlapped, and keeps versions only for reads in flight",
+   "decision": "D5",
+   "reason": "read cache: Unit test of CachedStorage, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-cached-storage.test.ts :: cached storage > keeps a bounded number of ended tasks, and every live one until it ends",
+   "decision": "D5",
+   "reason": "read cache: Unit test of CachedStorage, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-cached-storage.test.ts :: cached storage > keeps a read only when no commit overlapped it",
+   "decision": "D5",
+   "reason": "read cache: Unit test of CachedStorage, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-cached-storage.test.ts :: cached storage > keeps the ended tasks a task waits on until it moved on from its wait",
+   "decision": "D5",
+   "reason": "read cache: Unit test of CachedStorage, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-cached-storage.test.ts :: cached storage > keeps the written record itself, frozen: no copy",
+   "decision": "D5",
+   "reason": "read cache: Unit test of CachedStorage, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-cached-storage.test.ts :: cached storage > serves a written record without a read and follows later writes",
+   "decision": "D5",
+   "reason": "read cache: Unit test of CachedStorage, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-conversation-tails.test.ts :: conversation tails > answers a cutoff from the newest marker only at or after it",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: ConversationTails from src/session/conversation-tails.ts: Unit tests of a private cache class; the spec does not mention it."
+  },
+  {
+   "test": "upstream/test/session-conversation-tails.test.ts :: conversation tails > freezes the markers it keeps",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: ConversationTails from src/session/conversation-tails.ts: Unit tests of a private cache class; the spec does not mention it."
+  },
+  {
+   "test": "upstream/test/session-conversation-tails.test.ts :: conversation tails > keeps a bounded number of conversations, fewer with markers",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: ConversationTails from src/session/conversation-tails.ts: Unit tests of a private cache class; the spec does not mention it."
+  },
+  {
+   "test": "upstream/test/session-conversation-tails.test.ts :: conversation tails > knows a new root conversation is empty, and a fork only once read or written",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: ConversationTails from src/session/conversation-tails.ts: Unit tests of a private cache class; the spec does not mention it."
+  },
+  {
+   "test": "upstream/test/session-conversation-tails.test.ts :: conversation tails > reads once, then follows the commits",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: ConversationTails from src/session/conversation-tails.ts: Unit tests of a private cache class; the spec does not mention it."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: bases and overflow > stores a base of the commit's own value when it stores an overflowed hold",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: bases and overflow > stores a base when a held commit selected one, and counts the store as one delta otherwise",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: bases and overflow > stores the whole value once more than MAX_PENDING_OPS operations are held",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: crash > leaves Storage at the last stored state, which memory had, and nothing held after reopen",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > adopts a commit that only changes an existing latest, initial-fork conversation document in memory, unstored",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > rejects a deferred commit on a read-only Session like any commit with writes",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > rejects a withinMs that is not a number of milliseconds, 0 or more",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > stores a deferred commit at once when it writes anything else",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > stores a deferred commit that migrates its document at once, as a base",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: pinning > keeps a held document cached with retention 0 until it is stored, then lets it go",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: pinning > retains a held revision only until it is stored",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: publications > give observeCommits() exactly what was stored, and nothing for a held commit",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: publications > show every held commit to watches and the Session's own observers, once",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > arms no timer for an infinite window, and moves the timer on when a commit stores the held document",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > arms the earliest deadline of the held commits, each with its withinMs or the default",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > keeps them when a commit that reads the document fails before Storage",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > leaves them held through commits that neither read nor write the document, or write nothing",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores every held document in one transaction when the earliest deadline comes",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores nothing once the Session failed",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them at close, after the commits admitted before it, and closes Storage when that store fails",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them before a token of another definition version reloads the document",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them before the document's retirement, in the retiring commit",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them before unloadDocuments() drops the trackers",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them first, folded with its own, in a commit that writes the document",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them in a commit that only reads the document, with its other writes",
+   "decision": "D5",
+   "reason": "deferred commits: Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+  },
+  {
+   "test": "upstream/test/session-document-retention.test.ts :: document cache retention > queues one sweep job, not one per document, while a commit holds the line",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SessionImpl.documentCacheSizes: Counts private sweep jobs; the spec promises eviction, not job counts."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: a failure between two publications > publishes no part of a call after a failure that a continuation of an earlier part caused",
+   "decision": "D5",
+   "reason": "group commit: Needs later commits already admitted in the call when an earlier part's continuation fails."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: a publication that throws > fails the Session for a deferred commit memory cannot adopt, and still closes",
+   "decision": "D5",
+   "reason": "deferred commits: Tests adoption of a held commit in memory."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: a publication that throws > fails the Session for a throw in the read caches' write-through, and leaves the later parts unpublished",
+   "decision": "D5",
+   "reason": "read cache: Injects a failure into CachedStorage's write-through."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: a publication that throws > settles a deferred commit whose adoption throws, alone, and closes",
+   "decision": "D5",
+   "reason": "deferred commits: Tests adoption of a held commit in memory."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: backpressure and bounds > starts no job past 256 without a delivered outcome, and returns its line state to zero when idle",
+   "decision": "D5",
+   "reason": "group commit: Tests the 256-job admission bound."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: batching > stores the commits admitted while a call is in flight in one call, each with its seq, published in order",
+   "decision": "D5",
+   "reason": "group commit: Asserts several commits share one Storage.commit call."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: deferred commits > never publishes a deferred commit behind a commit that fails",
+   "decision": "D5",
+   "reason": "deferred commits: Tests memory publication of a held commit."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: deferred commits > publishes a deferred commit only once the commit before it is published",
+   "decision": "D5",
+   "reason": "deferred commits: Tests memory publication order of a held commit."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > fails every job after the first part of a call that rejects, except its other parts, with their storage error",
+   "decision": "D5",
+   "reason": "group commit: Requires one storage call carrying several commits."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > leaves the parts after one whose adoption throws unpublished, rejected with SessionFailed",
+   "decision": "D5",
+   "reason": "group commit: Asserts later parts of the same call are durable, which needs batching."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > publishes the parts received before a call rejects, then rejects them with its error",
+   "decision": "D5",
+   "reason": "group commit: Requires one storage call carrying several commits."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > rejects every part of a call with its rejection value, null included",
+   "decision": "D5",
+   "reason": "group commit: Requires one storage call carrying several commits."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > rejects every part of a call with its rejection value, undefined included",
+   "decision": "D5",
+   "reason": "group commit: Requires one storage call carrying several commits."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > reports SessionFailed with the first error for a call that rejects after another failure failed the Session",
+   "decision": "D5",
+   "reason": "group commit: Requires a later job to run and fail while a storage call is in flight."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: gates > makes a reader of a document held by a deferred commit behind a call wait for it, and store it",
+   "decision": "D5",
+   "reason": "deferred commits: Requires a commit held by the deferred option behind a call in flight."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: gates > makes a reader of a document whose held changes an unpublished commit stores wait, and store them once",
+   "decision": "D5",
+   "reason": "deferred commits: Requires changes held by a deferred commit."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: publication > publishes the parts of one call a macrotask apart: what one resolves runs before the next is published",
+   "decision": "D5",
+   "reason": "group commit: Asserts spacing between parts of one storage call."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: upkeep through the writer > stores held changes at their deadline after the call in flight",
+   "decision": "D5",
+   "reason": "deferred commits: Tests the withinMs deadline of a deferred commit."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: upkeep through the writer > stores held changes for a version reload inside a callback after the call in flight",
+   "decision": "D5",
+   "reason": "deferred commits: Tests storing held changes at a version reload."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: upkeep through the writer > stores held changes for an unload after the call in flight",
+   "decision": "D5",
+   "reason": "deferred commits: Tests storing held changes at unload."
+  },
+  {
+   "test": "upstream/test/session-observers.test.ts :: observeDoc > advances when memory adopts a held commit, before anything is stored",
+   "decision": "D5",
+   "reason": "deferred commits: Asserts observers advance on a held, unstored commit."
+  },
+  {
+   "test": "upstream/test/session-tables.test.ts :: Session transaction tables > replaces task records completely",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SessionImpl.commitWith(); Transaction.setTask(): Subject is setTask, a private Transaction method."
+  },
+  {
+   "test": "upstream/test/session-tables.test.ts :: Session transaction tables > treats synchronous setTask as the first table write",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SessionImpl.commitWith(); Transaction.setTask(): Subject is setTask, a private Transaction method."
+  },
+  {
+   "test": "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > namespaces tables and indexes with a prefix across reopen",
+   "decision": "D5",
+   "reason": "table prefix: Tests the SQLite table prefix option."
+  },
+  {
+   "test": "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > rejects an invalid prefix before creating the database",
+   "decision": "D5",
+   "reason": "table prefix: Tests the SQLite table prefix option."
+  },
+  {
+   "test": "upstream/test/storage-runtime-boundary.test.ts :: durable storage runtime boundaries > keeps the package root limited to portable core storage",
+   "decision": "D14",
+   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version"
+  },
+  {
+   "test": "upstream/test/storage-runtime-boundary.test.ts :: durable storage runtime boundaries > keeps the portable environment subpath free of Node imports",
+   "decision": "D14",
+   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version"
+  },
+  {
+   "test": "upstream/test/storage-runtime-boundary.test.ts :: durable storage runtime boundaries > keeps the portable JSONL subpath free of Node imports",
+   "decision": "D14",
+   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version"
+  },
+  {
+   "test": "upstream/test/storage-runtime-boundary.test.ts :: durable storage runtime boundaries > keeps the portable SQLite subpath free of Node imports",
+   "decision": "D14",
+   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: durability > keeps every batch of a stored call across a crash: reopened, the seqs, rows, documents and ids are there",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: failures: a rollback rejects, an unknown outcome stops the store > a call on a closed storage, or on a stopped store, rejects and stores nothing",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: failures: a rollback rejects, an unknown outcome stops the store > a call queued when the store closes rejects released, and stores nothing; the running one is stored",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: failures: a rollback rejects, an unknown outcome stops the store > a failed COMMIT is an unknown outcome: the call rejects storage_failed, nothing is received or stored",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: failures: a rollback rejects, an unknown outcome stops the store > rejects with nothing stored when a batch's check fails in the backend, and the store goes on",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: failures: a rollback rejects, an unknown outcome stops the store > rolls a 3-batch call back at a failure of any of its statements, as at a failed COMMIT, and reopens before it (third refused)",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: failures: a rollback rejects, an unknown outcome stops the store > rolls a 3-batch call back at a failure of any of its statements, as at a failed COMMIT, and reopens before it (third valid)",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: GC > keeps nothing of a settled call: its batches are collected",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: one transaction per call > stores the batches in one backend transaction, one seq and one outbox commit each, receipts in order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: one transaction per call > writes the metadata once per call: three statements per entry append, plus one (cost guard)",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: other users of the store > a read during a series sees all of it or none of it",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: other users of the store > an export holds the queue: a series waits for it and is not in its archive",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: other users of the store > another owner's call waits for a series in its transaction; the series' receipts come first",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: publication > publishes each commit of a call in a host batch of its own, after the call's one transaction",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: refusals: the batches before the refused one stand > checks a batch against the batches before it in the call: a copy reads their state",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: refusals: the batches before the refused one stand > refuses a batch its staging fails in that batch's turn, keeping the batches before it (review)",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: refusals: the batches before the refused one stand > refuses a batch whose rows staging cannot encode, keeping the batches before it",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: refusals: the batches before the refused one stand > refuses a change of a document an earlier batch retired against the state the batches before it left",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: refusals: the batches before the refused one stand > refuses a creation at the address an earlier batch took against the state the batches before it left",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: refusals: the batches before the refused one stand > refuses a later batch with a duplicate content command as Memory does, keeping the prefix (review)",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: refusals: the batches before the refused one stand > refuses a later batch with a duplicate retirement as Memory does, keeping the prefix (review)",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage-commit.test.ts :: refusals: the batches before the refused one stand > stores the batches before a refused one with Durable's message, none after it, and goes on",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: archives and batches of Durable data > an outbox of Durable commits replayed into an empty store gives the same archive (create-plus-retire included)",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: archives and batches of Durable data > export and import keep rewindable history, retired records and Chord's own data: reads at a point agree",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: claims and close > refuse a second StoreStorage on one owner until the first closed; two owners share a store",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: claims and close > waits at close for its calls underway, then releases its claims",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: commits (slice 6b §1.3, §2.5) > counts four statements for an entry append and for a delta, with a host attached",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: commits (slice 6b §1.3, §2.5) > publishes each commit of a Session inside the attached host's batch, and plainly without a host",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: Durable's views as Chord sources on the store (slice 6b §3) > a deferred Durable commit, then an immediate one, reach the followed document in order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: Durable's views as Chord sources on the store (slice 6b §3) > a derive over the conversation view and the task graph: one frame per Durable commit, both views in one batch",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: GC > a closed StoreStorage is collected while its store stays open",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: head markers (the entry_heads table) > a head entry is found after reopen, in an imported archive and in a replayed outbox",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: reads (slice 6b §1.4, §2.4) > a request error inside a multi-query read rejects that read only; the store goes on",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: review regressions > a head-marker entry whose kind is \"refused\" is returned, not taken for a request error",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > commits batches in order, each with its seq, checked against the earlier ones",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > commits mixed table writes atomically and rolls all of them back on failure",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > continues an entry cursor below its last item after a newer commit",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > copies stored document bases independently and rejects ambiguous sources",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > detaches prototype-like JSON keys without changing object prototypes",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > detaches retained writes and every returned record",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > filters and pages conversations by durable owner edges",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > indexes entries committed out of ID order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > indexes logical addresses and exact-scope scans independently",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > indexes request IDs per conversation and replaces complete submission records",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > keeps indexed string identities lossless",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > keeps one global record ID namespace and rejects exhausted ID minting",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > paginates conversations by opaque cursor in ascending ID order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > receives a durable commit once before resolving, and never a refused one",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > reconstructs rewindable documents and preserves half-open incarnations",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > refuses a creation and a change of one document in one commit, in either order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > refuses a later batch its own malformed actions fail, keeping the batches before it",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > rejects every operation after close",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > replaces complete task records and pages filtered task scans",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > reserves ID 1 for the immutable root conversation",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > resolves a batched copy against the state the earlier batches left",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > rolls back record tables and secondary indexes when a document command fails",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > scans deep fork history newest-first through every ancestor cap",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > scans tables in either ID order and continues a cursor in its order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > stores and scans sleeping tasks by status",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > stores continue submissions, which have no entry and are never queued",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > stores owners and scans waiting and completing tasks by status",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > stores passive write submissions without input-only lifecycle states",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > stores the batches before the first one refused, and none after it",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > streams long document tails across root replacement deltas",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage > uses bases for version transitions and rejects historical reads of current-only documents",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > commits batches in order, each with its seq, checked against the earlier ones",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > commits mixed table writes atomically and rolls all of them back on failure",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > continues an entry cursor below its last item after a newer commit",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > copies stored document bases independently and rejects ambiguous sources",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > detaches prototype-like JSON keys without changing object prototypes",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > detaches retained writes and every returned record",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > filters and pages conversations by durable owner edges",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > indexes entries committed out of ID order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > indexes logical addresses and exact-scope scans independently",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > indexes request IDs per conversation and replaces complete submission records",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > keeps indexed string identities lossless",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > keeps one global record ID namespace and rejects exhausted ID minting",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > paginates conversations by opaque cursor in ascending ID order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > receives a durable commit once before resolving, and never a refused one",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > reconstructs rewindable documents and preserves half-open incarnations",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > refuses a creation and a change of one document in one commit, in either order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > refuses a later batch its own malformed actions fail, keeping the batches before it",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > rejects every operation after close",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > replaces complete task records and pages filtered task scans",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > reserves ID 1 for the immutable root conversation",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > resolves a batched copy against the state the earlier batches left",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > rolls back record tables and secondary indexes when a document command fails",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > scans deep fork history newest-first through every ancestor cap",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > scans tables in either ID order and continues a cursor in its order",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > stores and scans sleeping tasks by status",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > stores continue submissions, which have no entry and are never queued",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > stores owners and scans waiting and completing tasks by status",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > stores passive write submissions without input-only lifecycle states",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > stores the batches before the first one refused, and none after it",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > streams long document tails across root replacement deltas",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: StoreStorage across reopen > uses bases for version transitions and rejects historical reads of current-only documents",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: the store's semantics (D4) > a refused Durable commit rejects with Durable's message and keeps the store usable",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/store-storage.test.ts :: the store's semantics (D4) > raises the allocator above every id it holds when it opens (a store built by import)",
+   "decision": "D5",
+   "reason": "key-value store adapter"
+  },
+  {
+   "test": "upstream/test/system-order-cache-e2e.test.ts :: Durable system message order e2e > keeps the prompt cache across a tool change only when the system message leads",
+   "decision": "D8",
+   "reason": "real Anthropic token and pi-ai's provider code (D8)"
+  }
+ ]
+}

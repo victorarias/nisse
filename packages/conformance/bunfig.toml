@@ -1,0 +1,1 @@
+# Empty on purpose: keeps the workspace's preloads out of vitest's Bun workers.

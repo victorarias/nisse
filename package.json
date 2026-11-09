@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "tsc --noEmit && prettier --check . && bun test --timeout 30000",
+    "check": "tsc --noEmit && prettier --check . && bun test --timeout 30000 --path-ignore-patterns='packages/conformance/**' && bun packages/conformance/check.ts",
     "format": "prettier --write .",
     "schema": "bun packages/nisse/src/main.ts schema > schema/nisse.schema.json"
   },

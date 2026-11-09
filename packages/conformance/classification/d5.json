@@ -1,0 +1,362 @@
+[
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: bases and overflow > stores a base of the commit's own value when it stores an overflowed hold",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: bases and overflow > stores a base when a held commit selected one, and counts the store as one delta otherwise",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: bases and overflow > stores the whole value once more than MAX_PENDING_OPS operations are held",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: crash > leaves Storage at the last stored state, which memory had, and nothing held after reopen",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > adopts a commit that only changes an existing latest, initial-fork conversation document in memory, unstored",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > rejects a deferred commit on a read-only Session like any commit with writes",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > rejects a withinMs that is not a number of milliseconds, 0 or more",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > stores a deferred commit at once when it writes anything else",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: holding a deferred commit > stores a deferred commit that migrates its document at once, as a base",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: pinning > keeps a held document cached with retention 0 until it is stored, then lets it go",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: pinning > retains a held revision only until it is stored",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: publications > give observeCommits() exactly what was stored, and nothing for a held commit",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: publications > show every held commit to watches and the Session's own observers, once",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > arms no timer for an infinite window, and moves the timer on when a commit stores the held document",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > arms the earliest deadline of the held commits, each with its withinMs or the default",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > keeps them when a commit that reads the document fails before Storage",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > leaves them held through commits that neither read nor write the document, or write nothing",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores every held document in one transaction when the earliest deadline comes",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores nothing once the Session failed",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them at close, after the commits admitted before it, and closes Storage when that store fails",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them before a token of another definition version reloads the document",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them before the document's retirement, in the retiring commit",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them before unloadDocuments() drops the trackers",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them first, folded with its own, in a commit that writes the document",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-deferred-commits.test.ts :: storing held changes > stores them in a commit that only reads the document, with its other writes",
+  "feature": "deferred commits",
+  "reason": "Tests commits held in memory and stored later under the deferred persistence option, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-cached-storage.test.ts :: cached storage > applies a batch stored with commit when it is published, not at its receipt",
+  "feature": "read cache",
+  "reason": "Unit test of CachedStorage, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-cached-storage.test.ts :: cached storage > drops a read a publication of its record overlapped, and keeps versions only for reads in flight",
+  "feature": "read cache",
+  "reason": "Unit test of CachedStorage, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-cached-storage.test.ts :: cached storage > keeps a bounded number of ended tasks, and every live one until it ends",
+  "feature": "read cache",
+  "reason": "Unit test of CachedStorage, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-cached-storage.test.ts :: cached storage > keeps a read only when no commit overlapped it",
+  "feature": "read cache",
+  "reason": "Unit test of CachedStorage, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-cached-storage.test.ts :: cached storage > keeps the ended tasks a task waits on until it moved on from its wait",
+  "feature": "read cache",
+  "reason": "Unit test of CachedStorage, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-cached-storage.test.ts :: cached storage > keeps the written record itself, frozen: no copy",
+  "feature": "read cache",
+  "reason": "Unit test of CachedStorage, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-cached-storage.test.ts :: cached storage > serves a written record without a read and follows later writes",
+  "feature": "read cache",
+  "reason": "Unit test of CachedStorage, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: batching > stores the commits admitted while a call is in flight in one call, each with its seq, published in order",
+  "feature": "group commit",
+  "reason": "Asserts several commits share one Storage.commit call."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: gates > makes a reader of a document whose held changes an unpublished commit stores wait, and store them once",
+  "feature": "deferred commits",
+  "reason": "Requires changes held by a deferred commit."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: gates > makes a reader of a document held by a deferred commit behind a call wait for it, and store it",
+  "feature": "deferred commits",
+  "reason": "Requires a commit held by the deferred option behind a call in flight."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > publishes the parts received before a call rejects, then rejects them with its error",
+  "feature": "group commit",
+  "reason": "Requires one storage call carrying several commits."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > fails every job after the first part of a call that rejects, except its other parts, with their storage error",
+  "feature": "group commit",
+  "reason": "Requires one storage call carrying several commits."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > reports SessionFailed with the first error for a call that rejects after another failure failed the Session",
+  "feature": "group commit",
+  "reason": "Requires a later job to run and fail while a storage call is in flight."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > rejects every part of a call with its rejection value, null included",
+  "feature": "group commit",
+  "reason": "Requires one storage call carrying several commits."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > rejects every part of a call with its rejection value, undefined included",
+  "feature": "group commit",
+  "reason": "Requires one storage call carrying several commits."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: failures per part > leaves the parts after one whose adoption throws unpublished, rejected with SessionFailed",
+  "feature": "group commit",
+  "reason": "Asserts later parts of the same call are durable, which needs batching."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: a publication that throws > fails the Session for a deferred commit memory cannot adopt, and still closes",
+  "feature": "deferred commits",
+  "reason": "Tests adoption of a held commit in memory."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: a publication that throws > settles a deferred commit whose adoption throws, alone, and closes",
+  "feature": "deferred commits",
+  "reason": "Tests adoption of a held commit in memory."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: a publication that throws > fails the Session for a throw in the read caches' write-through, and leaves the later parts unpublished",
+  "feature": "read cache",
+  "reason": "Injects a failure into CachedStorage's write-through."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: deferred commits > publishes a deferred commit only once the commit before it is published",
+  "feature": "deferred commits",
+  "reason": "Tests memory publication order of a held commit."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: deferred commits > never publishes a deferred commit behind a commit that fails",
+  "feature": "deferred commits",
+  "reason": "Tests memory publication of a held commit."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: publication > publishes the parts of one call a macrotask apart: what one resolves runs before the next is published",
+  "feature": "group commit",
+  "reason": "Asserts spacing between parts of one storage call."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: a failure between two publications > publishes no part of a call after a failure that a continuation of an earlier part caused",
+  "feature": "group commit",
+  "reason": "Needs later commits already admitted in the call when an earlier part's continuation fails."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: upkeep through the writer > stores held changes for an unload after the call in flight",
+  "feature": "deferred commits",
+  "reason": "Tests storing held changes at unload."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: upkeep through the writer > stores held changes for a version reload inside a callback after the call in flight",
+  "feature": "deferred commits",
+  "reason": "Tests storing held changes at a version reload."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: upkeep through the writer > stores held changes at their deadline after the call in flight",
+  "feature": "deferred commits",
+  "reason": "Tests the withinMs deadline of a deferred commit."
+ },
+ {
+  "id": "upstream/test/session-group-commit.test.ts :: group commit: backpressure and bounds > starts no job past 256 without a delivered outcome, and returns its line state to zero when idle",
+  "feature": "group commit",
+  "reason": "Tests the 256-job admission bound."
+ },
+ {
+  "id": "upstream/test/harness-group-commit.test.ts :: group commit: records a decision copies > marks a child in a cascade from its current record, not one its pending commit replaces",
+  "feature": "group commit",
+  "reason": "Needs a commit callback to run while another commit's storage call is in flight."
+ },
+ {
+  "id": "upstream/test/harness-group-commit.test.ts :: group commit: records a decision copies > marks the other tasks of a failFast wait from their current records",
+  "feature": "group commit",
+  "reason": "Needs a commit callback to run while another commit's storage call is in flight."
+ },
+ {
+  "id": "upstream/test/harness-group-commit.test.ts :: group commit: reads on the line > reads no task record from Storage for more live and awaited tasks than the record cache's count",
+  "feature": "read cache",
+  "reason": "Asserts the record cache serves all task reads."
+ },
+ {
+  "id": "upstream/test/harness-deferred-progress.test.ts :: generation partials > hold partials in memory and store them together, at most every persistWithinMs",
+  "feature": "deferred commits",
+  "reason": "Asserts partials are held in memory and stored less often than shown."
+ },
+ {
+  "id": "upstream/test/harness-deferred-progress.test.ts :: generation partials > leaves no aborted entry for a stream that crashed before its first store",
+  "feature": "deferred commits",
+  "reason": "Requires partials to be lost with the process; committed partials leave an aborted entry."
+ },
+ {
+  "id": "upstream/test/harness-deferred-progress.test.ts :: generation partials > converts a stored partial once through two crashes, before and after the conversion",
+  "feature": "deferred commits",
+  "reason": "Asserts the resend's partials stay unstored until the crash."
+ },
+ {
+  "id": "upstream/test/harness-deferred-progress.test.ts :: reading pi.live in a commit > stores the held partial a third-party task's commit read, with what it derived",
+  "feature": "deferred commits",
+  "reason": "Tests a commit reading pi.live storing what was held."
+ },
+ {
+  "id": "upstream/test/harness-live-deltas.test.ts :: pi.live deltas > hands a generation over to its tool round and starts a tool with one field write each",
+  "feature": "deferred commits",
+  "reason": "Exact ops encode deferred attempt and running status folded into later commits."
+ },
+ {
+  "id": "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > runs a handle operation queued behind the abort mark before the mark's publication, and the cascade aborts it",
+  "feature": "group commit",
+  "reason": "Needs a job to start while the mark's storage call is in flight."
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: publication after storage > keeps what host listeners get: exactly what was stored, held changes included",
+  "feature": "deferred commits",
+  "reason": "Tests publication of held changes."
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: publication after storage > publishes a store of held changes to host listeners once Storage resolved",
+  "feature": "deferred commits",
+  "reason": "Tests publication of a store of held changes."
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: publication after storage > publishes a store of held changes that Storage rejects after adopting it, then fails the Session",
+  "feature": "deferred commits",
+  "reason": "Tests a failed store of held changes."
+ },
+ {
+  "id": "upstream/test/session-adoption.test.ts :: publication after storage > publishes a JSONL commit once the storage reclaimed its sidecar and resolved",
+  "feature": "JSONL backend",
+  "reason": "Drives JsonlStorage, which D5 removes."
+ },
+ {
+  "id": "upstream/test/session-observers.test.ts :: observeDoc > advances when memory adopts a held commit, before anything is stored",
+  "feature": "deferred commits",
+  "reason": "Asserts observers advance on a held, unstored commit."
+ },
+ {
+  "id": "upstream/test/harness-sleep.test.ts :: sleeping tasks > arms no timer for sleeps with onWake",
+  "feature": "alarms",
+  "reason": "Tests the onWake alarm replacing the sleep timer."
+ },
+ {
+  "id": "upstream/test/harness-sleep.test.ts :: sleeping tasks > arms a foreground timer the host declines with setTimeout, reporting it once",
+  "feature": "alarms",
+  "reason": "Tests setTimer declining a timer."
+ },
+ {
+  "id": "upstream/test/harness-sleep.test.ts :: sleeping tasks > reports a throwing onWake and offers the same wake again at the next pass",
+  "feature": "alarms",
+  "reason": "Tests onWake delivery and retry."
+ },
+ {
+  "id": "upstream/test/harness-blocked.test.ts :: recovery at open > keeps the host's wake active until open's recovery pass has landed",
+  "feature": "alarms",
+  "reason": "Asserts the sequence of onWake calls during recovery."
+ },
+ {
+  "id": "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > namespaces tables and indexes with a prefix across reopen",
+  "feature": "table prefix",
+  "reason": "Tests the SQLite table prefix option."
+ },
+ {
+  "id": "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > rejects an invalid prefix before creating the database",
+  "feature": "table prefix",
+  "reason": "Tests the SQLite table prefix option."
+ }
+]
