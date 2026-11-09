@@ -21,10 +21,19 @@ server three times in a row ends instead of looping.
 - `crash-claude-settled` does not run a finished Claude Code answer again when
   the server dies after it.
 
-## How to get to it (user POV)
+## How to get to it
 
-- The server dies (SIGKILL, power loss) while Nisse is answering, a call
-  runs, or a Claude Code subagent works, with a TUI or `exec` waiting on it.
+### People
+
+None.
+
+### Agents
+
+None.
+
+### Triggers
+
+- The server dies (SIGKILL, power loss) while Nisse is answering, a call runs, or a Claude Code subagent works. The run resumes when the next server starts for that home, whoever starts it.
 
 ## Driving it with drive.ts
 
@@ -103,6 +112,27 @@ have taken effect`.
   `drive.ts r doctor` shows a new server once the TUI has reconnected. The
   screen is unchanged and the log in `evidence/fake-claude/log.ndjson` has
   spawn `0` only: nothing runs the answer again.
+
+## Contexts
+
+- **Provider.** On every provider a running call is recorded as interrupted. Claude Code is also told which calls were cut off.
+
+## Tests
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- a run cut off by a crashed server finishes after the server comes back
+- a call cut off by a crashed server is recorded as interrupted and the run carries on
+- a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own
+- a run that keeps crashing the server stops after three tries instead of looping
+
+This one needs the code-mode host, and is skipped when it is not installed:
+
+- a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- a run cut off by a server stop resumes, and Claude Code is told which call was cut off
 
 ## Gotchas
 

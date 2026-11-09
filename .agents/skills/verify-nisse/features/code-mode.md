@@ -43,22 +43,38 @@ installs; without it a code-mode run fails saying how to install it.
 - `code-mode-approvals` asks before a nested call that changes things, with
   `allow this call?`, `^Y`, `^N` or `approval/resolve`; `exec` denies them and
   `--auto` allows them, as for any call.
-- `code-mode-host-life` starts the host on a conversation's first script,
-  keeps one session per conversation so a later script can `load` what an
-  earlier one `store`d, and stops it after five idle minutes; the next
-  script starts a new one. A `wait` on a script whose host stopped answers
+- `code-mode-host-life` starts one host for the whole server on the first
+  script any conversation runs, keeps one session per conversation in it so a
+  later script can `load` what an earlier one `store`d, and stops it after
+  five minutes with no code-mode run active; the next script starts a new one,
+  and a host that dies ends every conversation's running scripts. A `wait` on a script whose host stopped answers
   `no running cell <id>; it already finished, or the code-mode host running it stopped`,
   even after a new host started other scripts.
+- `code-mode-script` is what a model's calls take. `exec` is raw JavaScript,
+  else `exec expects raw JavaScript source text`; a first line
+  `// @exec: {"yield_time_ms": N, "max_output_tokens": N}` sets when it yields
+  and its output budget. `wait` takes `cell_id` (else
+  ``bad arguments for wait: `cell_id` must be a string``), `yield_time_ms`,
+  `max_tokens` and `terminate`. Output over budget starts
+  `Warning: truncated output (original token count: N)`. Scripts have `text`,
+  `exit`, `store`, `load`, `setTimeout`, `clearTimeout`, `ALL_TOOLS` and
+  `yield_control`.
+- `code-mode-host-failed` ends the run when the host will not start, with
+  `could not start <program>: ...`, `the code-mode host did not answer its handshake...`
+  or `the code-mode host turned nisse down: ...`.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Run `scripts/code-mode-host.sh` once, then
-  `nisse --provider openai --model <a code-mode model>` or
-  `nisse exec --provider openai --model <model> '<prompt>'`.
-- Switch a conversation to a code-mode model with `/model` or
-  `conversation/select_model`.
-- Set `NISSE_CODE_MODE_HOST` in the environment of the command that starts the
-  server.
+### People
+
+- Run `scripts/code-mode-host.sh` once, then `nisse --provider openai --model <a code-mode model>`.
+- Switch a conversation to a code-mode model with `/model`.
+
+### Agents
+
+- Run `nisse exec --provider openai --model <model> '<prompt>'`.
+- Switch a conversation to a code-mode model with `conversation/select_model`.
+- Set `NISSE_CODE_MODE_HOST` in the environment of the command that starts the server.
 
 ## Driving it with drive.ts
 
@@ -326,16 +342,53 @@ each step names.
   `drive.ts r nisse exec --auto --provider openai --model gpt-6.1-sol 'what does echo say?'`:
   `It says hi.`, and the pid in `host.pid` is running. Wait for it to exit
   with
-  `timeout 420 sh -c 'while kill -0 "$(cat /tmp/nisse-verify/r/launcher/host.pid)" 2>/dev/null; do sleep 5; done'`:
+  `sh -c 'i=0; while kill -0 "$(cat /tmp/nisse-verify/r/launcher/host.pid)" 2>/dev/null; do i=$((i+5)); [ $i -lt 420 ] || exit 124; sleep 5; done'`:
   it exits 0 about five minutes after the script ended. The same `exec`
   again answers `It says hi.`, and `host.pid` holds a new pid.
+
+## Contexts
+
+- **Provider.** OpenAI only, and `gpt-5.5` keeps direct tools and needs no host.
+- **Idle.** Nisse starts the host on the first script and stops it after five idle minutes.
+
+## Tests
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- a code-mode model without the code-mode host says how to install it
+
+These need the host, and are skipped when it is not installed:
+
+- a code-mode model is offered exec and wait, with nisse's tools declared inside exec
+- a tool a request hook withholds is missing from a code-mode script's ALL_TOOLS too
+- a tool an extension removes is gone from a code-mode model's exec too
+- a script's nested call is committed under its script and asks first, and the model sees only the script
+- a script that yields is resumed by wait, and its cell ends when it does
+- terminating a script ends the call it was waiting on before the model hears it stopped
+- a patch that moves a file to another spelling of its own path keeps the file
+- a host that dies mid-script interrupts the script with the nested results so far
+- a host that dies while the model waits tells the wait what the script finished
+- a wait on a script whose host stopped never reaches a script the next host started
+- a yielded script cut off by the run's end still tells the model what its calls finished
+- a yielded script cut off by a server stop still tells the resumed model what its calls finished
+- a script stopped mid-run still tells the model what its calls finished
+- a host that dies ends the calls its script was waiting on
+- a waited script stopped after another script finished still tells what its calls finished
+- a host that dies ends the calls of every script it ran
 
 ## Gotchas
 
 - Code mode depends on the model's catalog entry, not on anything a person
   sets: ChatGPT's list once signed in, else the saved list, else the shipped
   one. `models/list` does not say which models use it;
-  `cache/openai-models.json` does, as `"tool_mode": "code_mode_only"`.
+  `cache/openai-models.json` does, as `"tool_mode":"code_mode_only"`.
+- A model is code-mode only when its catalog entry says so: a slug not in the
+  catalog runs with direct tools and no host.
+- `execute.before` and `execute.after` never see `exec` or `wait`, only the
+  calls nested inside scripts.
+- No committed test covers the truncation warning or the host's start failures.
+  The `// @exec:` pragma is exercised only through the recordings of yielding
+  scripts.
 - The host is looked for at each run's start, so installing it needs no
   server restart; `NISSE_CODE_MODE_HOST` is read when the server starts.
 - An open TUI starts a stopped server again with the TUI's own environment,
@@ -344,7 +397,7 @@ each step names.
   fails with the host message even when `NISSE_HOME/bin` holds the host.
 - With a code-mode model and no host, the host message comes before the
   sign-in check, so a signed-out person sees it first.
-- The host is a 75 MB download; `scripts/code-mode-host.sh` checks its
+- The host is a 136 to 162 MB download, by platform; `scripts/code-mode-host.sh` checks its
   SHA-256 and replaces it only when the pinned release changes.
 - A call cut off while it asked shows `✗ denied by nisse`: nisse answered
   the approval when the script stopped.
@@ -377,7 +430,7 @@ with the screens.
 
 - **Pick a model.** `drive.ts r rpc models/list '{}'` saves ChatGPT's list
   to `/tmp/nisse-verify/r/home/cache/openai-models.json`. Pick a `slug`
-  whose entry there has `"tool_mode": "code_mode_only"`, and copy the file
+  whose entry there has `"tool_mode":"code_mode_only"`, and copy the file
   into `evidence/`. Use it as `<model>` below.
 - **Calls.** `drive.ts r tui start --provider openai --model <model>`,
   `drive.ts r tui wait READY`, take `<id>` from the header, send

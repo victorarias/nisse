@@ -55,6 +55,8 @@ export const screenSession = (args: Array<string>, env: Record<string, string | 
     deadline(
       new Promise<string>((resolve) => {
         const check = () => {
+          // A frame can arrive in several writes; a person sees only the finished one.
+          if (terminal.modes.synchronizedOutputMode) return
           const current = screen()
           if (!predicate(current)) return
           changed.delete(check)

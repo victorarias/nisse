@@ -18,9 +18,14 @@ run, instead of waiting for the run to end.
 - `steer-openai` places a steer after the last of a step's calls, before the
   model's next answer.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Press `Tab` in the TUI while it shows `WORKING`, type, and press Enter.
+
+### Agents
+
 - Call `conversation/submit` with `"steer": true` while a run works.
 - The same on a ChatGPT or Claude conversation, while it works or waits for
   you to answer a call.
@@ -144,6 +149,29 @@ Preconditions:
   `evidence/fake-openai.ndjson` are `as recorded`: the second request holds
   both calls' outputs and then `and three`, and the first holds no steer.
 
+## Contexts
+
+- **Provider.** With calls running, a steer reaches the model after all of them, before its next answer.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- a steering prompt reaches nisse during the run instead of after it
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- tab switches a prompt sent mid-run from queueing to steering the run
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- a steer sent while calls run reaches the model after all of them, before its next answer
+- a skill named in a steer comes with it for the model the run is using, even after a switch
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- a steer sent while Claude works reaches Claude Code in the same run
+
 ## Gotchas
 
 - A steer is placed when the model takes its next step, after the running
@@ -159,7 +187,8 @@ Preconditions:
 - The Claude and OpenAI steps hold the run at an approval or a hook so that
   the steer lands inside the run; the fakes wait for a steer the recording
   has, whatever the timing, so a steer sent late stalls the run.
-- `Tab` does nothing while Nisse is ready; the panel then reads `PROMPT`.
+- `Tab` does nothing while Nisse is ready; the panel then reads `PROMPT`. A
+  switch to steering lasts across runs in that TUI, until `Tab` again.
 
 ## With a real account
 

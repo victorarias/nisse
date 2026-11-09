@@ -17,10 +17,14 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
 - `extensions-failed` lists an extension that fails to load, or takes over
   10 seconds to, as `failed` with why; the others load. The TUI shows
   `✗ extension <name> failed to load: <why>` when it opens, and
-  `nisse extensions` exits 1.
+  `nisse extensions` exits 1. A name with anything but letters, digits, `-`
+  and `_` fails with `an extension's name may use only letters, digits, - and _`,
+  and a second of one name, such as `foo.ts` beside `foo/index.ts`, with
+  `another extension is named <name>`.
 - `tools-transform` adds a tool the model can call, replaces one of the same
   name, changes a tool's description or `readOnly`, or removes one, from each
-  turn's start; a removed tool answers `no tool named <name>`.
+  turn's start; a removed tool answers `no tool named <name>`. A transform that
+  throws is undone, with the toast `its tool transform failed: <why>`.
 - `execute-before` changes a call's input before approval, the run and the
   transcript, or refuses it: its result is
   `<name> refused this call: <reason>`, and nobody is asked.
@@ -30,10 +34,12 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
   `instructions` to the model's instructions for each request, and offers the
   model only the tools left in `tools`.
 - `hook-failure` turns a hook that fails or takes over 10 seconds into a toast
-  `<hook> failed: <why>`; a failed `execute.before` refuses the call with
+  `<hook> failed: <why>`, where `<hook>` is `execute.before`, `execute.after` or
+  `request`; a failed `execute.before` refuses the call with
   `<name> refused this call: it failed: <why>`.
 - `status-line` shows `<name>: <text>` in the TUI's status bar, as
   `extensionStatus` in a snapshot and in the commit that changes it.
+  `conversation.status()` with no text, or `""`, clears the line.
 - `toast` is a `toast` entry `{ extension, text }`, drawn as
   `◆ <name>: <text>` in the TUI and printed to stderr by `nisse exec`.
 - `claude-extensions`: on Claude, an added tool is served from nisse's MCP
@@ -43,20 +49,28 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
   too), and `execute.after` sees Claude Code's results but can't change them:
   a change becomes the toast
   `execute.after changed <tool>'s result, but Claude Code keeps its own tools' results`.
+  `tools.update` on a Claude Code tool has no effect: Claude gets only added
+  and removed tools.
 - `reload` (`nisse extensions reload` or `extensions/reload`) loads every
   extension again from disk while the loaded ones keep guarding calls, then
   swaps them in, clears every status line and unloads the old ones. A server
-  start clears every status line before loading.
+  start clears every status line before loading. A `config.toml` that does not
+  read fails every extension in a reload with `<path>: <why>`, replacing the
+  loaded ones; at a server start the server refuses to run.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Write `NISSE_HOME/extensions/<name>.ts` (or `<name>/index.ts`), importing
-  `@nisse/extension` and `effect`; the server serves both.
+### People
+
+- Write `NISSE_HOME/extensions/<name>.ts` (or `<name>/index.ts`), importing `@nisse/extension`, `effect` and `effect/<module>`; the server serves them. `@nisse/extension` gives `Extension.define`, and `Tool.make`, `ok`, `fail` and `refuse`. An extension gets `ctx.name`, `ctx.options`, `ctx.tool.transform` (`list`, `get`, `add`, `update`, `remove`), `ctx.tool.hook` and `ctx.request.hook`; a hook's `conversation` has `id`, `cwd`, `model`, `lineage`, `status` and `toast`. What it registers ends when its scope closes on a reload or a server stop, so `Effect.addFinalizer` runs then.
 - Set options in `NISSE_HOME/config.toml` under `[extensions.<name>]`.
-- Run `nisse extensions` and `nisse extensions reload`, or call
-  `extensions/list` and `extensions/reload`.
-- Watch the TUI's status bar and transcript, `nisse exec`'s stderr, or a
-  subscription's `extensionStatus` and `toast` entries.
+- Run `nisse extensions` and `nisse extensions reload`.
+- Watch the TUI's status bar and transcript.
+
+### Agents
+
+- Call `extensions/list` and `extensions/reload`.
+- Read `nisse exec`'s stderr, or a subscription's `extensionStatus` and `toast` entries.
 
 ## Driving it with drive.ts
 
@@ -249,7 +263,8 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   `all done` to stdout and, to stderr, `› Bash(rm -rf ~/precious)`,
   `› Bash(echo hallo)` and `◆ guard: Bash finished`, exit 0.
 - **Tools, folder form and disabled.** In a fresh run with `--script` steps
-  `[{"tool": {"name": "Clock", "input": {"zone": "CET"}}}, {"tool": {"name": "Glob", "input": {"pattern": "*"}}}, {"tool": {"name": "Read", "input": {"file_path": "/etc/hostname"}}}, {"tool": {"name": "Bash", "input": {"command": "echo hi"}}}, {"text": "tools done"}]`,
+  `[{"tool": {"name": "Clock", "input": {"zone": "CET"}}}, {"tool": {"name": "Glob", "input": {"pattern": "*"}}}, {"tool": {"name": "Read", "input": {"file_path": "/tmp/nisse-verify/r/hostname"}}}, {"tool": {"name": "Bash", "input": {"command": "echo hi"}}}, {"text": "tools done"}]`,
+  run `printf 'gnome-box\n' > /tmp/nisse-verify/r/hostname`,
   copy `clock.ts` to `/tmp/nisse-verify/r/home/extensions/clock/index.ts`
   (`mkdir -p` that folder first), copy in `tidy.ts`, `shout.ts` and
   `off.ts`, and append `[extensions.off]\nenabled = false\n` to
@@ -259,10 +274,10 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   (no `--auto`), wait for `READY`, type `use your tools` and `Enter`, wait for
   `allow this call?` and `drive.ts r tui screen read-asks`: `▸ Clock` ran
   without asking and shows `NOON IN CET`, `▸ Glob(*)` shows
-  `no tool named Glob`, and `▸ Read(/etc/hostname)` asks, since `tidy`
+  `no tool named Glob`, and `▸ Read(/tmp/nisse-verify/r/hostname)` asks, since `tidy`
   made it not read-only. Press `C-y`, wait for `Bash(echo hi)` and
   `allow this call?`, press `C-y`, wait for `tools done` and `READY`: the
-  Read's result is the host name in capitals and the Bash's `HI`.
+  Read's result is `1` and `GNOME-BOX`, and the Bash's `HI`.
   `drive.ts r watch <id> --save tools` holds the `tool_result`s
   `NOON IN CET`, `no tool named Glob` with `"error":true`, the capitalised
   Read and `HI\n`, and an `approval` entry for the Read and the Bash only.
@@ -347,7 +362,7 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 - **Hook failure.** In a fresh run with `--script` steps
   `[{"tool": {"name": "Bash", "input": {"command": "echo boom"}}}, {"tool": {"name": "Bash", "input": {"command": "echo slow"}}}, {"tool": {"name": "Bash", "input": {"command": "echo fine"}}}, {"text": "all done"}]`,
   copy in `flaky.ts`. Run `drive.ts r nisse exec --auto "try the hooks"`:
-  after about 11 s, stdout `all done`, exit 0, and stderr, in order,
+  after about 10 s, stdout `all done`, exit 0, and stderr, in order,
   `◆ flaky: execute.before failed: boom`, `› Bash(echo boom)`,
   `◆ flaky: execute.before failed: Operation timed out after '10s'`,
   `› Bash(echo slow)`, `› Bash(echo fine)` and
@@ -367,8 +382,45 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   the first `nisse extensions` returns after about 10 s, and the list then
   comes at once.
 
+## Contexts
+
+- **Provider.** On Claude the request hook does not run, and `execute.after` cannot change the results of Claude Code's own tools.
+- **Server restart.** Status lines clear, so none outlives the code that set it.
+- **Second client.** Status lines and toasts are committed, so every client sees them, then and later.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- an extension's tool answers the model's calls, and a tool it removes is gone
+- an extension can refuse a call, change what runs and what the model sees, and tell people
+- an extension that fails to load is listed with why, while the others load and run
+- reloading runs the extensions as they are now, and no status outlives the code that set it
+- while extensions reload, the loaded ones keep guarding calls until their replacements are ready
+- a hook still running when its extension is unloaded can't bring back a status line
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- a person sees what extensions say in the footer and the transcript, and which failed to load
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- an extension's request hook adds instructions and narrows the tools of each request to the model
+- a request hook that fails is skipped with a toast, and the model gets the request as it was
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- an extension's tool reaches Claude through nisse's own MCP server, and a tool it removes is withheld
+- an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why
+- an extension's rewrite of a call is what Claude Code runs and what the transcript shows
+- an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
+- execute.after sees what Claude Code's tools return, and says so when it can't change it
+
 ## Gotchas
 
+- No committed test covers the name errors, a throwing transform, clearing a
+  status line, a `config.toml` that stops reading before a reload, or
+  `effect/<module>` imports.
 - The TUI asks `extensions/list` once when it opens; a reload while it runs
   does not change the failed-to-load lines it shows.
 - A toast is committed when the hook runs, so in the transcript it comes
@@ -376,8 +428,9 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   call.
 - A Claude recording plays its answers whatever nisse sends it, so judge a
   Claude hook by the log's hook answer, not by the screen alone.
-- The server loads extensions before it serves, so every client waits for the
-  slowest one, up to the 10 s limit.
+- The server loads extensions one at a time before it serves, so clients wait
+  for all of them, up to 10 s each; a client that started the server gives up
+  after about 10 s.
 - In `subagent_hooked`, Claude Code's turn ends before its subagent reports,
   so the subagent's card and conversation end `interrupted`.
 - `execute.after` runs only for a call that ran: a refused call, or a call to

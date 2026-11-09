@@ -14,9 +14,14 @@ the order sent.
 - `queue-idempotent` queues a submission once however often its `requestId`
   is sent.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Type and press Enter in the TUI while it shows `WORKING`.
+### People
+
+- Type and press Enter in the TUI while it shows `WORKING` and the panel reads `QUEUE · tab`.
+
+### Agents
+
 - Call `conversation/submit` while a run works.
 
 ## Driving it with drive.ts
@@ -59,13 +64,30 @@ Preconditions:
   `You said: third` (the script has run out, so Nisse echoes) and `run_end`:
   `second` once, and an empty queue.
 
+## Contexts
+
+- **Second client.** The queue shows to every client.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- prompts sent while nisse is working wait in a visible queue and run in order
+- submitting again with the same request id is answered once
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- a prompt sent while nisse works waits in the queue, then runs
+
 ## Gotchas
 
 - Replace `r` in the commands with your run id.
 - A scripted run needs no account: Claude is a fake that is signed in, so the
   splash and `providers/list` show it ready.
-- The prompt panel reads `PROMPT` while Nisse is ready and `QUEUE · tab` while
-  it works; wait for `QUEUE · tab` before typing the second prompt. `Tab`
-  switches it to steering, which is a different feature.
+- The prompt panel reads `PROMPT` while Nisse is ready and, while it works,
+  `QUEUE · tab`, or `STEER · tab` if `Tab` switched this TUI to steering
+  earlier: the switch lasts across runs until `Tab` is pressed again. Wait for
+  `QUEUE · tab` before typing the second prompt. Steering is a different
+  feature. No committed test covers the switch lasting across runs.
 - Each `drive.ts` call takes a few hundred milliseconds, so the first answer
   has to take seconds for the queued state to still be there when you look.

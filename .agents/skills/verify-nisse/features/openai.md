@@ -4,9 +4,11 @@ A conversation started with `--provider openai` is answered by ChatGPT through
 the person's ChatGPT sign-in, at `<home>/auth/openai.json`, with the
 conversation's model and effort. Nisse runs the loop and its own tools, with
 the same approvals as any conversation. An expired token is refreshed and
-saved back once; a sign-in that cannot be used or refreshed ends the run
-failed with a message saying to sign in again, and `providers/list` shows the
-provider signed out with that message. A provider `config.toml` names with
+saved back once; a refresh that is turned down ends the run failed with a
+message saying to sign in again, and `providers/list` shows the provider
+signed out with that message. A missing or invalid sign-in file fails the run
+with its own message, and `providers/list` shows `not signed in to ChatGPT`.
+A provider `config.toml` names with
 `driver = "openai"` is a second ChatGPT account, at `<home>/auth/<id>.json`.
 
 ## Sub-features
@@ -39,12 +41,18 @@ provider signed out with that message. A provider `config.toml` names with
 - `openai-code-mode` runs code-mode models' scripts, in
   [Code mode](./code-mode.md).
 
-## How to get to it (user POV)
+## How to get to it
 
-- Run `nisse --provider openai` or `nisse exec --provider openai '<prompt>'`,
-  with `--model` and `--effort`.
-- Call `conversation/start` with `"provider": "openai"`.
+### People
+
+- Run `nisse --provider openai`, with `--model` and `--effort`.
 - Run `nisse login openai`, or press `^L` in the TUI.
+
+### Agents
+
+- Run `nisse exec --provider openai '<prompt>'`.
+- Call `conversation/start` with `"provider": "openai"`.
+- Set `NISSE_OPENAI_URL` in the environment of the command that starts the server, to send sign-ins and requests to another address. `--fake-openai` sets it, and the stack tests use it.
 
 ## Driving it with drive.ts
 
@@ -150,6 +158,22 @@ Preconditions:
   run the same: ChatGPT turns the token down, Nisse refreshes once, and the
   run fails with the same message.
 
+## Contexts
+
+- **SSH.** Sign-in uses a device code.
+
+## Tests
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- a recorded ChatGPT exchange replays into the same answer
+- nisse offers its tools, runs the call the model asks for and sends back the result
+- a call the person denies reaches the model as denied
+- an expired token is refreshed once, saved, and used from then on
+- a failed response, a cut stream and a reached usage limit each end the run with the reason
+- an answer streams live, and interrupting it closes the request and keeps what was said
+- an answer whose CRLF event separators arrive split across reads is read whole
+
 ## Gotchas
 
 - The server reads the sign-in file on every request, so a changed file
@@ -157,8 +181,9 @@ Preconditions:
 - A refresh may rotate the refresh token, leaving the copy the sign-in came
   from stale. `down` writes a refreshed `--openai-auth` sign-in back to its
   file; a sign-in copied in by hand must be copied back by hand.
-- A refresh turned down keeps the provider listed signed out until the next
-  sign-in or a new server, even after the file changes.
+- A refresh turned down keeps the provider listed signed out, even after the
+  file changes, until the next sign-in, a ChatGPT request that succeeds, or a
+  new server.
 - `fake-openai.ndjson` logs requests for answers, not token refreshes: a
   refresh shows as the changed `auth/openai.json`.
 - The fake ChatGPT proves what nisse does with a 401 and a refresh answer,
@@ -199,7 +224,7 @@ steps' screens.
   slugs. Copy that file into `evidence/`.
 - **Model.** Pick an `openai` model other than `gpt-5.5` from that list,
   and one of its `efforts`. If `cache/openai-models.json` gives it
-  `"tool_mode": "code_mode_only"`, install the host first with
+  `"tool_mode":"code_mode_only"`, install the host first with
   `NISSE_HOME=/tmp/nisse-verify/r/home scripts/code-mode-host.sh`. Run
   `drive.ts r nisse exec --provider openai --model <model> --effort <effort> 'Say hello in five words.'`:
   exit 0 and an answer. `drive.ts r rpc conversation/list` holds a

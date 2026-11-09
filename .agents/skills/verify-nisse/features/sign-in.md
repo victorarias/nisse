@@ -36,15 +36,16 @@ time, and every connection sees it end as `succeeded`, `failed` or
   and a method the provider does not offer.
 - `signin-real` finishes a ChatGPT or Claude sign-in and names the account.
 
-## How to get to it (user POV)
+## How to get to it
 
-- Open `nisse`: the splash lists the providers; press `^L` to sign in to the
-  conversation's provider if it is signed out, else the first signed-out one.
-  Paste an address into the prompt and press `⏎`; `Esc` cancels.
-- Run `nisse login <provider>`, `nisse login openai --device-code`, or
-  `nisse logout <provider>`.
-- Call `providers/list`, `auth/start`, `auth/respond`, `auth/cancel`,
-  `auth/logout`, and follow `auth/watch`.
+### People
+
+- Open `nisse`: the splash lists the providers; press `^L` to sign in to the conversation's provider if it is signed out, else the first signed-out one. Paste an address into the prompt and press `⏎`; `Esc` cancels.
+- Run `nisse login <provider>`, `nisse login openai --device-code`, or `nisse logout <provider>`.
+
+### Agents
+
+- Call `providers/list`, `auth/start`, `auth/respond`, `auth/cancel`, `auth/logout`, and follow `auth/watch`.
 
 ## Driving it with drive.ts
 
@@ -188,12 +189,45 @@ Preconditions:
   `drive.ts r rpc auth/start '{"provider": "openai", "method": "terminal"}'`:
   an error, `openai can't sign in by terminal`.
 
+## Contexts
+
+- **SSH.** OpenAI's sign-in from the TUI and `nisse login` uses a device code, because a browser elsewhere cannot reach port 1455. Claude has only its terminal sign-in.
+- **Second client.** Any client can start, follow, answer or cancel a sign-in.
+- **Idle.** The server exits 30 s after its last client leaves, even while a sign-in waits.
+
+## Tests
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- the splash lists every provider and how it is signed in
+- ^L signs in to a signed-out Claude by running its own sign-in in the terminal
+- a sign-in cancelled from another connection stops Claude's sign-in in the terminal
+- an open TUI shows a sign-in another connection finished
+- nisse login hands what the person types to Claude's own sign-in
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- a ChatGPT answer is committed as nisse's message, asked for with the sign-in's headers
+- a conversation with ChatGPT before signing in says how to fix it
+- signing in through a browser saves the tokens for this user only and names the account
+- the address a browser on another machine ends on, pasted back, finishes the sign-in
+- a device code sign-in shows the code to enter, then finishes once someone enters it
+- a cancelled sign-in ends for every connection and frees the callback port
+- a connection that starts watching after a sign-in ended still learns how it ended
+- signing out leaves the provider signed out and tells every connection
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account
+
 ## Gotchas
 
 - The TUI follows only the sign-in it started; another client's sign-in does
   not open its panel.
-- A cancelled sign-in closes the TUI's panel. A failed one keeps it, showing
-  `✗ <reason>` with `^L  try again` and `esc  close`.
+- A cancelled sign-in closes the TUI's panel. A failed one keeps it, with
+  `^L  try again` and `esc  close`: a failure before any address appeared
+  shows `✗ <reason>`; today a failure after one keeps showing the address and
+  its hint, with no `✗` line.
 - One browser sign-in listens on port 1455 at a time; a second, from another
   home, fails at once, and `watch-auth` in that home shows
   `could not listen on 127.0.0.1:1455 for the browser's answer (is another sign-in running?); ...`.

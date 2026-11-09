@@ -30,15 +30,20 @@ failed with a message saying why, in every client.
   [Claude](./claude.md) and [OpenAI](./openai.md); signing in is in
   [Sign-in](./sign-in.md).
 
-## How to get to it (user POV)
+## How to get to it
 
-- Run `nisse --provider <name>` or `nisse exec --provider <name> '<prompt>'`.
+### People
+
+- Run `nisse --provider <name>`.
+- Write `NISSE_HOME/config.toml` with `[providers.<id>]` tables; the next server reads it. Set `NISSE_CLAUDE` in the environment of the command that starts the server.
+- Read the TUI's splash, which lists every provider.
+
+### Agents
+
+- Run `nisse exec --provider <name> '<prompt>'`.
 - Call `conversation/start` with `"provider": "<name>"`.
-- `conversation/list` and each snapshot's `conversation` show the provider in
-  its `model`.
-- Write `NISSE_HOME/config.toml` with `[providers.<id>]` tables; the next
-  server reads it. Set `NISSE_CLAUDE` in the environment of the command that
-  starts the server. `providers/list` and the TUI's splash list every provider.
+- Call `providers/list`. `conversation/list` and each snapshot's `conversation` show the provider in its `model`.
+- Write `NISSE_HOME/config.toml` with `[providers.<id>]` tables; the next server reads it. Set `NISSE_CLAUDE` in the environment of the command that starts the server.
 
 ## Driving it with drive.ts
 
@@ -148,6 +153,17 @@ Preconditions:
   stderr `/tmp/nisse-verify/r/home/config.toml: Expected "claude" | "openai"`
   and `at ["providers"]["gem"]["driver"]`. Run `drive.ts r nisse exec hi`:
   exit 1, empty stdout, and the same stderr from the server it tried to start.
+
+## Contexts
+
+- **Server restart.** The server reads `config.toml` and its environment when it starts.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- starting a conversation with a provider nisse does not have says so
+- the providers config.toml names can start conversations beside the built-in ones
 
 ## Gotchas
 

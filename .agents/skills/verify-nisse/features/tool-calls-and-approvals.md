@@ -27,13 +27,17 @@ conversation was started with `--auto`, which runs every call without asking.
 - `tool-root-env` runs every command with `NISSE_ROOT_CONVERSATION` set to the
   id of the conversation people started, in a subagent too.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - In the TUI, wait for `allow this call?` and press `^Y` or `^N`.
-- Start with `nisse --auto` or `nisse exec --auto '<prompt>'`.
-- Run `nisse exec '<prompt>'` without `--auto`.
-- Watch for an `approval` entry, then call `approval/resolve` with its
-  `approval` id; or `conversation/start` with `"approvals": "auto"`.
+- Start with `nisse --auto`.
+
+### Agents
+
+- Run `nisse exec '<prompt>'` without `--auto`, or `nisse exec --auto '<prompt>'`.
+- Watch for an `approval` entry, then call `approval/resolve` with its `approval` id; or `conversation/start` with `"approvals": "auto"`.
 
 ## Driving it with drive.ts
 
@@ -123,6 +127,32 @@ Preconditions:
   shows `✗ denied by nisse` and
   `interrupted; it may or may not have taken effect`, then `◆ interrupted`.
 
+## Contexts
+
+- **Second client.** Any client can answer, and the first answer counts.
+- **Provider.** On Claude, Nisse asks before the calls Claude Code would ask about.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- a call that changes files waits for a person's answer and runs once allowed
+- a denied call is reported to the model as denied and nothing changes
+- reading calls and conversations started with auto approvals run without asking
+- a running command's output streams live and ends as its result
+- a command's output keeps characters split across reads and between streams whole
+- a verbose command's live output stays a bounded tail
+- output a background process writes after its call ends never reaches the conversation
+- Grep reports only the lines a file has, whatever its line endings
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- nisse asks before a command runs, ctrl+y allows it and its output shows under the call
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- nisse exec shows the calls nisse makes and, without --auto, denies the ones that would change things
+
 ## Gotchas
 
 - The TUI's working directory is the checkout, so its calls run there. Script
@@ -130,4 +160,5 @@ Preconditions:
   over the wire with another `cwd`.
 - A script step with a `tool` calls it and the same run goes on to the next
   step; a step without one ends the run.
-- `^Y` and `^N` answer the oldest call waiting.
+- `^Y` and `^N` answer this conversation's oldest waiting call, or else the
+  oldest in the first subagent that has one.

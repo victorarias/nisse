@@ -3,28 +3,37 @@
 One server serves a home, shared by every client. The first client to need it
 starts it, clients starting at the same moment share it, a second server for
 the same home refuses to start, and the server exits 30 s after its last
-client leaves and its last run settles. `nisse serve --restart` replaces a
-running server once its runs settle, and `nisse schema` prints the protocol's
-JSON Schema.
+subscription closes and its last run settles. `nisse serve --restart` replaces a
+running server once its runs settle.
 
 ## Sub-features
 
 - `server-on-demand` starts a server for the first `exec` or TUI.
 - `server-shared` lets clients that start together share one server.
 - `server-refuse` makes `nisse serve` refuse a home that already has a server.
-- `server-idle-exit` exits the server 30 s after its last client leaves.
+- `server-idle-exit` exits the server 30 s after its last subscription closes
+  and its last run settles.
 - `server-stop` stops it on `server/stop` once its runs settle.
-- `server-restart` replaces the server with `nisse serve --restart` once its
-  runs settle.
-- `schema-print` prints the protocol's JSON Schema with `nisse schema`.
+- `server-restart` replaces the running server with `nisse serve --restart`
+  once its runs settle.
+- `server-old-home` keeps working in a home a Rust version of Nisse used: its
+  `nisse.sqlite` stays as it was, and this Nisse uses `store.sqlite` beside it.
 
-## How to get to it (user POV)
+## How to get to it
+
+### People
 
 - Run `nisse exec` or open the TUI with no server running.
-- Run `nisse serve`, or `nisse serve --restart` to replace a running server.
-- Leave the home with no clients for 30 s.
+- Run `nisse serve`.
+- Run `nisse serve --restart` to replace the running server once its runs settle.
+
+### Agents
+
 - Call `server/stop`.
-- Run `nisse schema`.
+
+### Triggers
+
+- The home has no open `conversation/subscribe`, `status/watch` or `auth/watch` stream and no running run for 30 s. A connection making only single calls does not keep the server alive.
 
 ## Driving it with drive.ts
 
@@ -72,15 +81,34 @@ Preconditions:
   committed, but the open TUI stays `WORKING` with no call output for good.
   `nisse exec --auto go` in place of the TUI never exits either, and
   `rpc server/stop` in place of `--restart` finishes the TUI as it should.
-- **Schema.** Run `drive.ts r nisse schema`. Exit 0 and no server started
-  (`doctor` still shows `none running`); the saved stdout, between `--- stdout`
-  and `--- stderr`, is the same text as `schema/nisse.schema.json`, whose
-  `"protocol"` matches the `protocol` that `doctor` prints once a server runs.
+
+## Contexts
+
+- **Running work.** `serve --restart` and `server/stop` wait for runs to settle.
+
+## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- the server exits once no client is connected and nothing is running
+- stopping the server answers the caller, then the server exits
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- nisse exec starts a server when none runs, prints the answer and exits 0
+- a home the Rust version used still works and keeps its database
+- clients starting at the same moment share one server
+- nisse exec says why the server it started could not run
+- a second server for the same home refuses to start
+
+No committed test covers `nisse serve --restart`.
 
 ## Gotchas
 
 - A server started with `drive.ts r serve` also exits 30 s after it goes idle.
   Start it just before the journey needs it.
+- `server-old-home` is covered by its stack test only: making a Rust home by
+  hand is not a user path `drive.ts` can drive.
 - The idle exit is the one journey that waits on time; give `doctor` 40 s.
 - `rpc server/stop` with a run still working waits for it, so the call times
   out after 5 s; start the stop once the run has ended.
