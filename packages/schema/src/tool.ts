@@ -27,17 +27,38 @@ export function projectParameters(schema: StandardJsonSchema): JsonSchema {
 	return projected as JsonSchema;
 }
 
+// Keywords whose values are data, not schemas: a "NaN" there is a value someone wrote, not a projection.
+const DATA_KEYWORDS = new Set(["const", "enum", "default", "examples"]);
+const NON_FINITE = ["Infinity", "-Infinity", "NaN"];
+
+// Effect projects a non-finite number as `anyOf: [{ type: "number" }, { type: "string", enum: NON_FINITE }, ...]`.
+function isNonFiniteNumber(anyOf: unknown): boolean {
+	if (!Array.isArray(anyOf)) return false;
+	const has = (test: (member: Record<string, unknown>) => boolean) =>
+		anyOf.some((member) => typeof member === "object" && member !== null && test(member));
+	return (
+		has((member) => member.type === "number") &&
+		has(
+			(member) =>
+				member.type === "string" &&
+				Array.isArray(member.enum) &&
+				NON_FINITE.every((value) => (member.enum as unknown[]).includes(value)),
+		)
+	);
+}
+
 function refuseNonFinite(node: unknown, path: string): void {
 	if (Array.isArray(node)) {
 		node.forEach((item, index) => refuseNonFinite(item, `${path}/${index}`));
 		return;
 	}
 	if (typeof node !== "object" || node === null) return;
-	const members = (node as { enum?: unknown }).enum;
-	if (Array.isArray(members) && members.includes("NaN")) {
+	if (isNonFiniteNumber((node as { anyOf?: unknown }).anyOf)) {
 		throw new Error(`tool parameters at "${path || "/"}" accept NaN and the infinities; use Schema.Finite`);
 	}
-	for (const [key, value] of Object.entries(node)) refuseNonFinite(value, `${path}/${key}`);
+	for (const [key, value] of Object.entries(node)) {
+		if (!DATA_KEYWORDS.has(key)) refuseNonFinite(value, `${path}/${key}`);
+	}
 }
 
 // One compiled validator per schema object: tool schemas are long-lived, so the WeakMap drops entries with their tools.

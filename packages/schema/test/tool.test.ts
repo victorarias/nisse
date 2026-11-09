@@ -58,6 +58,16 @@ test("tool-argument-validation: a tool cannot tell a model it may send NaN", () 
   )
 })
 
+test('tool-argument-validation: a string parameter may still offer the word "NaN"', () => {
+  const schema = fromEffect(
+    Schema.Struct({ mode: Schema.Literals(["NaN", "normal"]), note: Schema.String.annotate({ default: "NaN" }) }),
+  )
+  expect(checkToolArguments("echo", schema, { mode: "NaN", note: "x" })).toEqual({
+    ok: true,
+    value: { mode: "NaN", note: "x" },
+  })
+})
+
 test("tool-argument-validation: a coerced call leaves the transcript's arguments unchanged", () => {
   const args = { count: "42" }
   checkToolArguments("echo", fromJson, args)
