@@ -357,11 +357,13 @@ export function fauxProvider(options: FauxOptions = {}): Faux {
     Effect.map(
       typeof step !== "function"
         ? Effect.succeed(step)
-        : Effect.suspend(() => {
-            const result = step(context, streamOptions, state, model)
-            if (Effect.isEffect(result)) return result
-            return Effect.tryPromise({ try: async () => result, catch: (error) => error })
-          }),
+        : Effect.flatMap(
+            Effect.try({ try: () => step(context, streamOptions, state, model), catch: (error) => error }),
+            (result) =>
+              Effect.isEffect(result)
+                ? result
+                : Effect.tryPromise({ try: async () => result, catch: (error) => error }),
+          ),
       (message) =>
         withUsageEstimate(cloneMessage(message, api, provider, model.id), context, streamOptions, promptCache),
     )

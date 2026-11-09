@@ -90,7 +90,17 @@ describe("the faux provider", () => {
         stopReason: "toolUse",
       }),
     ])
-    const list = await run(Stream.runCollect(models.streamSimple(faux.getModel(), said("hi"))))
+    // `partial` is shared between events, so the arguments each delta showed are copied as it arrives.
+    const shown: unknown[] = []
+    const list = await run(
+      Stream.runCollect(
+        Stream.tap(models.streamSimple(faux.getModel(), said("hi")), (event) =>
+          Effect.sync(() => {
+            if (event.type === "toolcall_delta") shown.push(structuredClone(event.partial.content[2]))
+          }),
+        ),
+      ),
+    )
     expect(types(list)).toEqual([
       "start",
       "thinking_start",
@@ -106,10 +116,9 @@ describe("the faux provider", () => {
       "toolcall_end",
       "done",
     ])
-    const toolDeltas = list.filter((event) => event.type === "toolcall_delta")
-    expect(toolDeltas.map((event) => event.partial.content[2])).toMatchObject([
-      { arguments: {} },
-      { arguments: { a: 1 } },
+    expect(shown).toEqual([
+      { type: "toolCall", id: "c1", name: "echo", arguments: {} },
+      { type: "toolCall", id: "c1", name: "echo", arguments: { a: 1 } },
     ])
     expect(faux.state.callCount).toBe(1)
     const none = await run(models.completeSimple(faux.getModel(), said("more")))
@@ -150,6 +159,19 @@ describe("the faux provider", () => {
     expect(isRetryableAssistantError(failed)).toBe(true)
     const retried = await run(models.completeSimple(faux.getModel(), said("hi")))
     expect(retried.content).toEqual([{ type: "text", text: "fine" }])
+  })
+
+  test("models-faux: a response factory that throws ends the request with its error as the final message", async () => {
+    const faux = fauxProvider()
+    const models = fromProviders([faux.provider])
+    faux.setResponses([
+      () => {
+        throw new Error("503 service unavailable")
+      },
+    ])
+    const failed = await run(models.completeSimple(faux.getModel(), said("hi")))
+    expect(failed).toMatchObject({ stopReason: "error", errorMessage: "503 service unavailable" })
+    expect(isRetryableAssistantError(failed)).toBe(true)
   })
 
   test("models-faux: usage counts the prompt, and a session's repeated prefix is read from the cache", async () => {
