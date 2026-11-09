@@ -33,6 +33,9 @@ for (const entry of exclusions.tests) {
 for (const [id, row] of Object.entries(expected)) {
 	for (const mode of MODES) {
 		const state = stateOf(row, mode);
+		if (state.startsWith("amended ") && !existsSync(join(root, "amended", state.slice("amended ".length)))) {
+			problems.push(`row says "${state}" but that file does not exist: ${id}`);
+		}
 		if (state.startsWith("excluded ") && excluded.get(id)?.decision !== state.slice("excluded ".length)) {
 			problems.push(`row says "${state}" but exclusions.json has ${excluded.get(id)?.decision ?? "no entry"}: ${id}`);
 		}

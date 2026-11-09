@@ -119,7 +119,7 @@ writeFileSync(
 	join(root, "exclusions.json"),
 	`${JSON.stringify(
 		{
-			reviewed: { count: reviewed },
+			reviewed: { count: reviewed, ask: "a-1dy4mf" },
 			decisions: {
 				D5: "Left-out features: deferred commits, group commit, IndexedDB, Cloudflare, alarms, JSONL, key-value store, table prefix, read cache.",
 				D8: "pi-ai is not brought over; tests needing real providers and tokens do not run.",

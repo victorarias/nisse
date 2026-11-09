@@ -23,6 +23,10 @@ Checks before a PR:
 bun run check   # tsc, prettier and bun test
 ```
 
+A change that adds, changes or deletes tests goes through the `verify-tests`
+skill. A change to the kernel packages or `packages/conformance` goes through
+`verify-conformance`.
+
 Before reporting a change done, drive it with the `verify-nisse` skill
 (`.agents/skills/verify-nisse`) and show its evidence. A change to a
 user-facing behavior updates that skill's feature map in the same PR.
@@ -33,13 +37,13 @@ Every test defends one promise that a person, a client, an extension or a later
 version relies on, and its name says what they would see if it broke. Tests
 enter where those consumers enter:
 
-| Kind     | Enters through                                                                                 | Lives in                                               |
-| -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Wire     | a real server in process, driven as a raw JSON-RPC client over its socket                      | `packages/nisse/test/wire.test.ts`                     |
-| Screen   | the real TUI in a PTY on an `@xterm/headless` screen, typed into, against a real server        | `packages/nisse/test/screen.test.ts`                   |
-| Stack    | the `nisse` binary over its socket: kill, restart, reconnect                                   | `packages/nisse/test/stack.test.ts`                    |
-| Provider | a wire test whose provider is a fake server replaying a recorded exchange from `fixtures/`     | `packages/nisse/test/openai.test.ts`, `claude.test.ts` |
-| Package  | native Effect tests entering through a package's public API, for what the adapter cannot prove | `packages/<name>/test`                                 |
+| Kind     | Enters through                                                                                                                          | Lives in                                               |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Wire     | a real server in process, driven as a raw JSON-RPC client over its socket                                                               | `packages/nisse/test/wire.test.ts`                     |
+| Screen   | the real TUI in a PTY on an `@xterm/headless` screen, typed into, against a real server                                                 | `packages/nisse/test/screen.test.ts`                   |
+| Stack    | the `nisse` binary over its socket: kill, restart, reconnect                                                                            | `packages/nisse/test/stack.test.ts`                    |
+| Provider | a wire test whose provider is a fake server replaying a recorded exchange from `fixtures/`                                              | `packages/nisse/test/openai.test.ts`, `claude.test.ts` |
+| Package  | a package's public API, only for specified logic with a large input space (as tables or properties) or a promise no wire test can reach | `packages/<name>/test`                                 |
 
 Provider tests replay recorded exchanges from `fixtures/`. The fake OpenAI
 server serves each `emit_inbound` frame and the test checks every request
