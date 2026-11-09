@@ -89,9 +89,9 @@ export class SqliteStorage implements Storage {
   readonly #db: SqliteDatabase
   #nextId: number
   #closing: Deferred.Deferred<void, StorageError> | undefined
-  /** Reads underway that issue several queries; close waits for them, so none reaches a closed database. */
-  #reads = 0
-  #readsDrained: Deferred.Deferred<void> | undefined
+  /** Calls underway that issue several queries; close waits for them, so none reaches a closed database. */
+  #calls = 0
+  #callsDrained: Deferred.Deferred<void> | undefined
 
   private constructor(db: SqliteDatabase, nextId: number) {
     this.#db = db
@@ -117,48 +117,49 @@ export class SqliteStorage implements Storage {
     batches: readonly (readonly StorageWrite[])[],
     receive: (index: number, seq: Seq) => void,
   ): Effect.Effect<CommitResult, StorageError> {
-    return Effect.gen({ self: this }, function* () {
-      yield* this.#open()
-      const seqs: Seq[] = []
-      let refused: CommitRefused | undefined
-      let candidateNextId = this.#nextId
-      yield* this.#db.transaction((transaction) =>
-        Effect.gen({ self: this }, function* () {
-          const metadata = yield* readMetadata(transaction)
-          let next = metadata.next_seq
-          const state = yield* CommitState.read(transaction, batches)
-          const pending = new PendingWrites()
-          for (const writes of batches) {
-            const checked = yield* this.#checkBatch(transaction, state, pending, writes)
-            if (checked instanceof CommitRefused) {
-              refused = checked
-              break
+    return this.#admit(
+      Effect.gen({ self: this }, function* () {
+        const seqs: Seq[] = []
+        let refused: CommitRefused | undefined
+        let candidateNextId = this.#nextId
+        yield* this.#db.transaction((transaction) =>
+          Effect.gen({ self: this }, function* () {
+            const metadata = yield* readMetadata(transaction)
+            let next = metadata.next_seq
+            const state = yield* CommitState.read(transaction, batches)
+            const pending = new PendingWrites()
+            for (const writes of batches) {
+              const checked = yield* this.#checkBatch(transaction, state, pending, writes)
+              if (checked instanceof CommitRefused) {
+                refused = checked
+                break
+              }
+              const seq = seqFromNumber(next++)
+              state.apply(writes, checked, seq)
+              // A record JSON cannot encode, such as a cycle, fails the call and rolls it back.
+              yield* Effect.try({ try: () => pending.add(writes, checked, seq, state), catch: StorageError.of })
+              seqs.push(seq)
+              for (const write of writes) {
+                const id = claimOf(write)?.id
+                if (id !== undefined) candidateNextId = Math.max(candidateNextId, id + 1)
+              }
             }
-            const seq = seqFromNumber(next++)
-            state.apply(writes, checked, seq)
-            // A record JSON cannot encode, such as a cycle, fails the call and rolls it back.
-            yield* Effect.try({ try: () => pending.add(writes, checked, seq, state), catch: StorageError.of })
-            seqs.push(seq)
-            for (const write of writes) {
-              const id = claimOf(write)?.id
-              if (id !== undefined) candidateNextId = Math.max(candidateNextId, id + 1)
+            yield* pending.flush(transaction)
+            if (seqs.length > 0) {
+              yield* transaction.run(
+                "UPDATE durable_metadata SET next_id = ?, next_seq = ? WHERE singleton = 1",
+                String(Math.max(Number(metadata.next_id), candidateNextId)),
+                next,
+              )
             }
-          }
-          yield* pending.flush(transaction)
-          if (seqs.length > 0) {
-            yield* transaction.run(
-              "UPDATE durable_metadata SET next_id = ?, next_seq = ? WHERE singleton = 1",
-              String(Math.max(Number(metadata.next_id), candidateNextId)),
-              next,
-            )
-          }
-        }),
-      )
-      // The transaction committed: the stored batches are durable.
-      this.#nextId = Math.max(this.#nextId, candidateNextId)
-      for (const [index, seq] of seqs.entries()) receive(index, seq)
-      return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused }
-    })
+          }),
+        )
+        // The transaction committed: the stored batches are durable.
+        this.#nextId = Math.max(this.#nextId, candidateNextId)
+        for (const [index, seq] of seqs.entries()) receive(index, seq)
+        return refused === undefined ? { stored: seqs.length } : { stored: seqs.length, refused }
+      }),
+    )
   }
 
   /**
@@ -254,7 +255,7 @@ export class SqliteStorage implements Storage {
   entry(id: EntryId): Effect.Effect<StoredEntry | undefined, ReadError>
   entry(conversationId: ConversationId, id: EntryId): Effect.Effect<StoredEntry | undefined, ReadError>
   entry(first: EntryId | ConversationId, second?: EntryId): Effect.Effect<StoredEntry | undefined, ReadError> {
-    return this.#admitRead(
+    return this.#admit(
       Effect.gen({ self: this }, function* () {
         const id = idFromNumber<EntryId>(second ?? first)
         let conversation: ConversationRecord | undefined
@@ -284,7 +285,7 @@ export class SqliteStorage implements Storage {
     conversationId: ConversationId,
     atOrBeforeEntryId: EntryId | undefined,
   ): Effect.Effect<HeadMarker | undefined, ReadError> {
-    return this.#admitRead(
+    return this.#admit(
       Effect.gen({ self: this }, function* () {
         let conversation = yield* this.#readConversation(conversationId)
         if (conversation === undefined) return yield* unknownConversation(conversationId)
@@ -319,7 +320,7 @@ export class SqliteStorage implements Storage {
     limit: number,
     cursor: Cursor | undefined,
   ): Effect.Effect<Page<EntryRecord>, ReadError> {
-    return this.#admitRead(
+    return this.#admit(
       Effect.gen({ self: this }, function* () {
         const { order, after } = yield* scanStart(query.order, cursor, "descending")
         // The fork chain from the queried conversation to the root, each segment with its inclusive upper bound.
@@ -453,10 +454,7 @@ export class SqliteStorage implements Storage {
 
   document(id: DocumentId, at: DocumentPoint): Effect.Effect<StoredDocument | undefined, ReadError> {
     // The record and revision queries must see one committed state; a commit between them can replace the base.
-    return Effect.andThen(
-      this.#open(),
-      this.#db.transaction((transaction) => materializeDocument(transaction, id, at)),
-    )
+    return this.#admit(this.#db.transaction((transaction) => materializeDocument(transaction, id, at)))
   }
 
   scanDocuments(
@@ -497,20 +495,22 @@ export class SqliteStorage implements Storage {
   }
 
   close(): Effect.Effect<void, StorageError> {
+    // The close runs on its own fiber and every caller awaits it, so interrupting a caller only stops its wait.
     return Effect.suspend(() => {
       if (this.#closing !== undefined) return Deferred.await(this.#closing)
       const closing = Deferred.makeUnsafe<void, StorageError>()
       this.#closing = closing
-      return Effect.gen({ self: this }, function* () {
-        if (this.#reads > 0) {
-          this.#readsDrained = Deferred.makeUnsafe<void>()
-          yield* Deferred.await(this.#readsDrained)
+      const close = Effect.gen({ self: this }, function* () {
+        if (this.#calls > 0) {
+          this.#callsDrained = Deferred.makeUnsafe<void>()
+          yield* Deferred.await(this.#callsDrained)
         }
         yield* this.#db.close()
       }).pipe(
         Effect.exit,
-        Effect.flatMap((exit) => Effect.andThen(Deferred.done(closing, exit), exit)),
+        Effect.flatMap((exit) => Deferred.done(closing, exit)),
       )
+      return Effect.andThen(Effect.forkDetach(close, { startImmediately: true }), Deferred.await(closing))
     })
   }
 
@@ -520,17 +520,17 @@ export class SqliteStorage implements Storage {
     )
   }
 
-  /** A read that issues several queries; close waits for it, so its later queries never reach a closed database. */
-  #admitRead<A, E>(read: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> {
+  /** A call that issues several queries; close waits for it, so its later queries never reach a closed database. */
+  #admit<A, E>(read: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> {
     return Effect.andThen(
       this.#open(),
       Effect.suspend(() => {
-        this.#reads++
+        this.#calls++
         return Effect.ensuring(
           read,
           Effect.sync(() => {
-            if (--this.#reads === 0 && this.#readsDrained !== undefined)
-              Deferred.doneUnsafe(this.#readsDrained, Effect.void)
+            if (--this.#calls === 0 && this.#callsDrained !== undefined)
+              Deferred.doneUnsafe(this.#callsDrained, Effect.void)
           }),
         )
       }),

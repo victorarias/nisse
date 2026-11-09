@@ -135,11 +135,13 @@ export class BunSqliteDatabase extends BunSqliteExecutor implements SqliteDataba
   transaction<A, E, R>(
     body: (transaction: SqliteExecutor) => Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E | StorageError, R> {
-    return Effect.suspend(() => {
+    // Only the body is interruptible: an interrupted body still ends in a rollback, so the connection never stays inside
+    // the transaction.
+    return Effect.uninterruptibleMask((restore) => {
       const connection = this.#connection
       let active = true
       return call(() => connection.exec("BEGIN IMMEDIATE")).pipe(
-        Effect.andThen(Effect.exit(body(new BunSqliteExecutor(connection, () => active)))),
+        Effect.andThen(Effect.exit(restore(body(new BunSqliteExecutor(connection, () => active))))),
         Effect.flatMap((exit): Effect.Effect<A, E | StorageError> => {
           active = false
           if (Exit.isSuccess(exit)) {
