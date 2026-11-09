@@ -9,7 +9,8 @@ So far the kernel holds storage:
   pi-durable's, so a database and the upstream suite read the same.
 - `src/storage.ts`: the `Storage` port (spec section 10), every method an Effect.
 - `src/sqlite/`: the port over `bun:sqlite`. `database.ts` is the `SqliteDatabase` facade, chord's shape with Effect
-  calls; the real one runs each call synchronously, and a test double may suspend. `migrations.ts` holds the schema
+  calls; the real one runs each call synchronously and holds other calls while a transaction is open, and a test
+  double may suspend. `migrations.ts` holds the schema
   history. `storage.ts`, `commit.ts`, `statements.ts` and `rows.ts` implement the port.
 
 `src/sqlite/{rows,statements,commit,storage}.ts` are derived from pi-durable's `src/storage/sqlite/` at commit

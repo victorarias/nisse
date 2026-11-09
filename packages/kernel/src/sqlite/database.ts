@@ -3,7 +3,7 @@
 import { Database, type Statement } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { dirname } from "node:path"
-import { Effect, Exit } from "effect"
+import { Effect, Exit, Semaphore } from "effect"
 import { StorageError } from "../errors.ts"
 
 /** Values a statement binds. */
@@ -25,7 +25,8 @@ export interface SqliteExecutor {
 /**
  * A SQLite database. `transaction` gives `body` a handle for all of its work, invalid once the body ends; it commits
  * when the body succeeds and rolls back when it fails or is interrupted. A failed rollback fails with a `StorageError`,
- * so no caller mistakes the body's own failure for a guaranteed rollback.
+ * so no caller mistakes the body's own failure for a guaranteed rollback. Calls on the database wait while a
+ * transaction is open, so they never see its uncommitted writes; the body must use its handle, not the database.
  */
 export interface SqliteDatabase extends SqliteExecutor {
   transaction<A, E, R>(
@@ -50,10 +51,16 @@ const call = <A>(operation: () => A): Effect.Effect<A, StorageError> =>
 class BunSqliteExecutor implements SqliteExecutor {
   readonly #connection: BunSqliteConnection
   readonly #active: () => boolean
+  readonly #admit: <A>(call: Effect.Effect<A, StorageError>) => Effect.Effect<A, StorageError>
 
-  constructor(connection: BunSqliteConnection, active: () => boolean) {
+  constructor(
+    connection: BunSqliteConnection,
+    active: () => boolean,
+    admit: <A>(call: Effect.Effect<A, StorageError>) => Effect.Effect<A, StorageError> = (call) => call,
+  ) {
     this.#connection = connection
     this.#active = active
+    this.#admit = admit
   }
 
   exec(sql: string): Effect.Effect<void, StorageError> {
@@ -78,10 +85,12 @@ class BunSqliteExecutor implements SqliteExecutor {
   }
 
   #call<A>(operation: (connection: BunSqliteConnection) => A): Effect.Effect<A, StorageError> {
-    return call(() => {
-      if (!this.#active()) throw new Error("SQLite transaction handle is no longer active")
-      return operation(this.#connection)
-    })
+    return this.#admit(
+      call(() => {
+        if (!this.#active()) throw new Error("SQLite transaction handle is no longer active")
+        return operation(this.#connection)
+      }),
+    )
   }
 }
 
@@ -120,16 +129,22 @@ class BunSqliteConnection {
   }
 }
 
-/** A `SqliteDatabase` over one `bun:sqlite` connection. Every call runs synchronously. */
+/**
+ * A `SqliteDatabase` over one `bun:sqlite` connection. Every call runs synchronously, but a transaction's body can
+ * suspend, if only when the runtime yields its fiber, so one permit orders the connection's calls and transactions.
+ */
 export class BunSqliteDatabase extends BunSqliteExecutor implements SqliteDatabase {
   readonly #connection: BunSqliteConnection
+  readonly #permit: Semaphore.Semaphore
   #closed = false
 
   /** Takes ownership of `database`: closing this closes it. */
   constructor(database: Database) {
     const connection = new BunSqliteConnection(database)
-    super(connection, () => true)
+    const permit = Semaphore.makeUnsafe(1)
+    super(connection, () => true, Semaphore.withPermit(permit))
     this.#connection = connection
+    this.#permit = permit
   }
 
   transaction<A, E, R>(
@@ -137,31 +152,35 @@ export class BunSqliteDatabase extends BunSqliteExecutor implements SqliteDataba
   ): Effect.Effect<A, E | StorageError, R> {
     // Only the body is interruptible: an interrupted body still ends in a rollback, so the connection never stays inside
     // the transaction.
-    return Effect.uninterruptibleMask((restore) => {
-      const connection = this.#connection
-      let active = true
-      return call(() => connection.exec("BEGIN IMMEDIATE")).pipe(
-        Effect.andThen(Effect.exit(restore(body(new BunSqliteExecutor(connection, () => active))))),
-        Effect.flatMap((exit): Effect.Effect<A, E | StorageError> => {
-          active = false
-          if (Exit.isSuccess(exit)) {
-            return call(() => connection.exec("COMMIT")).pipe(
-              Effect.catch((error) => Effect.andThen(rollback(connection, error), Effect.fail(error))),
-              Effect.as(exit.value),
-            )
-          }
-          return Effect.andThen(rollback(connection, exit.cause), exit)
-        }),
-      )
-    })
+    return Semaphore.withPermit(this.#permit)(
+      Effect.uninterruptibleMask((restore) => {
+        const connection = this.#connection
+        let active = true
+        return call(() => connection.exec("BEGIN IMMEDIATE")).pipe(
+          Effect.andThen(Effect.exit(restore(body(new BunSqliteExecutor(connection, () => active))))),
+          Effect.flatMap((exit): Effect.Effect<A, E | StorageError> => {
+            active = false
+            if (Exit.isSuccess(exit)) {
+              return call(() => connection.exec("COMMIT")).pipe(
+                Effect.catch((error) => Effect.andThen(rollback(connection, error), Effect.fail(error))),
+                Effect.as(exit.value),
+              )
+            }
+            return Effect.andThen(rollback(connection, exit.cause), exit)
+          }),
+        )
+      }),
+    )
   }
 
   close(): Effect.Effect<void, StorageError> {
-    return call(() => {
-      if (this.#closed) return
-      this.#closed = true
-      this.#connection.close()
-    })
+    return Semaphore.withPermit(this.#permit)(
+      call(() => {
+        if (this.#closed) return
+        this.#closed = true
+        this.#connection.close()
+      }),
+    )
   }
 }
 
