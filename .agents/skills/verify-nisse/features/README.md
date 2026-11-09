@@ -97,7 +97,8 @@ A new feature adds its id and its test in the same change.
 A feature file made of kernel use cases, or whose client path is not built yet,
 keeps the entry contract's order but has no `drive.ts` steps: `How to get to it`
 says `None.` or names the step that adds the path, `Sources` names the ledger
-area, the spec sections and the examples, and `Tests` points at `bun run
+area in `ledger.json` and where the use cases come from in pi-durable (its
+spec sections, its README's headings and its numbered examples), and `Tests` points at `bun run
 coverage`. When the owning step adds a client path, it adds the entry points and
 a `Driving it with drive.ts` recipe in the same change.
 
