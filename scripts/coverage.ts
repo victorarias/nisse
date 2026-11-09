@@ -97,7 +97,6 @@ function readTests(useCases: Map<string, UseCase>): Test[] {
     const file = /\bfile="([^"]*)"/.exec(attrs)
     if (!name || !file) continue
     const title = unescape(name[1]!)
-    if (/<skipped\b/.test(body) || /<failure\b/.test(body)) continue
     const prefix = /^([a-z0-9-]+(?:, [a-z0-9-]+)*): /.exec(title)
     if (!prefix) {
       problems.push(`${file[1]}: test title names no use case: ${title}`)
@@ -106,6 +105,7 @@ function readTests(useCases: Map<string, UseCase>): Test[] {
     const ids = prefix[1]!.split(", ")
     for (const id of ids)
       if (!useCases.has(id)) problems.push(`${file[1]}: test names unknown use case ${id}: ${title}`)
+    if (/<skipped\b/.test(body) || /<failure\b/.test(body)) continue
     out.push({ ids, file: file[1]!, title })
   }
   return out
