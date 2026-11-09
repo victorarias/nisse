@@ -174,6 +174,32 @@ describe("the faux provider", () => {
     expect(isRetryableAssistantError(failed)).toBe(true)
   })
 
+  test("models-faux: a factory that waits is told through its signal when the request is interrupted", async () => {
+    const faux = fauxProvider()
+    const models = fromProviders([faux.provider])
+    let reached!: () => void
+    const waiting = new Promise<void>((resolve) => (reached = resolve))
+    const reasons: unknown[] = []
+    faux.setResponses([
+      (_context, options) =>
+        new Promise((_, reject) => {
+          reached()
+          options!.signal.addEventListener("abort", () => {
+            reasons.push(options!.signal.reason)
+            reject(options!.signal.reason)
+          })
+        }),
+    ])
+    await run(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(models.completeSimple(faux.getModel(), said("hi")))
+        yield* Effect.promise(() => waiting)
+        yield* Fiber.interrupt(fiber)
+      }),
+    )
+    expect(reasons).toHaveLength(1)
+  })
+
   test("models-faux: usage counts the prompt, and a session's repeated prefix is read from the cache", async () => {
     const faux = fauxProvider()
     const models = fromProviders([faux.provider])

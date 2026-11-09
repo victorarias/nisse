@@ -94,10 +94,13 @@ export interface FauxProviderState {
   cancelledDeferred: DeferredHandle[]
 }
 
-/** Computes a response from the request. May return a Promise or an Effect; a failure becomes an error message. */
+/**
+ * Computes a response from the request. May return a Promise or an Effect; a failure becomes an error message.
+ * `options.signal` aborts when the request is interrupted, so a factory that waits can stop.
+ */
 export type FauxResponseFactory = (
   context: TranscriptContext,
-  options: RequestOptions | undefined,
+  options: (RequestOptions & { signal: AbortSignal }) | undefined,
   state: FauxProviderState,
   model: Model<string>,
 ) => AssistantMessage | PromiseLike<AssistantMessage> | Effect.Effect<AssistantMessage, unknown>
@@ -358,11 +361,12 @@ export function fauxProvider(options: FauxOptions = {}): Faux {
       typeof step !== "function"
         ? Effect.succeed(step)
         : Effect.flatMap(
-            Effect.try({ try: () => step(context, streamOptions, state, model), catch: (error) => error }),
-            (result) =>
-              Effect.isEffect(result)
-                ? result
-                : Effect.tryPromise({ try: async () => result, catch: (error) => error }),
+            // An async wrapper, so a factory that throws fails the same way as one that rejects.
+            Effect.tryPromise({
+              try: async (signal) => step(context, { ...streamOptions, signal }, state, model),
+              catch: (error) => error,
+            }),
+            (result) => (Effect.isEffect(result) ? result : Effect.succeed(result)),
           ),
       (message) =>
         withUsageEstimate(cloneMessage(message, api, provider, model.id), context, streamOptions, promptCache),

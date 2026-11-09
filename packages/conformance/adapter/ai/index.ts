@@ -302,14 +302,21 @@ export function toSeam(models: Models): M.Models {
 function facade(seam: M.Models, providers: () => readonly Provider[]): Models {
 	const all = (id?: string) => (id === undefined ? providers() : providers().filter((p) => p.id === id)).flatMap((p) => p.getAllModels());
 	const ofType = <T extends ModelType>(models: readonly AnyModel[], type: T) => models.filter((m): m is ModelTypeMap[T] => M.isModelType(m, type));
-	const settled = async <A>(effect: Effect.Effect<A, unknown>, onFailure: (error: unknown) => A): Promise<A> => {
-		const exit = await Effect.runPromiseExit(effect);
-		return Exit.isSuccess(exit) ? exit.value : onFailure(causeError(exit.cause));
+	// Runs a request under the caller's signal: an abort interrupts it, and ends it as pi-ai's `Models` does.
+	const settled = async <A>(
+		effect: Effect.Effect<A, unknown>,
+		signal: AbortSignal | undefined,
+		onFailure: (error: unknown, stopReason: "error" | "aborted") => A,
+	): Promise<A> => {
+		if (signal?.aborted) return onFailure(new Error("Request was aborted"), "aborted");
+		const exit = await Effect.runPromiseExit(effect, signal === undefined ? {} : { signal });
+		if (Exit.isSuccess(exit)) return exit.value;
+		return Cause.hasInterruptsOnly(exit.cause) ? onFailure(new Error("Request was aborted"), "aborted") : onFailure(causeError(exit.cause), "error");
 	};
 	const streamSimple = (model: Model<string>, context: Context, options?: SimpleStreamOptions) =>
 		toEventStream(model, seam.streamSimple(model, context, withoutSignal(options)), options?.signal);
 	const fetchDeferred = (model: Model<string>, handle: DeferredHandle, options?: DeferredFetchOptions) =>
-		settled(seam.fetchDeferred(model, handle, withoutSignal(options)), (error) => errorMessage(model, error));
+		settled(seam.fetchDeferred(model, handle, withoutSignal(options)), options?.signal, (error, stopReason) => errorMessage(model, error, stopReason));
 	return {
 		getProviders: providers,
 		getProvider: (id) => providers().find((p) => p.id === id),
@@ -334,24 +341,25 @@ function facade(seam: M.Models, providers: () => readonly Provider[]): Models {
 			return out;
 		},
 		fetchDeferred,
-		cancelDeferred: (model, handle, options) => Effect.runPromise(seam.cancelDeferred(model, handle, withoutSignal(options))),
+		cancelDeferred: (model, handle, options) =>
+			Effect.runPromise(seam.cancelDeferred(model, handle, withoutSignal(options)), options?.signal === undefined ? {} : { signal: options.signal }),
 		generateImages: (model, context, options) =>
-			settled(seam.generateImages(model, context, withoutSignal(options)), (error) => ({
+			settled(seam.generateImages(model, context, withoutSignal(options)), options?.signal, (error, stopReason) => ({
 				api: model.api,
 				provider: model.provider,
 				model: model.id,
 				output: [],
-				stopReason: "error",
+				stopReason,
 				errorMessage: error instanceof Error ? error.message : String(error),
 				timestamp: Date.now(),
 			})),
 		classify: (model, context, options) =>
-			settled(seam.classify(model, context, withoutSignal(options)), (error) => ({
+			settled(seam.classify(model, context, withoutSignal(options)), options?.signal, (error, stopReason) => ({
 				api: model.api,
 				provider: model.provider,
 				model: model.id,
 				answers: {},
-				stopReason: "error",
+				stopReason,
 				errorMessage: error instanceof Error ? error.message : String(error),
 				timestamp: Date.now(),
 			})),
