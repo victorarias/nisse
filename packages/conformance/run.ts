@@ -11,6 +11,9 @@ export type Status = "passed" | "failed" | "skipped";
 export interface RunResult {
 	tests: Map<string, Status>;
 	unloaded: Map<string, string>;
+	// Files whose tests ran but which failed outside any test, such as in an afterAll.
+	suiteErrors: Map<string, string>;
+	unhandledErrors: number;
 }
 
 const VITEST = join(root, "../../node_modules/vitest/vitest.mjs");
@@ -50,10 +53,11 @@ export async function runSuite(targetPath: string, mode: Mode, label: string): P
 	if (!existsSync(outputFile) || lstatSync(outputFile).size === 0) {
 		throw new Error(`conformance: vitest wrote no report (exit ${code}), see results/${label}-${mode}.err; a run past ${DEADLINE_MS} ms is killed`);
 	}
-	return readReport(outputFile);
+	const unhandled = readFileSync(join(root, "results", `${label}-${mode}.err`), "utf8").match(/Vitest caught (\d+) unhandled error/);
+	return { ...readReport(outputFile), unhandledErrors: Number(unhandled?.[1] ?? 0) };
 }
 
-function readReport(path: string): RunResult {
+function readReport(path: string): Omit<RunResult, "unhandledErrors"> {
 	const report = JSON.parse(readFileSync(path, "utf8")) as {
 		testResults: {
 			name: string;
@@ -64,14 +68,16 @@ function readReport(path: string): RunResult {
 	};
 	const tests = new Map<string, Status>();
 	const unloaded = new Map<string, string>();
+	const suiteErrors = new Map<string, string>();
 	for (const file of report.testResults) {
 		const name = relativeFile(file.name, root);
 		if (file.assertionResults.length === 0 && file.status !== "passed") unloaded.set(name, file.message ?? "");
+		else if (file.message) suiteErrors.set(name, file.message);
 		for (const test of file.assertionResults) {
 			const id = testId(name, [...test.ancestorTitles.filter((t) => t !== ""), test.title]);
 			if (tests.has(id)) throw new Error(`conformance: two tests share the id ${id}`);
 			tests.set(id, test.status === "passed" ? "passed" : test.status === "failed" ? "failed" : "skipped");
 		}
 	}
-	return { tests, unloaded };
+	return { tests, unloaded, suiteErrors };
 }

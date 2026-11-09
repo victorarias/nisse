@@ -63,6 +63,18 @@ function judgeAdapter(mode: Mode, result: RunResult): void {
 	}
 }
 
+// A failure outside any test counts against a file that holds a `pass` row. Unhandled errors name no test, so while
+// pending rows fail on purpose they are only printed; once none is pending they fail the check.
+function judgeRunErrors(mode: Mode, result: RunResult): void {
+	for (const [file, message] of result.suiteErrors) {
+		if (Object.entries(expected).some(([id, row]) => id.startsWith(`${file} :: `) && stateName(stateOf(row, mode)) === "pass")) {
+			problems.push(`${mode}: ${file} failed outside its tests: ${message.split("\n")[0]}`);
+		}
+	}
+	const anyPending = Object.values(expected).some((row) => stateName(stateOf(row, mode)) === "pending");
+	if (result.unhandledErrors > 0 && !anyPending) problems.push(`${mode}: vitest caught ${result.unhandledErrors} unhandled errors`);
+}
+
 function judgeReference(mode: Mode, result: RunResult): void {
 	const want = baseline(mode);
 	for (const [id, status] of result.tests) {
@@ -93,9 +105,12 @@ for (const mode of MODES) {
 		if (row !== undefined && stateName(stateOf(row, mode)) === "pending" && status === "passed") pendingPassing++;
 	}
 	if (target === "reference") judgeReference(mode, result);
-	else judgeAdapter(mode, result);
+	else {
+		judgeAdapter(mode, result);
+		judgeRunErrors(mode, result);
+	}
 	const summary = [...counts].sort().map(([s, n]) => `${s}=${n}`).join(" ");
-	console.log(`conformance ${target} ${mode}: ${result.tests.size} ran, ${result.unloaded.size} files did not load; rows: ${summary}; pending now passing: ${pendingPassing}`);
+	console.log(`conformance ${target} ${mode}: ${result.tests.size} ran, ${result.unloaded.size} files did not load, ${result.suiteErrors.size} failed outside tests, ${result.unhandledErrors} unhandled errors; rows: ${summary}; pending now passing: ${pendingPassing}`);
 }
 console.log(`conformance exclusions: ${exclusions.tests.length} (reviewed: ${exclusions.reviewed.count})`);
 
