@@ -728,6 +728,16 @@ describe("task documents", () => {
     checkpointWhen: () => true,
   })
 
+  /**
+   * Waits for `effect`, or fails naming `what`: each wait here is one commit's publication, microseconds when healthy, so
+   * a second is only reached when a call or the end never comes. The failure interrupts the wait and the scope closes.
+   */
+  const within = <A, E>(effect: Effect.Effect<A, E>, what: string) =>
+    Effect.timeoutOrElse(effect, {
+      duration: "1 second",
+      orElse: () => Effect.die(new Error(`${what} did not arrive within 1 second`)),
+    })
+
   test("doc-task-scope: a task document's watch follows a retirement while its task runs, and ends after the task's", () =>
     run(
       Effect.gen(function* () {
@@ -751,14 +761,26 @@ describe("task documents", () => {
 
         // Retired while the task runs: the address can be created again, so the watch goes on.
         yield* session.commit((tx) => tx.retireDoc(Progress, id))
-        expect(yield* Queue.take(seen)).toEqual({ value: { step: 1 }, ops: [], retired: true })
+        expect(yield* within(Queue.take(seen), "the explicit retirement")).toEqual({
+          value: { step: 1 },
+          ops: [],
+          retired: true,
+        })
         yield* step(2)
-        expect(yield* Queue.take(seen)).toEqual({ value: { step: 2 }, ops: [["r", { step: 2 }]], retired: false })
+        expect(yield* within(Queue.take(seen), "the next incarnation")).toEqual({
+          value: { step: 2 },
+          ops: [["r", { step: 2 }]],
+          retired: false,
+        })
 
         // The task ends: its documents retire for good, and the watch ends after that retirement.
         yield* scheduler.abortTask(id)
-        expect(yield* Queue.take(seen)).toEqual({ value: { step: 2 }, ops: [], retired: true })
-        yield* Deferred.await(ended)
+        expect(yield* within(Queue.take(seen), "the task's retirement")).toEqual({
+          value: { step: 2 },
+          ops: [],
+          retired: true,
+        })
+        yield* within(Deferred.await(ended), "the watch's end")
       }),
     ))
 })

@@ -107,14 +107,18 @@ export class ConversationTranscript<E = never> {
         const started = load
         shared(
           started,
-          Effect.map(this.#load({ maxEntryId: low as EntryId, order: "descending" }, this.#pageSize), (page) => {
-            const items = [...page.items].reverse()
-            const oldest = items[0]
-            // No next page, or an empty one: the transcript starts here.
-            if (page.next === undefined || oldest === undefined) this.#cover(Number.NEGATIVE_INFINITY, low, items)
-            else this.#cover(oldest.id - 1, low, items)
-            return this.#result()
-          }),
+          Effect.map(
+            // Suspended, so a loader that throws building its Effect fails this load and its cleanup still runs.
+            Effect.suspend(() => this.#load({ maxEntryId: low as EntryId, order: "descending" }, this.#pageSize)),
+            (page) => {
+              const items = [...page.items].reverse()
+              const oldest = items[0]
+              // No next page, or an empty one: the transcript starts here.
+              if (page.next === undefined || oldest === undefined) this.#cover(Number.NEGATIVE_INFINITY, low, items)
+              else this.#cover(oldest.id - 1, low, items)
+              return this.#result()
+            },
+          ),
           () => {
             if (this.#earlier === started) this.#earlier = undefined
           },
@@ -151,14 +155,17 @@ export class ConversationTranscript<E = never> {
         const started = load
         shared(
           started,
-          Effect.map(this.#load(query, this.#pageSize), (page) => {
-            const newest = page.items.at(-1)
-            // No next page, or an empty one: nothing else is missing.
-            if (page.next === undefined || newest === undefined)
-              this.#cover(current.after, current.upTo - 1, page.items)
-            else this.#cover(current.after, newest.id, page.items)
-            return this.#result()
-          }),
+          Effect.map(
+            Effect.suspend(() => this.#load(query, this.#pageSize)),
+            (page) => {
+              const newest = page.items.at(-1)
+              // No next page, or an empty one: nothing else is missing.
+              if (page.next === undefined || newest === undefined)
+                this.#cover(current.after, current.upTo - 1, page.items)
+              else this.#cover(current.after, newest.id, page.items)
+              return this.#result()
+            },
+          ),
           () => {
             if (this.#filling.get(key) === started) this.#filling.delete(key)
           },

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, type Scope } from "effect"
+import { Effect, Exit, type Scope } from "effect"
 import { type EntryRecord, openSqliteStorage } from "@nisse/kernel"
 import { fromProviders } from "@nisse/models"
 import {
@@ -120,4 +120,27 @@ describe("conversation view", () => {
     )
     expect(allIds).toHaveLength(15)
   })
+
+  test("view-load-earlier: a loader that throws building its load fails that call, and the next call loads", () =>
+    Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* open(databasePath())
+          const root = yield* harness.root()
+          yield* notes(root, 3)
+          let throws = true
+          const transcript = new ConversationTranscript((query, limit) => {
+            if (throws) throw new Error("loader broke")
+            return root.entries(query, limit)
+          })
+          const first = yield* connect(root, transcript, { min: 1, max: 2 })
+          expect(first.items[0]?.kind).toBe("earlier")
+
+          expect(Exit.isFailure(yield* Effect.exit(transcript.loadEarlier))).toBe(true)
+          throws = false
+          const loaded = yield* transcript.loadEarlier
+          expect(ids(loaded)).toEqual(entryIds((yield* root.entries({ order: "ascending" }, 100)).items))
+        }),
+      ),
+    ))
 })
