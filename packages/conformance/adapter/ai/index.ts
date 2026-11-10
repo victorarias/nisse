@@ -5,7 +5,7 @@
 // Failures the seam reports as `Unsupported` or `UnknownProvider` come back as pi-ai's `Models` reports them: an error
 // message from a stream or a fetch, an error result from `classify` and `generateImages`, a rejection from
 // `cancelDeferred`.
-import { Cause, Effect, Exit, Fiber, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, Option, Stream, Tracer } from "effect";
 import * as Faux from "../../../models/src/faux.ts";
 import * as M from "../../../models/src/index.ts";
 import type {
@@ -32,6 +32,8 @@ import type {
 	TranscriptContext,
 } from "../../../models/src/index.ts";
 import { unimplemented } from "../../unimplemented.ts";
+import { telemetryOfSpan, underSpan } from "../durable/src/telemetry-bridge.ts";
+import { NOOP_TELEMETRY_CONTEXT, type TelemetrySpan } from "../telemetry/src/index.ts";
 import { AssistantMessageEventStream, createAssistantMessageEventStream, EventStream } from "./event-stream.ts";
 
 export type * from "../../../models/src/types.ts";
@@ -93,8 +95,14 @@ export interface Provider extends ProviderStreams {
 }
 
 const withoutSignal = <T extends { signal?: AbortSignal }>(options: T | undefined): Omit<T, "signal"> => {
-	const { signal: _signal, ...rest } = options ?? ({} as T);
-	return rest;
+	const { signal: _signal, telemetry: _telemetry, ...rest } = (options ?? {}) as T & { telemetry?: unknown };
+	return rest as Omit<T, "signal">;
+};
+
+/** The span a pi-ai caller passed as `options.telemetry`; pi-ai starts its request spans under it. */
+const telemetryOption = (options: unknown): TelemetrySpan | undefined => {
+	const telemetry = (options as { telemetry?: TelemetrySpan } | undefined)?.telemetry;
+	return telemetry === undefined || telemetry === NOOP_TELEMETRY_CONTEXT ? undefined : telemetry;
 };
 
 const errorMessage = (model: AnyModel, error: unknown, stopReason: "error" | "aborted" = "error"): AssistantMessage => ({
@@ -117,17 +125,17 @@ function toEventStream(
 	model: AnyModel,
 	stream: Stream.Stream<AssistantMessageEvent, unknown>,
 	signal: AbortSignal | undefined,
+	telemetry?: TelemetrySpan,
 ): AssistantMessageEventStream {
 	const out = createAssistantMessageEventStream();
 	let partial: AssistantMessage | undefined;
-	const fiber = Effect.runFork(
-		Stream.runForEach(stream, (event) =>
-			Effect.sync(() => {
-				if ("partial" in event) partial = event.partial;
-				out.push(event);
-			}),
-		),
+	const run = Stream.runForEach(stream, (event) =>
+		Effect.sync(() => {
+			if ("partial" in event) partial = event.partial;
+			out.push(event);
+		}),
 	);
+	const fiber = Effect.runFork(telemetry === undefined ? run : underSpan(run, telemetry));
 	const abort = () => Effect.runFork(Fiber.interrupt(fiber));
 	if (signal?.aborted) abort();
 	else signal?.addEventListener("abort", abort, { once: true });
@@ -341,9 +349,15 @@ function makePromiseSeam(models: Models): M.Models {
 		getAvailableOfType: (type, provider) => request(() => models.getAvailableOfType(type, provider)),
 		streamSimple: (model, context, options) =>
 			Stream.unwrap(
-				Effect.sync(() => {
+				Effect.map(Effect.serviceOption(Tracer.ParentSpan), (parent) => {
 					const controller = new AbortController();
-					const events = models.streamSimple(model, context as Context, { ...options, signal: controller.signal });
+					// pi-ai starts its request span under the caller's span, which it reads as `options.telemetry`.
+					const telemetry = telemetryOfSpan(Option.getOrUndefined(parent));
+					const events = models.streamSimple(model, context as Context, {
+						...options,
+						signal: controller.signal,
+						...(telemetry === undefined ? {} : { telemetry }),
+					} as SimpleStreamOptions);
 					// pi-ai's `result()` is the final message; a stream that never yields its terminal event ends with it.
 					let ended = false;
 					const terminal = Stream.unwrap(
@@ -398,7 +412,12 @@ function facade(seam: M.Models, providers: () => readonly Provider[]): Models {
 		return Cause.hasInterruptsOnly(exit.cause) ? onFailure(new Error("Request was aborted"), "aborted") : onFailure(causeError(exit.cause), "error");
 	};
 	const streamSimple = (model: Model<string>, context: Context, options?: SimpleStreamOptions) =>
-		toEventStream(model, seam.streamSimple(model, context, withoutSignal(options)), options?.signal);
+		toEventStream(
+			model,
+			seam.streamSimple(model, context, withoutSignal(options)),
+			options?.signal,
+			telemetryOption(options),
+		);
 	const fetchDeferred = (model: Model<string>, handle: DeferredHandle, options?: DeferredFetchOptions) =>
 		settled(seam.fetchDeferred(model, handle, withoutSignal(options)), options?.signal, (error, stopReason) => errorMessage(model, error, stopReason));
 	return {
