@@ -1,6 +1,5 @@
 // Upstream's agent functions over @nisse/harness's: Promise transactions, and upstream snapshots and agents.
 import * as H from "../../../../../harness/src/index.ts";
-import { unimplemented } from "../../../../unimplemented.ts";
 import { run } from "../session/session.ts";
 import { harnessSnapshot, upstreamAgent } from "./convert.ts";
 
@@ -16,7 +15,8 @@ export {
 	resolveSettings,
 } from "../../../../../harness/src/index.ts";
 
-export const addTools = unimplemented("addTools", "harness-tools");
+export const addTools = (tx: Any, conversationId: Any, added: readonly string[]): Promise<void> =>
+	run(H.addTools(tx.kernel, conversationId, added));
 
 export const configure = (tx: Any, conversationId: Any, change: Any): Promise<void> =>
 	run(H.configure(tx.kernel, conversationId, change));
