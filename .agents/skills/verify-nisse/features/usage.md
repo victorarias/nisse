@@ -10,7 +10,7 @@ Tokens and cost are counted per conversation, model and tool, and totalled for t
 - `usage-per-tool` [kernel, pending harness-run-core] Per-tool usage (§8.6): Attribute spend to a tool
 - `usage-total` [kernel, pending harness-run-core] `Harness.usage` totals (R855-861): One number across the home
 - `usage-cost` [kernel, pending harness-run-core] Cost in currency (§8.6): See money spent
-- `usage-context-live` [kernel, pending tools-package] Context used, for live display (§8.2): People see how full the context is
+- `usage-context-live` [kernel] Context used, for live display (§8.2): People see how full the context is
 - `usage-spending-limit` [kernel, pending harness-run-core] Spending limit: Stop at a budget
 
 ## How to get to it

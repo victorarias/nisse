@@ -19,7 +19,7 @@ Every change to a conversation goes through one ordered, atomic store commit, an
 - `session-resume-explicit` [kernel, pending harness-run-core] `resume()` as an explicit start of scheduling (R115-138): The host installs extensions before any work restarts
 - `session-read-only` [kernel] Read-only open (R115-138, §2.2): Look at a session without running or changing anything
 - `serve-read-only` [pending surface-conversations] The client path for Read-only open (R115-138, §2.2): Look at a session without running or changing anything
-- `session-clock` [kernel, pending kernel-tasks] Injected clock, `now` and `setTimer` (R140-212): Tests and hosts control durable time
+- `session-clock` [kernel] Injected clock: Effect's `Clock`, or a `now` (R140-212): Tests and hosts control durable time
 - `provider-session-id` [kernel, pending harness-run-core] Provider session id, stable per conversation (R115-138): Provider prompt caches keep hitting across requests
 - `session-clean-close` [kernel, pending harness-run-core] Explicit `Harness` close without counting a crash (§5.4): A clean shutdown leaves runs resumable without using up their restarts
 - `session-types` [kernel, pending harness-shell] The public types accept a run, a task and a document as written in the spec.

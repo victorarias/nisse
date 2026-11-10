@@ -22,7 +22,7 @@ The model composes tool calls in a deterministic script that survives a server r
 - `codemode-temp-files` [kernel, pending codemode-package] Temporary files for large outputs (§7.6): Large script results are reachable
 - `codemode-details` [kernel, pending codemode-package] `CodemodeToolDetails` for UIs (§7.6): Clients draw a script's calls as a list
 - `codemode-documents` [kernel, pending codemode-package] Documents `pi.codemode.run`, `journal`, `store` (§7.6): The durable records behind M3 and M9
-- `codemode-imports` [kernel, pending codemode-package] The extension loads without the WASM runtime.
+- `codemode-imports` [kernel] The extension loads without the WASM runtime.
 
 ## How to get to it
 

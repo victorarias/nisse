@@ -55,3 +55,32 @@ export type {
   Tx,
 } from "./session/transaction.ts"
 export * from "./documents/definition.ts"
+export { InvocationEnded } from "./errors.ts"
+export { fromPromise } from "./promise.ts"
+export {
+  type AnyTask,
+  defineTask,
+  type NextTaskState,
+  type PhaseHandler,
+  type RunningTask,
+  type SettledTask,
+  type Task,
+  type TaskDefinition,
+  type TaskOptions,
+  type TaskOwnership,
+  type TaskRegistry,
+  type TaskRuntime,
+  type TaskSnapshot,
+} from "./tasks/task.ts"
+export {
+  type BlockedReason,
+  openTaskScheduler,
+  type PhaseInfo,
+  type ReportTask,
+  type SchedulerOutcome,
+  type TaskInspection,
+  type TaskReport,
+  type TaskScheduler,
+  type TaskSchedulerOptions,
+  type Wake,
+} from "./tasks/scheduler.ts"

@@ -11,7 +11,7 @@
 // completer's call, which on the line would run that fiber's code before the next job; outcomes therefore go back
 // through a queue, whose waiter resumes later. Observers are called on the line, so they must only capture.
 import { type Op, track } from "@nisse/delta"
-import { type Cause, Deferred, Effect, Exit, Fiber, Queue, type Scope } from "effect"
+import { type Cause, Clock, Deferred, Effect, Exit, Fiber, Queue, type Scope } from "effect"
 import {
   type AnyDocDefinition,
   type AnyDocToken,
@@ -105,7 +105,10 @@ export type SessionOptions = {
    * healthy; a commit that writes nothing succeeds.
    */
   readonly readOnly?: boolean
-  /** The clock document retention and task lifecycle times are measured by, in ms. Default `Date.now`. */
+  /**
+   * The clock document retention and task lifecycle times are measured by, in ms. Default: Effect's `Clock` of the
+   * context that opens the Session, so a `TestClock` controls it.
+   */
   readonly now?: () => number
   /**
    * How long a loaded document with no observer stays in memory after its last use, in ms, read at each use; `0` drops
@@ -198,6 +201,10 @@ export interface SessionInternals {
   onClosing(step: (store: (writes: readonly StorageWrite[]) => Effect.Effect<void>) => Effect.Effect<void>): void
   /** Fails the Session with an error of the scheduler's own commits. */
   fail(error: unknown): void
+  /** The Session's clock, in ms. */
+  now(): number
+  /** Storage's reads behind the failure rule, for code that runs inside a job on the line, such as a commit callback. */
+  readonly lineReads: StorageReads
 }
 
 export const internals = (session: Session): SessionInternals => session as SessionImpl
@@ -264,13 +271,14 @@ class SessionImpl implements Session, SessionInternals {
     options: SessionOptions,
     jobs: Queue.Queue<Job, Cause.Done>,
     closed: Deferred.Deferred<SessionEnd>,
+    clock: Clock.Clock,
   ) {
     this.#storage = storage
     this.#readOnly = options.readOnly === true
     this.#jobs = jobs
     this.#closedEnd = closed
     this.#reads = guardedReads(storage, (call) => this.#storageCall(call))
-    const now = options.now ?? Date.now
+    const now = options.now ?? (() => clock.currentTimeMillisUnsafe())
     // Cache bookkeeping never changes the outcome of what it follows: a throwing clock or retention is the default.
     this.#now = () => {
       try {
@@ -301,6 +309,7 @@ class SessionImpl implements Session, SessionInternals {
         options,
         yield* Queue.unbounded<Job, Cause.Done>(),
         yield* Deferred.make<SessionEnd>(),
+        yield* Clock.Clock,
       )
       // Detached: the line ends when close ends its queue, never by interruption.
       session.#line = yield* Effect.forkDetach(session.#runLine())
@@ -314,6 +323,14 @@ class SessionImpl implements Session, SessionInternals {
 
   onClosing(step: (store: (writes: readonly StorageWrite[]) => Effect.Effect<void>) => Effect.Effect<void>): void {
     this.#closingSteps.push(step)
+  }
+
+  now(): number {
+    return this.#now()
+  }
+
+  get lineReads(): StorageReads {
+    return this.#reads
   }
 
   fail(error: unknown): void {
