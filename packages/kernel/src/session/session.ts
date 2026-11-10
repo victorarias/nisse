@@ -226,6 +226,11 @@ export interface SessionInternals {
   fail(error: unknown): void
   /** The Session's clock, in ms. */
   now(): number
+  /**
+   * At a publication: runs `task` once every commit observer saw it, so a microtask `task` queues follows the ones the
+   * observers queued.
+   */
+  afterPublication(task: () => void): void
   /** Storage's reads behind the failure rule, for code that runs inside a job on the line, such as a commit callback. */
   readonly lineReads: StorageReads
 }
@@ -267,6 +272,8 @@ class SessionImpl implements Session, SessionInternals {
   readonly #jobs: Queue.Queue<Job, Cause.Done>
   readonly #closedEnd: Deferred.Deferred<SessionEnd>
   readonly #observers = new Set<CommitObserver>()
+  /** Tasks for after the current publication's observers. */
+  #afterPublication: (() => void)[] = []
   readonly #closeListeners = new Set<() => void>()
   readonly #cache: DocumentCache
   /** Attached document observers by address. */
@@ -745,6 +752,13 @@ class SessionImpl implements Session, SessionInternals {
         this.#observerFailed(observer, error)
       }
     }
+    const after = this.#afterPublication
+    this.#afterPublication = []
+    for (const task of after) task()
+  }
+
+  afterPublication(task: () => void): void {
+    this.#afterPublication.push(task)
   }
 
   /** A plain Session drops reports (spec 10.1): the observer is detached and told why, once. */

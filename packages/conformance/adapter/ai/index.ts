@@ -318,17 +318,23 @@ const owners = new WeakMap<M.Models, Models>();
 export function promiseModels(seam: M.Models): Models {
 	const known = owners.get(seam);
 	if (known !== undefined) return known;
-	const made = facade(seam, () => []);
+	// A wrapper that spreads a promise seam, as an identity does, keeps its `HOST` and so the host's providers.
+	const host = (seam as { [HOST]?: Models })[HOST];
+	const made = facade(seam, () => host?.getProviders() ?? []);
 	owners.set(seam, made);
 	return made;
 }
+
+/** The pi-ai `Models` a promise seam calls, kept on the seam itself. */
+const HOST = Symbol("pi-ai host models");
 
 function makePromiseSeam(models: Models): M.Models {
 	const request = <A>(call: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, never> =>
 		Effect.orDie(
 			Effect.tryPromise({ try: (signal) => Promise.resolve(call(signal)), catch: (error) => error }),
 		);
-	return {
+	const seam: M.Models & { [HOST]: Models } = {
+		[HOST]: models,
 		getModel: (provider, id) => models.getModel(provider, id) as Model<M.Api> | undefined,
 		getModelsOfType: (type, provider) => models.getModelsOfType(type, provider),
 		getModelOfType: (type, provider, id) => models.getModelOfType(type, provider, id),
@@ -373,6 +379,7 @@ function makePromiseSeam(models: Models): M.Models {
 		generateImages: (model, context, options) =>
 			request((signal) => models.generateImages(model, context, { ...options, signal })),
 	};
+	return seam;
 }
 
 // The pi-ai facade over a seam. `providers` lists the pi-ai providers the seam was built from.

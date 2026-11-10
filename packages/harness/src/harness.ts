@@ -51,7 +51,7 @@ import {
 import { Cause, Clock, Deferred, Effect, Exit, Layer, Scope } from "effect"
 import { AgentDoc, agentHooks, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"
-import { readContext } from "./context.ts"
+import { ContextReads } from "./context.ts"
 import { ProviderDoc } from "./documents.ts"
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts"
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts"
@@ -264,7 +264,14 @@ export const openHarness = <T extends ToolRegistration>(
       }),
       () => Effect.ignore(session.close),
     )
-    return host.bind(session, scheduler, yield* Clock.Clock)
+    const clock = yield* Clock.Clock
+    const contexts = new ContextReads(session, {
+      now: () => host.now(),
+      retentionMs: () => host.settings().contextRetentionMs,
+      waitForIdle: (conversationId) => scheduler.waitForIdle(conversationId),
+      clock,
+    })
+    return host.bind(session, scheduler, clock, contexts)
   })
 
 /** Conversations with queued submissions, from a scan of every queued one. */
@@ -296,6 +303,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
   #scheduler: TaskScheduler | undefined
   #submissions: Submissions | undefined
   #effectClock: Clock.Clock | undefined
+  #contexts: ContextReads | undefined
 
   /** The host's clock behind `safeNow`; `undefined` for Effect's `Clock`. */
   readonly clock: (() => number) | undefined
@@ -309,10 +317,11 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
         : safeNow(now, (error) => this.report(error, { kind: "host_error", callback: "now" }))
   }
 
-  bind(session: Session, scheduler: TaskScheduler, clock: Clock.Clock): this {
+  bind(session: Session, scheduler: TaskScheduler, clock: Clock.Clock, contexts: ContextReads): this {
     this.#session = session
     this.#scheduler = scheduler
     this.#effectClock = clock
+    this.#contexts = contexts
     this.#submissions = new Submissions(
       session,
       () => this.now(),
@@ -532,7 +541,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
           ? this.submissions.submit(id, first)
           : this.submissions.admit(first, id, second!)) as Conversation["submit"],
       commit: (body) => commitIn(this.session, { conversationId: id }, body),
-      context: (options) => readContext(this.session, id, options?.at),
+      context: (options) => this.#contexts!.read(id, options?.at),
       entries: (query, limit, cursor) =>
         this.session.read((storage) => storage.scanEntries({ ...query, conversationId: id }, limit, cursor)),
       fork: (at, options) => this.#create({ kind: "fork", parentId: id, at, ownership: options.ownership }, options),
@@ -606,7 +615,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
         entries: (query, limit, cursor) => runtime.entries(query, limit, cursor),
         snapshot: (token, ...address) => runtime.snapshot(token, ...address),
       },
-      context: (id, options) => runtime.guard(readContext(this.session, id, options?.at)),
+      context: (id, options) => runtime.guard(this.#contexts!.readFor(runtime, id, options?.at)),
       snapshotAsOf: <K extends AnyDocToken>(token: K, ...address: RewindableAddressArgs<K>) =>
         runtime.guard(this.session.snapshotAsOf(token, ...address)),
       // The watch lives in a scope of its own, closed by the caller's scope or the invocation's end, whichever is first.

@@ -498,6 +498,11 @@ export class SessionImpl {
 		return this.#kernel;
 	}
 
+	/** Internal, as upstream's: fails the Session now, so nothing more reaches Storage, as when the process dies. */
+	fail(error: unknown): void {
+		this.#kernel.fail(error);
+	}
+
 	get failure(): { readonly error: unknown } | undefined {
 		const failure = this.#kernel.failure;
 		return failure === undefined ? undefined : { error: upstreamCause(failure.error) };

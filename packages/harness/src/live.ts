@@ -192,13 +192,22 @@ export const LiveDoc = defineDoc<LiveState>({
     } as LiveState
   },
   // A complete base whenever nothing runs (spec 8.2): no generation and no running tool slot. That holds while idle, in
-  // the commit handing a generation over to its tool round, and between tools, so the delta chain spans at most one
-  // generation or the overlapping execution of one round's tools. A slot holds output only while running.
-  checkpointWhen: (value) =>
-    value.generation === undefined &&
-    !(value.tools ?? []).some((slot) => slot.status === "running") &&
-    !(value.nestedTools ?? []).some((slot) => slot.status === "running"),
+  // the commit handing a generation over to its tool round, and between tools. A slot holds output only while running.
+  // A long generation or tool round also takes a base every LIVE_DELTAS_PER_BASE deltas, so its chain stays bounded.
+  checkpointWhen: (value, _ops, info) =>
+    info.deltasSinceBase >= LIVE_DELTAS_PER_BASE ||
+    (value.generation === undefined &&
+      !(value.tools ?? []).some((slot) => slot.status === "running") &&
+      !(value.nestedTools ?? []).some((slot) => slot.status === "running")),
 })
+
+/**
+ * Deltas a running generation or tool round stores before `pi.live` takes another base. Without it a one-hour tool
+ * stream retains every delta since the round began: about 36,000 rows and 125 MiB at 40 KB/s of output. A base costs
+ * about one output window (50 KiB) and a delta about 3.5 KiB at that rate, so a base every 128 deltas adds about a tenth
+ * to what the round writes and bounds what a reopen replays.
+ */
+export const LIVE_DELTAS_PER_BASE = 128
 
 /** A copy of a version 1 compaction status or failure with `reason` renamed `trigger`, its keys in their order. */
 function renameReason(value: JsonObject): JsonObject {

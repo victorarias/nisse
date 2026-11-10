@@ -375,8 +375,8 @@ class Scheduler<Svc> implements TaskScheduler {
               cursor = page.next
             } while (cursor !== undefined)
           }
+          // Their chains load later, off open's path: until then each counts as inside every scope.
           for (const record of loaded) this.#track(undefined, record, undefined)
-          yield* this.#loadChains()
           if (this.#readOnly) return
           for (const record of loaded) {
             if (record.abandonOnRestart === true) this.#abandoned.add(record.id)
@@ -668,9 +668,20 @@ class Scheduler<Svc> implements TaskScheduler {
   /** On the line, at each stored commit: keeps `#live` and its indexes equal to the committed records. */
   #observe(publication: CommitPublication): void {
     const created = new Map<ConversationId, ConversationRecord>()
-    for (const change of publication.changes)
-      if (change.type === "conversation") created.set(change.value.id, change.value)
     let changed = false
+    for (const change of publication.changes) {
+      if (change.type === "conversation") created.set(change.value.id, change.value)
+      // An input queued below a cancelled owner, even after its cascade, is withdrawn too.
+      else if (
+        change.type === "submission" &&
+        change.value.type === "input" &&
+        change.value.status === "queued" &&
+        this.#intent.size > 0
+      ) {
+        this.#cascadePending = true
+        changed = true
+      }
+    }
     for (const change of publication.changes) {
       if (change.type !== "task") continue
       changed = true
@@ -680,9 +691,11 @@ class Scheduler<Svc> implements TaskScheduler {
       if (record.state.status === "terminal") continue
       if (record.abortRequested && previous?.abortRequested !== true) {
         this.#cascadePending = true
-        // Task code never runs inside a publication: the signal follows in a microtask.
+        // Task code never runs inside a publication: the signal follows in a microtask, after what observers queued.
         const invocation = this.#invocations.get(record.id)
-        if (invocation?.mode === "run") queueMicrotask(() => this.#signalInvocation(invocation))
+        if (invocation?.mode === "run") {
+          this.#internals.afterPublication(() => queueMicrotask(() => this.#signalInvocation(invocation)))
+        }
       }
       // A request replacing a `restart` mark upgrades the marks below.
       if (previous?.abortReason !== undefined && record.abortReason === undefined) this.#cascadePending = true
