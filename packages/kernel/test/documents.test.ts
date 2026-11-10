@@ -343,6 +343,42 @@ describe("documents", () => {
       }),
     ))
 
+  test("doc-migration: one transaction cannot reach a document through two definition versions, and stores nothing", () =>
+    run(
+      Effect.gen(function* () {
+        const Old = defineDoc<{ count: number }>({
+          kind: "test.two-tokens",
+          version: 1,
+          scope: "session",
+          initial: () => ({ count: 0 }),
+          checkpointWhen: () => false,
+        })
+        const New = defineDoc<{ total: number }>({
+          kind: "test.two-tokens",
+          version: 2,
+          scope: "session",
+          initial: () => ({ total: 0 }),
+          checkpointWhen: () => false,
+        })
+        const session = yield* newSession()
+        yield* session.commit((tx) => Effect.map(tx.doc(Old), (doc) => void (doc.count = 1)))
+
+        const mixed = yield* Effect.exit(
+          session.commit((tx) =>
+            Effect.gen(function* () {
+              ;(yield* tx.doc(Old)).count = 2
+              ;(yield* tx.doc(New)).total = 5
+            }),
+          ),
+        )
+        expect(Exit.isFailure(mixed)).toBe(true)
+        expect(
+          String(Exit.isFailure(mixed) && mixed.cause.reasons[0]?._tag === "Die" && mixed.cause.reasons[0].defect),
+        ).toContain("two definitions")
+        expect(yield* session.snapshot(Old)).toEqual({ count: 1 })
+      }),
+    ))
+
   test("view-slow-folding: a stalled watch neither slows commits nor grows, and resumes with one root replacement", () =>
     run(
       Effect.gen(function* () {

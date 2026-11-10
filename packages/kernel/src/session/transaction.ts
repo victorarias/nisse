@@ -293,6 +293,30 @@ type DocumentEntry = {
   retire: boolean
 }
 
+/**
+ * A second access at an address in one transaction must use the definition the incarnation was acquired with: another
+ * version or lifetime would read or write the draft in a shape its stored version does not have.
+ */
+function sameDefinition(entry: DocumentEntry, definition: AnyDocDefinition): Effect.Effect<void> {
+  const acquired = entry.definition
+  if (acquired === undefined || acquired === definition) return Effect.void
+  const semantics = (d: AnyDocDefinition) =>
+    JSON.stringify([
+      d.kind,
+      d.version,
+      d.scope,
+      "history" in d ? d.history : null,
+      "fork" in d ? d.fork : null,
+      d.family === true,
+    ])
+  if (semantics(acquired) === semantics(definition)) return Effect.void
+  return Effect.die(
+    new Error(
+      `Document ${definition.kind} is accessed in one transaction through two definitions: version ${acquired.version} and version ${definition.version}, or another scope, history or fork`,
+    ),
+  )
+}
+
 /** What one staged incarnation writes and publishes, decided before Storage so adoption only applies it. */
 type DocumentPlan = {
   readonly addressId: string
@@ -477,7 +501,12 @@ export class Transaction implements Tx {
         const resolved = resolveAddress(definition, args)
         const latest = this.#latest.get(resolved.id)
         if (latest !== undefined && !latest.retire) {
-          if (latest.draft !== undefined) return Deferred.await(latest.draft)
+          if (latest.draft !== undefined) {
+            const draft = latest.draft
+            return Effect.flatMap(Deferred.await(draft), (acquired) =>
+              Effect.as(sameDefinition(latest, definition), acquired),
+            )
+          }
           if (latest.target?.kind === "fork-copy") {
             const target = latest.target
             return this.#memoize(latest, this.#acquireForkCopy(latest, definition, target), () => {
@@ -511,7 +540,10 @@ export class Transaction implements Tx {
           // The acquired draft's final content is stored before the retirement. An acquisition that failed unstaged
           // itself, so the retirement then looks the incarnation up on its own.
           latest.retire = true
-          return Effect.catchCause(Effect.asVoid(Deferred.await(latest.draft)), () => this.retireDoc(token, ...args))
+          return Effect.matchCauseEffect(Deferred.await(latest.draft), {
+            onFailure: () => this.retireDoc(token, ...args),
+            onSuccess: () => sameDefinition(latest, definition),
+          })
         }
         const entry: DocumentEntry = { addressId: resolved.id, address: resolved.address, definition, retire: true }
         const unstage = this.#stage(entry, latest)
