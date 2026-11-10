@@ -6,8 +6,9 @@
 // Derived from pi-durable's `src/harness/scheduler.ts` at 7d073328e (MIT, see LICENSE). Two departures. Upstream's
 // group commit made decisions wait for unpublished commits (decision regions and membership keys); the kernel's line
 // waits for each storage call to settle, so a decision taken inside a commit callback reads exactly the committed
-// state in `#live` and needs none of that. And each live task keeps its whole ownership chain, which never changes,
-// instead of a tree of nodes that sweeps forget: memory stays bounded by live work and every walk is a list.
+// state in `#live` and needs none of that. And each live task keeps its ownership chain, which never changes, as a list
+// it shares with the work above it, instead of nodes that sweeps forget: memory stays bounded by live work, and a task
+// costs the same at any depth.
 //
 // Every decision about a task is one callback serialized on the Session line: open, reservation, the step before each
 // phase, a runtime commit, an abort mark, and the reconcile pass that marks cascades, `failFast` waits and finalizes
@@ -191,8 +192,11 @@ type Checkpoint = { readonly phase: string }
 /** A step of an ownership chain: an owner task, or a conversation. */
 type Step = { readonly task: TaskId; readonly background: boolean } | { readonly conversation: ConversationId }
 
-/** A live task: its committed record, and the chain above it, nearest first, once known. */
-type Live = { record: TaskRecord; chain: readonly Step[] | undefined }
+/** An ownership chain, nearest step first: a list each task shares with the work below it. */
+type Chain = { readonly step: Step; readonly up: Chain | undefined }
+
+/** A live task: its committed record, the chain above it once known, and the chain it starts for work below it. */
+type Live = { record: TaskRecord; chain: Chain | undefined; own?: Chain }
 
 /** One in-memory execution of a task, in run or abort mode. */
 type Invocation = {
@@ -249,10 +253,14 @@ class Scheduler<Svc> implements TaskScheduler {
 
   /** Every committed non-terminal task. */
   readonly #live = new Map<TaskId, Live>()
-  /** The live tasks below each task or conversation (`t<id>`, `c<id>`): those with it on their chain. */
-  readonly #below = new Map<string, Set<TaskId>>()
-  /** The chain from each conversation on a live task's chain, with how many live tasks have it. */
-  readonly #conversations = new Map<ConversationId, { readonly chain: readonly Step[]; refs: number }>()
+  /**
+   * The ownership tree around live work, downward: under each task or conversation (`t<id>`, `c<id>`), the steps just
+   * below it that are live tasks with a known chain, or have steps listed below them. Each step is listed once, under
+   * its parent, so what lies below a node is a walk down from it.
+   */
+  readonly #below = new Map<string, Map<string, Step>>()
+  /** The chain from each conversation with steps listed below it. */
+  readonly #conversations = new Map<ConversationId, Chain>()
   /** Live tasks whose chain is not known yet; the next pass loads it from Storage. */
   readonly #unloaded = new Set<TaskId>()
   /** Live tasks with cancellation intent: an abort mark, or a held outcome other than `completed`. */
@@ -541,13 +549,10 @@ class Scheduler<Svc> implements TaskScheduler {
           const queued = yield* this.#queued()
           const top = conversationKey(conversationId)
           const reached: TaskId[] = []
-          for (const id of this.#below.get(top) ?? []) {
-            const live = this.#live.get(id)!
-            if (!reaches(live, top, background)) continue
-            reached.push(id)
-            const record = live.record
+          this.#reach(top, background, (record) => {
+            reached.push(record.id)
             if (!record.abortRequested || record.abortReason !== undefined) tx.setTask(withAbortMark(record))
-          }
+          })
           for (const id of queued) {
             if (id === conversationId || (yield* this.#conversationReaches(id, top, background, tx))) {
               yield* this.#withdraw(tx, id)
@@ -607,7 +612,7 @@ class Scheduler<Svc> implements TaskScheduler {
 
   get indexSizes() {
     let below = 0
-    for (const ids of this.#below.values()) below += ids.size
+    for (const steps of this.#below.values()) below += steps.size
     let waiters = 0
     for (const set of this.#taskWaiters.values()) waiters += set.size
     for (const set of this.#idleWaiters.values()) waiters += set.size
@@ -716,7 +721,7 @@ class Scheduler<Svc> implements TaskScheduler {
       live = { record, chain: this.#chainNow(record, created) }
       this.#live.set(id, live)
       if (live.chain === undefined) this.#unloaded.add(id)
-      else this.#install(id, live.chain)
+      else this.#install(record, live.chain)
     } else {
       live.record = record
     }
@@ -727,15 +732,23 @@ class Scheduler<Svc> implements TaskScheduler {
     if (failedOutcome(record)) for (const waiter of this.#waiters.get(id) ?? []) this.#failFastChecks.add(waiter)
   }
 
-  #install(id: TaskId, chain: readonly Step[]): void {
-    for (let index = 0; index < chain.length; index++) {
-      const step = chain[index]!
-      addTo(this.#below, stepKey(step), id)
-      if ("conversation" in step) {
-        const known = this.#conversations.get(step.conversation)
-        if (known === undefined) this.#conversations.set(step.conversation, { chain: chain.slice(index), refs: 1 })
-        else known.refs++
+  /** Lists a live task whose chain is now known under its parent, and each step above it not listed yet. */
+  #install(record: TaskRecord, chain: Chain): void {
+    let key = taskKey(record.id)
+    let step: Step = { task: record.id, background: record.background }
+    for (let at: Chain | undefined = chain; at !== undefined; at = at.up) {
+      const parent = stepKey(at.step)
+      const listed = this.#below.get(parent)
+      if (listed !== undefined) {
+        listed.set(key, step)
+        return
       }
+      this.#below.set(parent, new Map([[key, step]]))
+      if ("conversation" in at.step) this.#conversations.set(at.step.conversation, at)
+      // A live task with a known chain is listed already.
+      else if (this.#live.get(at.step.task)?.chain !== undefined) return
+      key = parent
+      step = at.step
     }
   }
 
@@ -744,35 +757,44 @@ class Scheduler<Svc> implements TaskScheduler {
     this.#unloaded.delete(id)
     this.#sleeping.delete(id)
     this.#intent.delete(id)
-    if (live.chain === undefined) return
-    for (const step of live.chain) {
-      deleteFrom(this.#below, stepKey(step), id)
-      if ("conversation" in step) {
-        const known = this.#conversations.get(step.conversation)!
-        if (--known.refs === 0) this.#conversations.delete(step.conversation)
-      }
+    // Unlists the ended task unless steps are listed below it, then each step above that has nothing left below it.
+    let key = taskKey(id)
+    for (let at = live.chain; at !== undefined && !this.#below.has(key); at = at.up) {
+      const parent = stepKey(at.step)
+      const listed = this.#below.get(parent)
+      if (listed === undefined || !listed.delete(key) || listed.size > 0) return
+      this.#below.delete(parent)
+      if ("conversation" in at.step) this.#conversations.delete(at.step.conversation)
+      // A live task with a known chain stays listed.
+      else if (this.#live.get(at.step.task)?.chain !== undefined) return
+      key = parent
     }
+  }
+
+  /** The chain a live task with a known chain starts for the work below it. */
+  #own(id: TaskId, live: Live): Chain {
+    live.own ??= { step: { task: id, background: live.record.background }, up: live.chain! }
+    return live.own
   }
 
   /** The chain of a task from memory alone, when every step is known; otherwise a pass loads it. */
   #chainNow(
     record: TaskRecord,
     created: ReadonlyMap<ConversationId, ConversationRecord> | undefined,
-  ): readonly Step[] | undefined {
+  ): Chain | undefined {
     if (record.owner !== undefined) {
       const owner = this.#live.get(record.owner)
-      if (owner?.chain === undefined) return undefined
-      return [{ task: record.owner, background: owner.record.background }, ...owner.chain]
+      return owner?.chain === undefined ? undefined : this.#own(record.owner, owner)
     }
     const known = this.#conversations.get(record.conversationId)
-    if (known !== undefined) return known.chain
+    if (known !== undefined) return known
     const conversation = created?.get(record.conversationId)
     if (conversation === undefined) return undefined
     const ownerId = conversation.owner?.taskId
-    if (ownerId === undefined) return [{ conversation: conversation.id }]
+    if (ownerId === undefined) return { step: { conversation: conversation.id }, up: undefined }
     const owner = this.#live.get(ownerId)
     if (owner?.chain === undefined) return undefined
-    return [{ conversation: conversation.id }, { task: ownerId, background: owner.record.background }, ...owner.chain]
+    return { step: { conversation: conversation.id }, up: this.#own(ownerId, owner) }
   }
 
   /** On the line: loads the chains of the live tasks whose chain is not known, from Storage. */
@@ -783,42 +805,39 @@ class Scheduler<Svc> implements TaskScheduler {
         if (live === undefined || live.chain !== undefined) continue
         live.chain = yield* this.#resolveChain(live.record, undefined)
         this.#unloaded.delete(id)
-        this.#install(id, live.chain)
+        this.#install(live.record, live.chain)
       }
     })
   }
 
   /** The chain above a record, read from memory, the transaction's candidates, or Storage. */
-  #resolveChain(record: TaskRecord, tx: Transaction | undefined): Effect.Effect<readonly Step[], StorageError> {
+  #resolveChain(record: TaskRecord, tx: Transaction | undefined): Effect.Effect<Chain, StorageError> {
+    if (record.owner !== undefined) return this.#ownChain(record.owner, tx)
+    return this.#conversationChain(record.conversationId, tx)
+  }
+
+  /** The chain task `id` starts for the work below it. */
+  #ownChain(id: TaskId, tx: Transaction | undefined): Effect.Effect<Chain, StorageError> {
+    const live = this.#live.get(id)
+    if (live?.chain !== undefined) return Effect.succeed(this.#own(id, live))
     return Effect.gen({ self: this }, function* () {
-      if (record.owner !== undefined) {
-        const owner = yield* this.#taskRecord(record.owner, tx)
-        const above = yield* this.#taskChain(record.owner, tx)
-        return [{ task: record.owner, background: owner.background }, ...above]
-      }
-      return yield* this.#conversationChain(record.conversationId, tx)
+      const record = yield* this.#taskRecord(id, tx)
+      const up = yield* this.#resolveChain(record, tx)
+      return { step: { task: id, background: record.background }, up }
     })
   }
 
-  #taskChain(id: TaskId, tx: Transaction | undefined): Effect.Effect<readonly Step[], StorageError> {
-    const chain = this.#live.get(id)?.chain
-    if (chain !== undefined) return Effect.succeed(chain)
-    return Effect.flatMap(this.#taskRecord(id, tx), (record) => this.#resolveChain(record, tx))
-  }
-
-  #conversationChain(id: ConversationId, tx: Transaction | undefined): Effect.Effect<readonly Step[], StorageError> {
+  #conversationChain(id: ConversationId, tx: Transaction | undefined): Effect.Effect<Chain, StorageError> {
     return Effect.gen({ self: this }, function* () {
-      const known = this.#conversations.get(id)?.chain
+      const known = this.#conversations.get(id)
       if (known !== undefined) return known
       const conversation =
         tx?.stagedConversations().find((record) => record.id === id) ??
         (yield* orDieRequest(this.#internals.lineReads.conversation(id)))
       if (conversation === undefined) return yield* Effect.die(new Error(`Conversation ${id} does not exist`))
       const ownerId = conversation.owner?.taskId
-      if (ownerId === undefined) return [{ conversation: id }]
-      const owner = yield* this.#taskRecord(ownerId, tx)
-      const above = yield* this.#taskChain(ownerId, tx)
-      return [{ conversation: id }, { task: ownerId, background: owner.background }, ...above]
+      if (ownerId === undefined) return { step: { conversation: id }, up: undefined }
+      return { step: { conversation: id }, up: yield* this.#ownChain(ownerId, tx) }
     })
   }
 
@@ -848,14 +867,41 @@ class Scheduler<Svc> implements TaskScheduler {
     const found: TaskId[] = []
     const staged =
       tx === undefined ? undefined : new Map<TaskId, TaskRecord>(tx.stagedTasks().map((record) => [record.id, record]))
-    for (const id of this.#below.get(top) ?? []) {
-      const live = this.#live.get(id)!
-      const record = staged?.get(id) ?? live.record
-      if (record.state.status === "terminal" || !reaches(live, top, false)) continue
-      found.push(id)
-      if (first) return found
-    }
+    this.#reach(top, false, (live) => {
+      const record = staged?.get(live.id) ?? live
+      if (record.state.status === "terminal") return false
+      found.push(record.id)
+      return first
+    })
     return found
+  }
+
+  /**
+   * Visits the live tasks with a known chain that ordinary traversal from `top` (a task or conversation key) reaches,
+   * until `visit` returns true: a walk down `#below` that enters no background task unless `crossBackground`, nor a
+   * task `enter` refuses. Returns whether a visit stopped it. A loop, as chains can be deeper than the call stack.
+   */
+  #reach(
+    top: string,
+    crossBackground: boolean,
+    visit: (record: TaskRecord) => boolean | void,
+    enter?: (id: TaskId) => boolean,
+  ): boolean {
+    const pending = [top]
+    for (let at = pending.pop(); at !== undefined; at = pending.pop()) {
+      const below = this.#below.get(at)
+      if (below === undefined) continue
+      for (const [key, step] of below) {
+        if ("task" in step) {
+          if (step.background && !crossBackground) continue
+          const live = this.#live.get(step.task)
+          if (live?.chain !== undefined && visit(live.record) === true) return true
+          if (enter !== undefined && !enter(step.task)) continue
+        }
+        pending.push(key)
+      }
+    }
+    return false
   }
 
   /** `#hasOwnedLive` that also counts the tasks the commit creates below `owner`, whose chains may need Storage. */
@@ -866,7 +912,7 @@ class Scheduler<Svc> implements TaskScheduler {
       for (const record of tx.stagedTasks()) {
         if (this.#live.has(record.id) || record.background || record.state.status === "terminal") continue
         const chain = yield* this.#resolveChain(record, tx)
-        if (reaches({ record, chain }, top, false)) return true
+        if (chainReaches(chain, top, false)) return true
       }
       return false
     })
@@ -879,22 +925,17 @@ class Scheduler<Svc> implements TaskScheduler {
     crossBackground: boolean,
     tx: Transaction | undefined,
   ): Effect.Effect<boolean, StorageError> {
-    return Effect.map(this.#conversationChain(id, tx), (chain) => {
-      for (const step of chain) {
-        if (stepKey(step) === top) return true
-        if ("task" in step && step.background && !crossBackground) return false
-      }
-      return false
-    })
+    return Effect.map(this.#conversationChain(id, tx), (chain) => chainReaches(chain, top, crossBackground))
   }
 
   /**
    * The nearest live owner above a chain whose cancellation intent reaches it: walking up finds an owner with intent
    * before a background owner without it. Terminal owners never cascade (spec 5.4).
    */
-  #cancellingOwner(chain: readonly Step[]): TaskRecord | undefined {
+  #cancellingOwner(chain: Chain): TaskRecord | undefined {
     if (this.#intent.size === 0) return undefined
-    for (const step of chain) {
+    for (let at: Chain | undefined = chain; at !== undefined; at = at.up) {
+      const step = at.step
       if (!("task" in step)) continue
       const live = this.#live.get(step.task)?.record
       if (live !== undefined && cancellationIntent(live)) return live
@@ -904,9 +945,10 @@ class Scheduler<Svc> implements TaskScheduler {
   }
 
   /** The nearest live task above ended ordinary work: the one it held, if any. Work at a background task holds none. */
-  #nearestLiveAbove(record: TaskRecord, chain: readonly Step[]): TaskRecord | undefined {
+  #nearestLiveAbove(record: TaskRecord, chain: Chain): TaskRecord | undefined {
     if (record.background) return undefined
-    for (const step of chain) {
+    for (let at: Chain | undefined = chain; at !== undefined; at = at.up) {
+      const step = at.step
       if (!("task" in step)) continue
       const live = this.#live.get(step.task)?.record
       if (live !== undefined) return live
@@ -919,14 +961,14 @@ class Scheduler<Svc> implements TaskScheduler {
   #idle(conversationId: ConversationId | undefined): boolean {
     if (conversationId !== undefined) {
       const top = conversationKey(conversationId)
-      for (const id of this.#below.get(top) ?? []) if (reaches(this.#live.get(id)!, top, false)) return false
+      if (this.#reach(top, false, () => true)) return false
       for (const id of this.#unloaded) if (!this.#live.get(id)!.record.background) return false
       return true
     }
     for (const live of this.#live.values()) {
       if (live.record.background) continue
       if (live.chain === undefined) return false
-      if (!live.chain.some((step) => "task" in step && step.background)) return false
+      if (!belowBackground(live.chain)) return false
     }
     return true
   }
@@ -1032,13 +1074,9 @@ class Scheduler<Svc> implements TaskScheduler {
           const owner = this.#live.get(id)!.record
           // Only an owner abandoned after a restart, and nothing else, passes its reason on.
           const restart = owner.abortReason === "restart" && !failedOutcome(owner)
-          const top = taskKey(id)
-          for (const below of this.#below.get(top) ?? []) {
-            const live = this.#live.get(below)!
-            // A nested owner with intent of its own covers what is below it.
-            if (!reaches(live, top, false) || this.#nestedIntent(live.chain!, top)) continue
-            mark(live.record, restart ? "restart" : undefined)
-          }
+          // A nested owner with intent of its own covers what is below it.
+          const enter = (below: TaskId) => !this.#intent.has(below)
+          this.#reach(taskKey(id), false, (record) => mark(record, restart ? "restart" : undefined), enter)
         }
       }
       for (const id of [...this.#failFastChecks]) {
@@ -1064,15 +1102,6 @@ class Scheduler<Svc> implements TaskScheduler {
       }
       yield* this.#finalize(tx)
     })
-  }
-
-  /** Whether a task with cancellation intent lies between a chain's start and `top`. */
-  #nestedIntent(chain: readonly Step[], top: string): boolean {
-    for (const step of chain) {
-      if (stepKey(step) === top) return false
-      if ("task" in step && this.#intent.has(step.task)) return true
-    }
-    return false
   }
 
   /**
@@ -1617,9 +1646,9 @@ class Scheduler<Svc> implements TaskScheduler {
           this.#session.read(() =>
             Effect.sync(() => {
               const owned: TaskRecord[] = []
-              for (const id of this.#below.get(taskKey(invocation.taskId)) ?? []) {
-                const record = this.#live.get(id)!.record
-                if (record.owner === invocation.taskId) owned.push(record)
+              for (const step of this.#below.get(taskKey(invocation.taskId))?.values() ?? []) {
+                const record = "task" in step ? this.#live.get(step.task)?.record : undefined
+                if (record !== undefined) owned.push(record)
               }
               return owned.sort((a, b) => a.id - b.id)
             }),
@@ -1848,14 +1877,21 @@ type Runnable = TaskRecord & {
 }
 
 /**
- * Whether ordinary traversal from `top` (a task or conversation key) reaches a live task: `top` is on its chain and no
- * background task lies between, the task itself included, unless `crossBackground`.
+ * Whether ordinary traversal from `top` (a task or conversation key) reaches the work below `chain`: `top` is on it and
+ * no background task lies between, unless `crossBackground`.
  */
-function reaches(live: Live, top: string, crossBackground: boolean): boolean {
-  if (live.chain === undefined || (live.record.background && !crossBackground)) return false
-  for (const step of live.chain) {
-    if (stepKey(step) === top) return true
-    if ("task" in step && step.background && !crossBackground) return false
+function chainReaches(chain: Chain, top: string, crossBackground: boolean): boolean {
+  for (let at: Chain | undefined = chain; at !== undefined; at = at.up) {
+    if (stepKey(at.step) === top) return true
+    if ("task" in at.step && at.step.background && !crossBackground) return false
+  }
+  return false
+}
+
+/** Whether a background task is on `chain`. */
+function belowBackground(chain: Chain): boolean {
+  for (let at: Chain | undefined = chain; at !== undefined; at = at.up) {
+    if ("task" in at.step && at.step.background) return true
   }
   return false
 }
