@@ -538,7 +538,7 @@ describe("tasks", () => {
       }),
     ))
 
-  test("task-terminal: a task whose process is killed mid-phase resumes from its checkpoint in a new process, with the restart counted", async () => {
+  test("task-terminal: a task whose process is killed mid-phase resumes from its checkpoint in a new process, with the restart counted even after a read-only scheduler opened and closed it", async () => {
     const path = databasePath()
     // The PID is the one spawned here; nothing else is killed.
     const child = Bun.spawn(["bun", join(import.meta.dir, "support/crash-task.ts"), path], { stdout: "pipe" })
@@ -555,9 +555,16 @@ describe("tasks", () => {
 
     await run(
       Effect.gen(function* () {
+        const session = yield* openSession(yield* openSqliteStorage(path))
+        yield* openTaskScheduler({ session, registry: registry(), readOnly: true })
+      }),
+    )
+    await run(
+      Effect.gen(function* () {
         let firstRuns = 0
         const resumed = stepper({ first: () => firstRuns++, second: () => Effect.void })
         const storage = yield* openSqliteStorage(path)
+        // Still as the crash left it: an inspection is not a close of running work.
         expect((yield* storage.task(id))?.state).toEqual({
           status: "running",
           checkpoint: { phase: "second" },

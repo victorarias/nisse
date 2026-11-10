@@ -319,7 +319,8 @@ class Scheduler<Svc> implements TaskScheduler {
         end: () => {},
       })
       this.#session.subscribeClose(() => this.#seal())
-      this.#internals.onClosing((store) => this.#join(store))
+      // A read-only scheduler runs nothing, so a close has nothing to join or write back.
+      if (!this.#readOnly) this.#internals.onClosing((store) => this.#join(store))
       if (this.#registry.subscribe !== undefined) {
         try {
           this.#unsubscribeRegistry = this.#registry.subscribe(() => {
