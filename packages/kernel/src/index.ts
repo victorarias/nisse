@@ -76,6 +76,7 @@ export {
 } from "./tasks/task.ts"
 export {
   type BlockedReason,
+  endedByCrashes,
   openTaskScheduler,
   type PhaseInfo,
   type ReportTask,

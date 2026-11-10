@@ -298,6 +298,90 @@ export function toSeam(models: Models): M.Models {
 	return models[SEAM];
 }
 
+/**
+ * nisse's seam over any pi-ai `Models`, through its Promise methods: a suite that wraps one, as a Proxy overriding
+ * `streamSimple`, is heard. Interruption aborts the request's signal.
+ */
+export function promiseSeam(models: Models): M.Models {
+	const known = seams.get(models);
+	if (known !== undefined) return known;
+	const seam = makePromiseSeam(models);
+	seams.set(models, seam);
+	owners.set(seam, models);
+	return seam;
+}
+
+const seams = new WeakMap<Models, M.Models>();
+const owners = new WeakMap<M.Models, Models>();
+
+/** The pi-ai `Models` behind a seam `promiseSeam` made; any other seam, such as one with an identity applied, as pi-ai's facade over it. */
+export function promiseModels(seam: M.Models): Models {
+	const known = owners.get(seam);
+	if (known !== undefined) return known;
+	// A wrapper that spreads a promise seam, as an identity does, keeps its `HOST` and so the host's providers.
+	const host = (seam as { [HOST]?: Models })[HOST];
+	const made = facade(seam, () => host?.getProviders() ?? []);
+	owners.set(seam, made);
+	return made;
+}
+
+/** The pi-ai `Models` a promise seam calls, kept on the seam itself. */
+const HOST = Symbol("pi-ai host models");
+
+function makePromiseSeam(models: Models): M.Models {
+	const request = <A>(call: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, never> =>
+		Effect.orDie(
+			Effect.tryPromise({ try: (signal) => Promise.resolve(call(signal)), catch: (error) => error }),
+		);
+	const seam: M.Models & { [HOST]: Models } = {
+		[HOST]: models,
+		getModel: (provider, id) => models.getModel(provider, id) as Model<M.Api> | undefined,
+		getModelsOfType: (type, provider) => models.getModelsOfType(type, provider),
+		getModelOfType: (type, provider, id) => models.getModelOfType(type, provider, id),
+		getAvailableOfType: (type, provider) => request(() => models.getAvailableOfType(type, provider)),
+		streamSimple: (model, context, options) =>
+			Stream.unwrap(
+				Effect.sync(() => {
+					const controller = new AbortController();
+					const events = models.streamSimple(model, context as Context, { ...options, signal: controller.signal });
+					// pi-ai's `result()` is the final message; a stream that never yields its terminal event ends with it.
+					let ended = false;
+					const terminal = Stream.unwrap(
+						Effect.map(
+							Effect.tryPromise({ try: () => events.result(), catch: (error) => error }),
+							(message): Stream.Stream<AssistantMessageEvent> =>
+								ended
+									? Stream.empty
+									: Stream.make(
+											message.stopReason === "error" || message.stopReason === "aborted"
+												? { type: "error", reason: message.stopReason, error: message }
+												: { type: "done", reason: message.stopReason as "stop", message },
+										),
+						),
+					);
+					return Stream.fromAsyncIterable(events, (error) => error).pipe(
+						Stream.tap((event) =>
+							Effect.sync(() => {
+								if (event.type === "done" || event.type === "error") ended = true;
+							}),
+						),
+						Stream.concat(terminal),
+						Stream.orDie,
+						Stream.ensuring(Effect.sync(() => controller.abort())),
+					);
+				}),
+			),
+		completeSimple: (model, context, options) =>
+			request((signal) => models.completeSimple(model, context as Context, { ...options, signal })),
+		fetchDeferred: (model, handle, options) => request((signal) => models.fetchDeferred(model, handle, { ...options, signal })),
+		cancelDeferred: (model, handle, options) => request((signal) => models.cancelDeferred(model, handle, { ...options, signal })),
+		classify: (model, context, options) => request((signal) => models.classify(model, context, { ...options, signal })),
+		generateImages: (model, context, options) =>
+			request((signal) => models.generateImages(model, context, { ...options, signal })),
+	};
+	return seam;
+}
+
 // The pi-ai facade over a seam. `providers` lists the pi-ai providers the seam was built from.
 function facade(seam: M.Models, providers: () => readonly Provider[]): Models {
 	const all = (id?: string) => (id === undefined ? providers() : providers().filter((p) => p.id === id)).flatMap((p) => p.getAllModels());

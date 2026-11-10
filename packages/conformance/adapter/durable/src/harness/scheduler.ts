@@ -4,4 +4,4 @@ export type { BlockedReason } from "../../../../../kernel/src/index.ts";
 // The kernel's scheduler (`openTaskScheduler`) runs Effect phases; the harness wraps it with Promise phases and hooks.
 export const TaskScheduler = unimplemented("TaskScheduler", "harness-shell");
 export const blockedSubject = unimplemented("blockedSubject", "harness-shell");
-export const endedByCrashes = unimplemented("endedByCrashes", "harness-run-core");
+export { endedByCrashes } from "../../../../../kernel/src/index.ts";

@@ -147,6 +147,8 @@ export interface Session {
   readonly closed: Effect.Effect<SessionEnd>
   /** The first error that failed the Session, once one did; set before the close listeners run. */
   readonly failure: { readonly error: unknown } | undefined
+  /** Whether `tx` is a transaction of one of this Session's commits. */
+  owns(tx: Tx): boolean
 
   /**
    * The committed value at a document address, migrated in memory to the token's version; `undefined` when absent
@@ -186,6 +188,14 @@ export interface Session {
    * there fails the Session, as in a commit.
    */
   read<A, E>(body: (storage: StorageReads) => Effect.Effect<A, E>): Effect.Effect<A, E | SessionFailed | SessionClosed>
+  /**
+   * Runs `body` beside the line, for reads of records no commit changes, such as entries at or below a tail read on the
+   * line: commits go on meanwhile. A storage error fails the Session. What it read is refused once the Session failed
+   * or began closing before it ended, and the close waits for it before closing Storage.
+   */
+  readOffLine<A, E>(
+    body: (storage: StorageReads) => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E | SessionFailed | SessionClosed>
   /** Drops every loaded document not observed; the next access loads it from Storage. */
   readonly unloadDocuments: Effect.Effect<void, SessionFailed | SessionClosed>
   /** For tests that bound memory: what the document cache holds. */
@@ -216,6 +226,11 @@ export interface SessionInternals {
   fail(error: unknown): void
   /** The Session's clock, in ms. */
   now(): number
+  /**
+   * At a publication: runs `task` once every commit observer saw it, so a microtask `task` queues follows the ones the
+   * observers queued.
+   */
+  afterPublication(task: () => void): void
   /** Storage's reads behind the failure rule, for code that runs inside a job on the line, such as a commit callback. */
   readonly lineReads: StorageReads
 }
@@ -257,6 +272,8 @@ class SessionImpl implements Session, SessionInternals {
   readonly #jobs: Queue.Queue<Job, Cause.Done>
   readonly #closedEnd: Deferred.Deferred<SessionEnd>
   readonly #observers = new Set<CommitObserver>()
+  /** Tasks for after the current publication's observers. */
+  #afterPublication: (() => void)[] = []
   readonly #closeListeners = new Set<() => void>()
   readonly #cache: DocumentCache
   /** Attached document observers by address. */
@@ -275,6 +292,9 @@ class SessionImpl implements Session, SessionInternals {
   #closeError: StorageError | undefined
   /** Storage's reads, each behind the failure rule. */
   readonly #reads: StorageReads
+  /** Reads underway beside the line, and what a close waiting for them to end awaits. */
+  #offLine = 0
+  #offLineEnded: Deferred.Deferred<void> | undefined
   readonly #closingSteps: ((store: (writes: readonly StorageWrite[]) => Effect.Effect<void>) => Effect.Effect<void>)[] =
     []
   /** The pending cache sweep: a job queued on the line, or a timer and the time it fires. */
@@ -417,6 +437,10 @@ class SessionImpl implements Session, SessionInternals {
     return this.#failure
   }
 
+  owns(tx: Tx): boolean {
+    return Transaction.over(tx, this.#storage)
+  }
+
   // Documents
 
   snapshot<K extends AnyDocToken>(token: K, ...address: DocAddressArgs<K>) {
@@ -505,6 +529,29 @@ class SessionImpl implements Session, SessionInternals {
       const refused = this.#admissionError()
       if (refused !== undefined) return Effect.fail(refused)
       return this.#onLine(Effect.suspend(() => body(this.#reads)))
+    })
+  }
+
+  readOffLine<A, E>(body: (storage: StorageReads) => Effect.Effect<A, E>) {
+    return Effect.suspend(() => {
+      const refused = this.#admissionError()
+      if (refused !== undefined) return Effect.fail(refused)
+      this.#offLine++
+      return Effect.suspend(() => body(this.#reads)).pipe(
+        Effect.ensuring(
+          Effect.suspend(() => {
+            this.#offLine--
+            // A storage error here failed the Session outside any job, so nothing on the line starts its close.
+            if (this.#failure !== undefined) this.#beginClose()
+            const ended = this.#offLineEnded
+            return this.#offLine === 0 && ended !== undefined ? Deferred.succeed(ended, undefined) : Effect.void
+          }),
+        ),
+        Effect.flatMap((value) => {
+          const late = this.#admissionError()
+          return late === undefined ? Effect.succeed(value) : Effect.fail(late)
+        }),
+      )
     })
   }
 
@@ -705,6 +752,13 @@ class SessionImpl implements Session, SessionInternals {
         this.#observerFailed(observer, error)
       }
     }
+    const after = this.#afterPublication
+    this.#afterPublication = []
+    for (const task of after) task()
+  }
+
+  afterPublication(task: () => void): void {
+    this.#afterPublication.push(task)
   }
 
   /** A plain Session drops reports (spec 10.1): the observer is detached and told why, once. */
@@ -913,6 +967,11 @@ class SessionImpl implements Session, SessionInternals {
       // Every job admitted before the seal runs; after a failure each gets SessionFailed.
       yield* Queue.end(this.#jobs)
       if (this.#line !== undefined) yield* Fiber.await(this.#line)
+      if (this.#offLine > 0) {
+        const ended = yield* Deferred.make<void>()
+        this.#offLineEnded = ended
+        yield* Deferred.await(ended)
+      }
       const failure = this.#failure
       const end: CommitObserverEnd =
         failure === undefined ? { kind: "ended" } : { kind: "failed", error: failure.error }

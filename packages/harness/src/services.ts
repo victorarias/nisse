@@ -11,11 +11,15 @@ import type {
   RewindableAddressArgs,
   DocAddressArgs,
   CommitError,
+  ReadError,
+  SubmissionId,
+  Tx,
 } from "@nisse/kernel"
 import type { ExecutionEnv } from "@nisse/env"
 import type { Models } from "@nisse/models"
 import { Context, type Effect, type Scope } from "effect"
-import type { Agent, ContextView, Settings } from "./types.ts"
+import type { AdmissionError, Submission } from "./submissions.ts"
+import type { Agent, ContextView, HookApi, Settings, SubmissionDraft } from "./types.ts"
 
 /** Runs one handler of the hooks the task's conversation selects for the task's name. */
 export interface HookRunner {
@@ -37,6 +41,9 @@ export type ReportFrom =
  */
 export interface ConversationHandle {
   readonly id: ConversationId
+  /** Admits a submission, as `Conversation.submit` does; the handle's operations are bound to the invocation too. */
+  submit(draft: SubmissionDraft): Effect.Effect<Submission, InvocationEnded | AdmissionError | ReadError | CommitError>
+  submit(tx: Tx, draft: SubmissionDraft): Effect.Effect<SubmissionId, InvocationEnded | AdmissionError | ReadError>
   /** Aborts the conversation's live work, as `Conversation.abort` does. */
   abort(options?: { readonly background?: boolean }): Effect.Effect<void, InvocationEnded | ReadFailure | CommitError>
   waitForIdle: Effect.Effect<void, InvocationEnded | ReadFailure>
@@ -53,6 +60,8 @@ export interface TaskApi {
   readonly env: Effect.Effect<ExecutionEnv | undefined, unknown>
   /** Handlers of this task's name from the extensions its conversation selects. */
   readonly hooks: HookRunner
+  /** What this task's hooks are called with. */
+  readonly hookApi: HookApi
   /** The committed context of a conversation, optionally cut off at its visible entry `at`. */
   context(
     conversationId: ConversationId,

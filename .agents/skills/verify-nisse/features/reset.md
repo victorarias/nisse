@@ -7,7 +7,7 @@ A reset starts over with an empty context in the same conversation, history kept
 - `reset-context` [kernel] `reset()` (R593-604): Start over with an empty context in the same conversation, history kept
 - `reset-rpc` [pending surface-conversations] The client path for `reset()` (R593-604): Start over with an empty context in the same conversation, history kept
 - `reset-handoff` [kernel] Handoff text on reset (R593-604): Carry a short brief into the fresh context
-- `reset-at-boundary` [kernel, pending harness-run-core] Reset while busy applies at a boundary (§6): A reset from one client does not cut another's tool call in half
+- `reset-at-boundary` [kernel] Reset while busy applies at a boundary (§6): A reset from one client does not cut another's tool call in half
 
 ## How to get to it
 

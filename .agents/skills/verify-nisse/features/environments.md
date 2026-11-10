@@ -14,7 +14,7 @@ Tools work through an execution environment, per conversation, for commands, fil
 - `env-conformance` [kernel] Environment conformance suite (`testing/env-conformance`, 633 lines): A custom environment can be proven correct
 - `env-variables` [kernel] Environment variables to commands (R430-463): Commands know their conversation
 - `env-text-reader` [kernel] Text line reading decodes multi-byte splits and reports newline termination.
-- `env-filesystem` [kernel, pending harness-run-core] Files and directories read, write, list, rename and fail with typed errors.
+- `env-filesystem` [kernel] Files and directories read, write, list, rename and fail with typed errors.
 - `env-shell` [kernel] Shell execution streams, spills, times out, aborts and reports exit codes.
 - `env-truncate` [kernel] Truncation by lines and UTF-8 bytes reports what it cut.
 

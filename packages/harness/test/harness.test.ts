@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Deferred, Effect, Queue, Scope, Stream } from "effect"
+import { Deferred, Effect, Option, Queue, Scope, Stream } from "effect"
 import {
   type ConversationId,
   defineDoc,
@@ -15,12 +15,15 @@ import {
   type TaskId,
 } from "@nisse/kernel"
 import { fromProviders } from "@nisse/models"
+import { fauxAssistantMessage, fauxProvider } from "@nisse/models/faux"
 import {
   AgentDoc,
   type Conversation,
+  type ConversationInit,
   createRegistry,
   defineExtension,
   defineTool,
+  LiveDoc,
   type Harness,
   type HarnessOptions,
   openHarness,
@@ -429,6 +432,110 @@ describe("registry", () => {
         yield* Deferred.succeed(gate, undefined)
         const older = yield* harness.waitForTask(running)
         expect(older.state.outcome).toEqual({ status: "completed", result: { code: "old", tools: ["old-tool"] } })
+      }),
+    )
+  })
+})
+
+describe("submissions", () => {
+  test("session-init: the host's init seeds the root once, in the commit that creates it, and never again after a restart", async () => {
+    const Seeded = defineDoc<{ runs: number }>({
+      kind: "test.seeded",
+      version: 1,
+      scope: "conversation",
+      history: "latest",
+      fork: "initial",
+      initial: () => ({ runs: 0 }),
+      checkpointWhen: () => true,
+    })
+    const path = databasePath()
+    let inits = 0
+    const init: ConversationInit = (tx, id) =>
+      Effect.map(tx.doc(Seeded, id), (seeded) => {
+        inits++
+        seeded.runs++
+      })
+    for (let open_ = 0; open_ < 2; open_++) {
+      await run(
+        Effect.gen(function* () {
+          const harness = yield* open(path, createRegistry())
+          const root = yield* harness.root({ agent: { instructions: "seeded" }, init })
+          expect(yield* harness.session.snapshot(Seeded, root.id)).toEqual({ runs: 1 })
+          expect((yield* root.agent).instructions).toBe("seeded")
+        }),
+      )
+    }
+    expect(inits).toBe(1)
+  })
+
+  test("submission-dedupe: a submission retried with its request ID after a restart lands once", async () => {
+    const path = databasePath()
+    const draft = { requestId: "send-1", type: "write", entry: { kind: "message", model: [user("once")] } } as const
+    const first = await run(
+      Effect.gen(function* () {
+        const harness = yield* open(path, createRegistry())
+        const root = yield* harness.root()
+        const submission = yield* root.submit(draft)
+        yield* submission.wait
+        return { root: root.id, submission: submission.id }
+      }),
+    )
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(path, createRegistry())
+        const root = (yield* harness.conversation(first.root))!
+        const retried = yield* root.submit(draft)
+        expect(retried.id).toBe(first.submission)
+        expect((yield* retried.wait).status).toBe("done")
+        const stored = yield* harness.session.read((storage) =>
+          storage.scanSubmissions({ conversationId: first.root }, 10, undefined),
+        )
+        expect(stored.items.map((record) => record.id)).toEqual([first.submission])
+        expect(yield* contextTexts(root)).toEqual(["once"])
+      }),
+    )
+  })
+})
+
+describe("runs", () => {
+  test("run-retry-live, run-failed-attempt: Stop during a retry backoff ends the run as aborted without waiting it out", async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([], { stopReason: "error", errorMessage: "503 Service Unavailable" })])
+    await run(
+      Effect.gen(function* () {
+        const storage = yield* openSqliteStorage(databasePath())
+        const harness = yield* Effect.acquireRelease(
+          openHarness(storage, {
+            registry: createRegistry(),
+            models: fromProviders([faux.provider]),
+            // The longest backoff, a minute (maxAgentDelayMs): Stop ends it long before.
+            settings: { retry: { baseDelayMs: 3_600_000 } },
+          }),
+          (opened) => Effect.ignore(opened.close),
+        )
+        const root = yield* harness.root({ agent: { model: { provider: "faux", modelId: "faux-1" } } })
+        const watch = (yield* harness.session.watchDoc(LiveDoc, root.id))!
+        const submission = yield* root.submit({ type: "input", content: "hi" })
+        const retrying = yield* Stream.runHead(
+          Stream.filter(watch.changes, (change) => change.value.generation?.retry !== undefined),
+        )
+        const retry = Option.getOrThrow(retrying).value.generation!.retry
+        expect(retry?.error).toBe("503 Service Unavailable")
+        expect(retry!.at).toBeGreaterThan(Date.now())
+        const failed = yield* harness.session.read((reads) =>
+          reads.scanEntries({ conversationId: root.id }, 10, undefined),
+        )
+        expect(
+          failed.items.map((entry) => [
+            entry.kind,
+            (entry.model?.[0] as { stopReason?: string } | undefined)?.stopReason,
+          ]),
+        ).toContainEqual(["pi.assistant", "error"])
+
+        yield* root.abort()
+        expect(yield* submission.wait).toMatchObject({ status: "unanswered", reason: "aborted" })
+        expect(yield* harness.session.snapshot(LiveDoc, root.id)).toMatchObject({ runFailure: { reason: "aborted" } })
+        expect((yield* harness.session.snapshot(LiveDoc, root.id))?.generation).toBeUndefined()
       }),
     )
   })

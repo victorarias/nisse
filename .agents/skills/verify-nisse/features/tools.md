@@ -11,7 +11,7 @@ Tools return separate channels for the model, programs and clients, are bounded 
 - `tool-usage` [kernel, pending harness-tools] Usage on a tool result (§7.3, §8.6): A tool that calls a model has its cost counted
 - `tool-terminate` [kernel, pending harness-tools] `control.terminate` (§7.3): A tool ends the run with no further model call
 - `tool-add-tools` [kernel, pending harness-tools] `control.addTools` (§7.3): A tool makes more tools available at the next step
-- `tool-handoff` [kernel, pending harness-run-core] `control.handoff` (§7.3): A tool resets context and carries a brief
+- `tool-handoff` [kernel] `control.handoff` (§7.3): A tool resets context and carries a brief
 - `tool-replay-policy` [kernel, pending tools-package] Replay policy safe or unsafe (§7.3, §8.4): Read-only calls rerun after a crash; the rest are marked interrupted
 - `tool-prepare-arguments` [kernel, pending tools-package] `prepareArguments` (§7.3): Normalize odd model arguments before validation and hooks
 - `tool-output-schema` [kernel, pending harness-tools] `structuredOutputSchema` validation (R279, §7.3): Programs can trust a declared shape
@@ -26,7 +26,7 @@ Tools return separate channels for the model, programs and clients, are bounded 
 - `tool-output-throttle` [kernel, pending harness-tools] Adaptive throttle on running output (§7.3): A chatty command doesn't overload storage
 - `tool-output-window` [kernel, pending harness-views] `outputWindow`, `skipped` count (§7.3, §8.2): Live view shows head, tail and how much was skipped
 - `tool-unavailable` [kernel, pending harness-tools] `tool_unavailable` when a call names a tool not offered (§7.3): A model can't call something withheld
-- `tool-retained-output` [kernel, pending harness-run-core] `retainedOutput` kept across a crash (§7.3): Output so far survives
+- `tool-retained-output` [kernel] `retainedOutput` kept across a crash (§7.3): Output so far survives
 - `tool-api-env` [kernel, pending harness-tools] `api.env` in the tool API (§7.3): Tools work on whichever environment the conversation uses
 - `tool-api-commit` [kernel, pending harness-tools] `api.commit` and `api.memo` in tools (§7.3): A tool stores progress atomically and doesn't repeat steps after a crash
 - `tool-api-create` [kernel, pending harness-tools] `api.createTask`, `api.conversation` (§7.3, R772-797): A tool starts durable work or a conversation

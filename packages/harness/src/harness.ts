@@ -9,6 +9,7 @@ import {
   type ConversationOwnership,
   type ConversationRecord,
   type Cursor,
+  type JsonValue,
   type DocAddressArgs,
   type EntryId,
   type EntryQuery,
@@ -25,6 +26,10 @@ import {
   ROOT_CONVERSATION_ID,
   type RewindableAddressArgs,
   type Session,
+  SessionFailed,
+  type StorageReads,
+  type SubmissionId,
+  type SubmissionRecord,
   type SettledTask,
   type Storage,
   type StorageError,
@@ -36,12 +41,22 @@ import {
   type Tx,
   type Wake,
 } from "@nisse/kernel"
-import type { Models } from "@nisse/models"
+import {
+  type ClientIdentity,
+  mergeClientIdentity,
+  type Models,
+  PI_ATTRIBUTION,
+  withClientIdentity,
+} from "@nisse/models"
 import { Cause, Clock, Deferred, Effect, Exit, Layer, Scope } from "effect"
 import { AgentDoc, agentHooks, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"
-import { readContext } from "./context.ts"
-import { InboxDoc, LiveDoc, ProviderDoc, UsageDoc } from "./documents.ts"
+import { ContextReads } from "./context.ts"
+import { ProviderDoc } from "./documents.ts"
+import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts"
+import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts"
+import { type AbortResult, type AdmissionError, type Submission, Submissions } from "./submissions.ts"
+import { addUsageState, UsageDoc, type UsageState } from "./usage.ts"
 import { ResetEntry } from "./entries.ts"
 import { type ConversationHandle, type ReportFrom, type TaskApi, TaskServices } from "./services.ts"
 import type {
@@ -50,11 +65,16 @@ import type {
   ContextView,
   DocumentReader,
   HarnessSettings,
+  HookApi,
   RegistryReader,
   RegistrySnapshot,
   Settings,
+  SubmissionDraft,
   ToolRegistration,
 } from "./types.ts"
+
+/** Request identity of a Harness's model requests: the models' defaults with provider attribution to pi. */
+export const DEFAULT_HARNESS_IDENTITY: ClientIdentity = { attribution: PI_ATTRIBUTION }
 
 /** What a viewer's calls that would run tasks fail with. */
 const RUNNING_REFUSED = new ReadOnlySession({ message: "Read-only Harness: running tasks refused" })
@@ -99,6 +119,8 @@ export type HarnessOptions<T extends ToolRegistration = ToolRegistration> = {
   readonly registry: RegistryReader<T>
   /** The host's models, read at each use. */
   readonly models: Models | (() => Models)
+  /** Merged over `DEFAULT_HARNESS_IDENTITY` into every model request. */
+  readonly identity?: ClientIdentity
   /** The host's policy, read at each use. */
   readonly settings?: HarnessSettings | (() => HarnessSettings | undefined)
   /** Builds a conversation's execution environment; without it tasks get none. */
@@ -119,8 +141,15 @@ export interface Conversation {
   readonly agent: Effect.Effect<Agent, ReadFailure>
   /** Applies one change to the stored agent in its own commit. */
   configure(change: AgentChange): Effect.Effect<void, CommitError>
-  /** Starts a new context, history kept; `handoff` is the first message of the new context (spec 7.1). */
-  reset(handoff?: string): Effect.Effect<void, CommitError>
+  /**
+   * Starts a new context, history kept; `handoff` is the first message of the new context (spec 7.1). Behind a live run
+   * the reset waits in the inbox, as every write does.
+   */
+  reset(handoff?: string): Effect.Effect<void, ReadError | CommitError>
+  /** Admits a submission in its own commit (spec 6). */
+  submit(draft: SubmissionDraft): Effect.Effect<Submission, AdmissionError | ReadError | CommitError>
+  /** Admits a submission inside `tx`, before the commit's first table write; it is stored or lost with that commit. */
+  submit(tx: Tx, draft: SubmissionDraft): Effect.Effect<SubmissionId, AdmissionError | ReadError>
   /** A commit bound to the conversation: `tx.createTask()` defaults to it. */
   commit<A, E>(body: (tx: Tx) => Effect.Effect<A, E>): Effect.Effect<A, E | CommitError>
   /** The committed context, or the context cut off at the visible entry `at` (spec 2.1). */
@@ -136,6 +165,12 @@ export interface Conversation {
   /** Aborts the conversation's live work and succeeds once it is idle (spec 5.4). */
   abort(options?: { readonly background?: boolean }): Effect.Effect<void, ReadFailure | CommitError>
   readonly waitForIdle: Effect.Effect<void, ReadFailure | ReadOnlySession>
+}
+
+export type HarnessInspection = {
+  readonly scheduling: "paused" | "running" | "closing"
+  readonly tasks: readonly TaskInspection[]
+  readonly submissions: readonly SubmissionRecord[]
 }
 
 export interface Harness<T extends ToolRegistration = ToolRegistration> {
@@ -156,10 +191,17 @@ export interface Harness<T extends ToolRegistration = ToolRegistration> {
   abortTask(id: TaskId): Effect.Effect<"marked" | "terminal", ReadFailure | CommitError>
   waitForTask<R>(id: TaskId<R>): Effect.Effect<SettledTask<R>, ReadFailure | ReadOnlySession>
   readonly waitForIdle: Effect.Effect<void, ReadFailure | ReadOnlySession>
-  readonly inspect: Effect.Effect<
-    { readonly scheduling: "paused" | "running" | "closing"; readonly tasks: readonly TaskInspection[] },
-    ReadFailure
-  >
+  /** Live tasks and the submissions not settled yet, queued and placed, in ID order. */
+  readonly inspect: Effect.Effect<HarnessInspection, ReadFailure>
+  /** The handle of an existing submission. */
+  submission(id: SubmissionId): Effect.Effect<Submission | undefined, ReadFailure>
+  /** Withdraws a queued submission; `conversationId` limits it to that conversation's submissions. */
+  abortSubmission(
+    id: SubmissionId,
+    conversationId?: ConversationId,
+  ): Effect.Effect<AbortResult | "not_found", ReadFailure | CommitError>
+  /** Every conversation's committed `pi.usage`, summed. */
+  readonly usage: Effect.Effect<UsageState, ReadFailure>
   /** Joins every task invocation, then closes the Session. */
   readonly close: Effect.Effect<void, StorageError>
   /** For tests that bound memory: what the scheduler's indexes hold. */
@@ -189,29 +231,79 @@ export const openHarness = <T extends ToolRegistration>(
       documentRetentionMs: () => host.hostSettings()?.documentRetentionMs,
       conversationCreated: (tx, record) => host.conversationCreated(tx, record),
     })
+    // The Session's failure is reported once: at the seal when it failed the Session, or when the close ends failed, for
+    // a failure the close itself met (Storage's close, a write still in flight). Watched before the scheduler opens, so
+    // a failure that fails open is reported too.
+    let reported = false
+    const reportFailure = (error: unknown) => {
+      if (reported) return
+      reported = true
+      host.report(error, { kind: "storage_failed" })
+    }
+    session.subscribeClose(() => {
+      const failure = session.failure
+      if (failure !== undefined) reportFailure(failure.error)
+    })
+    Effect.runFork(
+      Effect.map(session.closed, (end) => {
+        if (end.kind === "failed") reportFailure(end.error)
+      }),
+    )
     const scheduler = yield* Effect.onError(
       openTaskScheduler<TaskServices>({
         session,
         registry: options.registry,
         services: (phase) => Layer.succeed(TaskServices, host.taskApi(phase)),
         restartLimit: () => host.settings().restartLimit,
-        report: (error, report) => host.report(error, host.taskReport(report)),
+        limitsRestarts: (kind) => LIMITS_RESTARTS.has(kind),
+        settleOutcome: settleSchedulerOutcome,
+        withdrawInputs: (tx, conversationId) => withdrawQueuedInputs(tx, conversationId),
+        queuedInputs: (reads) => queuedConversations(reads),
+        report: (error, report, snapshot) => host.report(error, host.taskReport(report, snapshot)),
         readOnly: options.readOnly === true,
       }),
       () => Effect.ignore(session.close),
     )
-    session.subscribeClose(() => {
-      const failure = session.failure
-      if (failure !== undefined) host.report(failure.error, { kind: "storage_failed" })
+    const clock = yield* Clock.Clock
+    const contexts = new ContextReads(session, {
+      now: () => host.now(),
+      retentionMs: () => host.settings().contextRetentionMs,
+      waitForIdle: (conversationId) => scheduler.waitForIdle(conversationId),
+      clock,
     })
-    return host.bind(session, scheduler)
+    return host.bind(session, scheduler, clock, contexts)
   })
+
+/** Conversations with queued submissions, from a scan of every queued one. */
+const queuedConversations = (reads: StorageReads): Effect.Effect<readonly ConversationId[], ReadError> =>
+  Effect.map(
+    scanAll((cursor) => reads.scanSubmissions({ status: "queued" }, SCAN_PAGE_SIZE, cursor)),
+    (queued) => [...new Set(queued.map((record) => record.conversationId))],
+  )
+
+/** Collects every page of a scan. */
+const scanAll = <T, E>(page: (cursor: Cursor | undefined) => Effect.Effect<Page<T>, E>): Effect.Effect<T[], E> =>
+  Effect.gen(function* () {
+    const items: T[] = []
+    let cursor: Cursor | undefined
+    do {
+      const next = yield* page(cursor)
+      items.push(...next.items)
+      cursor = next.next
+    } while (cursor !== undefined)
+    return items
+  })
+
+const SCAN_PAGE_SIZE = 256
 
 /** What a Harness keeps; its parts are bound once the Session and scheduler are open. */
 class HarnessHost<T extends ToolRegistration> implements Harness<T> {
   readonly #options: HarnessOptions<T>
   #session: Session | undefined
   #scheduler: TaskScheduler | undefined
+  #submissions: Submissions | undefined
+  #effectClock: Clock.Clock | undefined
+  #contexts: ContextReads | undefined
 
   /** The host's clock behind `safeNow`; `undefined` for Effect's `Clock`. */
   readonly clock: (() => number) | undefined
@@ -225,9 +317,17 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
         : safeNow(now, (error) => this.report(error, { kind: "host_error", callback: "now" }))
   }
 
-  bind(session: Session, scheduler: TaskScheduler): this {
+  bind(session: Session, scheduler: TaskScheduler, clock: Clock.Clock, contexts: ContextReads): this {
     this.#session = session
     this.#scheduler = scheduler
+    this.#effectClock = clock
+    this.#contexts = contexts
+    this.#submissions = new Submissions(
+      session,
+      () => this.now(),
+      () => this.settings(),
+      this.#options.readOnly === true ? Effect.void : scheduler.resume,
+    )
     return this
   }
 
@@ -243,6 +343,15 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     return this.#scheduler!
   }
 
+  get submissions(): Submissions {
+    return this.#submissions!
+  }
+
+  /** The Session's clock: the host's, or Effect's. */
+  now(): number {
+    return this.clock?.() ?? this.#effectClock!.currentTimeMillisUnsafe()
+  }
+
   hostSettings(): HarnessSettings | undefined {
     const settings = this.#options.settings
     return typeof settings === "function" ? settings() : settings
@@ -252,18 +361,30 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     return resolveSettings(this.hostSettings())
   }
 
+  /** The host's models with the Harness's request identity applied; each `Models` is wrapped once. */
   models(): Models {
-    const models = this.#options.models
-    return typeof models === "function" ? models() : models
+    const option = this.#options.models
+    const models = typeof option === "function" ? option() : option
+    let wrapped = this.#identified.get(models)
+    if (wrapped === undefined) {
+      const identity = mergeClientIdentity(DEFAULT_HARNESS_IDENTITY, this.#options.identity) ?? DEFAULT_HARNESS_IDENTITY
+      wrapped = withClientIdentity(models, identity)
+      this.#identified.set(models, wrapped)
+    }
+    return wrapped
   }
 
+  readonly #identified = new WeakMap<Models, Models>()
+
   /** Forwards a report to the host; a host callback that throws is dropped, since reporting it would report again. */
-  /** A scheduler report with the extension whose definition its task has, by the registry's current snapshot. */
-  taskReport(report: TaskReport): ReportInfo {
+  /**
+   * A scheduler report with the extension whose definition its task has: by the snapshot the task ran with, else by the
+   * registry's current one.
+   */
+  taskReport(report: TaskReport, snapshot?: unknown): ReportInfo {
     if (!("task" in report)) return report
     const kind = report.task.kind
-    const extension = this.registry
-      .snapshot()
+    const extension = ((snapshot as RegistrySnapshot<T> | undefined) ?? this.registry.snapshot())
       .installed()
       .find((extension) => extension.tasks?.some((task) => task.definition.name === kind) === true)
     return extension === undefined ? report : { ...report, extension: extension.name }
@@ -340,8 +461,40 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     return Effect.andThen(this.resume, this.#tasks.waitForIdle())
   }
 
-  get inspect() {
-    return this.#tasks.inspect
+  get inspect(): Effect.Effect<HarnessInspection, ReadFailure> {
+    return Effect.gen({ self: this }, function* () {
+      const { scheduling, tasks } = yield* this.#tasks.inspect
+      const scan = (status: "queued" | "placed") =>
+        this.session.read((storage) => scanAll((cursor) => storage.scanSubmissions({ status }, SCAN_PAGE_SIZE, cursor)))
+      const submissions = [...(yield* scan("queued")), ...(yield* scan("placed"))].sort((a, b) => a.id - b.id)
+      return { scheduling, tasks, submissions }
+    })
+  }
+
+  submission(id: SubmissionId): Effect.Effect<Submission | undefined, ReadFailure> {
+    return this.submissions.get(id)
+  }
+
+  abortSubmission(
+    id: SubmissionId,
+    conversationId?: ConversationId,
+  ): Effect.Effect<AbortResult | "not_found", ReadFailure | CommitError> {
+    return this.submissions.abort(id, conversationId)
+  }
+
+  /** Every conversation's committed `pi.usage`, summed. Each document is read at its own point; totals only grow. */
+  get usage(): Effect.Effect<UsageState, ReadFailure> {
+    return Effect.gen({ self: this }, function* () {
+      const conversations = yield* this.session.read((storage) =>
+        scanAll((cursor) => storage.scanConversations({}, SCAN_PAGE_SIZE, cursor)),
+      )
+      const total = UsageDoc.definition.initial()
+      for (const { id } of conversations) {
+        const state = yield* this.session.snapshot(UsageDoc, id)
+        if (state !== undefined) addUsageState(total, state)
+      }
+      return total
+    })
   }
 
   get close(): Effect.Effect<void, StorageError> {
@@ -383,8 +536,12 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       },
       configure: (change) => this.session.commit((tx) => configure(tx, id, change)) as Effect.Effect<void, CommitError>,
       reset: (handoff) => this.#reset(id, handoff),
+      submit: ((first: SubmissionDraft | Tx, second?: SubmissionDraft) =>
+        isDraft(first)
+          ? this.submissions.submit(id, first)
+          : this.submissions.admit(first, id, second!)) as Conversation["submit"],
       commit: (body) => commitIn(this.session, { conversationId: id }, body),
-      context: (options) => readContext(this.session, id, options?.at),
+      context: (options) => this.#contexts!.read(id, options?.at),
       entries: (query, limit, cursor) =>
         this.session.read((storage) => storage.scanEntries({ ...query, conversationId: id }, limit, cursor)),
       fork: (at, options) => this.#create({ kind: "fork", parentId: id, at, ownership: options.ownership }, options),
@@ -395,24 +552,13 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     }
   }
 
-  /**
-   * A reset is a write admitted in one commit: the `pi.reset` entry, `head: "self"`, carrying the handoff, and its
-   * `done` write submission. Admission behind a live run, where the write waits in the inbox, comes with runs.
-   */
-  #reset(id: ConversationId, handoff: string | undefined): Effect.Effect<void, CommitError> {
-    const now = this.clock
-    return this.session.commit((tx) =>
-      Effect.gen(function* () {
-        const live = yield* tx.doc(LiveDoc, id)
-        if (live.run !== undefined) {
-          return yield* Effect.die(new Error("A reset behind a live run waits in the inbox, which runs bring"))
-        }
-        const timestamp = now === undefined ? yield* Clock.currentTimeMillis : now()
-        const model = handoff === undefined ? {} : { model: [{ role: "user", content: handoff, timestamp }] }
-        const entry = yield* tx.appendEntry(id, { kind: ResetEntry.kind, head: "self", ...model })
-        yield* tx.createSubmission({ conversationId: id, type: "write", status: "done", entry: entry.id })
-      }),
-    ) as Effect.Effect<void, CommitError>
+  /** A reset is a write submission (spec 7.1): its `pi.reset` entry, `head: "self"`, carries the handoff. */
+  #reset(id: ConversationId, handoff: string | undefined): Effect.Effect<void, ReadError | CommitError> {
+    const model = handoff === undefined ? {} : { model: [{ role: "user", content: handoff, timestamp: this.now() }] }
+    const entry = { kind: ResetEntry.kind, head: "self" as const, ...model }
+    return Effect.asVoid(
+      this.submissions.submit(id, { type: "write", entry }) as Effect.Effect<Submission, ReadError | CommitError>,
+    )
   }
 
   /** The services of one task handler (spec 5.1); every operation fails once the invocation ended. */
@@ -458,7 +604,18 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
             }),
           ),
       },
-      context: (id, options) => runtime.guard(readContext(this.session, id, options?.at)),
+      hookApi: {
+        taskId: phase.record.id,
+        conversationId,
+        signal: runtime.signal,
+        models: () => this.models(),
+        memo: ((name: string, ...candidate: [JsonValue?]) =>
+          candidate.length === 0 ? runtime.memo(name) : runtime.memo(name, candidate[0]!)) as HookApi["memo"],
+        entry: (id) => runtime.entry(id),
+        entries: (query, limit, cursor) => runtime.entries(query, limit, cursor),
+        snapshot: (token, ...address) => runtime.snapshot(token, ...address),
+      },
+      context: (id, options) => runtime.guard(this.#contexts!.readFor(runtime, id, options?.at)),
       snapshotAsOf: <K extends AnyDocToken>(token: K, ...address: RewindableAddressArgs<K>) =>
         runtime.guard(this.session.snapshotAsOf(token, ...address)),
       // The watch lives in a scope of its own, closed by the caller's scope or the invocation's end, whichever is first.
@@ -485,11 +642,32 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
                 ? undefined
                 : {
                     id: record.id,
+                    // Refused once the invocation is aborted, before it ended: the task is winding down.
+                    submit: ((first: SubmissionDraft | Tx, second?: SubmissionDraft) =>
+                      runtime.signal.aborted
+                        ? ended
+                        : isDraft(first)
+                          ? runtime.guard(
+                              Effect.map(this.submissions.submit(record.id, first), (submission) => ({
+                                ...submission,
+                                status: runtime.guard(submission.status),
+                                wait: runtime.guard(submission.wait),
+                                abort: runtime.guard(submission.abort),
+                              })),
+                            )
+                          : runtime.guard(
+                              this.submissions.admit(first, record.id, second!),
+                            )) as ConversationHandle["submit"],
                     abort: (options) => runtime.guard(this.#tasks.abortConversation(record.id, options)),
                     waitForIdle: runtime.guard(
                       Effect.raceFirst(
                         this.#tasks.waitForIdle(record.id),
-                        Effect.andThen(aborted(runtime.signal), ended),
+                        // A failed Session ends the invocation too; the wait ends with that failure, as the
+                        // scheduler's waits do.
+                        Effect.andThen(
+                          aborted(runtime.signal),
+                          Effect.suspend(() => sessionEnd(this.session, ended)),
+                        ),
                       ),
                     ),
                   },
@@ -533,6 +711,14 @@ type CreateTarget =
       readonly at: EntryId
       readonly ownership: ConversationOwnership
     }
+
+/** `SessionFailed` once the Session failed, else `otherwise`. */
+const sessionEnd = <A, E>(session: Session, otherwise: Effect.Effect<A, E>): Effect.Effect<A, E | SessionFailed> => {
+  const failure = session.failure
+  return failure === undefined ? otherwise : Effect.fail(SessionFailed.of(failure.error))
+}
+
+const isDraft = (value: SubmissionDraft | Tx): value is SubmissionDraft => "type" in value
 
 /** Succeeds once `signal` aborts; interrupting it removes its listener. */
 const aborted = (signal: AbortSignal): Effect.Effect<void> =>
