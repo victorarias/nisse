@@ -19,7 +19,19 @@ import {
 	upstreamError,
 } from "../session/session.ts";
 import { kernelStorage } from "../session/storage-bridge.ts";
-import { harnessReader, promised, signalled, upstreamAgent, upstreamSnapshot } from "./convert.ts";
+import {
+	callback,
+	harnessReader,
+	promised,
+	signalled,
+	unwrap,
+	upstreamAgent,
+	upstreamHandle,
+	upstreamHookApi,
+	upstreamSnapshot,
+	upstreamSubmission,
+	upstreamSubmit,
+} from "./convert.ts";
 
 type Any = any;
 
@@ -33,20 +45,6 @@ export const DEFAULT_HARNESS_IDENTITY = unimplemented("DEFAULT_HARNESS_IDENTITY"
 export function safeNow(now: (() => number) | undefined, report: (error: unknown, info: Any) => void): () => number {
 	return now === undefined ? Date.now : H.safeNow(now, (error) => report(error, { kind: "host_error", callback: "now" }));
 }
-
-/** A commit callback's own rejection passes through unchanged. */
-const unwrap = (error: unknown): never => {
-	throw error instanceof CallbackFailed ? error.error : error;
-};
-
-/** Upstream's commit callback as a kernel one: an upstream Transaction over the kernel Tx. */
-const callback =
-	(change: (tx: Any, ...rest: Any[]) => Any) =>
-	(tx: Any, ...rest: Any[]) =>
-		Effect.tryPromise({
-			try: async () => change(new Transaction(tx), ...rest),
-			catch: (error) => new CallbackFailed(error),
-		});
 
 const init = (init: Any) =>
 	init === undefined
@@ -79,8 +77,8 @@ class ConversationImpl {
 		return this.#harness.usable(() => run(this.#conversation.configure(change), context));
 	}
 
-	submit(): never {
-		return unimplemented("Conversation.submit", "harness-run-core")();
+	submit(first: Any, second: Any) {
+		return this.#harness.usable(() => upstreamSubmit(this.#conversation.submit.bind(this.#conversation) as Any)(first, second));
 	}
 
 	compact(): never {
@@ -205,36 +203,29 @@ export class HarnessImpl extends SessionImpl {
 
 	inspect(context: Context) {
 		return this.usable(async () => {
-			const { scheduling, tasks } = await run(this.#harness.inspect, context);
-			const submissions: Any[] = [];
-			for (const status of ["queued", "placed"]) {
-				let cursor: Any;
-				do {
-					const page = await this.readOnLine((storage) =>
-						storage.scanSubmissions({ status }, 256, cursor, context),
-					);
-					submissions.push(...page.items);
-					cursor = page.next;
-				} while (cursor !== undefined);
-			}
+			const { scheduling, tasks, submissions } = await run(this.#harness.inspect, context);
 			// The kernel calls a task that can run now `ready`; pi-durable calls it `pending`.
 			const upstreamTasks = tasks.map((task: Any) =>
 				task.state.kind === "ready" ? { ...task, state: { ...task.state, kind: "pending" } } : task,
 			);
-			return { scheduling, tasks: upstreamTasks, submissions: submissions.sort((a, b) => a.id - b.id) };
+			return { scheduling, tasks: upstreamTasks, submissions };
 		});
 	}
 
-	submission(): never {
-		return unimplemented("Harness.submission", "harness-run-core")();
+	submission(id: Any, context: Context) {
+		return this.usable(() =>
+			run(this.#harness.submission(id), context).then((submission) =>
+				submission === undefined ? undefined : upstreamSubmission(submission),
+			),
+		);
 	}
 
-	abortSubmission(): never {
-		return unimplemented("Harness.abortSubmission", "harness-run-core")();
+	abortSubmission(id: Any, context: Context, conversationId?: Any) {
+		return this.usable(() => run(this.#harness.abortSubmission(id, conversationId), context));
 	}
 
-	usage(): never {
-		return unimplemented("Harness.usage", "harness-run-core")();
+	usage(context: Context) {
+		return this.usable(() => run(this.#harness.usage, context));
 	}
 
 	watchTaskGraph(): never {
@@ -326,12 +317,7 @@ export class HarnessImpl extends SessionImpl {
 				run(entry.current.api.conversation(id), context).then((handle) =>
 					handle === undefined
 						? undefined
-						: {
-								id: handle.id,
-								submit: unimplemented("ConversationHandle.submit", "harness-run-core"),
-								abort: (callContext: Context, options?: Any) => run(handle.abort(options), callContext),
-								waitForIdle: (callContext: Context) => run(handle.waitForIdle, callContext),
-							},
+						: upstreamHandle(handle),
 				),
 			entry: (...args: Any[]) =>
 				args.length === 2

@@ -1,18 +1,25 @@
-export { LiveDoc } from "../../../../../harness/src/index.ts";
-import { unimplemented } from "../../../../unimplemented.ts";
+// `pi.live` helpers over @nisse/harness's. Upstream reads the restart limit from a runtime's settings; the harness takes
+// the limit. Partial output is committed state (D5), so a progress commit is an ordinary one.
+import * as H from "../../../../../harness/src/index.ts";
+import { run } from "../session/session.ts";
 
-export const LIMITS_RESTARTS = unimplemented("LIMITS_RESTARTS", "harness-run-core");
-export const PROGRESS_COMMIT = unimplemented("PROGRESS_COMMIT", "harness-run-core");
-export const addCompactionStatus = unimplemented("addCompactionStatus", "harness-run-core");
-export const clearProgress = unimplemented("clearProgress", "harness-run-core");
-export const compactionStatus = unimplemented("compactionStatus", "harness-run-core");
-export const cutOffCount = unimplemented("cutOffCount", "harness-run-core");
-export const cutOffTooOften = unimplemented("cutOffTooOften", "harness-run-core");
-export const endRun = unimplemented("endRun", "harness-run-core");
-export const failCompactionStatus = unimplemented("failCompactionStatus", "harness-run-core");
-export const finishSlot = unimplemented("finishSlot", "harness-run-core");
-export const removeCompactionStatus = unimplemented("removeCompactionStatus", "harness-run-core");
-export const removeNestedSlots = unimplemented("removeNestedSlots", "harness-run-core");
-export const salvageable = unimplemented("salvageable", "harness-run-core");
-export const settleSchedulerOutcome = unimplemented("settleSchedulerOutcome", "harness-run-core");
-export const toolSlot = unimplemented("toolSlot", "harness-run-core");
+type Any = any;
+
+export const LiveDoc = H.LiveDoc;
+export const LIMITS_RESTARTS = H.LIMITS_RESTARTS;
+/** Commit options of a progress commit: none, as every commit is stored before it is published (D5). */
+export const PROGRESS_COMMIT = {};
+export const addCompactionStatus = H.addCompactionStatus;
+export const clearProgress = H.clearProgress;
+export const compactionStatus = H.compactionStatus;
+export const cutOffCount = H.cutOffCount;
+export const cutOffTooOften = (task: Any, runtime: Any): boolean => H.cutOffTooOften(task, runtime.settings.restartLimit);
+export const salvageable = (task: Any, runtime: Any): boolean => H.salvageable(task, runtime.settings.restartLimit);
+export const endRun = (tx: Any, live: Any, taskId: Any, end: Any): Promise<void> => run(H.endRun(tx.kernel, live, taskId, end));
+export const failCompactionStatus = H.failCompactionStatus;
+export const finishSlot = H.finishSlot;
+export const removeCompactionStatus = H.removeCompactionStatus;
+export const removeNestedSlots = H.removeNestedSlots;
+export const settleSchedulerOutcome = (tx: Any, record: Any, outcome: Any): Promise<void> =>
+	run(H.settleSchedulerOutcome(tx.kernel, record, outcome));
+export const toolSlot = H.toolSlot;

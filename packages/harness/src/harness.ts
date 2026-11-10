@@ -595,19 +595,22 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
                 ? undefined
                 : {
                     id: record.id,
+                    // Refused once the invocation is aborted, before it ended: the task is winding down.
                     submit: ((first: SubmissionDraft | Tx, second?: SubmissionDraft) =>
-                      isDraft(first)
-                        ? runtime.guard(
-                            Effect.map(this.submissions.submit(record.id, first), (submission) => ({
-                              ...submission,
-                              status: runtime.guard(submission.status),
-                              wait: runtime.guard(submission.wait),
-                              abort: runtime.guard(submission.abort),
-                            })),
-                          )
-                        : runtime.guard(
-                            this.submissions.admit(first, record.id, second!),
-                          )) as ConversationHandle["submit"],
+                      runtime.signal.aborted
+                        ? ended
+                        : isDraft(first)
+                          ? runtime.guard(
+                              Effect.map(this.submissions.submit(record.id, first), (submission) => ({
+                                ...submission,
+                                status: runtime.guard(submission.status),
+                                wait: runtime.guard(submission.wait),
+                                abort: runtime.guard(submission.abort),
+                              })),
+                            )
+                          : runtime.guard(
+                              this.submissions.admit(first, record.id, second!),
+                            )) as ConversationHandle["submit"],
                     abort: (options) => runtime.guard(this.#tasks.abortConversation(record.id, options)),
                     waitForIdle: runtime.guard(
                       Effect.raceFirst(

@@ -147,6 +147,8 @@ export interface Session {
   readonly closed: Effect.Effect<SessionEnd>
   /** The first error that failed the Session, once one did; set before the close listeners run. */
   readonly failure: { readonly error: unknown } | undefined
+  /** Whether `tx` is a transaction of one of this Session's commits. */
+  owns(tx: Tx): boolean
 
   /**
    * The committed value at a document address, migrated in memory to the token's version; `undefined` when absent
@@ -415,6 +417,10 @@ class SessionImpl implements Session, SessionInternals {
 
   get failure(): { readonly error: unknown } | undefined {
     return this.#failure
+  }
+
+  owns(tx: Tx): boolean {
+    return Transaction.over(tx, this.#storage)
   }
 
   // Documents

@@ -16,9 +16,12 @@ import {
   type JsonObject,
   type JsonValue,
   type NextTaskState,
+  type ReadFailure,
   type RunningTask,
+  type SettledTask,
   type Task,
   type TaskId,
+  type TaskRecord,
   type TaskRuntime,
   type TaskSnapshot,
   type Tx,
@@ -57,9 +60,10 @@ import {
   type ProgressClock,
   utf8ByteLength,
 } from "./output.ts"
-import { type TaskApi, TaskServices } from "./services.ts"
+import { type ConversationHandle, type TaskApi, TaskServices } from "./services.ts"
 import type {
   Agent,
+  DocumentReader,
   ToolControl,
   ToolDiagnostic,
   ToolExecutionResult,
@@ -131,10 +135,8 @@ export const NestedCallDoc = defineDocFamily<NestedCallState, null>({
   checkpointWhen: () => false,
 })
 
-/** A tool's own repair and output limits, which `ToolRegistration` may carry. */
-
 /** What a running tool's `execute` gets besides its arguments. Every operation fails once the invocation ended. */
-export interface ToolExecutionApi {
+export interface ToolExecutionApi extends DocumentReader<ReadFailure | InvocationEnded> {
   readonly taskId: TaskId
   readonly conversationId: ConversationId
   readonly callId: string
@@ -167,6 +169,12 @@ export interface ToolExecutionApi {
   commit<A, E>(change: (tx: Tx) => Effect.Effect<A, E>): Effect.Effect<A, unknown>
   memo<T extends JsonValue>(name: string): Effect.Effect<T | undefined, InvocationEnded>
   memo<T extends JsonValue>(name: string, candidate: T): Effect.Effect<T, unknown>
+  getTask<R>(
+    id: TaskId<R>,
+  ): Effect.Effect<TaskRecord<JsonValue, JsonValue, R> | undefined, InvocationEnded | ReadFailure>
+  waitForTask<R>(id: TaskId<R>): Effect.Effect<SettledTask<R>, InvocationEnded | ReadFailure>
+  /** A handle of an existing conversation, bound to this call's invocation. */
+  conversation(id: ConversationId): Effect.Effect<ConversationHandle | undefined, InvocationEnded | ReadFailure>
   /** Creates a task owned by this call. */
   createTask(task: Task<unknown, { phase: string }, unknown, unknown>, input: unknown): Effect.Effect<TaskId, unknown>
   /** Runs tool `name` as a nested call of this one and waits for its result. */
@@ -527,6 +535,10 @@ const run = (
         return env
       },
       now: () => runtime.now(),
+      snapshot: (token, ...address) => runtime.snapshot(token, ...address),
+      getTask: (id) => runtime.getTask(id),
+      waitForTask: (id) => runtime.waitForTask(id),
+      conversation: (id) => services.conversation(id),
       output: (chunk, skipped) => {
         assertLive()
         if (reported.output.push(chunk, skipped)) progress.mark()

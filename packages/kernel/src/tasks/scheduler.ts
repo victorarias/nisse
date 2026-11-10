@@ -222,7 +222,10 @@ type StepPlan =
   | { readonly kind: "continue" | "progress" | "end" | "cascade" }
   | { readonly kind: "fault"; readonly error: unknown }
 
-type Fit = { readonly task: AnyTask<unknown>; readonly migrates: boolean } | { readonly reason: BlockedReason }
+type Fit =
+  | { readonly task: AnyTask<unknown>; readonly migrates: boolean }
+  /** `error` is a failed migration's. */
+  | { readonly reason: BlockedReason; readonly error?: unknown }
 
 type Waiter<A> = Queue.Queue<Exit.Exit<A, SessionFailed | SessionClosed>>
 
@@ -281,7 +284,7 @@ class Scheduler<Svc> implements TaskScheduler {
   readonly #abandoned = new Set<TaskId>()
   readonly #invocations = new Map<TaskId, Invocation>()
   /** Definitions whose `migrate` threw, per task: retried only once the registry resolves another. */
-  readonly #failedMigrations = new Map<TaskId, AnyTask<unknown>>()
+  readonly #failedMigrations = new Map<TaskId, { readonly task: AnyTask<unknown>; readonly error: unknown }>()
   readonly #taskWaiters = new Map<TaskId, Set<Waiter<TaskRecord>>>()
   /** Idle waiters by conversation, or `all` for every ownerless conversation. */
   readonly #idleWaiters = new Map<ConversationId | typeof ALL, Set<Waiter<void>>>()
@@ -628,7 +631,9 @@ class Scheduler<Svc> implements TaskScheduler {
     if (on.length > 0) return { kind: "waiting", on }
     if (this.#notDue(record)) return { kind: "sleeping", until: (record.state as { until: number }).until }
     const fit = snapshot === undefined ? undefined : this.#fit(record, snapshot.task(record.kind))
-    if (fit !== undefined && "reason" in fit) return { kind: "blocked", reason: fit.reason }
+    if (fit !== undefined && "reason" in fit) {
+      return { kind: "blocked", reason: fit.reason, ...("error" in fit ? { error: fit.error } : {}) }
+    }
     if (fit?.migrates === true && fit.task.definition.migrate === undefined) {
       return { kind: "blocked", reason: "migration_failed", error: missingMigration(record, fit.task) }
     }
@@ -1325,7 +1330,7 @@ class Scheduler<Svc> implements TaskScheduler {
       const input = structuredClone(migrated.input)
       return { task: fit.task, record: { ...record, version: definition.version, input, state } as Runnable }
     } catch (error) {
-      this.#failedMigrations.set(record.id, fit.task)
+      this.#failedMigrations.set(record.id, { task: fit.task, error })
       this.#report(error, { kind: "migration_failed", task: reportTask(record) })
       return { reason: "migration_failed" }
     }
@@ -1336,7 +1341,8 @@ class Scheduler<Svc> implements TaskScheduler {
     const version = task.definition.version
     if (version === record.version) return { task, migrates: false }
     if (version < record.version) return { reason: "task_too_old" }
-    if (this.#failedMigrations.get(record.id) === task) return { reason: "migration_failed" }
+    const failed = this.#failedMigrations.get(record.id)
+    if (failed?.task === task) return { reason: "migration_failed", error: failed.error }
     return { task, migrates: true }
   }
 

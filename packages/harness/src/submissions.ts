@@ -120,6 +120,7 @@ export class Submissions {
     draft: SubmissionDraft,
   ): Effect.Effect<SubmissionId, AdmissionError | ReadError> {
     return Effect.gen({ self: this }, function* () {
+      if (!this.#session.owns(tx)) return yield* Effect.die(new Error("The transaction belongs to another Session"))
       // Enforced on every path: admission reads tables only on some (request IDs, an idle boundary).
       if (tx.hasTableWrite) return yield* Effect.die(new ReadAfterWrite("submit(tx, draft)"))
       yield* Effect.ignore(this.#resume)

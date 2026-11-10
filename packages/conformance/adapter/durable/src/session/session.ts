@@ -25,6 +25,8 @@ import {
 	ReadOnlySession,
 	SessionFailed,
 	StorageRequestError,
+	ConversationBusy,
+	ConversationIdle,
 } from "../errors.ts";
 import { kernelStorage } from "./storage-bridge.ts";
 
@@ -72,8 +74,12 @@ export function upstreamError(error: unknown): unknown {
 		return new ReadOnlySession(error.message.includes("running tasks") ? "running tasks" : "a commit with writes");
 	}
 	if (error instanceof CommitRefused) return refusal(error);
+	// The harness's admission refusals, by tag: the session module does not import the harness.
+	const tag = (error as { _tag?: unknown } | null)?._tag;
+	if (tag === "ConversationBusy") return new ConversationBusy((error as { conversationId: never }).conversationId);
+	if (tag === "ConversationIdle") return new ConversationIdle((error as { conversationId: never }).conversationId);
 	if (error instanceof KernelReadAfterWrite) {
-		const operation = /^(Tx\.\w+\(\))/.exec(error.message)?.[1] ?? "Tx";
+		const operation = /^(.+?) reads a table after/.exec(error.message)?.[1] ?? "Tx";
 		return new ReadAfterWrite(operation);
 	}
 	return error;

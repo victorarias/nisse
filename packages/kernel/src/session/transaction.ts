@@ -386,6 +386,11 @@ export class Transaction implements Tx {
   get hasTableWrite(): boolean {
     return this.#hasTableWrite
   }
+
+  /** Whether `tx` is a transaction over `storage`; a proxy or another object is not. */
+  static over(tx: unknown, storage: Storage): boolean {
+    return typeof tx === "object" && tx !== null && #host in tx && (tx as Transaction).#host.storage === storage
+  }
   /** Operations started and not settled, and the queue settlement waits on once sealed. */
   #pending = 0
   #drained: Queue.Queue<void> | undefined

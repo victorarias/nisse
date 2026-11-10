@@ -4,7 +4,8 @@ import { Effect } from "effect";
 import * as H from "../../../../../harness/src/index.ts";
 import { defineTask as kernelDefineTask, fromPromise } from "../../../../../kernel/src/index.ts";
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "../../../chord/src/context/index.ts";
-import { run } from "../session/session.ts";
+import { promiseModels } from "../../../ai/index.ts";
+import { CallbackFailed, run, Transaction, upstreamError } from "../session/session.ts";
 
 type Any = any;
 
@@ -41,12 +42,164 @@ export const signalled = (signal: AbortSignal): Context => withAbortSignal(signa
 export const promised = <A>(work: (context: Context) => PromiseLike<A> | A): Effect.Effect<A, unknown> =>
 	fromPromise((signal) => Promise.resolve().then(() => work(signal === undefined ? BACKGROUND_CONTEXT : signalled(signal))));
 
+// Commits
+
+/** A commit callback's own rejection passes through unchanged. */
+export const unwrap = (error: unknown): never => {
+	throw error instanceof CallbackFailed ? error.error : error;
+};
+
+/** Upstream's commit callback as a kernel one: an upstream Transaction over the kernel Tx. */
+export const callback =
+	(change: (tx: Any, ...rest: Any[]) => Any) =>
+	(tx: Any, ...rest: Any[]) =>
+		Effect.tryPromise({
+			try: async () => change(new Transaction(tx), ...rest),
+			catch: (error) => new CallbackFailed(error),
+		});
+
+/** A document address's arguments and the context after them. */
+export const split = (token: Any, args: readonly Any[], extra = 0): [Any[], Context | undefined] => {
+	const length = (token.definition.scope === "session" ? 0 : 1) + (token.definition.family === true ? 1 : 0) + extra;
+	return [args.slice(0, length), args[length]];
+};
+
+/** A synchronous harness read, failing as upstream does. */
+const sync = <A>(read: () => A): A => {
+	try {
+		return read();
+	} catch (error) {
+		throw upstreamError(error);
+	}
+};
+
+/** An upstream memo call: `(name, context)` or `(name, candidate, context)`. */
+const memo = (memo: Any) => (name: string, ...rest: Any[]) =>
+	rest.length <= 1 ? run(memo(name), rest[0]) : run(memo(name, rest[0]), rest[1]);
+
+/** An upstream entry read: `(id, context)`, or `(token, id, context)` for an entry of the token's kind. */
+const entry = (read: (id: Any) => Effect.Effect<Any, unknown>) => (...args: Any[]) =>
+	args.length === 2
+		? run(read(args[0]), args[1])
+		: run(read(args[1]), args[2]).then((entry: Any) => (entry?.kind === args[0].kind ? entry : undefined));
+
+// Submissions and conversations
+
+/** A Harness operation's rejection: pi-durable words a close of its Session as its Harness's. */
+const harnessClosed = (error: unknown): never => {
+	throw error instanceof Error && error.message === "Session is closed" ? new Error("Harness is closed") : error;
+};
+
+/** Upstream's handle of a submission. */
+export const upstreamSubmission = (submission: H.Submission): Any => ({
+	id: submission.id,
+	status: (context: Context) => run(submission.status, context).catch(harnessClosed),
+	wait: (context: Context) => run(submission.wait, context).catch(harnessClosed),
+	abort: (context: Context) => run(submission.abort, context).catch(harnessClosed),
+});
+
+/** Upstream's `submit(draft, context)` and `submit(tx, draft)` over the harness's two forms. */
+export const upstreamSubmit =
+	(submit: { (draft: Any): Effect.Effect<H.Submission, unknown>; (tx: Any, draft: Any): Effect.Effect<Any, unknown> }) =>
+	(first: Any, second: Any): Promise<Any> =>
+		typeof first?.type === "string"
+			? run(submit(first), second).then(upstreamSubmission)
+			: run(submit(kernelOf(first), second));
+
+/** The kernel Tx behind a suite's Transaction; anything else as it is, for the harness to refuse. */
+const kernelOf = (tx: Any): Any => {
+	try {
+		return tx.kernel ?? tx;
+	} catch {
+		return tx;
+	}
+};
+
+/** Upstream's handle of a conversation a task or tool holds. */
+export const upstreamHandle = (handle: H.ConversationHandle): Any => ({
+	id: handle.id,
+	submit: upstreamSubmit(handle.submit.bind(handle) as Any),
+	abort: (context: Context, options?: Any) => run(handle.abort(options), context),
+	waitForIdle: (context: Context) => run(handle.waitForIdle, context),
+});
+
+// Hook and tool APIs
+
+const hookApis = new WeakMap<object, Any>();
+
+/** Upstream's hook API over the harness's; the same object for the same API. */
+export function upstreamHookApi(api: H.HookApi): Any {
+	const known = hookApis.get(api);
+	if (known !== undefined) return known;
+	const made = {
+		taskId: api.taskId,
+		conversationId: api.conversationId,
+		get models() {
+			return promiseModels(api.models());
+		},
+		memo: memo(api.memo.bind(api)),
+		entry: entry((id) => api.entry(id)),
+		entries: (query: Any, limit: number, cursor: Any, context: Context) => run(api.entries(query, limit, cursor), context),
+		snapshot: (token: Any, ...args: Any[]) => {
+			const [address, context] = split(token, args);
+			return run((api.snapshot as Any)(token, ...address), context);
+		},
+	};
+	hookApis.set(api, made);
+	return made;
+}
+
+/** Whether a hook's last argument is the harness's hook API, which upstream's handlers take as API and context. */
+const isHookApi = (value: Any): value is H.HookApi =>
+	typeof value === "object" && value !== null && typeof value.models === "function" && value.signal instanceof AbortSignal;
+
+/** Upstream's tool execution API over the harness's. */
+export function upstreamToolApi(api: H.ToolExecutionApi): Any {
+	return {
+		taskId: api.taskId,
+		conversationId: api.conversationId,
+		callId: api.callId,
+		get registry() {
+			return upstreamSnapshot(api.registry);
+		},
+		agent: (context: Context) => run(api.agent, context).then(upstreamAgent),
+		get models() {
+			return promiseModels(api.models());
+		},
+		get env() {
+			return api.env;
+		},
+		now: () => sync(() => api.now()),
+		output: (chunk: Any, skipped?: Any) => sync(() => api.output(chunk, skipped)),
+		get outputWindow() {
+			return api.outputWindow;
+		},
+		retainedOutput: () => sync(() => api.retainedOutput()),
+		diagnostic: (diagnostic: Any) => sync(() => api.diagnostic(diagnostic)),
+		details: (value: Any, context: Context) => run(api.details(value), context),
+		commit: (change: Any, context: Context) => run(api.commit(callback(change)), context).catch(unwrap),
+		memo: memo(api.memo.bind(api)),
+		createTask: (task: Any, input: Any, _options: Any, context: Context) =>
+			run(api.createTask(harnessTask(task), input), context),
+		executeTool: (name: string, args: Any, context: Context, options?: Any) =>
+			run(api.executeTool(name, args, options), context),
+		getTask: (id: Any, context: Context) => run(api.getTask(id), context),
+		waitForTask: (id: Any, context: Context) => run(api.waitForTask(id), context),
+		conversation: (id: Any, context: Context) =>
+			run(api.conversation(id), context).then((handle) => (handle === undefined ? undefined : upstreamHandle(handle))),
+		snapshot: (token: Any, ...args: Any[]) => {
+			const [address, context] = split(token, args);
+			return run((api.snapshot as Any)(token, ...address), context);
+		},
+	};
+}
+
 // Tools
 
 export const harnessTool = (tool: Any): Any =>
 	cached(tool, (tool) => ({
 		...tool,
-		execute: (args: Any, api: Any) => promised((context) => tool.execute(args, api, context)),
+		execute: (args: Any, api: Any) => promised((context) => tool.execute(args, upstreamToolApi(api), context)),
 	}));
 
 export const upstreamTool = (tool: Any): Any =>
@@ -103,7 +256,13 @@ const harnessHandlers = (handlers: Any): Any =>
 			Object.keys(handlers).map((name) => [
 				name,
 				typeof handlers[name] === "function"
-					? (...args: Any[]) => promised(() => handlers[name].apply(handlers, args))
+					? (...args: Any[]) => {
+							// The harness passes its hook API last; upstream's handlers take an API and a context there.
+							const api = args.at(-1);
+							if (!isHookApi(api)) return promised(() => handlers[name].apply(handlers, args));
+							const upstreamArgs = [...args.slice(0, -1), upstreamHookApi(api)];
+							return promised((context) => handlers[name].apply(handlers, [...upstreamArgs, context]));
+						}
 					: handlers[name],
 			]),
 		),

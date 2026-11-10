@@ -303,6 +303,21 @@ export function toSeam(models: Models): M.Models {
  * `streamSimple`, is heard. Interruption aborts the request's signal.
  */
 export function promiseSeam(models: Models): M.Models {
+	const known = seams.get(models);
+	if (known !== undefined) return known;
+	const seam = makePromiseSeam(models);
+	seams.set(models, seam);
+	owners.set(seam, models);
+	return seam;
+}
+
+const seams = new WeakMap<Models, M.Models>();
+const owners = new WeakMap<M.Models, Models>();
+
+/** The pi-ai `Models` behind a seam `promiseSeam` made; any other seam as it is. */
+export const promiseModels = (seam: M.Models): Models => owners.get(seam) ?? (seam as never);
+
+function makePromiseSeam(models: Models): M.Models {
 	const request = <A>(call: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, never> =>
 		Effect.orDie(
 			Effect.tryPromise({ try: (signal) => Promise.resolve(call(signal)), catch: (error) => error }),
