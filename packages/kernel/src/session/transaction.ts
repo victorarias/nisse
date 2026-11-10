@@ -245,7 +245,7 @@ export type TransactionHost = {
     address: DocumentAddress,
   ) => Effect.Effect<LoadedDocument | undefined, ReadError>
   readonly install: (document: LoadedDocument) => void
-  readonly evict: (addressId: string, recordId: DocumentId) => void
+  readonly retire: (addressId: string, recordId: DocumentId) => void
 }
 
 type SubmissionChange = SubmissionSettlement | { readonly status: "placed"; readonly entry: EntryId }
@@ -770,7 +770,11 @@ export class Transaction implements Tx {
           })
         }
       }
-      if (plan.retire && isCommitted(plan.record)) this.#host.evict(plan.addressId, record.id)
+      if (plan.retire && isCommitted(plan.record)) {
+        this.#host.retire(plan.addressId, record.id)
+        // The incarnation ended: a stale reference to its tracker, such as a finished generator's, keeps no value.
+        plan.change?.tracker.release()
+      }
       const published = describe(plan, record)
       if (published !== undefined) changes.push(published)
     }
