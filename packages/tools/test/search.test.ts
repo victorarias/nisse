@@ -1,6 +1,6 @@
 // `grep` and `glob` through a real Harness, in a git work tree and in a plain directory.
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs"
+import { mkdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { fauxAssistantMessage, fauxToolCall } from "@nisse/models/faux"
 import { Effect } from "effect"
@@ -87,5 +87,26 @@ test("tool-glob: glob lists matching files newest first, outside git skipping hi
       git(chat.workspace)
       yield* chat.ask("list again, now in git")
       expect(resultText((yield* chat.toolResults()).at(-1)!)).toBe(".hidden.ts\nsrc/a.ts")
+    }),
+  ))
+
+test("tool-grep: grep and glob search a directory the model names through a symlink", () =>
+  run(
+    Effect.gen(function* () {
+      const chat = yield* openChat({
+        tools: [createGrepTool(), createGlobTool()],
+        responses: calls(
+          ["grep", { pattern: "needle", path: "linked" }],
+          ["glob", { pattern: "*.ts", path: "linked" }],
+        ),
+      })
+      const at = files(chat)
+      symlinkSync(at("src"), at("linked"))
+      yield* chat.ask("search")
+      const results = yield* chat.toolResults()
+      expect(results.map(resultText)).toEqual([
+        "linked/a.ts:1:const needle = 1\nlinked/a.ts:3:export { needle }",
+        "linked/a.ts",
+      ])
     }),
   ))

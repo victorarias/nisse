@@ -9,7 +9,8 @@ import { Effect } from "effect"
  */
 export const filesBelow = (env: ExecutionEnv, root: string): Effect.Effect<string[] | undefined, FileError> =>
   Effect.gen(function* () {
-    const info = yield* Effect.option(env.fileInfo(root))
+    // `fileInfo` does not follow symlinks, so a symlinked root is classified by what it points to.
+    const info = yield* Effect.option(Effect.flatMap(env.canonicalPath(root), (target) => env.fileInfo(target)))
     if (info._tag === "None") return undefined
     if (info.value.kind !== "directory") return [""]
     const tracked = yield* gitFiles(env, root)
