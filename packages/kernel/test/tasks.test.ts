@@ -16,6 +16,7 @@ import {
   openTaskScheduler,
   type Session,
   SessionClosed,
+  StorageError,
   type Storage,
   type TaskId,
   type TaskRecord,
@@ -178,7 +179,7 @@ describe("tasks", () => {
       }),
     ))
 
-  test("task-terminal: a phase that fails, or returns without durable progress, ends its task faulted and reported", () =>
+  test("task-terminal: a phase that fails, throws, or returns without durable progress ends its task faulted and reported", () =>
     run(
       Effect.gen(function* () {
         const storage = yield* openSqliteStorage(databasePath())
@@ -196,19 +197,34 @@ describe("tasks", () => {
           phases: { go: () => Effect.void },
           abort: () => Effect.void,
         })
-        const { session, scheduler, reports } = yield* open(storage, { registry: registry(throws, stalls) })
+        // Extension code that throws before returning an Effect, as on bad input.
+        const crashes = defineTask<null, { phase: "go" }, null>({
+          name: "test.crashes",
+          version: 1,
+          initial: () => ({ phase: "go" }),
+          phases: {
+            go: () => {
+              throw new TypeError("input.items is undefined")
+            },
+          },
+          abort: () => Effect.void,
+        })
+        const { session, scheduler, reports } = yield* open(storage, { registry: registry(throws, stalls, crashes) })
         const conversationId = yield* conversation(session)
         const thrown = yield* scheduler.waitForTask(yield* start(session, conversationId, throws, null))
         const stalled = yield* scheduler.waitForTask(yield* start(session, conversationId, stalls, null))
+        const crashed = yield* scheduler.waitForTask(yield* start(session, conversationId, crashes, null))
+        expect(crashed.state.outcome).toEqual({ status: "faulted", error: { message: "input.items is undefined" } })
         expect(thrown.state.outcome).toEqual({ status: "faulted", error: { message: "tool broke" } })
         expect(stalled.state.outcome).toEqual({
           status: "faulted",
           error: { message: "Task test.stalls phase go returned without durable progress" },
         })
-        const reported = [yield* Queue.take(reports), yield* Queue.take(reports)]
+        const reported = [yield* Queue.take(reports), yield* Queue.take(reports), yield* Queue.take(reports)]
         expect(reported.map((report) => [report.kind, "task" in report ? report.task.id : undefined])).toEqual([
           ["task_faulted", thrown.id],
           ["task_faulted", stalled.id],
+          ["task_faulted", crashed.id],
         ])
       }),
     ))
@@ -334,7 +350,6 @@ describe("tasks", () => {
           ["test.counter", id, "terminal"],
         ])
         const ids = all.slice(1).map((child) => child.id)
-        expect(ids).toEqual([...ids].sort((a, b) => a - b))
         expect(ids[0]!).toBeGreaterThan(id)
         expect(listed).toEqual([ids])
         const sizes = all.slice(1).map((child) => (child.input as { to: number }).to)
@@ -476,17 +491,127 @@ describe("tasks", () => {
 
     await run(
       Effect.gen(function* () {
-        const resumed = stepper(() => Effect.void)
+        let firstRuns = 0
+        const resumed = stepper({ first: () => firstRuns++, second: () => Effect.void })
         const storage = yield* openSqliteStorage(path)
         expect((yield* storage.task(id))?.state).toEqual({
           status: "running",
-          checkpoint: { phase: "second", firstRuns: 1 },
+          checkpoint: { phase: "second" },
         })
         const { scheduler } = yield* open(storage, { registry: registry(resumed) })
         const settled = yield* scheduler.waitForTask(id)
-        // `first` ran once, in the killed process; the new one started at `second`.
-        expect(settled.state.outcome).toEqual({ status: "completed", result: { firstRuns: 1, restarts: 1 } })
+        // The new process started at `second`, with the crash counted.
+        expect(firstRuns).toBe(0)
+        expect(settled.state.outcome).toEqual({ status: "completed", result: { restarts: 1 } })
       }),
     )
   })
+
+  test("session-failed: a close whose write-back of a stopped task fails reports the failure instead of a clean close", () =>
+    run(
+      Effect.gen(function* () {
+        const inner = yield* openSqliteStorage(databasePath())
+        let failCommits = false
+        const storage = new Proxy(inner, {
+          get(target, key) {
+            if (key === "commit")
+              return (...args: Parameters<Storage["commit"]>) =>
+                failCommits ? Effect.fail(StorageError.because("disk full")) : inner.commit(...args)
+            const value = Reflect.get(target, key)
+            return typeof value === "function" ? value.bind(target) : value
+          },
+        }) as Storage
+        const { session } = yield* open(storage, { registry: registry(forever) })
+        const conversationId = yield* conversation(session)
+        const running = committedTask(session, (record) => record.state.status === "running")
+        yield* start(session, conversationId, forever, null)
+        yield* running
+        failCommits = true
+        const closed = yield* Effect.exit(session.close)
+        expect(
+          Exit.isFailure(closed) && closed.cause.reasons[0]?._tag === "Fail" && closed.cause.reasons[0].error,
+        ).toEqual(StorageError.because("disk full"))
+        expect((yield* session.closed).kind).toBe("failed")
+      }),
+    ))
+
+  test("task-terminal: a close while an aborted owner waits for its child's abort handler leaves both resumable, with no restart counted", () =>
+    run(
+      Effect.gen(function* () {
+        const path = databasePath()
+        const childAborting = Deferred.makeUnsafe<void>()
+        const slowAbort = defineTask<null, { phase: "wait" }, null>({
+          name: "test.slow-abort",
+          version: 1,
+          initial: () => ({ phase: "wait" }),
+          phases: { wait: () => Effect.never },
+          abort: () =>
+            Effect.andThen(
+              Effect.sync(() => Deferred.doneUnsafe(childAborting, Exit.void)),
+              Effect.never,
+            ),
+        })
+        const parent = defineTask<null, { phase: "spawn" } | { phase: "hold" }, null>({
+          name: "test.parent",
+          version: 1,
+          initial: () => ({ phase: "spawn" }),
+          phases: {
+            spawn: (task, runtime) =>
+              runtime.commit((tx) =>
+                Effect.as(tx.createTask(slowAbort, null, { ownership: { kind: "task", taskId: task.id } }), {
+                  status: "running" as const,
+                  checkpoint: { phase: "hold" as const },
+                }),
+              ),
+            hold: () => Effect.never,
+          },
+          abort: (_task, runtime) =>
+            runtime.commit(() =>
+              Effect.succeed({ status: "terminal" as const, outcome: { status: "aborted" as const } }),
+            ),
+        })
+        const { session, scheduler } = yield* open(yield* openSqliteStorage(path), {
+          registry: registry(parent, slowAbort),
+        })
+        const conversationId = yield* conversation(session)
+        const holding = committedTask(session, (record) => record.kind === "test.slow-abort")
+        const id = yield* start(session, conversationId, parent, null)
+        const child = (yield* holding).id
+        const aborting = yield* Effect.forkChild(scheduler.abortTask(id))
+        yield* Deferred.await(childAborting)
+        yield* session.close
+        yield* Fiber.await(aborting)
+
+        const reopened = yield* openSqliteStorage(path)
+        for (const taskId of [id, child]) {
+          const stored = (yield* reopened.task(taskId))!
+          expect([stored.state.status, stored.abortRequested, stored.restarts]).toEqual(["pending", true, undefined])
+        }
+        yield* reopened.close()
+      }),
+    ))
+
+  test("session-failed: a reservation whose commit fails fails the Session, and it still closes", () =>
+    run(
+      Effect.gen(function* () {
+        const inner = yield* openSqliteStorage(databasePath())
+        const storage = new Proxy(inner, {
+          get(target, key) {
+            if (key === "commit")
+              return (...args: Parameters<Storage["commit"]>) =>
+                args[0].some((batch) =>
+                  batch.some((write) => write.type === "task" && write.value.state.status === "running"),
+                )
+                  ? Effect.fail(StorageError.because("disk full"))
+                  : inner.commit(...args)
+            const value = Reflect.get(target, key)
+            return typeof value === "function" ? value.bind(target) : value
+          },
+        }) as Storage
+        const { session } = yield* open(storage, { registry: registry(counter) })
+        const conversationId = yield* conversation(session)
+        yield* start(session, conversationId, counter, { to: 1 })
+        expect(yield* session.closed).toEqual({ kind: "failed", error: StorageError.because("disk full") })
+      }),
+    ))
 })

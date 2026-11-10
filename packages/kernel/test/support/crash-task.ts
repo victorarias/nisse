@@ -3,30 +3,31 @@
 import { Effect } from "effect"
 import { defineTask, openSession, openSqliteStorage, openTaskScheduler } from "../../src/index.ts"
 
-export type StepperResult = { readonly firstRuns: number; readonly restarts: number | undefined }
+export type StepperHooks = {
+  /** Called each time phase `first` runs in this process. */
+  readonly first?: () => void
+  /** Runs inside phase `second` with the task's id and restart count; the task completes once it returns. */
+  readonly second: (id: number, restarts: number | undefined) => Effect.Effect<void>
+}
 
-/**
- * Two phases: `first` moves to `second`, counting its runs in the checkpoint; `second` runs the caller's `second` with
- * the task's id and restart count, and completes once it returns.
- */
-export const stepper = (second: (id: number, restarts: number | undefined) => Effect.Effect<void>) => {
-  let firstRuns = 0
-  return defineTask<null, { phase: "first" } | { phase: "second"; firstRuns: number }, StepperResult>({
+/** Two phases: `first` moves to `second`; `second` completes with the restart count it saw. */
+export const stepper = (hooks: StepperHooks) =>
+  defineTask<null, { phase: "first" } | { phase: "second" }, { restarts: number | undefined }>({
     name: "test.stepper",
     version: 1,
     initial: () => ({ phase: "first" }),
     phases: {
       first: (_task, runtime) =>
-        runtime.commit(() =>
-          Effect.succeed({
-            status: "running" as const,
-            checkpoint: { phase: "second" as const, firstRuns: ++firstRuns },
-          }),
+        Effect.andThen(
+          Effect.sync(() => hooks.first?.()),
+          runtime.commit(() =>
+            Effect.succeed({ status: "running" as const, checkpoint: { phase: "second" as const } }),
+          ),
         ),
       second: (task, runtime) =>
         Effect.gen(function* () {
-          yield* second(task.id, task.restarts)
-          const result = { firstRuns: task.state.checkpoint.firstRuns, restarts: task.restarts }
+          yield* hooks.second(task.id, task.restarts)
+          const result = { restarts: task.restarts }
           yield* runtime.commit(() =>
             Effect.succeed({ status: "terminal" as const, outcome: { status: "completed" as const, result } }),
           )
@@ -34,16 +35,16 @@ export const stepper = (second: (id: number, restarts: number | undefined) => Ef
     },
     abort: () => Effect.void,
   })
-}
 
 if (import.meta.main) {
   const path = process.argv[2]!
-  const task = stepper((id) =>
-    Effect.andThen(
-      Effect.sync(() => process.stdout.write(`second ${id}\n`)),
-      Effect.never,
-    ),
-  )
+  const task = stepper({
+    second: (id) =>
+      Effect.andThen(
+        Effect.sync(() => process.stdout.write(`second ${id}\n`)),
+        Effect.never,
+      ),
+  })
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {

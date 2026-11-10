@@ -9,31 +9,36 @@ import { Effect } from "effect"
  * for the work.
  */
 export const fromPromise = <A>(evaluate: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, unknown> =>
-  Effect.suspend(() => {
-    const controller = new AbortController()
-    let promise: PromiseLike<A>
-    try {
-      promise = evaluate(controller.signal)
-    } catch (error) {
-      return Effect.fail(error)
-    }
-    const settled = Effect.callback<void>((resume) => {
-      promise.then(
-        () => resume(Effect.void),
-        () => resume(Effect.void),
-      )
-    })
-    return Effect.callback<A, unknown>((resume) => {
-      promise.then(
-        (value) => resume(Effect.succeed(value)),
-        (error: unknown) => resume(Effect.fail(error)),
-      )
-    }).pipe(
-      Effect.onInterrupt(() =>
-        Effect.andThen(
-          Effect.sync(() => controller.abort()),
-          settled,
+  // Started and given its interruption handler in one uninterruptible step, so no interruption falls between them.
+  Effect.uninterruptibleMask((restore) =>
+    Effect.suspend(() => {
+      const controller = new AbortController()
+      let promise: Promise<A>
+      try {
+        // A thenable is adopted once: a lazy one starts its work at each `then`.
+        promise = Promise.resolve(evaluate(controller.signal))
+      } catch (error) {
+        return Effect.fail(error)
+      }
+      const settled = Effect.callback<void>((resume) => {
+        promise.then(
+          () => resume(Effect.void),
+          () => resume(Effect.void),
+        )
+      })
+      const outcome = Effect.callback<A, unknown>((resume) => {
+        promise.then(
+          (value) => resume(Effect.succeed(value)),
+          (error: unknown) => resume(Effect.fail(error)),
+        )
+      })
+      return restore(outcome).pipe(
+        Effect.onInterrupt(() =>
+          Effect.andThen(
+            Effect.sync(() => controller.abort()),
+            settled,
+          ),
         ),
-      ),
-    )
-  })
+      )
+    }),
+  )

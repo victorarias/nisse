@@ -384,8 +384,9 @@ class Scheduler<Svc> implements TaskScheduler {
   }
 
   /**
-   * A closing step, after the line drained: waits for every invocation, then writes the tasks they ran back as
-   * `pending`, straight to Storage, as a close is not a crash (spec 5.4).
+   * A closing step, after the line drained: waits for every invocation, then writes every task still `running` back as
+   * `pending`, straight to Storage, as a close is not a crash (spec 5.4). That includes tasks whose invocation already
+   * ended, such as an abort-marked owner waiting for its owned work to drain.
    */
   #join(store: (writes: readonly import("../records.ts").StorageWrite[]) => Effect.Effect<void>): Effect.Effect<void> {
     return Effect.gen({ self: this }, function* () {
@@ -393,9 +394,9 @@ class Scheduler<Svc> implements TaskScheduler {
       for (const invocation of stopped) this.#signalInvocation(invocation)
       for (const invocation of stopped) yield* Deferred.await(invocation.done)
       const writes = []
-      for (const invocation of stopped) {
-        const record = this.#live.get(invocation.taskId)?.record
-        if (record?.state.status !== "running") continue
+      // The line has drained, so `#live` is final.
+      for (const { record } of this.#live.values()) {
+        if (record.state.status !== "running") continue
         writes.push({
           type: "task" as const,
           value: withState(record, { status: "pending", checkpoint: record.state.checkpoint }),
@@ -933,7 +934,7 @@ class Scheduler<Svc> implements TaskScheduler {
         const next = yield* Effect.exit(Queue.take(this.#wakeup))
         if (Exit.isFailure(next)) return
         while (!this.#closing) {
-          if (this.#reconcileWork() || this.#abandoned.size > 0) {
+          if (this.#reconcileWork() || (this.#enabled && this.#abandoned.size > 0)) {
             this.#reconciling = true
             yield* this.#schedulerCommit((tx) => this.#reconcile(tx))
             this.#reconciling = false
@@ -942,7 +943,9 @@ class Scheduler<Svc> implements TaskScheduler {
           }
           if (this.#enabled && this.#dirty) {
             this.#dirty = false
-            const reservations = yield* this.#schedulerCommit((tx) => this.#reserve(tx))
+            const created: Invocation[] = []
+            const reservations = yield* this.#schedulerCommit((tx) => this.#reserve(tx, created))
+            if (reservations === undefined) this.#dropReservations(created)
             for (const reservation of reservations ?? []) yield* this.#start(reservation)
             continue
           }
@@ -1105,7 +1108,7 @@ class Scheduler<Svc> implements TaskScheduler {
    * Reserves every eligible task in one commit, and orphans abort-marked tasks no definition can take unless they were
    * abandoned after a restart. Runs no task code but `migrate`.
    */
-  #reserve(tx: Transaction): Effect.Effect<Reservation[], unknown> {
+  #reserve(tx: Transaction, created: Invocation[]): Effect.Effect<Reservation[], unknown> {
     return Effect.gen({ self: this }, function* () {
       const reservations: Reservation[] = []
       if (!this.#enabled || this.#closing) return reservations
@@ -1166,24 +1169,22 @@ class Scheduler<Svc> implements TaskScheduler {
         }
         this.#runnable.delete(id)
         const invocation = this.#createInvocation(record, mode)
+        created.push(invocation)
         reservations.push({ invocation, task: resolution.task, snapshot })
       }
       for (const { record, message } of faulted) {
         this.#report(new Error(message), { kind: "task_faulted", task: reportTask(record), reason: "restart_limit" })
       }
       return reservations
-    }).pipe(
-      Effect.onError(() =>
-        Effect.sync(() => {
-          // Nothing was stored: the tasks it reserved are candidates again.
-          for (const [id, invocation] of [...this.#invocations]) {
-            if (invocation.handler !== undefined) continue
-            this.#invocations.delete(id)
-            this.#runnable.add(id)
-          }
-        }),
-      ),
-    )
+    })
+  }
+
+  /** A reservation commit failed: nothing was stored, so its invocations never start, and its tasks are candidates. */
+  #dropReservations(created: readonly Invocation[]): void {
+    for (const invocation of created) {
+      this.#end(invocation)
+      Deferred.doneUnsafe(invocation.done, Exit.void)
+    }
   }
 
   /**
@@ -1328,7 +1329,8 @@ class Scheduler<Svc> implements TaskScheduler {
         const handler =
           phase === undefined
             ? Effect.die(new Error(`Task ${task.kind} has no phase ${checkpoint.phase}`))
-            : phase(task as RunningTask<JsonValue, never, JsonValue>, runtime)
+            : // Built inside the handler's fiber, so a handler that throws fails its phase instead of the invocation.
+              Effect.suspend(() => phase(task as RunningTask<JsonValue, never, JsonValue>, runtime))
         const exit = yield* this.#handle(invocation, handler, {
           mode: "run",
           task: state.task,
@@ -1351,7 +1353,9 @@ class Scheduler<Svc> implements TaskScheduler {
       const runtime = this.#runtime(invocation, state)
       const exit = yield* this.#handle(
         invocation,
-        erased(reservation.task).abort(current as RunningTask<JsonValue, never, JsonValue>, runtime),
+        Effect.suspend(() =>
+          erased(reservation.task).abort(current as RunningTask<JsonValue, never, JsonValue>, runtime),
+        ),
         { mode: "abort", task: reservation.task, record: current, snapshot: reservation.snapshot },
       )
       const message = `Abort handler of task ${invocation.taskId} returned without a terminal outcome`
@@ -1512,8 +1516,11 @@ class Scheduler<Svc> implements TaskScheduler {
       this.#invocations.delete(invocation.taskId)
       if (this.#live.has(invocation.taskId)) this.#runnable.add(invocation.taskId)
     }
-    invocation.controller.abort()
-    queueMicrotask(() => Deferred.doneUnsafe(invocation.endedSignal, Exit.void))
+    // Listeners on the signal run off the line.
+    queueMicrotask(() => {
+      invocation.controller.abort()
+      Deferred.doneUnsafe(invocation.endedSignal, Exit.void)
+    })
   }
 
   // The runtime

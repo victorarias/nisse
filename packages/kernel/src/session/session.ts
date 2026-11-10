@@ -11,7 +11,7 @@
 // completer's call, which on the line would run that fiber's code before the next job; outcomes therefore go back
 // through a queue, whose waiter resumes later. Observers are called on the line, so they must only capture.
 import { type Op, track } from "@nisse/delta"
-import { type Cause, Clock, Deferred, Effect, Exit, Fiber, Queue, type Scope } from "effect"
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Queue, type Scope } from "effect"
 import {
   type AnyDocDefinition,
   type AnyDocToken,
@@ -901,10 +901,19 @@ class SessionImpl implements Session, SessionInternals {
         if (this.#observers.delete(observer)) contain(() => observer.end(end))
       }
       this.#cache.clear()
-      for (const step of this.#closingSteps.splice(0)) yield* step((writes) => this.#storeAtClose(writes))
+      for (const step of this.#closingSteps.splice(0)) {
+        const stepped = yield* Effect.exit(step((writes) => this.#storeAtClose(writes)))
+        if (Exit.isFailure(stepped)) this.#fail(Cause.squash(stepped.cause))
+      }
       const closed = yield* Effect.exit(this.#storage.close())
       if (failure !== undefined)
         return yield* Deferred.succeed(this.#closedEnd, { kind: "failed", error: failure.error })
+      // A closing step's write that failed fails the close, as Storage's own close does.
+      const stepFailure = this.#failure
+      if (stepFailure !== undefined) {
+        if (stepFailure.error instanceof StorageError) this.#closeError = stepFailure.error
+        return yield* Deferred.succeed(this.#closedEnd, { kind: "failed", error: stepFailure.error })
+      }
       if (Exit.isFailure(closed)) {
         const error = failureOf(closed)
         this.#failure = { error }
