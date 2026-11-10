@@ -62,6 +62,13 @@ export type AdmissionError = ConversationBusy | ConversationIdle
 
 export type AbortResult = "aborted" | "already_placed" | "settled"
 type Admission = { readonly id: SubmissionId; readonly status: "queued" | "placed" | "done" }
+/** How Submissions record their spans: the Harness's tracer and propagation, and where a throwing tracer is reported. */
+export interface SubmitTelemetry {
+  readonly propagation: TracePropagation | undefined
+  readonly tracer: Tracer.Tracer
+  readonly report: (error: unknown) => void
+}
+
 /** The `pi.durable.submit` span of one admission, with the propagation that names it in the records it writes. */
 export interface SubmitTrace {
   readonly span: Tracer.Span
@@ -90,6 +97,8 @@ export class Submissions {
   readonly #propagation: TracePropagation | undefined
   /** The tracer of the context the Harness opened in, which records submit spans whatever context submits. */
   readonly #tracer: Tracer.Tracer
+  /** Reports a throwing tracer, which must not fail an admission that is already stored. */
+  readonly #reportTelemetry: (error: unknown) => void
   readonly #waiters = new Map<SubmissionId, Set<Waiter>>()
   #closed = false
 
@@ -98,11 +107,12 @@ export class Submissions {
     now: () => number,
     queueModes: () => QueueModes,
     resume: Effect.Effect<void, unknown>,
-    telemetry: { readonly propagation: TracePropagation | undefined; readonly tracer: Tracer.Tracer },
+    telemetry: SubmitTelemetry,
   ) {
     this.#session = session
     this.#propagation = telemetry.propagation
     this.#tracer = telemetry.tracer
+    this.#reportTelemetry = telemetry.report
     this.#now = now
     this.#queueModes = queueModes
     this.#resume = resume
@@ -176,11 +186,16 @@ export class Submissions {
       const propagation = this.#propagation
       const trace = propagation === undefined ? undefined : { span, propagation }
       const exit = yield* Effect.exit(Effect.withParentSpan(admit(trace), span))
-      if (Exit.isSuccess(exit)) {
-        span.attribute("submission.id", exit.value.id)
-        span.attribute("result", exit.value.status)
+      // The admission is stored by now: a throwing tracer is reported, and the caller still gets its submission.
+      try {
+        if (Exit.isSuccess(exit)) {
+          span.attribute("submission.id", exit.value.id)
+          span.attribute("result", exit.value.status)
+        }
+        span.end(spanTime(), Exit.isSuccess(exit) ? Exit.void : CONTENT_FREE_FAILURE)
+      } catch (error) {
+        this.#reportTelemetry(error)
       }
-      span.end(spanTime(), Exit.isSuccess(exit) ? Exit.void : CONTENT_FREE_FAILURE)
       return yield* exit
     })
   }

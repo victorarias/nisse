@@ -61,7 +61,13 @@ import { ContextReads } from "./context.ts"
 import { ProviderDoc } from "./documents.ts"
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts"
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts"
-import { type AbortResult, type AdmissionError, type Submission, Submissions } from "./submissions.ts"
+import {
+  type AbortResult,
+  type AdmissionError,
+  type Submission,
+  Submissions,
+  type SubmitTelemetry,
+} from "./submissions.ts"
 import { addUsageState, UsageDoc, type UsageState } from "./usage.ts"
 import { ResetEntry } from "./entries.ts"
 import { type ConversationHandle, type ReportFrom, type TaskApi, TaskServices } from "./services.ts"
@@ -287,6 +293,7 @@ export const openHarness = <T extends ToolRegistration>(
     return host.bind(session, scheduler, clock, contexts, {
       propagation: yield* TracePropagation,
       tracer: yield* Effect.tracer,
+      report: (error) => host.report(error, { kind: "host_error", callback: "telemetry" }),
     })
   })
 
@@ -342,7 +349,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     scheduler: TaskScheduler,
     clock: Clock.Clock,
     contexts: ContextReads,
-    telemetry: { readonly propagation: TracePropagation | undefined; readonly tracer: Tracer.Tracer },
+    telemetry: SubmitTelemetry,
   ): this {
     this.#session = session
     this.#scheduler = scheduler

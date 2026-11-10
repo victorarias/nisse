@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Deferred, Effect, Option, Queue, Scope, Stream } from "effect"
+import { Deferred, Effect, Option, Queue, Scope, Stream, Tracer } from "effect"
 import {
   type ConversationId,
   defineDoc,
@@ -625,5 +625,32 @@ describe("tasks", () => {
         expect((yield* harness.inspect).tasks).toEqual([])
       }),
     )
+  })
+})
+
+describe("telemetry", () => {
+  test("telemetry-spans: a tracer that throws on a submit span is reported, and the stored submission still reaches its caller", async () => {
+    const reports: unknown[] = []
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options)
+        if (options.name === "pi.durable.submit") {
+          span.end = () => {
+            throw new Error("tracer broke")
+          }
+        }
+        return span
+      },
+    })
+    const status = await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), createRegistry(), { onReport: (report) => reports.push(report) })
+        const root = yield* harness.root()
+        const submission = yield* root.submit({ type: "write", entry: { kind: "app.note" } })
+        return (yield* submission.status).status
+      }).pipe(Effect.withTracer(tracer)),
+    )
+    expect(status).toBe("done")
+    expect(reports).toMatchObject([{ kind: "host_error", callback: "telemetry" }])
   })
 })
