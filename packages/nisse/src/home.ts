@@ -7,6 +7,8 @@ import { Effect, Schema } from "effect"
 export interface Home {
   readonly dir: string
   readonly database: string
+  /** The kernel's database, which a server under NISSE_KERNEL=1 uses; it ignores `database`. */
+  readonly kernel: string
   readonly socket: string
   readonly lock: string
   readonly log: string
@@ -16,6 +18,7 @@ export interface Home {
 export const homeAt = (dir: string): Home => ({
   dir,
   database: join(dir, "store.sqlite"),
+  kernel: join(dir, "kernel.sqlite"),
   socket: join(dir, "nisse.sock"),
   lock: join(dir, "nisse.lock"),
   log: join(dir, "nisse.log"),

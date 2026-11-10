@@ -253,15 +253,40 @@ export type RunEnd =
       readonly settlement?: SubmissionSettlement
     }
 
+/** A run as it ends, handed to the host's `runEnded` in the commit that ends it. */
+export type EndedRun = {
+  readonly conversationId: ConversationId
+  readonly taskId: TaskId
+  readonly end: RunEnd
+  /** The run answered before it ended: always with `done`, and for a run cut while it ran its `afterRun` tasks. */
+  readonly answered: boolean
+}
+
+/**
+ * Runs in the commit that ends a run, after its inputs are settled, so what it writes is stored with the run's end. The
+ * commit has written already, so it reads no table. A failure fails that commit.
+ */
+export type RunEndedHook = (tx: Tx, run: EndedRun) => Effect.Effect<void, StorageError>
+
+/** Where a run ends: its conversation, and the host's hook. */
+export type RunOwner = { readonly conversationId: ConversationId; readonly runEnded: RunEndedHook | undefined }
+
 /**
  * Ends the run owned by `taskId`: settles each of its inputs, removes `run`, and, without an answer, records
  * `runFailure`. A run that answered already, and runs only its `afterRun` tasks, records no failure, however it ends.
  * Always removes `generation`, `tools` and `nestedTools`, whose presentation belongs to the ending run.
  */
-export const endRun = (tx: Tx, live: Draft<LiveState>, taskId: TaskId, end: RunEnd): Effect.Effect<void> =>
+export const endRun = (
+  tx: Tx,
+  live: Draft<LiveState>,
+  taskId: TaskId,
+  end: RunEnd,
+  owner: RunOwner,
+): Effect.Effect<void, StorageError> =>
   Effect.gen(function* () {
     const run = live.run
     if (run?.taskId === taskId) {
+      const answered = end.status === "done" || run.afterRun !== undefined
       const inputs = [...run.inputs]
       const { first } = run
       if (end.status === "done") {
@@ -283,6 +308,8 @@ export const endRun = (tx: Tx, live: Draft<LiveState>, taskId: TaskId, end: RunE
         }
       }
       delete live.run
+      if (owner.runEnded !== undefined)
+        yield* owner.runEnded(tx, { conversationId: owner.conversationId, taskId, end, answered })
     }
     delete live.generation
     delete live.tools
@@ -402,6 +429,7 @@ export const settleSchedulerOutcome = (
   tx: Tx,
   record: TaskRecord,
   outcome: SchedulerOutcome,
+  runEnded?: RunEndedHook,
 ): Effect.Effect<void, StorageError | DocError> =>
   Effect.gen(function* () {
     if (record.kind === TOOL_TASK_KIND) {
@@ -439,5 +467,6 @@ export const settleSchedulerOutcome = (
             detail: outcome.reason,
             settlement: { status: "unanswered", reason: outcome.reason },
           },
+      { conversationId: record.conversationId, runEnded },
     )
   })

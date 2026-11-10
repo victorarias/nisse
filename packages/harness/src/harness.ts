@@ -64,7 +64,7 @@ import { createCompaction } from "./compaction.ts"
 import { ContextReads } from "./context.ts"
 import { ProviderDoc } from "./documents.ts"
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts"
-import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts"
+import { LIMITS_RESTARTS, LiveDoc, type RunEndedHook, settleSchedulerOutcome } from "./live.ts"
 import {
   type AbortResult,
   type AdmissionError,
@@ -149,6 +149,8 @@ export type HarnessOptions<T extends ToolRegistration = ToolRegistration> = {
   /** A viewer of a Session another process drives: nothing is written or run (spec 2.2). */
   readonly readOnly?: boolean
   readonly onReport?: (report: Report) => void
+  /** Runs in the commit that ends a run, whatever ended it. */
+  readonly runEnded?: RunEndedHook
   /** Runs in every commit that creates or forks a conversation, after the built-in creation hook. */
   readonly conversationCreated?: (tx: Tx, record: ConversationRecord) => Effect.Effect<void, unknown>
 }
@@ -299,7 +301,7 @@ export const openHarness = <T extends ToolRegistration>(
         services: (phase) => Layer.succeed(TaskServices, host.taskApi(phase)),
         restartLimit: () => host.settings().restartLimit,
         limitsRestarts: (kind) => LIMITS_RESTARTS.has(kind),
-        settleOutcome: settleSchedulerOutcome,
+        settleOutcome: (tx, record, outcome) => settleSchedulerOutcome(tx, record, outcome, options.runEnded),
         withdrawInputs: (tx, conversationId) => withdrawQueuedInputs(tx, conversationId),
         queuedInputs: (reads) => queuedConversations(reads),
         report: (error, report, snapshot, span) => host.report(error, host.taskReport(report, snapshot), span),
@@ -680,6 +682,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       settings: () => this.settings(),
       models: () => this.models(),
       env: runtime.guard(this.#env(conversationId)),
+      runOwner: { conversationId, runEnded: this.#options.runEnded },
       hooks: {
         each: (name, invoke) =>
           runtime.guard(

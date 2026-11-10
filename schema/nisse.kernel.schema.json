@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nisse kernel protocol",
+  "protocol": 1,
+  "methods": {
+    "initialize": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "client",
+          "version",
+          "protocol"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "version",
+          "protocol"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "conversation/start": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "The directory the conversation works in."
+          }
+        },
+        "required": [
+          "cwd"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id, as conversation/start gave it."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "conversation/submit": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id, as conversation/start gave it."
+          },
+          "requestId": {
+            "type": "string",
+            "description": "Submitting again with the same id is answered once."
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation",
+          "requestId",
+          "text"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "submission": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "submission"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
+    },
+    "conversation/watch": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id, as conversation/start gave it."
+          },
+          "window": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Start the window at this entry, such as the one after the last you hold."
+              },
+              "min": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "The newest entries the window holds at least; 50."
+              },
+              "max": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Past this many, the oldest leave the window down to min; twice min."
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "view"
+                ]
+              },
+              "view": {
+                "type": "object",
+                "properties": {
+                  "conversation": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  "entries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "conversationId": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "kind": {
+                          "type": "string",
+                          "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`."
+                        },
+                        "model": {
+                          "type": "array"
+                        },
+                        "data": {},
+                        "head": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "edits": {
+                          "type": "array"
+                        },
+                        "byTaskId": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "conversationId",
+                        "kind"
+                      ],
+                      "additionalProperties": true,
+                      "description": "One immutable transcript record."
+                    },
+                    "description": "A window over the transcript, oldest first."
+                  },
+                  "before": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991,
+                    "description": "The entry just before the window; absent when the window starts the transcript."
+                  },
+                  "docs": {
+                    "type": "object",
+                    "description": "pi.agent, pi.live, pi.inbox, pi.provider and pi.usage, by kind; pi.live holds the run in flight."
+                  }
+                },
+                "required": [
+                  "conversation",
+                  "entries",
+                  "docs"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "_tag",
+              "view"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "change"
+                ]
+              },
+              "ops": {
+                "type": "array",
+                "description": "The operations one commit applied to the view, in order: [\"r\", value] replaces it, [\"s\", path, value] sets, [\"d\", path] deletes, [\"a\", path, text] appends text, [\"t\", path, length] truncates text, [\"p\", path, at, deleteCount, items] splices an array, [\"m\", path, permutation] reorders one."
+              }
+            },
+            "required": [
+              "_tag",
+              "ops"
+            ],
+            "additionalProperties": true
+          }
+        ],
+        "description": "The view through the window, then each commit's changes to it."
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/FellBehindEncoded"
+          }
+        ]
+      },
+      "stream": true
+    },
+    "conversation/interrupt": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "Stops its run; what was said stays."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
+    },
+    "server/stop": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    }
+  },
+  "$defs": {
+    "NoSuchConversationEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "NoSuchConversation"
+          ]
+        },
+        "conversation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "conversation"
+      ],
+      "additionalProperties": true
+    },
+    "FellBehindEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "FellBehind"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "The changes a watch may hold unread before it is dropped; watch again from the position you hold."
+        }
+      },
+      "required": [
+        "_tag",
+        "limit"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

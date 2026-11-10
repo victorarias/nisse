@@ -475,7 +475,7 @@ export const GenerationTask: Task<GenerationInput, GenerationCheckpoint, Generat
             yield* appendToolResult(tx, conversationId, call, result, { timestamp: runtime.now() })
           }
           // In `finish` and `drain` the run answered already: it ends without a failure, its inputs stay `done`.
-          yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "aborted" })
+          yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "aborted" }, api.runOwner)
           return { status: "terminal", outcome: { status: "aborted" } }
         }),
       )
@@ -706,7 +706,7 @@ const endFailedRun = (
 ) =>
   Effect.gen(function* () {
     const { conversationId } = ctx.runtime
-    yield* endRun(tx, live, ctx.runtime.taskId, end)
+    yield* endRun(tx, live, ctx.runtime.taskId, end, ctx.api.runOwner)
     if (failure.policy === "withdraw") yield* withdrawQueuedInputs(tx, conversationId, "run_failed")
     if (failure.boundary === undefined) return
     const { users, first } = yield* applyBoundary(tx, failure.boundary, "final", ctx.runtime.now())
@@ -936,7 +936,7 @@ const answer = (ctx: Ctx, message: AssistantMessage) =>
           delete live.generation
           return result
         }
-        yield* endRun(tx, live, runtime.taskId, { status: "done", answer: entry.id })
+        yield* endRun(tx, live, runtime.taskId, { status: "done", answer: entry.id }, ctx.api.runOwner)
         if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
         return result
       }),
@@ -1033,7 +1033,7 @@ const endAnsweredRun = (ctx: Ctx, answer: EntryId) =>
       const boundary = yield* prepareBoundary(tx, conversationId, api.settings())
       const live = yield* tx.doc(LiveDoc, conversationId)
       const { users, first } = yield* applyBoundary(tx, boundary, "final", runtime.now())
-      yield* endRun(tx, live, runtime.taskId, { status: "done", answer })
+      yield* endRun(tx, live, runtime.taskId, { status: "done", answer }, ctx.api.runOwner)
       if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
       return { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
     }),
@@ -1050,7 +1050,7 @@ const endAnsweredCutOff = (ctx: Ctx, task: AnyPhase, answer: EntryId) => {
   return runtime.commit((tx) =>
     Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
       const live = yield* tx.doc(LiveDoc, runtime.conversationId)
-      yield* endRun(tx, live, runtime.taskId, { status: "done", answer })
+      yield* endRun(tx, live, runtime.taskId, { status: "done", answer }, ctx.api.runOwner)
       const completed: Next = { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
       return endedByCrashes(completed, text)
     }),
@@ -1178,7 +1178,7 @@ const finishToolRound = (ctx: Ctx, assistant: EntryId, tools: readonly TaskId<To
         if (held !== undefined) return held
         if (terminate) {
           const { users, first } = yield* applyBoundary(tx, boundary, "final", now)
-          yield* endRun(tx, live, runtime.taskId, { status: "done", answer: assistant })
+          yield* endRun(tx, live, runtime.taskId, { status: "done", answer: assistant }, ctx.api.runOwner)
           if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
         } else if (maxTurns !== undefined && turns >= maxTurns) {
           // The turn limit ends the run like a failure: `afterFailedRun` decides the queued items, and a continue resumes
@@ -1194,7 +1194,7 @@ const finishToolRound = (ctx: Ctx, assistant: EntryId, tools: readonly TaskId<To
           const { users, first, reset } = yield* applyBoundary(tx, boundary, "postTools", now)
           if (reset) {
             // The queued reset cut the run's context before an answer.
-            yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "reset" })
+            yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "reset" }, ctx.api.runOwner)
             if (users.length > 0) {
               yield* startRun(tx, conversationId, live, { inputs: users, first }, { keepFailure: true })
             }
