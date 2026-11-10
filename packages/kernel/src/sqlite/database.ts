@@ -155,11 +155,11 @@ export class BunSqliteDatabase extends BunSqliteExecutor implements SqliteDataba
     return Semaphore.withPermit(this.#permit)(
       Effect.uninterruptibleMask((restore) => {
         const connection = this.#connection
-        let active = true
+        const handle = transactionHandle()
         return call(() => connection.exec("BEGIN IMMEDIATE")).pipe(
-          Effect.andThen(Effect.exit(restore(body(new BunSqliteExecutor(connection, () => active))))),
+          Effect.andThen(Effect.exit(restore(body(new BunSqliteExecutor(connection, handle.active))))),
           Effect.flatMap((exit): Effect.Effect<A, E | StorageError> => {
-            active = false
+            handle.end()
             if (Exit.isSuccess(exit)) {
               return call(() => connection.exec("COMMIT")).pipe(
                 Effect.catch((error) => Effect.andThen(rollback(connection, error), Effect.fail(error))),
@@ -181,6 +181,20 @@ export class BunSqliteDatabase extends BunSqliteExecutor implements SqliteDataba
         this.#connection.close()
       }),
     )
+  }
+}
+
+/**
+ * Whether a transaction's handle may still run calls. Made outside the transaction's scope so the handle's executor
+ * keeps no reference to the transaction body, which holds its commit's values.
+ */
+function transactionHandle(): { readonly active: () => boolean; end(): void } {
+  let active = true
+  return {
+    active: () => active,
+    end: () => {
+      active = false
+    },
   }
 }
 

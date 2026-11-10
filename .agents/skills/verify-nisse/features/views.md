@@ -13,11 +13,11 @@ Clients and extensions follow conversations and documents through windowed views
 - `view-load-earlier` [kernel, pending harness-views] `earlier`, `loadEarlier` (§9.3): Scroll back and load more
 - `tui-load-earlier` [pending tui-views] The client path for `earlier`, `loadEarlier` (§9.3): Scroll back and load more
 - `view-fill-gap` [kernel, pending harness-views] `fillGap` (§9.3): A reconnecting client repairs a hole
-- `doc-watch` [kernel, pending kernel-documents] Watch a document, `watchDoc` (R816-853, §9.1): A client or extension follows any state
+- `doc-watch` [kernel] Watch a document, `watchDoc` (R816-853, §9.1): A client or extension follows any state
 - `view-documents` [kernel, pending harness-views] Documents on the conversation view (§9): One subscription carries agent, usage and extension state
 - `observer-conversation` [kernel, pending harness-views] Observers for in-process code (§9.2): An extension reacts to changes, each with its own queue
-- `observer-commits` [kernel, pending kernel-documents] `observeCommits` (§4): Extensions see every commit
-- `view-slow-folding` [kernel, pending kernel-documents] Slow-watcher folding and 10,000-op root replacement (§9.2): A slow client catches up with merged changes rather than being dropped
+- `observer-commits` [kernel] `observeCommits` (§4): Extensions see every commit
+- `view-slow-folding` [kernel] Slow-watcher folding and 10,000-op root replacement (§9.2): A slow client catches up with merged changes rather than being dropped
 - `view-live` [kernel, pending harness-run-core] Live state, `pi.live` (§8.2): Clients see partial answers and running tools
 - `view-reasoning` [kernel, pending harness-views] Reasoning streamed live (§8.2): People see the model thinking
 - `view-partial-arguments` [kernel, pending harness-run-core] Partial tool arguments streamed (`harness/partial-changes`): See a file being written as it is generated

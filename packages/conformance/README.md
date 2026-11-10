@@ -54,7 +54,12 @@ implemented is `unimplemented(name, owner)`: it loads, and throws naming the
 owner on first use. A child replaces the exports it owns with thin wrappers over
 its package. `derive.ts adapter` generated the first version and is not rerun
 once children edit it. `setDefaultDocumentRetention` is real, because the setup
-file calls it in every run; `kernel-documents` connects it, with the Promise wrapper over `packages/kernel`'s Session.
+file calls it in every run, and it sets the retention a Session made after it uses.
+
+The Session is `packages/kernel`'s, run as Promises by `adapter/durable/src/session/session.ts`: a commit's callback
+gets a Promise `Transaction` over the kernel's `Tx`, errors become the upstream classes, host observers run one
+microtask after the kernel publishes, and `watchDoc` gives chord's handle over the kernel's folding watch. A storage
+the suite passes that is not the kernel's own SQLite is bridged call by call (`session/storage-bridge.ts`).
 
 Test doubles behind the Storage port: `adapter/durable/src/storage/memory.ts` is
 upstream's `MemoryStorage` copied unchanged, and `ControlledStorage` stays in
@@ -77,7 +82,7 @@ facade; any other database a test passes, such as a test double, is bridged call
 | chord `json`, `delta`                                       | re-export `packages/delta`                                               |
 | chord `output`                                              | `harness-run-core`                                                       |
 | chord `sqlite`                                              | real: `NodeSqliteDatabase` wraps `packages/kernel`'s SQLite facade       |
-| chord `watch`                                               | `kernel-documents`                                                       |
+| chord `watch`                                               | types only; the adapter wraps the kernel's document watches               |
 | `pi-codemode`                                               | `codemode-package`                                                       |
 
 `reference-support/` holds the hand-written `pi-ai` stand-in and the `bun:sqlite`
