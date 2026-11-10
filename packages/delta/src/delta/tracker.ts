@@ -156,6 +156,11 @@ export interface Tracker<T extends object> {
   beginChange(): Change<T>
   prepareReplace(value: T): Prepared<T>
   adopt(prepared: Prepared<T>): void
+  /**
+   * Drops the value once nothing will read it again, such as when its document incarnation ends, so a stale reference to
+   * the tracker keeps no value alive. Reading or changing the tracker afterwards throws.
+   */
+  release(): void
 }
 
 class PreparedImpl<T extends object> implements Prepared<T> {
@@ -245,6 +250,7 @@ class TrackerImpl<T extends object> implements Tracker<T> {
   #competitors: Set<WeakRef<OverlayContext>> | undefined
   readonly #selfRef: WeakRef<TrackerImpl<object>>
   #value: T
+  #released = false
   #revision = 0
   #pruneBudget = 256
 
@@ -254,7 +260,19 @@ class TrackerImpl<T extends object> implements Tracker<T> {
   }
 
   get value(): T {
+    this.#assertHeld()
     return this.#value
+  }
+
+  release(): void {
+    this.#released = true
+    this.#value = undefined as unknown as T
+    this.#revision += 1
+    if (this.#open !== undefined) this.#demote(this.#open)
+  }
+
+  #assertHeld(): void {
+    if (this.#released) throw new Error("Tracker has been released")
   }
 
   get revision(): number {
@@ -262,6 +280,7 @@ class TrackerImpl<T extends object> implements Tracker<T> {
   }
 
   beginChange(): Change<T> {
+    this.#assertHeld()
     const context = createContext(this.#selfRef, this.#owner, this.#revision, this.#value, false, this.#value)
     if (this.#open !== undefined) this.#demote(this.#open)
     this.#open = context
@@ -269,6 +288,7 @@ class TrackerImpl<T extends object> implements Tracker<T> {
   }
 
   prepareReplace(value: T): Prepared<T> {
+    this.#assertHeld()
     // Not tracked: materialization below releases the context before this returns, as `prepare()` does.
     const context = createContext(this.#selfRef, this.#owner, this.#revision, value, true, this.#value)
     context.status.value = "prepared"
@@ -282,6 +302,7 @@ class TrackerImpl<T extends object> implements Tracker<T> {
   }
 
   adopt(prepared: Prepared<T>): void {
+    this.#assertHeld()
     const context = PREPARED.get(prepared as object)
     if (context?.owner !== this.#owner) throw new Error("Prepared change belongs to a different tracker")
     if (context.status.value === "consumed") throw new Error("Prepared change has already been used")

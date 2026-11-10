@@ -583,7 +583,7 @@ class SessionImpl implements Session, SessionInternals {
         cached: (id) => this.#cache.get(id),
         load: (definition, id, address) => this.#loadDocument(definition, id, address),
         install: (document) => this.#cache.install(document),
-        evict: (id, recordId) => this.#cache.evict(id, recordId),
+        retire: (id, recordId) => this.#cache.retire(id, recordId),
       })
       const callback = yield* Effect.forkChild(
         Effect.suspend(() => body(tx)),

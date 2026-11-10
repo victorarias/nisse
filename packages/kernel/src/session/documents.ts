@@ -70,9 +70,15 @@ export class DocumentCache {
     this.touch(document.addressId)
   }
 
-  /** Drops the incarnation at an address, if it is still the cached one. */
-  evict(addressId: string, recordId: DocumentId): void {
-    if (this.#documents.get(addressId)?.record.id === recordId) this.drop(addressId)
+  /**
+   * An incarnation ended: drops it if it is still the cached one, and releases its value, so a stale reference to its
+   * tracker keeps nothing alive.
+   */
+  retire(addressId: string, recordId: DocumentId): void {
+    const cached = this.#documents.get(addressId)
+    if (cached?.record.id !== recordId) return
+    this.drop(addressId)
+    cached.tracker.release()
   }
 
   drop(addressId: string): void {
