@@ -68,7 +68,7 @@ export function upstreamError(error: unknown): unknown {
 	}
 	if (error instanceof StorageError) return error.cause;
 	if (error instanceof KernelRequestError) return new StorageRequestError(error.message);
-	if (error instanceof KernelSessionFailed) { console.error("DEBUGCAUSE", error.cause); return new SessionFailed(upstreamCause(error.cause)); }
+	if (error instanceof KernelSessionFailed) return new SessionFailed(upstreamCause(error.cause));
 	if (error instanceof SessionClosed) return new Error("Session is closed");
 	if (error instanceof KernelReadOnly) {
 		return new ReadOnlySession(error.message.includes("running tasks") ? "running tasks" : "a commit with writes");

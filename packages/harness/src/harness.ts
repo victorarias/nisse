@@ -26,6 +26,7 @@ import {
   ROOT_CONVERSATION_ID,
   type RewindableAddressArgs,
   type Session,
+  SessionFailed,
   type StorageReads,
   type SubmissionId,
   type SubmissionRecord,
@@ -258,7 +259,7 @@ export const openHarness = <T extends ToolRegistration>(
         settleOutcome: settleSchedulerOutcome,
         withdrawInputs: (tx, conversationId) => withdrawQueuedInputs(tx, conversationId),
         queuedInputs: (reads) => queuedConversations(reads),
-        report: (error, report) => host.report(error, host.taskReport(report)),
+        report: (error, report, snapshot) => host.report(error, host.taskReport(report, snapshot)),
         readOnly: options.readOnly === true,
       }),
       () => Effect.ignore(session.close),
@@ -367,12 +368,14 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
   readonly #identified = new WeakMap<Models, Models>()
 
   /** Forwards a report to the host; a host callback that throws is dropped, since reporting it would report again. */
-  /** A scheduler report with the extension whose definition its task has, by the registry's current snapshot. */
-  taskReport(report: TaskReport): ReportInfo {
+  /**
+   * A scheduler report with the extension whose definition its task has: by the snapshot the task ran with, else by the
+   * registry's current one.
+   */
+  taskReport(report: TaskReport, snapshot?: unknown): ReportInfo {
     if (!("task" in report)) return report
     const kind = report.task.kind
-    const extension = this.registry
-      .snapshot()
+    const extension = ((snapshot as RegistrySnapshot<T> | undefined) ?? this.registry.snapshot())
       .installed()
       .find((extension) => extension.tasks?.some((task) => task.definition.name === kind) === true)
     return extension === undefined ? report : { ...report, extension: extension.name }
@@ -650,7 +653,12 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
                     waitForIdle: runtime.guard(
                       Effect.raceFirst(
                         this.#tasks.waitForIdle(record.id),
-                        Effect.andThen(aborted(runtime.signal), ended),
+                        // A failed Session ends the invocation too; the wait ends with that failure, as the
+                        // scheduler's waits do.
+                        Effect.andThen(
+                          aborted(runtime.signal),
+                          Effect.suspend(() => sessionEnd(this.session, ended)),
+                        ),
                       ),
                     ),
                   },
@@ -694,6 +702,12 @@ type CreateTarget =
       readonly at: EntryId
       readonly ownership: ConversationOwnership
     }
+
+/** `SessionFailed` once the Session failed, else `otherwise`. */
+const sessionEnd = <A, E>(session: Session, otherwise: Effect.Effect<A, E>): Effect.Effect<A, E | SessionFailed> => {
+  const failure = session.failure
+  return failure === undefined ? otherwise : Effect.fail(SessionFailed.of(failure.error))
+}
 
 const isDraft = (value: SubmissionDraft | Tx): value is SubmissionDraft => "type" in value
 

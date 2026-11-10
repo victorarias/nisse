@@ -27,8 +27,8 @@ type ContextBounds = {
 
 /**
  * The committed context of a conversation, or of its context cut off at the visible entry `at`. The bounds are read in
- * one step on the Session line; entries at or below the tail never change, so the range is then read page by page,
- * each page a step of its own, and commits go on between them.
+ * one step on the Session line; entries at or below the tail never change, so the range is then read page by page
+ * beside the line, and commits go on meanwhile.
  */
 export const readContext = (
   session: Session,
@@ -59,7 +59,7 @@ export const readContext = (
     const entries: EntryRecord[] = []
     let cursor: Cursor | undefined
     do {
-      const page = yield* session.read((storage) =>
+      const page = yield* session.readOffLine((storage) =>
         storage.scanEntries({ conversationId, ...range }, SCAN_PAGE_SIZE, cursor),
       )
       entries.push(...page.items)

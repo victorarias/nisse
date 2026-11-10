@@ -73,9 +73,15 @@ export function kernelStorage(storage: Storage): KernelStorage {
 	};
 }
 
-/** Whether a method was assigned on the instance, over its class's. */
+/**
+ * Whether a method is not the class's: assigned on the instance, or wrapped by a Proxy's `get`, as a suite simulating a
+ * crash does. Every call must then go through the methods.
+ */
 function overridden(storage: object): boolean {
-	return Object.getOwnPropertyNames(storage).some(
-		(name) => typeof (storage as Record<string, unknown>)[name] === "function",
+	return Object.entries(Object.getOwnPropertyDescriptors(SqliteStorage.prototype)).some(
+		([name, descriptor]) =>
+			name !== "constructor" &&
+			typeof descriptor.value === "function" &&
+			(storage as Record<string, unknown>)[name] !== descriptor.value,
 	);
 }

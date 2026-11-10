@@ -6,6 +6,7 @@ import { copyJson } from "@nisse/delta/json"
 import type { Draft } from "@nisse/delta"
 import {
   defineTask,
+  endedByCrashes,
   type ConversationId,
   type EntryId,
   type JsonObject,
@@ -1061,19 +1062,18 @@ const endAnsweredRun = (ctx: Ctx, answer: EntryId) =>
  * run answered, so it ends `completed`, without a failure and without the tasks it would still have waited for, and is
  * reported `task_interrupted`. Queued items stay queued, as after a failed run.
  */
-const endAnsweredCutOff = (ctx: Ctx, task: AnyPhase, answer: EntryId) =>
-  Effect.gen(function* () {
-    const { runtime } = ctx
-    const text = `The generation was interrupted ${cutOffCount(task)} in its ${task.state.checkpoint.phase} phase`
-    yield* runtime.commit((tx) =>
-      Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
-        const live = yield* tx.doc(LiveDoc, runtime.conversationId)
-        yield* endRun(tx, live, runtime.taskId, { status: "done", answer })
-        return { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
-      }),
-    )
-    runtime.report(Object.assign(new Error(text), { taskInterrupted: { reason: "restart_limit" as const } }))
-  })
+const endAnsweredCutOff = (ctx: Ctx, task: AnyPhase, answer: EntryId) => {
+  const { runtime } = ctx
+  const text = `The generation was interrupted ${cutOffCount(task)} in its ${task.state.checkpoint.phase} phase`
+  return runtime.commit((tx) =>
+    Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
+      const live = yield* tx.doc(LiveDoc, runtime.conversationId)
+      yield* endRun(tx, live, runtime.taskId, { status: "done", answer })
+      const completed: Next = { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
+      return endedByCrashes(completed, text)
+    }),
+  )
+}
 
 /**
  * Whether an answer's `onYield` continuation is taken (spec 8.3), decided from the inbox before the final boundary

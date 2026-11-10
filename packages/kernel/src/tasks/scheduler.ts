@@ -65,6 +65,16 @@ export type TaskReport =
   | { readonly kind: "task_error"; readonly task: ReportTask }
   /** The scheduler ended a task `faulted`: its handler threw or made no progress, or crashes cut it off too often. */
   | { readonly kind: "task_faulted"; readonly task: ReportTask; readonly reason: "threw" | "restart_limit" }
+  /**
+   * A task ended because crashes cut it off: a failed outcome whose detail's `reason` is `restart_limit` or
+   * `interrupted`, or a state marked with `endedByCrashes`. `restarts` is how often it was cut off in a row.
+   */
+  | {
+      readonly kind: "task_interrupted"
+      readonly task: ReportTask
+      readonly reason: "restart_limit" | "interrupted"
+      readonly restarts: number
+    }
   /** A definition's `migrate` threw; the task waits, blocked, for another definition. */
   | { readonly kind: "migration_failed"; readonly task: ReportTask }
   /** A running task keeps its old definition because the registered one cannot take it. */
@@ -105,7 +115,11 @@ export type TaskSchedulerOptions<Svc> = {
   readonly withdrawInputs?: (tx: Transaction, conversationId: ConversationId) => Effect.Effect<void, unknown>
   /** Conversations with queued inputs, read on the line; `withdrawInputs` is called for those a cascade reaches. */
   readonly queuedInputs?: (reads: SessionInternals["lineReads"]) => Effect.Effect<readonly ConversationId[], unknown>
-  readonly report?: (error: unknown, report: TaskReport) => void
+  /**
+   * `snapshot`, for a report from a running invocation, is the registry snapshot its current handler runs under, so the
+   * host can name the definition that ran after the registry moved on.
+   */
+  readonly report?: (error: unknown, report: TaskReport, snapshot?: TaskSnapshot<Svc>) => void
   /** Open only loads live tasks: nothing is written or run, and no wakeup is needed. */
   readonly readOnly?: boolean
 }
@@ -210,6 +224,8 @@ type Invocation = {
   /** The handler running now, interrupted by the signal. */
   handler: Fiber.Fiber<void, unknown> | undefined
   ended: boolean
+  /** The registry snapshot of the handler that ran last, for reports about it. */
+  snapshot: TaskSnapshot<unknown> | undefined
   /** Completed off the line once the invocation is over, its last handler included. */
   readonly done: Deferred.Deferred<void>
   /** Completed in a microtask after the invocation ended, for runtime waits to give up. */
@@ -250,7 +266,7 @@ class Scheduler<Svc> implements TaskScheduler {
   readonly #settleOutcome: SettleOutcome
   readonly #withdrawInputs: TaskSchedulerOptions<unknown>["withdrawInputs"]
   readonly #queuedInputs: TaskSchedulerOptions<unknown>["queuedInputs"]
-  readonly #report: (error: unknown, report: TaskReport) => void
+  readonly #report: (error: unknown, report: TaskReport, snapshot?: TaskSnapshot<unknown>) => void
   readonly #readOnly: boolean
   readonly #clock: Clock.Clock
   /** Wakes the driver fiber, which runs reconcile and reservation passes. */
@@ -278,6 +294,8 @@ class Scheduler<Svc> implements TaskScheduler {
   readonly #failFastChecks = new Set<TaskId>()
   /** Waiting tasks by each task in their `on`. */
   readonly #waiters = new Map<TaskId, Set<TaskId>>()
+  /** Fails with the Session's failure once it fails, so a join of a run that ignores its signal ends with it. */
+  readonly #failed = Deferred.makeUnsafe<never, SessionFailed>()
   /** Sleeping live tasks, due or not. */
   readonly #sleeping = new Set<TaskId>()
   /** Live `abandonOnRestart` tasks of an earlier process; the first reservation pass marks them. */
@@ -311,9 +329,10 @@ class Scheduler<Svc> implements TaskScheduler {
     this.#withdrawInputs = options.withdrawInputs as TaskSchedulerOptions<unknown>["withdrawInputs"]
     this.#queuedInputs = options.queuedInputs
     const report = options.report ?? (() => {})
-    this.#report = (error, info) => {
+    this.#report = (error, info, snapshot) => {
       try {
-        report(error, info)
+        // The scheduler erases its services' type; a snapshot it holds is one `options.registry` made.
+        report(error, info, snapshot as TaskSnapshot<Svc> | undefined)
       } catch {
         // A report handler that throws loses that report; it never fails what reported.
       }
@@ -393,6 +412,8 @@ class Scheduler<Svc> implements TaskScheduler {
     if (this.#timer !== undefined) Effect.runFork(Fiber.interrupt(this.#timer.fiber))
     this.#timer = undefined
     const closed = this.#closedError()
+    const failure = this.#session.failure
+    if (failure !== undefined) Deferred.doneUnsafe(this.#failed, Exit.fail(SessionFailed.of(failure.error)))
     for (const waiters of this.#taskWaiters.values()) for (const waiter of waiters) Queue.offerUnsafe(waiter, closed)
     this.#taskWaiters.clear()
     for (const waiters of this.#idleWaiters.values()) for (const waiter of waiters) Queue.offerUnsafe(waiter, closed)
@@ -474,8 +495,10 @@ class Scheduler<Svc> implements TaskScheduler {
           return { result: "marked" as const, run: invocation?.mode === "run" ? invocation : undefined }
         }),
       )
-      // The publication signalled the run; join it.
-      if (marked.run !== undefined) yield* Deferred.await(marked.run.done)
+      // The publication signalled the run; join it, unless the Session fails first: a run that ignores its signal
+      // may never end, and a clean close joins it anyway.
+      if (marked.run !== undefined)
+        yield* Effect.raceFirst(Deferred.await(marked.run.done), Deferred.await(this.#failed))
       return marked.result
     })
   }
@@ -1357,6 +1380,7 @@ class Scheduler<Svc> implements TaskScheduler {
       controller: new AbortController(),
       handler: undefined,
       ended: false,
+      snapshot: undefined,
       done: Deferred.makeUnsafe<void>(),
       endedSignal: Deferred.makeUnsafe<void>(),
     }
@@ -1372,7 +1396,13 @@ class Scheduler<Svc> implements TaskScheduler {
       Effect.forkDetach(
         run.pipe(
           Effect.catchCause((cause) =>
-            Effect.sync(() => this.#report(causeError(cause), { kind: "task_error", task: reportTask(invocation) })),
+            Effect.sync(() =>
+              this.#report(
+                causeError(cause),
+                { kind: "task_error", task: reportTask(invocation) },
+                invocation.snapshot,
+              ),
+            ),
           ),
           Effect.ensuring(
             Effect.suspend(() => {
@@ -1449,6 +1479,7 @@ class Scheduler<Svc> implements TaskScheduler {
     phase: PhaseInfo<unknown>,
   ): Effect.Effect<Exit.Exit<void, unknown>> {
     return Effect.gen({ self: this }, function* () {
+      invocation.snapshot = phase.snapshot
       let layer: Layer.Layer<unknown>
       try {
         layer = this.#services(phase)
@@ -1543,7 +1574,11 @@ class Scheduler<Svc> implements TaskScheduler {
       if (continued === undefined) this.#end(invocation)
       // Reported once the fault is durable.
       if (fault !== undefined) {
-        this.#report(fault.error, { kind: "task_faulted", task: reportTask(invocation), reason: "threw" })
+        this.#report(
+          fault.error,
+          { kind: "task_faulted", task: reportTask(invocation), reason: "threw" },
+          invocation.snapshot,
+        )
       }
       return continued
     })
@@ -1616,13 +1651,29 @@ class Scheduler<Svc> implements TaskScheduler {
       },
       guard: read,
       commit: (change) =>
-        this.#gated(invocation, (tx, current) =>
-          Effect.gen({ self: this }, function* () {
-            const next = yield* change(tx, current as RunningTask<JsonValue, never, JsonValue>)
-            if (next !== undefined)
+        Effect.gen({ self: this }, function* () {
+          let interrupted:
+            | { readonly message: string; readonly reason: InterruptReason; readonly restarts: number }
+            | undefined
+          yield* this.#gated(invocation, (tx, current) =>
+            Effect.gen({ self: this }, function* () {
+              const next = yield* change(tx, current as RunningTask<JsonValue, never, JsonValue>)
+              if (next === undefined) return
               yield* this.#commitState(tx, invocation, current, next as NextTaskState<JsonValue, JsonValue>)
-          }),
-        ),
+              const ending = next.status === "terminal" ? endedForCrashes(next) : undefined
+              if (ending !== undefined) interrupted = { ...ending, restarts: current.restarts ?? 0 }
+            }),
+          )
+          // Reported once stored, so a host keeps a crash-loop signal.
+          if (interrupted !== undefined) {
+            const { message, reason, restarts } = interrupted
+            this.#report(
+              new Error(message),
+              { kind: "task_interrupted", task: reportTask(invocation), reason, restarts },
+              invocation.snapshot,
+            )
+          }
+        }),
       memo: ((name: string, ...rest: readonly JsonValue[]) => {
         if (rest.length === 0) return read(Effect.sync(() => memoOf(this.#live.get(invocation.taskId)?.record, name)))
         const candidate = rest[0]!
@@ -1701,7 +1752,7 @@ class Scheduler<Svc> implements TaskScheduler {
       },
       report: (error) => {
         if (invocation.ended) throw new InvocationEnded({ message: `Task ${invocation.taskId} invocation has ended` })
-        this.#report(error, { kind: "task_error", task: reportTask(invocation) })
+        this.#report(error, { kind: "task_error", task: reportTask(invocation) }, invocation.snapshot)
       },
     }
     return runtime
@@ -1907,6 +1958,35 @@ function belowBackground(chain: Chain): boolean {
     if ("task" in at.step && at.step.background) return true
   }
   return false
+}
+
+type InterruptReason = "restart_limit" | "interrupted"
+
+/** Terminal states marked by `endedByCrashes`, with their message; keyed by the state, so nothing is stored. */
+const endedByCrashesStates = new WeakMap<object, string>()
+
+/**
+ * `state`, a terminal state a task commits, marked as ending its task for crashes: the scheduler reports it
+ * `task_interrupted` with `message`, whatever its outcome, as a run that answered and ends `completed` without its
+ * after-run tasks.
+ */
+export function endedByCrashes<T extends object>(state: T, message: string): T {
+  endedByCrashesStates.set(state, message)
+  return state
+}
+
+/** Why a terminal state ends its task for crashes, if it does. */
+function endedForCrashes(
+  state: Extract<NextTaskState<JsonValue, JsonValue>, { readonly status: "terminal" }>,
+): { readonly message: string; readonly reason: InterruptReason } | undefined {
+  const outcome = state.outcome
+  if (outcome.status === "failed") {
+    const detail = outcome.error.detail
+    const reason = typeof detail === "object" && detail !== null && "reason" in detail ? detail.reason : undefined
+    if (reason === "restart_limit" || reason === "interrupted") return { message: outcome.error.message, reason }
+  }
+  const message = endedByCrashesStates.get(state)
+  return message === undefined ? undefined : { message, reason: "restart_limit" }
 }
 
 function reportTask(
