@@ -349,7 +349,7 @@ type DocumentPlan = {
   /** Creation, copy or change content; absent when only a retirement is written. */
   content?: Extract<StorageWrite, { readonly type: "document.create" | "document.copy" | "document.change" }>
   /** A tracked incarnation's prepared change; absent for copies and retirement-only entries. */
-  readonly change?: {
+  change?: {
     readonly tracker: Tracker<JsonObject>
     readonly prepared: Prepared<JsonObject>
     readonly version: number
@@ -796,6 +796,18 @@ export class Transaction implements Tx {
    * stale reference to a finished transaction holds no document value.
    */
   #release(): void {
+    // Closures and generators of this commit may still reference an entry or a plan (JavaScriptCore scans stacks
+    // conservatively), so each drops what reaches a document value, not only the lists that hold them.
+    for (const document of this.#documents) {
+      delete document.draft
+      delete document.target
+      delete document.change
+      delete document.prepared
+    }
+    for (const plan of this.#plans) {
+      delete plan.change
+      delete plan.content
+    }
     this.#documents.length = 0
     this.#plans.length = 0
     this.#latest.clear()
