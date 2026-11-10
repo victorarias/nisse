@@ -29,15 +29,12 @@ seam, and the providers behind it.
   (`ScriptStep`): `text` word by word with `delayMs` before each word, a `tool`
   call, a `fail` error, and `agent` to give a subagent its own steps, matched to
   the request's `metadata.agent` (default `/root`). When the steps run out, it
-  answers `You said: <the last user text>`, 30 ms per word, as today's script
-  driver does. It has no deferred, classifier or image support.
+  answers `You said: <the last user text>`, 30 ms per word. It has no deferred, classifier or image support.
 - `fauxProvider(options)` (`@nisse/models/faux`) is pi-ai's faux provider on
   Effect, for tests: scripted responses one per request, a deferred response
   pending for `deferred.pendingFetches` fetches, cancellation, pacing by
   `tokensPerSecond`, and usage estimated from the prompt with a simulated prompt
   cache per `sessionId`.
-
-ChatGPT joins them with `chatgpt-provider`.
 
 ## Copied code
 

@@ -70,7 +70,7 @@ Session close.
 | `pi-telemetry` contexts                                     | `harness-compaction`, fed by an Effect tracer (D7)                       |
 | chord `context`                                             | copied here, in `adapter/chord/src/context`                              |
 | chord `json`, `delta`                                       | re-export `packages/delta`                                               |
-| chord `output`                                              | unassigned; still a stand-in, used by `harness-tools` and `tools-package` |
+| chord `output`                                              | `harness-run-core`                                                       |
 | chord `sqlite`                                              | `kernel-storage`                                                         |
 | chord `watch`                                               | `kernel-documents`                                                       |
 | `pi-codemode`                                               | `codemode-package`                                                       |
