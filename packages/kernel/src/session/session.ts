@@ -318,10 +318,12 @@ class SessionImpl implements Session {
 const isPromiseLike = (value: unknown): value is PromiseLike<unknown> =>
   typeof value === "object" && value !== null && typeof (value as { then?: unknown }).then === "function"
 
-/** Runs a callback that must not fail its caller. A plain Session drops what it throws (spec 10.1). */
-function contain(callback: () => void): void {
+/** Runs a callback that must not fail its caller. A plain Session drops what it throws or rejects with (spec 10.1). */
+function contain(callback: () => unknown): void {
   try {
-    callback()
+    // A callback may be async; its rejection is dropped like a throw, never left unhandled.
+    const returned = callback()
+    if (isPromiseLike(returned)) returned.then(undefined, () => {})
   } catch {
     // Dropped: a plain Session has no report handler.
   }

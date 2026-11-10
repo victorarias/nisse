@@ -634,4 +634,24 @@ describe("Session", () => {
         }
       }),
     ))
+  test("session-failed: a close listener or observer end that returns a rejecting promise has the rejection contained", () =>
+    run(
+      Effect.gen(function* () {
+        const control = yield* testStorage(databasePath())
+        const session = yield* openSession(control.storage)
+        // A promise that records whether the Session attached a rejection handler to it.
+        const handled: string[] = []
+        const rejecting = (name: string) =>
+          ({
+            then: (_onFulfilled: unknown, onRejected: unknown) => {
+              if (typeof onRejected === "function") handled.push(name)
+            },
+          }) as unknown as void
+        session.subscribeClose(() => rejecting("close listener"))
+        session.observeCommits({ advance: () => rejecting("advance"), end: () => rejecting("end") })
+        yield* newConversation(session)
+        yield* session.close
+        expect(handled.sort()).toEqual(["advance", "close listener", "end"])
+      }),
+    ))
 })
