@@ -314,8 +314,14 @@ export function promiseSeam(models: Models): M.Models {
 const seams = new WeakMap<Models, M.Models>();
 const owners = new WeakMap<M.Models, Models>();
 
-/** The pi-ai `Models` behind a seam `promiseSeam` made; any other seam as it is. */
-export const promiseModels = (seam: M.Models): Models => owners.get(seam) ?? (seam as never);
+/** The pi-ai `Models` behind a seam `promiseSeam` made; any other seam, such as one with an identity applied, as pi-ai's facade over it. */
+export function promiseModels(seam: M.Models): Models {
+	const known = owners.get(seam);
+	if (known !== undefined) return known;
+	const made = facade(seam, () => []);
+	owners.set(seam, made);
+	return made;
+}
 
 function makePromiseSeam(models: Models): M.Models {
 	const request = <A>(call: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, never> =>
@@ -332,7 +338,28 @@ function makePromiseSeam(models: Models): M.Models {
 				Effect.sync(() => {
 					const controller = new AbortController();
 					const events = models.streamSimple(model, context as Context, { ...options, signal: controller.signal });
+					// pi-ai's `result()` is the final message; a stream that never yields its terminal event ends with it.
+					let ended = false;
+					const terminal = Stream.unwrap(
+						Effect.map(
+							Effect.tryPromise({ try: () => events.result(), catch: (error) => error }),
+							(message): Stream.Stream<AssistantMessageEvent> =>
+								ended
+									? Stream.empty
+									: Stream.make(
+											message.stopReason === "error" || message.stopReason === "aborted"
+												? { type: "error", reason: message.stopReason, error: message }
+												: { type: "done", reason: message.stopReason as "stop", message },
+										),
+						),
+					);
 					return Stream.fromAsyncIterable(events, (error) => error).pipe(
+						Stream.tap((event) =>
+							Effect.sync(() => {
+								if (event.type === "done" || event.type === "error") ended = true;
+							}),
+						),
+						Stream.concat(terminal),
 						Stream.orDie,
 						Stream.ensuring(Effect.sync(() => controller.abort())),
 					);

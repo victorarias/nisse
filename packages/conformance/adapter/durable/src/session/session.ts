@@ -68,7 +68,7 @@ export function upstreamError(error: unknown): unknown {
 	}
 	if (error instanceof StorageError) return error.cause;
 	if (error instanceof KernelRequestError) return new StorageRequestError(error.message);
-	if (error instanceof KernelSessionFailed) return new SessionFailed(upstreamCause(error.cause));
+	if (error instanceof KernelSessionFailed) { console.error("DEBUGCAUSE", error.cause); return new SessionFailed(upstreamCause(error.cause)); }
 	if (error instanceof SessionClosed) return new Error("Session is closed");
 	if (error instanceof KernelReadOnly) {
 		return new ReadOnlySession(error.message.includes("running tasks") ? "running tasks" : "a commit with writes");
@@ -113,6 +113,29 @@ export function run<A>(effect: Effect.Effect<A, unknown>, context?: Context): Pr
 	return new Promise<A>((resolve, reject) => {
 		const fiber = Effect.runFork(effect);
 		const abort = (): void => void Effect.runFork(Fiber.interrupt(fiber));
+		signal?.addEventListener("abort", abort, { once: true });
+		fiber.addObserver((exit) => {
+			signal?.removeEventListener("abort", abort);
+			if (Exit.isSuccess(exit)) resolve(exit.value);
+			else reject(rejection(exit.cause, context));
+		});
+	});
+}
+
+/**
+ * Runs a commit as a Promise. Aborting `context` interrupts it until its callback has returned; after that the commit
+ * is in Storage, and it settles durably and resolves, as upstream's does. `build` gets the call that marks the
+ * callback's return.
+ */
+export function runCommit<A>(build: (returned: () => void) => Effect.Effect<A, unknown>, context?: Context): Promise<A> {
+	const signal = context?.abortSignal;
+	if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("aborted"));
+	let returned = false;
+	return new Promise<A>((resolve, reject) => {
+		const fiber = Effect.runFork(build(() => void (returned = true)));
+		const abort = (): void => {
+			if (!returned) Effect.runFork(Fiber.interrupt(fiber));
+		};
 		signal?.addEventListener("abort", abort, { once: true });
 		fiber.addObserver((exit) => {
 			signal?.removeEventListener("abort", abort);
@@ -523,13 +546,18 @@ export class SessionImpl {
 		} catch (error) {
 			return Promise.reject(error);
 		}
-		const commit = this.#kernel.commit((tx) =>
-			Effect.tryPromise({
-				try: async () => change(new Transaction(tx)),
-				catch: (error) => new CallbackFailed(error),
-			}),
-		);
-		return this.#counted(run(commit, context)).catch((error: unknown) => {
+		const commit = (returned: () => void) =>
+			this.#kernel.commit((tx) =>
+				Effect.tryPromise({
+					try: async () => {
+						const result = await change(new Transaction(tx));
+						returned();
+						return result;
+					},
+					catch: (error) => new CallbackFailed(error),
+				}),
+			);
+		return this.#counted(runCommit(commit, context)).catch((error: unknown) => {
 			throw error instanceof CallbackFailed ? error.error : error;
 		});
 	}
@@ -670,9 +698,27 @@ export class SessionImpl {
 		return () => this.#closeListeners.delete(listener);
 	}
 
+	/** Closes once; a caller that stops waiting leaves the shutdown going, and a later close awaits the same one. */
 	close(context: Context = BACKGROUND_CONTEXT): Promise<void> {
 		this.#closing ??= run(this.#kernel.close);
-		return this.#closing;
+		const closing = this.#closing;
+		const signal = context.abortSignal;
+		if (signal === undefined) return closing;
+		if (signal.aborted) return Promise.reject(signal.reason ?? new Error("aborted"));
+		return new Promise<void>((resolve, reject) => {
+			const abort = () => reject(signal.reason ?? new Error("aborted"));
+			signal.addEventListener("abort", abort, { once: true });
+			closing.then(
+				() => {
+					signal.removeEventListener("abort", abort);
+					resolve();
+				},
+				(error: unknown) => {
+					signal.removeEventListener("abort", abort);
+					reject(error);
+				},
+			);
+		});
 	}
 
 	/** A read of the kernel Session, refused as upstream refuses once the Session failed or closed. */

@@ -51,10 +51,14 @@ export const unwrap = (error: unknown): never => {
 
 /** Upstream's commit callback as a kernel one: an upstream Transaction over the kernel Tx. */
 export const callback =
-	(change: (tx: Any, ...rest: Any[]) => Any) =>
+	(change: (tx: Any, ...rest: Any[]) => Any, returned: () => void = () => {}) =>
 	(tx: Any, ...rest: Any[]) =>
 		Effect.tryPromise({
-			try: async () => change(new Transaction(tx), ...rest),
+			try: async () => {
+				const result = await change(new Transaction(tx), ...rest);
+				returned();
+				return result;
+			},
 			catch: (error) => new CallbackFailed(error),
 		});
 
@@ -394,12 +398,32 @@ export const upstreamSnapshot = (snapshot: Any): Any =>
 		},
 	}));
 
-/** The harness snapshot behind one of upstream's. */
+/** The harness snapshot behind one of upstream's; a snapshot the suite built by hand is converted. */
 export function harnessSnapshot(snapshot: Any): Any {
-	const inner = snapshot[HARNESS_SNAPSHOT];
-	if (inner === undefined) throw new Error("conformance adapter: a registry snapshot not made by createRegistry()");
-	return inner;
+	return snapshot[HARNESS_SNAPSHOT] ?? cached(snapshot, plainSnapshot);
 }
+
+/** A built-in harness task as it is; an upstream task converted. */
+const anyTask = (task: Any): Any => (H.BUILTIN_TASKS.includes(task) ? task : harnessTask(task));
+
+const plainSnapshot = (snapshot: Any): Any => ({
+	installed: () => snapshot.installed().map(harnessExtension),
+	extension: (name: string) => {
+		const extension = snapshot.extension(name);
+		return extension === undefined ? undefined : harnessExtension(extension);
+	},
+	tools: () =>
+		snapshot.tools().map(({ extension, tool }: Any) => ({ extension: harnessExtension(extension), tool: harnessTool(tool) })),
+	sections: () =>
+		snapshot
+			.sections()
+			.map(({ extension, section }: Any) => ({ extension: harnessExtension(extension), section: harnessSection(section) })),
+	tasks: () => snapshot.tasks().map(anyTask),
+	task: (name: string) => {
+		const task = snapshot.task(name);
+		return task === undefined ? undefined : anyTask(task);
+	},
+});
 
 const boundSnapshots = new WeakMap<RuntimeHost, WeakMap<object, Any>>();
 

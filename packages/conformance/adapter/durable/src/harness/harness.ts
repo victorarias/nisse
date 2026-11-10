@@ -12,6 +12,7 @@ import {
 	documentRetention,
 	run,
 	run as runIn,
+	runCommit,
 	runSync,
 	SessionImpl,
 	Transaction,
@@ -40,7 +41,7 @@ export const SCHEDULER_INDEX_SIZES = Symbol.for("pi-durable.schedulerIndexSizes"
 /** Key of the Harness's internal idle-state getter; the harness keeps no contexts (D14). */
 export const SCHEDULER_IDLE_STATE = Symbol.for("pi-durable.schedulerIdleState");
 
-export const DEFAULT_HARNESS_IDENTITY = unimplemented("DEFAULT_HARNESS_IDENTITY", "harness-run-core");
+export const DEFAULT_HARNESS_IDENTITY = H.DEFAULT_HARNESS_IDENTITY;
 
 export function safeNow(now: (() => number) | undefined, report: (error: unknown, info: Any) => void): () => number {
 	return now === undefined ? Date.now : H.safeNow(now, (error) => report(error, { kind: "host_error", callback: "now" }));
@@ -94,7 +95,9 @@ class ConversationImpl {
 	}
 
 	commit(change: Any, context: Context) {
-		return this.#harness.usable(() => run(this.#conversation.commit(callback(change)), context).catch(unwrap));
+		return this.#harness.usable(() =>
+			runCommit((returned) => this.#conversation.commit(callback(change, returned)), context).catch(unwrap),
+		);
 	}
 
 	context(context: Context, options?: { readonly at?: Any }) {
@@ -144,11 +147,7 @@ export class HarnessImpl extends SessionImpl {
 	}
 
 	override report(error: unknown, info: Any = { kind: "listener_error" }): void {
-		try {
-			this.#options.onReport?.({ ...info, error });
-		} catch {
-			// Dropped: reporting it would report again.
-		}
+		hostReport(this.#options, error, info);
 	}
 
 	resume(): void {
@@ -395,14 +394,17 @@ export const Harness = {
 			H.openHarness(kernelStorage(storage), {
 				registry: harnessReader(options.registry, host),
 				models: typeof models === "function" ? () => promiseSeam(models()) : promiseSeam(models),
+				...(options.identity === undefined ? {} : { identity: options.identity }),
 				settings: () => {
 					const settings = hostSettings();
 					return { ...settings, documentRetentionMs: documentRetention(settings?.documentRetentionMs) };
 				},
 				...(options.now === undefined ? {} : { now: options.now }),
 				readOnly: options.readOnly === true,
+				// Reports during open, before `harness` exists, reach the host too.
 				onReport: (report: Any) =>
-					harness?.report(
+					hostReport(
+						options,
 						report.kind === "storage_failed" ? upstreamCause(report.error) : report.error,
 						withoutError(report),
 					),
@@ -434,6 +436,16 @@ export const Harness = {
 		return harness;
 	},
 };
+
+/** Forwards a report to the host's `onReport`; one that throws or rejects is dropped, as reporting it would report again. */
+function hostReport(options: Any, error: unknown, info: Any): void {
+	try {
+		const result = options.onReport?.({ ...info, error });
+		if (typeof result?.then === "function") Promise.resolve(result).catch(() => {});
+	} catch {
+		// Dropped: see above.
+	}
+}
 
 const withoutError = ({ error: _error, ...info }: Any): Any => info;
 

@@ -623,7 +623,7 @@ const materializeDocument = (
       }
       value = yield* Effect.try({
         try: () => apply(value, parseJson<readonly Op[]>(revision.content)) as JsonObject,
-        catch: StorageError.of,
+        catch: (e) => { console.error("DEBUGMAT", base.content.slice(0,300), JSON.stringify(tail.map((t)=>[t.seq,t.content.slice(0,400)]))); return StorageError.of(e) },
       })
     }
     return { record, version: base.version, value, deltasSinceBase: tail.length }

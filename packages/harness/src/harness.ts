@@ -40,7 +40,13 @@ import {
   type Tx,
   type Wake,
 } from "@nisse/kernel"
-import type { Models } from "@nisse/models"
+import {
+  type ClientIdentity,
+  mergeClientIdentity,
+  type Models,
+  PI_ATTRIBUTION,
+  withClientIdentity,
+} from "@nisse/models"
 import { Cause, Clock, Deferred, Effect, Exit, Layer, Scope } from "effect"
 import { AgentDoc, agentHooks, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"
@@ -65,6 +71,9 @@ import type {
   SubmissionDraft,
   ToolRegistration,
 } from "./types.ts"
+
+/** Request identity of a Harness's model requests: the models' defaults with provider attribution to pi. */
+export const DEFAULT_HARNESS_IDENTITY: ClientIdentity = { attribution: PI_ATTRIBUTION }
 
 /** What a viewer's calls that would run tasks fail with. */
 const RUNNING_REFUSED = new ReadOnlySession({ message: "Read-only Harness: running tasks refused" })
@@ -109,6 +118,8 @@ export type HarnessOptions<T extends ToolRegistration = ToolRegistration> = {
   readonly registry: RegistryReader<T>
   /** The host's models, read at each use. */
   readonly models: Models | (() => Models)
+  /** Merged over `DEFAULT_HARNESS_IDENTITY` into every model request. */
+  readonly identity?: ClientIdentity
   /** The host's policy, read at each use. */
   readonly settings?: HarnessSettings | (() => HarnessSettings | undefined)
   /** Builds a conversation's execution environment; without it tasks get none. */
@@ -219,6 +230,24 @@ export const openHarness = <T extends ToolRegistration>(
       documentRetentionMs: () => host.hostSettings()?.documentRetentionMs,
       conversationCreated: (tx, record) => host.conversationCreated(tx, record),
     })
+    // The Session's failure is reported once: at the seal when it failed the Session, or when the close ends failed, for
+    // a failure the close itself met (Storage's close, a write still in flight). Watched before the scheduler opens, so
+    // a failure that fails open is reported too.
+    let reported = false
+    const reportFailure = (error: unknown) => {
+      if (reported) return
+      reported = true
+      host.report(error, { kind: "storage_failed" })
+    }
+    session.subscribeClose(() => {
+      const failure = session.failure
+      if (failure !== undefined) reportFailure(failure.error)
+    })
+    Effect.runFork(
+      Effect.map(session.closed, (end) => {
+        if (end.kind === "failed") reportFailure(end.error)
+      }),
+    )
     const scheduler = yield* Effect.onError(
       openTaskScheduler<TaskServices>({
         session,
@@ -234,10 +263,6 @@ export const openHarness = <T extends ToolRegistration>(
       }),
       () => Effect.ignore(session.close),
     )
-    session.subscribeClose(() => {
-      const failure = session.failure
-      if (failure !== undefined) host.report(failure.error, { kind: "storage_failed" })
-    })
     return host.bind(session, scheduler, yield* Clock.Clock)
   })
 
@@ -326,10 +351,20 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     return resolveSettings(this.hostSettings())
   }
 
+  /** The host's models with the Harness's request identity applied; each `Models` is wrapped once. */
   models(): Models {
-    const models = this.#options.models
-    return typeof models === "function" ? models() : models
+    const option = this.#options.models
+    const models = typeof option === "function" ? option() : option
+    let wrapped = this.#identified.get(models)
+    if (wrapped === undefined) {
+      const identity = mergeClientIdentity(DEFAULT_HARNESS_IDENTITY, this.#options.identity) ?? DEFAULT_HARNESS_IDENTITY
+      wrapped = withClientIdentity(models, identity)
+      this.#identified.set(models, wrapped)
+    }
+    return wrapped
   }
+
+  readonly #identified = new WeakMap<Models, Models>()
 
   /** Forwards a report to the host; a host callback that throws is dropped, since reporting it would report again. */
   /** A scheduler report with the extension whose definition its task has, by the registry's current snapshot. */
