@@ -5,7 +5,7 @@ A conversation is created with its settings, listed, reopened, owned by a task o
 ## Sub-features
 
 - `conversation-options` [kernel] Create a conversation with options (§2.2): Start with model, instructions, tools, extensions and limits
-- `conversation-owner` [kernel, pending harness-tools] Ownership kinds (§2, §3): A conversation is owned by a task or another conversation, and goes away with it
+- `conversation-owner` [kernel] Ownership kinds (§2, §3): A conversation is owned by a task or another conversation, and goes away with it
 - `fork-at-entry` [kernel] Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
 - `fork-rpc` [pending surface-conversations] The client path for Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
 - `fork-document-policy` [kernel] Fork document policies: asOf, current, initial (§3.7): Each kind of state chooses what a fork inherits

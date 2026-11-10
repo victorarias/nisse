@@ -4,7 +4,7 @@ Tools work through an execution environment, per conversation, for commands, fil
 
 ## Sub-features
 
-- `env-per-conversation` [kernel, pending harness-tools] `env` factory per conversation (R430-463, example 28): Each conversation can be sandboxed apart
+- `env-per-conversation` [kernel] `env` factory per conversation (R430-463, example 28): Each conversation can be sandboxed apart
 - `env-interface` [kernel] `ExecutionEnv` interface (R430-463, `env/index.ts`): Tools work unchanged on another machine or container
 - `env-exec` [kernel] `exec` with argv, no shell (§7.3): A tool runs a program without quoting hazards
 - `env-binary-reader` [kernel] Binary reader and `scanLines` (§7.3): Read huge files in a bounded way

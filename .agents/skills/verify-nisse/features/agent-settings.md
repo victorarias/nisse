@@ -15,7 +15,7 @@ A conversation's configuration is durable, forkable and watchable, and harness s
 - `agent-visible` [kernel] Agent changes visible on the watch and rewindable (§2.2): Every client sees configuration changes and forks can read old ones
 - `settings-live` [kernel] Live harness settings (R406-428): Change policy without a restart
 - `settings-default-extensions` [kernel] Default extension selection (R406-428): New conversations get a chosen extension set
-- `settings-tool-execution` [kernel, pending harness-tools] `toolExecution`: parallel or sequential (R406-428, §8.5): Trade speed against ordering
+- `settings-tool-execution` [kernel] `toolExecution`: parallel or sequential (R406-428, §8.5): Trade speed against ordering
 - `settings-progress-intervals` [kernel] Output progress intervals (§8.2): Tune how often running output is stored
 - `settings-as-functions` [kernel] `models` and `settings` given as functions are read at each decision.
 - `agent-resolved` [kernel] `conversation.agent()` returns the resolved agent: model, extensions, offered and callable tools, sections and working directory.

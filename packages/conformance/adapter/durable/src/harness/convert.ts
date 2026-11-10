@@ -191,8 +191,8 @@ export function upstreamToolApi(api: H.ToolExecutionApi): Any {
 		details: (value: Any, context: Context) => run(api.details(value), context),
 		commit: (change: Any, context: Context) => run(api.commit(callback(change)), context).catch(unwrap),
 		memo: memo(api.memo.bind(api)),
-		createTask: (task: Any, input: Any, _options: Any, context: Context) =>
-			run(api.createTask(harnessTask(task), input), context),
+		createTask: (task: Any, input: Any, options: Any, context: Context) =>
+			run(api.createTask(harnessTask(task), input, options), context),
 		executeTool: (name: string, args: Any, context: Context, options?: Any) =>
 			run(api.executeTool(name, args, options), context),
 		getTask: (id: Any, context: Context) => run(api.getTask(id), context),
