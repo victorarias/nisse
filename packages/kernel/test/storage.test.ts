@@ -104,6 +104,18 @@ describe("Storage port", () => {
     expect(log).toEqual(["released", "closed"])
   })
 
+  test("storage-port: close waits for a single-query read underway, and the read completes", async () => {
+    const { storage, database, log } = await held()
+    const reading = Effect.runPromise(storage.task(idFromNumber(7)))
+    await database.reached.promise
+    const closing = Effect.runPromise(storage.close())
+    log.push("released")
+    Deferred.doneUnsafe(database.release, Effect.void)
+    expect(await reading).toBeUndefined()
+    await closing
+    expect(log).toEqual(["released", "closed"])
+  })
+
   test("storage-port: a close whose first caller is interrupted still completes for the next caller", async () => {
     const { storage, database, log } = await held()
     const reading = Effect.runPromise(storage.document(DOCUMENT, "current"))

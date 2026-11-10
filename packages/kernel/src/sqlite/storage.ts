@@ -89,7 +89,7 @@ export class SqliteStorage implements Storage {
   readonly #db: SqliteDatabase
   #nextId: number
   #closing: Deferred.Deferred<void, StorageError> | undefined
-  /** Calls underway that issue several queries; close waits for them, so none reaches a closed database. */
+  /** Calls underway that reach the database; close waits for them, so none reaches a closed database. */
   #calls = 0
   #callsDrained: Deferred.Deferred<void> | undefined
 
@@ -229,15 +229,16 @@ export class SqliteStorage implements Storage {
   }
 
   mintId<I extends Id<string>>(): Effect.Effect<I, StorageError> {
-    return Effect.gen({ self: this }, function* () {
-      yield* this.#open()
-      if (!Number.isSafeInteger(this.#nextId)) return yield* StorageError.because("ID space is exhausted")
-      return idFromNumber<I>(this.#nextId++)
-    })
+    return this.#admit(
+      Effect.gen({ self: this }, function* () {
+        if (!Number.isSafeInteger(this.#nextId)) return yield* StorageError.because("ID space is exhausted")
+        return idFromNumber<I>(this.#nextId++)
+      }),
+    )
   }
 
   conversation(id: ConversationId): Effect.Effect<ConversationRecord | undefined, StorageError> {
-    return Effect.andThen(this.#open(), this.#readConversation(id))
+    return this.#admit(this.#readConversation(id))
   }
 
   scanConversations(
@@ -391,7 +392,7 @@ export class SqliteStorage implements Storage {
   }
 
   task(id: TaskId): Effect.Effect<TaskRecord | undefined, StorageError> {
-    return Effect.andThen(this.#open(), this.#readRecord<TaskRecord>("SELECT record FROM tasks WHERE id = ?", id))
+    return this.#admit(this.#readRecord<TaskRecord>("SELECT record FROM tasks WHERE id = ?", id))
   }
 
   scanTasks(query: TaskQuery, limit: number, cursor: Cursor | undefined): Effect.Effect<Page<TaskRecord>, ReadError> {
@@ -407,10 +408,7 @@ export class SqliteStorage implements Storage {
   }
 
   submission(id: SubmissionId): Effect.Effect<SubmissionRecord | undefined, StorageError> {
-    return Effect.andThen(
-      this.#open(),
-      this.#readRecord<SubmissionRecord>("SELECT record FROM submissions WHERE id = ?", id),
-    )
+    return this.#admit(this.#readRecord<SubmissionRecord>("SELECT record FROM submissions WHERE id = ?", id))
   }
 
   scanSubmissions(
@@ -429,8 +427,7 @@ export class SqliteStorage implements Storage {
     conversationId: ConversationId,
     requestId: string,
   ): Effect.Effect<SubmissionRecord | undefined, StorageError> {
-    return Effect.andThen(
-      this.#open(),
+    return this.#admit(
       this.#readRecord<SubmissionRecord>(
         "SELECT record FROM submissions WHERE conversation_id = ? AND request_id = ?",
         conversationId,
@@ -449,7 +446,7 @@ export class SqliteStorage implements Storage {
         : `SELECT record FROM documents WHERE ${where} AND created_at <= ? AND (retired_at IS NULL OR retired_at > ?)
             ORDER BY created_at DESC LIMIT 1`
     if (at !== "current") params.push(at, at)
-    return Effect.andThen(this.#open(), this.#readRecord<DocumentRecord>(sql, ...params))
+    return this.#admit(this.#readRecord<DocumentRecord>(sql, ...params))
   }
 
   document(id: DocumentId, at: DocumentPoint): Effect.Effect<StoredDocument | undefined, ReadError> {
@@ -462,36 +459,37 @@ export class SqliteStorage implements Storage {
     limit: number,
     cursor: Cursor | undefined,
   ): Effect.Effect<Page<DocumentRecord>, ReadError> {
-    return Effect.gen({ self: this }, function* () {
-      yield* this.#open()
-      const after = cursor?.after
-      if (after !== undefined && (typeof after !== "number" || !Number.isSafeInteger(after))) {
-        return yield* new StorageRequestError({ message: "Invalid storage cursor" })
-      }
-      const scope = scopeColumns(query.scope)
-      const clauses = ["scope_kind = ?", "owner_id = ?", "id > ?"]
-      const params: SqliteValue[] = [scope.scopeKind, scope.ownerId, after ?? -1]
-      if (query.kind !== undefined) {
-        clauses.push("kind = ?")
-        params.push(encodeIndexedString(query.kind))
-      }
-      if (query.at === "current") {
-        clauses.push("retired_at IS NULL")
-      } else {
-        clauses.push("created_at <= ?", "(retired_at IS NULL OR retired_at > ?)")
-        params.push(query.at, query.at)
-      }
-      params.push(limit + 1)
-      const rows = yield* this.#db.all<JsonRow>(
-        `SELECT record FROM documents WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT ?`,
-        ...params,
-      )
-      return page(
-        rows.map((row) => parseJson<DocumentRecord>(row.record)),
-        limit,
-        "ascending",
-      )
-    })
+    return this.#admit(
+      Effect.gen({ self: this }, function* () {
+        const after = cursor?.after
+        if (after !== undefined && (typeof after !== "number" || !Number.isSafeInteger(after))) {
+          return yield* new StorageRequestError({ message: "Invalid storage cursor" })
+        }
+        const scope = scopeColumns(query.scope)
+        const clauses = ["scope_kind = ?", "owner_id = ?", "id > ?"]
+        const params: SqliteValue[] = [scope.scopeKind, scope.ownerId, after ?? -1]
+        if (query.kind !== undefined) {
+          clauses.push("kind = ?")
+          params.push(encodeIndexedString(query.kind))
+        }
+        if (query.at === "current") {
+          clauses.push("retired_at IS NULL")
+        } else {
+          clauses.push("created_at <= ?", "(retired_at IS NULL OR retired_at > ?)")
+          params.push(query.at, query.at)
+        }
+        params.push(limit + 1)
+        const rows = yield* this.#db.all<JsonRow>(
+          `SELECT record FROM documents WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT ?`,
+          ...params,
+        )
+        return page(
+          rows.map((row) => parseJson<DocumentRecord>(row.record)),
+          limit,
+          "ascending",
+        )
+      }),
+    )
   }
 
   close(): Effect.Effect<void, StorageError> {
@@ -514,27 +512,22 @@ export class SqliteStorage implements Storage {
     })
   }
 
-  #open(): Effect.Effect<void, StorageError> {
-    return Effect.suspend(() =>
-      this.#closing === undefined ? Effect.void : Effect.fail(StorageError.because("SqliteStorage is closed")),
-    )
-  }
-
-  /** A call that issues several queries; close waits for it, so its later queries never reach a closed database. */
-  #admit<A, E>(read: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> {
-    return Effect.andThen(
-      this.#open(),
-      Effect.suspend(() => {
-        this.#calls++
-        return Effect.ensuring(
-          read,
-          Effect.sync(() => {
-            if (--this.#calls === 0 && this.#callsDrained !== undefined)
-              Deferred.doneUnsafe(this.#callsDrained, Effect.void)
-          }),
-        )
-      }),
-    )
+  /**
+   * Runs a call on open storage, and fails it once storage is closing. Close waits for the calls underway, so none of
+   * their queries reaches a closed database.
+   */
+  #admit<A, E>(call: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> {
+    return Effect.suspend((): Effect.Effect<A, E | StorageError> => {
+      if (this.#closing !== undefined) return Effect.fail(StorageError.because("SqliteStorage is closed"))
+      this.#calls++
+      return Effect.ensuring(
+        call,
+        Effect.sync(() => {
+          if (--this.#calls === 0 && this.#callsDrained !== undefined)
+            Deferred.doneUnsafe(this.#callsDrained, Effect.void)
+        }),
+      )
+    })
   }
 
   #readConversation(id: ConversationId): Effect.Effect<ConversationRecord | undefined, StorageError> {
@@ -555,28 +548,29 @@ export class SqliteStorage implements Storage {
     limit: number,
     cursor: Cursor | undefined,
   ): Effect.Effect<Page<T>, ReadError> {
-    return Effect.gen({ self: this }, function* () {
-      yield* this.#open()
-      const start = yield* scanStart(order, cursor, "ascending")
-      const scan = scanSql(start)
-      const clauses = [scan.clause]
-      const params: SqliteValue[] = [scan.param]
-      for (const [clause, value] of filters) {
-        if (value === undefined) continue
-        clauses.push(clause)
-        params.push(value)
-      }
-      params.push(limit + 1)
-      const rows = yield* this.#db.all<JsonRow>(
-        `SELECT record FROM ${table} WHERE ${clauses.join(" AND ")} ORDER BY id ${scan.direction} LIMIT ?`,
-        ...params,
-      )
-      return page(
-        rows.map((row) => parseJson<T>(row.record)),
-        limit,
-        start.order,
-      )
-    })
+    return this.#admit(
+      Effect.gen({ self: this }, function* () {
+        const start = yield* scanStart(order, cursor, "ascending")
+        const scan = scanSql(start)
+        const clauses = [scan.clause]
+        const params: SqliteValue[] = [scan.param]
+        for (const [clause, value] of filters) {
+          if (value === undefined) continue
+          clauses.push(clause)
+          params.push(value)
+        }
+        params.push(limit + 1)
+        const rows = yield* this.#db.all<JsonRow>(
+          `SELECT record FROM ${table} WHERE ${clauses.join(" AND ")} ORDER BY id ${scan.direction} LIMIT ?`,
+          ...params,
+        )
+        return page(
+          rows.map((row) => parseJson<T>(row.record)),
+          limit,
+          start.order,
+        )
+      }),
+    )
   }
 }
 
