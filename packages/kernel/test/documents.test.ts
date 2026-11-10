@@ -309,7 +309,7 @@ describe("documents", () => {
       }),
     ))
 
-  test("doc-lifetime: a reset whose cold doc() dies on its migration fails the commit, and the stored document stays", () =>
+  test("doc-lifetime: a reset whose cold doc() dies on its migration fails the commit and keeps the stored document; retiring first resets it", () =>
     run(
       Effect.gen(function* () {
         const Old = defineDoc<{ count: number }>({
@@ -338,7 +338,7 @@ describe("documents", () => {
           }),
         )
         // A fresh Session has nothing cached, and the stored document's lookup yields, so the first doc() is still
-        // loading while the retirement and the replacement start.
+        // loading while the retirement and the replacement start. Without the yield the calls run one after another.
         const stored = yield* openSqliteStorage(path)
         const storage = new Proxy(stored, {
           get(target, key) {
@@ -370,6 +370,15 @@ describe("documents", () => {
         ).toContain("cannot migrate this value")
         expect(session.failure).toBeUndefined()
         expect(yield* session.snapshot(Old)).toEqual({ count: 7 })
+
+        // A retirement before any doc() does not load the stored value, so it resets the address without migrating.
+        yield* session.commit((tx) =>
+          Effect.gen(function* () {
+            yield* tx.retireDoc(New)
+            ;(yield* tx.doc(New)).total = 1
+          }),
+        )
+        expect(yield* session.snapshot(New)).toEqual({ total: 1 })
       }),
     ))
 
@@ -416,7 +425,9 @@ describe("documents", () => {
             }),
           ),
         )
-        expect(Exit.isFailure(caught)).toBe(true)
+        expect(
+          String(Exit.isFailure(caught) && caught.cause.reasons[0]?._tag === "Die" && caught.cause.reasons[0].defect),
+        ).toContain("two definitions")
         expect(yield* session.snapshot(Old)).toEqual({ count: 1 })
       }),
     ))
