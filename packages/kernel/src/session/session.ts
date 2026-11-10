@@ -817,7 +817,15 @@ class SessionImpl implements Session, SessionInternals {
     if (span === undefined || propagation === undefined) return () => undefined
     let carrier: { readonly value: TelemetryCarrier | undefined } | undefined
     return () => {
-      carrier ??= { value: propagation.inject(span) }
+      if (carrier === undefined) {
+        // A throwing propagation leaves the task without a trace; the commit goes on.
+        try {
+          carrier = { value: propagation.inject(span) }
+        } catch (error) {
+          carrier = { value: undefined }
+          this.#reportTelemetry(error)
+        }
+      }
       return carrier.value
     }
   }

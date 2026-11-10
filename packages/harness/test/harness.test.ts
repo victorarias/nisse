@@ -13,9 +13,10 @@ import {
   openSqliteStorage,
   type Task,
   type TaskId,
+  TracePropagation,
 } from "@nisse/kernel"
 import { fromProviders } from "@nisse/models"
-import { fauxAssistantMessage, fauxProvider } from "@nisse/models/faux"
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@nisse/models/faux"
 import {
   AgentDoc,
   type Conversation,
@@ -638,17 +639,25 @@ const breakingTracer = (name: string, broken: (span: Tracer.NativeSpan) => void)
     },
   })
 
-/** One input answered by a faux model under `tracer`: how its submission settled, and what the Harness reported. */
-const answerUnder = async (tracer: Tracer.Tracer) => {
+/**
+ * One input answered under `tracer` and `propagation`, by a faux model that calls a tool first: how its submission
+ * settled, and what the Harness reported.
+ */
+const answerUnder = async (tracer: Tracer.Tracer, propagation?: TracePropagation) => {
   const reports: unknown[] = []
   const faux = fauxProvider()
-  faux.setResponses([fauxAssistantMessage("answer")])
+  faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("echo", {})], { stopReason: "toolUse" }),
+    fauxAssistantMessage("answer"),
+  ])
+  const registry = createRegistry()
+  registry.install(defineExtension({ name: "echo", tools: [tool("echo")] }))
   const settled = await run(
     Effect.gen(function* () {
       const storage = yield* openSqliteStorage(databasePath())
       const harness = yield* Effect.acquireRelease(
         openHarness(storage, {
-          registry: createRegistry(),
+          registry,
           models: fromProviders([faux.provider]),
           onReport: (report) => reports.push(report),
         }),
@@ -657,7 +666,7 @@ const answerUnder = async (tracer: Tracer.Tracer) => {
       const root = yield* harness.root({ agent: { model: { provider: "faux", modelId: "faux-1" } } })
       const submission = yield* root.submit({ type: "input", content: "hi" })
       return yield* submission.wait
-    }).pipe(Effect.withTracer(tracer)),
+    }).pipe(Effect.withTracer(tracer), Effect.provideService(TracePropagation, propagation)),
   )
   return { settled, reports }
 }
@@ -675,6 +684,50 @@ describe("telemetry", () => {
     expect(reports.length).toBeGreaterThan(0)
     expect(reports).toMatchObject(reports.map(() => ({ kind: "host_error", callback: "telemetry" })))
   })
+
+  const broke = () => {
+    throw new Error("telemetry broke")
+  }
+  const carriers = new WeakMap<object, Record<string, string>>()
+  const working: TracePropagation = {
+    inject: (span) => carriers.get(span) ?? (carriers.set(span, { span: span.spanId }), carriers.get(span)),
+    extract: (carrier) => Tracer.externalSpan({ spanId: carrier.span!, traceId: carrier.span! }),
+  }
+  test.each([
+    [
+      "the tool call's names on its phase span",
+      breakingTracer("pi.durable.phase", (span) => {
+        const attribute = span.attribute.bind(span)
+        span.attribute = (key, value) => (key.startsWith("tool.") ? broke() : attribute(key, value))
+      }),
+      working,
+    ],
+    [
+      "opening a submit span",
+      Tracer.make({
+        span: (options) => (options.name === "pi.durable.submit" ? broke() : new Tracer.NativeSpan(options)),
+      }),
+      working,
+    ],
+    [
+      "injecting a carrier",
+      Tracer.make({ span: (options) => new Tracer.NativeSpan(options) }),
+      { ...working, inject: broke },
+    ],
+    [
+      "extracting a carrier",
+      Tracer.make({ span: (options) => new Tracer.NativeSpan(options) }),
+      { ...working, extract: broke },
+    ],
+  ] as const)(
+    "telemetry-spans: telemetry that throws on %s is reported, and the run still answers",
+    async (_, tracer, propagation) => {
+      const { settled, reports } = await answerUnder(tracer, propagation)
+      expect(settled.status).toBe("done")
+      expect(reports.length).toBeGreaterThan(0)
+      expect(reports).toMatchObject(reports.map(() => ({ kind: "host_error", callback: "telemetry" })))
+    },
+  )
 
   test("telemetry-spans: a tracer that throws on a model request's span leaves the run's answer", async () => {
     const tracer = breakingTracer("pi.ai.request", (span) => {

@@ -19,7 +19,7 @@ import {
   type TracePropagation,
   type Tx,
 } from "@nisse/kernel"
-import { Data, Effect, Exit, Option, Queue, Tracer } from "effect"
+import { Cause, Data, Effect, Exit, Option, Queue, Tracer } from "effect"
 import { startRun } from "./generation.ts"
 import {
   appendInput,
@@ -73,6 +73,18 @@ export interface SubmitTelemetry {
 export interface SubmitTrace {
   readonly span: Tracer.Span
   readonly propagation: TracePropagation
+  /** Where a throwing propagation or span goes; the admission goes on without that part of its trace. */
+  readonly report: (error: unknown) => void
+}
+
+/** `read`, or `undefined` when telemetry throws, which `trace` reports. */
+const traced = <A>(trace: SubmitTrace, read: () => A): A | undefined => {
+  try {
+    return read()
+  } catch (error) {
+    trace.report(error)
+    return undefined
+  }
 }
 type Waiter = Queue.Queue<Exit.Exit<SettledSubmissionRecord, SessionFailed | SessionClosed>>
 
@@ -176,15 +188,23 @@ export class Submissions {
       yield* Effect.ignore(this.#resume)
       const startsRun = draft.type !== "write"
       const caller = Option.getOrUndefined(yield* Effect.serviceOption(Tracer.ParentSpan))
-      const span = yield* Effect.withTracer(
-        Effect.makeSpan("pi.durable.submit", {
-          attributes: { "submission.type": draft.type, "conversation.id": conversationId },
-          ...(startsRun ? { root: true, links: caller === undefined ? [] : [{ span: caller, attributes: {} }] } : {}),
-        }),
-        this.#tracer,
+      const opened = yield* Effect.exit(
+        Effect.withTracer(
+          Effect.makeSpan("pi.durable.submit", {
+            attributes: { "submission.type": draft.type, "conversation.id": conversationId },
+            ...(startsRun ? { root: true, links: caller === undefined ? [] : [{ span: caller, attributes: {} }] } : {}),
+          }),
+          this.#tracer,
+        ),
       )
+      // A tracer that cannot open the span leaves the admission untraced.
+      if (Exit.isFailure(opened)) {
+        this.#reportTelemetry(Cause.squash(opened.cause))
+        return yield* admit(undefined)
+      }
+      const span = opened.value
       const propagation = this.#propagation
-      const trace = propagation === undefined ? undefined : { span, propagation }
+      const trace = propagation === undefined ? undefined : { span, propagation, report: this.#reportTelemetry }
       const exit = yield* Effect.exit(Effect.withParentSpan(admit(trace), span))
       // The admission is stored by now: a throwing tracer is reported, and the caller still gets its submission.
       try {
@@ -347,7 +367,7 @@ export const admitSubmission = (
         return { id: existing.id, status: existing.status === "unanswered" ? "done" : existing.status } as Admission
       }
     }
-    const carrier = trace?.propagation.inject(trace.span)
+    const carrier = trace === undefined ? undefined : traced(trace, () => trace.propagation.inject(trace.span))
     const fields = {
       conversationId,
       ...(draft.requestId === undefined ? {} : { requestId: draft.requestId }),
@@ -367,8 +387,13 @@ export const admitSubmission = (
     if (draft.type === "input" && draft.whenBusy === "steer" && live.run !== undefined && trace !== undefined) {
       // A steer joins the running run: its span links to the run's trace.
       const run = yield* tx.task(live.run.taskId)
-      const target = run?.trace === undefined ? undefined : trace.propagation.extract(run.trace)
-      if (target !== undefined) trace.span.addLinks([{ span: target, attributes: {} }])
+      const runTrace = run?.trace
+      if (runTrace !== undefined) {
+        traced(trace, () => {
+          const target = trace.propagation.extract(runTrace)
+          if (target !== undefined) trace.span.addLinks([{ span: target, attributes: {} }])
+        })
+      }
     }
     if (busy && draft.type === "input" && draft.whenBusy === "reject") {
       return yield* Effect.fail(ConversationBusy.of(conversationId))
