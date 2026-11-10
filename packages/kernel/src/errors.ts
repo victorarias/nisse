@@ -67,6 +67,12 @@ export class ReadOnlySession extends Data.TaggedError("ReadOnlySession")<{ reado
 }
 
 /**
+ * A task runtime operation was refused: its invocation has ended, the scheduler is closing, or the task can no longer
+ * commit through it, being no longer `running` or, for a run invocation, abort-marked (spec 5.1, 5.4).
+ */
+export class InvocationEnded extends Data.TaggedError("InvocationEnded")<{ readonly message: string }> {}
+
+/**
  * A commit read a table after its first table write (spec 4). The order is a rule of the commit callback, so this is a
  * defect of that callback, not a failure to handle: read everything a commit needs before it writes.
  */

@@ -15,6 +15,7 @@ import {
 	ReadAfterWrite as KernelReadAfterWrite,
 	type Tx as KernelTx,
 } from "../../../../../kernel/src/index.ts";
+import type { Transaction as KernelTransaction } from "../../../../../kernel/src/session/transaction.ts";
 import { BACKGROUND_CONTEXT, type Context, withoutAbortSignal } from "../../../chord/src/context/index.ts";
 import type { WatchEnd } from "../../../chord/src/watch.ts";
 import {
@@ -173,8 +174,12 @@ export class Transaction {
 	appendEntry(first: Any, second: Any, third?: Any) {
 		return observed(run(third === undefined ? this.#tx.appendEntry(first, second) : this.#tx.appendEntry(first, second, third)));
 	}
-	createTask(): never {
-		throw new Error("conformance adapter: createTask belongs to kernel-tasks");
+	createTask(task: Any, input: Any, options: Any) {
+		return observed(run(this.#tx.createTask(task, input, options)));
+	}
+	/** Internal: the scheduler's whole-record replacement; throws as upstream does. */
+	setTask(value: Any): void {
+		(this.#tx as KernelTransaction).setTask(value);
 	}
 	createSubmission(create: Any) {
 		return observed(run(this.#tx.createSubmission(create)));
