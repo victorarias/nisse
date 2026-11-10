@@ -45,6 +45,8 @@ type TestStorage = {
   holding: boolean
   /** Like `holding`, for single-submission reads. */
   holdingReads: boolean
+  /** Entry scans die, as a stored record that does not parse makes them. */
+  breakScans: boolean
   failCommits: boolean
   closed: boolean
   readonly stored: number[]
@@ -59,6 +61,7 @@ const testStorage = (path: string): Effect.Effect<TestStorage, StorageError> =>
       storage: undefined as unknown as Storage,
       holding: false,
       holdingReads: false,
+      breakScans: false,
       failCommits: false,
       closed: false,
       stored: [],
@@ -85,12 +88,15 @@ const testStorage = (path: string): Effect.Effect<TestStorage, StorageError> =>
         }
         return yield* inner.submission(id)
       })
+    const scanEntries: Storage["scanEntries"] = (query, limit, cursor) =>
+      control.breakScans ? Effect.sync(() => JSON.parse("{corrupt") as never) : inner.scanEntries(query, limit, cursor)
     const close: Storage["close"] = () => Effect.tap(inner.close(), () => Effect.sync(() => (control.closed = true)))
     ;(control as { storage: Storage }).storage = new Proxy(inner, {
       get(target, key) {
         if (key === "commit") return commit
         if (key === "close") return close
         if (key === "submission") return submission
+        if (key === "scanEntries") return scanEntries
         const value = Reflect.get(target, key)
         return typeof value === "function" ? value.bind(target) : value
       },
@@ -684,6 +690,40 @@ describe("Session", () => {
           }),
         ).not.toThrow()
         expect(afterClose).toEqual({ kind: "ended" })
+      }),
+    ))
+  test("session-failed: a storage read that dies on a corrupt record fails the Session like a storage error", () =>
+    run(
+      Effect.gen(function* () {
+        const control = yield* testStorage(databasePath())
+        const session = yield* openSession(control.storage)
+        const conversationId = yield* newConversation(session)
+        control.breakScans = true
+        const hit = failureOf(yield* Effect.exit(session.commit((tx) => tx.latestEntryId(conversationId))))
+        expect(hit).toBeInstanceOf(StorageError)
+        expect((hit as StorageError).cause).toBeInstanceOf(SyntaxError)
+        expect(failureOf(yield* Effect.exit(note(session, conversationId, "later")))).toBeInstanceOf(SessionFailed)
+        expect(yield* session.closed).toEqual({ kind: "failed", error: hit })
+      }),
+    ))
+
+  test("commit-atomic: an observer that another observer's end detached during close gets no end", () =>
+    run(
+      Effect.gen(function* () {
+        const control = yield* testStorage(databasePath())
+        const session = yield* openSession(control.storage)
+        const ended: string[] = []
+        let second: { detach(): void } | undefined
+        session.observeCommits({
+          advance: () => {},
+          end: () => {
+            ended.push("first")
+            second?.detach()
+          },
+        })
+        second = session.observeCommits({ advance: () => {}, end: () => ended.push("second") })
+        yield* session.close
+        expect(ended).toEqual(["first"])
       }),
     ))
 })

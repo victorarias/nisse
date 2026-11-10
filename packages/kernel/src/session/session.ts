@@ -304,8 +304,10 @@ class SessionImpl implements Session {
       const end: CommitObserverEnd =
         failure === undefined ? { kind: "ended" } : { kind: "failed", error: failure.error }
       this.#observersEnded = end
-      for (const observer of [...this.#observers]) contain(() => observer.end(end))
-      this.#observers.clear()
+      // An observer's `end` may detach another, which then gets no `end`.
+      for (const observer of [...this.#observers]) {
+        if (this.#observers.delete(observer)) contain(() => observer.end(end))
+      }
       const closed = yield* Effect.exit(this.#storage.close())
       if (failure !== undefined)
         return yield* Deferred.succeed(this.#closedEnd, { kind: "failed", error: failure.error })

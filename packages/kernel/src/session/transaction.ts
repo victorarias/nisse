@@ -306,7 +306,7 @@ export class Transaction implements Tx {
 
   // Helpers
 
-  #tableRead<A, E>(name: string, read: Effect.Effect<A, E>): Effect.Effect<A, E> {
+  #tableRead<A, E>(name: string, read: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> {
     return Effect.suspend(() => {
       this.#assertOpen()
       if (this.#hasTableWrite) return Effect.die(new ReadAfterWrite(`Tx.${name}`))
@@ -342,12 +342,18 @@ export class Transaction implements Tx {
     return this.#storageCall(this.#host.storage.mintId<I>())
   }
 
-  /** A storage call of this transaction: its `StorageError` fails the Session, and the call fails with it too. */
-  #storageCall<A, E>(call: Effect.Effect<A, E>): Effect.Effect<A, E> {
-    return Effect.tapError(call, (error) =>
-      Effect.sync(() => {
-        if (error instanceof StorageError) this.#host.failed(error)
-      }),
+  /**
+   * A storage call of this transaction: its `StorageError` fails the Session, and the call fails with it too. A defect,
+   * such as a stored record that does not parse, leaves the outcome unknown, so it is a `StorageError` as well.
+   */
+  #storageCall<A, E>(call: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> {
+    return call.pipe(
+      Effect.catchDefect((defect) => Effect.fail(StorageError.of(defect))),
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          if (error instanceof StorageError) this.#host.failed(error)
+        }),
+      ),
     )
   }
 
