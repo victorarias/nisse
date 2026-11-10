@@ -511,12 +511,36 @@ const run = (
   tool: ToolRegistration,
   args: JsonObject,
 ): Effect.Effect<void, unknown> =>
-  Effect.gen(function* () {
-    const { runtime, api: services } = ctx
+  Effect.suspend(() => {
     const limits = outputLimits(tool)
     const reported: Reported = { output: new OutputBuffer(limits), limits, diagnostics: [], details: undefined }
     const streams = input.kind === "model" || input.progress !== false
     const progress = publishProgress(ctx, reported, streams)
+    // The scheduler interrupts the handler when the invocation ends, which skips the stops below: stop the throttle
+    // here too, or its timer keeps rearming after the call is gone.
+    return execute(ctx, input, call, tool, args, reported, progress).pipe(
+      Effect.onInterrupt(() =>
+        Effect.promise(() => progress.stop()).pipe(
+          Effect.map((waiters) => {
+            for (const waiter of waiters) waiter.reject(new Error(`Tool call ${call.id} was interrupted`))
+          }),
+        ),
+      ),
+    )
+  })
+
+const execute = (
+  ctx: Ctx,
+  input: ToolTaskInput,
+  call: ToolHookCall,
+  tool: ToolRegistration,
+  args: JsonObject,
+  reported: Reported,
+  progress: Progress,
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function* () {
+    const { runtime, api: services } = ctx
+    const { limits } = reported
     let ended = false
     const assertLive = (): void => {
       if (ended) throw new Error(`Tool call ${call.id} has settled`)
