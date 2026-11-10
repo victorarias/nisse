@@ -14,7 +14,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: |
           mkdir -p "$RUNNER_TEMP/leak"
-          for i in 1 2 3; do LEAK_DIR="$RUNNER_TEMP/leak" bun packages/conformance/check.ts || true; done
+          for i in 1 2 3 4 5 6 7 8; do LEAK_DIR="$RUNNER_TEMP/leak" bun packages/conformance/check.ts || true; done
           ls -la "$RUNNER_TEMP/leak"
       - uses: actions/upload-artifact@v4
         if: always()
