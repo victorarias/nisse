@@ -662,7 +662,7 @@ const execute = (
           const memo = (madeNestedMemo ??= yield* Effect.forkDetach(runtime.memo(MADE_NESTED_CALLS, true)))
           const admission = yield* Effect.forkDetach(
             Effect.andThen(
-              Effect.tapError(Fiber.join(memo), () =>
+              Effect.tapCause(Fiber.join(memo), () =>
                 Effect.sync(() => {
                   if (madeNestedMemo === memo) madeNestedMemo = undefined
                 }),

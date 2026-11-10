@@ -41,6 +41,9 @@
   "amended/harness-structured.test.ts :: waiting > keeps running phases after spawning and waits on subsets in sequence": [
     "task-wait"
   ],
+  "amended/harness-tasks-runtime.test.ts :: task runtime > reads committed documents and context through the runtime, and forwards the clock and reports": [
+    "task-effect-sandwich"
+  ],
   "amended/harness-tasks.test.ts :: task phases > commits results with entries atomically, keeps memos until terminal, and retires task documents": [
     "task-memo"
   ],
