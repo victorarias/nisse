@@ -16,7 +16,7 @@ Every change to a conversation goes through one ordered, atomic store commit, an
 - `commit-read-after-write` [kernel] Read-after-write rule while commits are in flight (§4): Reads never see half-stored data
 - `session-failed` [kernel] Session failure on storage error: `SessionFailed`, `closed` promise (§10.1, R923-939): The host learns once that the session is dead, and nothing keeps running on bad state
 - `error-model` [kernel] Three-rule error model (R923-939): An extension author knows which errors throw, which become records, and which go to reports
-- `session-resume-explicit` [kernel, pending harness-run-core] `resume()` as an explicit start of scheduling (R115-138): The host installs extensions before any work restarts
+- `session-resume-explicit` [kernel] `resume()` as an explicit start of scheduling (R115-138): The host installs extensions before any work restarts
 - `session-read-only` [kernel] Read-only open (R115-138, §2.2): Look at a session without running or changing anything
 - `serve-read-only` [pending surface-conversations] The client path for Read-only open (R115-138, §2.2): Look at a session without running or changing anything
 - `session-clock` [kernel] Injected clock: Effect's `Clock`, or a `now` (R140-212): Tests and hosts control durable time

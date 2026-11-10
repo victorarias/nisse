@@ -1,9 +1,14 @@
-export { CompactionTask } from "../../../../../harness/src/index.ts";
-import { unimplemented } from "../../../../unimplemented.ts";
+// Compaction over @nisse/harness's: a Transaction of the suite creates through its kernel Tx.
+import * as H from "../../../../../harness/src/index.ts";
+import { run } from "../session/session.ts";
 
-export const compactionPolicy = unimplemented("compactionPolicy", "harness-shell");
-export const createCompaction = unimplemented("createCompaction", "harness-shell");
-export const estimateContext = unimplemented("estimateContext", "harness-shell");
-export const selectCut = unimplemented("selectCut", "harness-shell");
-export const serializeConversation = unimplemented("serializeConversation", "harness-shell");
-export const summarizedMessages = unimplemented("summarizedMessages", "harness-shell");
+type Any = any;
+
+export const CompactionTask = H.CompactionTask;
+export const compactionPolicy = H.compactionPolicy;
+export const estimateContext = H.estimateContext;
+export const selectCut = H.selectCut;
+export const serializeConversation = H.serializeConversation;
+export const summarizedMessages = H.summarizedMessages;
+export const createCompaction = (tx: Any, conversationId: Any, input: Any, owner?: Any): Promise<Any> =>
+	run(H.createCompaction(tx.kernel, conversationId, input, owner));

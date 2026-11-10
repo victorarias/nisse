@@ -20,6 +20,9 @@ import {
 	upstreamError,
 } from "../session/session.ts";
 import { kernelStorage } from "../session/storage-bridge.ts";
+import { withTelemetry } from "../telemetry-bridge.ts";
+import { createTypedMetrics, NOOP_TELEMETRY_METRICS } from "../../../telemetry/src/index.ts";
+import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import {
 	callback,
 	harnessClosed,
@@ -83,8 +86,8 @@ class ConversationImpl {
 		return this.#harness.usable(() => upstreamSubmit(this.#conversation.submit.bind(this.#conversation) as Any)(first, second));
 	}
 
-	compact(): never {
-		return unimplemented("Conversation.compact", "harness-compaction")();
+	compact(instructions: string | undefined, context: Context) {
+		return this.#harness.usable(() => run(this.#conversation.compact(instructions), context));
 	}
 
 	watch(context: Context, window?: Any) {
@@ -133,10 +136,15 @@ export class HarnessImpl extends SessionImpl {
 	readonly #harness: H.Harness<Any>;
 	readonly #options: Any;
 
+	readonly #reports: Any;
+
 	constructor(storage: Any, harness: H.Harness<Any>, options: Any) {
 		super(storage, undefined, undefined, undefined, options.readOnly === true, harness.session);
 		this.#harness = harness;
 		this.#options = options;
+		this.#reports = createTypedMetrics(options.telemetry?.metrics ?? NOOP_TELEMETRY_METRICS, [
+			DURABLE_TELEMETRY_SCHEMA,
+		]).counter("pi.durable.reports");
 	}
 
 	/** Runs `operation` unless the Harness failed or closed, rejecting as upstream does. */
@@ -149,8 +157,18 @@ export class HarnessImpl extends SessionImpl {
 		return operation();
 	}
 
-	override report(error: unknown, info: Any = { kind: "listener_error" }): void {
+	/**
+	 * Reports a failure the adapter itself contained, such as a host observer's: to the host, then as the harness does
+	 * its own, a `pi.durable.reports` count and a content-free event on the caller's span.
+	 */
+	override report(error: unknown, info: Any = { kind: "listener_error" }, context?: Context): void {
 		hostReport(this.#options, error, info);
+		try {
+			this.#reports.add(1, { type: info.kind });
+			context?.telemetry.addEvent("pi.durable.report", { type: info.kind });
+		} catch {
+			// Dropped: reporting it would report again.
+		}
 	}
 
 	resume(): void {
@@ -400,7 +418,7 @@ export const Harness = {
 		const models = options.models;
 		const hostSettings = () => (typeof options.settings === "function" ? options.settings() : options.settings);
 		const opened = await run(
-			H.openHarness(kernelStorage(storage), {
+			withTelemetry(H.openHarness(kernelStorage(storage), {
 				registry: harnessReader(options.registry, host),
 				models: typeof models === "function" ? () => promiseSeam(models()) : promiseSeam(models),
 				...(options.identity === undefined ? {} : { identity: options.identity }),
@@ -438,7 +456,7 @@ export const Harness = {
 							conversationCreated: (tx: Any, record: Any) =>
 								promised(() => options.conversationCreated(new Transaction(tx), record)),
 						}),
-			}),
+			}), options.telemetry),
 			withoutAbortSignal(context),
 		);
 		harness = new HarnessImpl(storage, opened, options);

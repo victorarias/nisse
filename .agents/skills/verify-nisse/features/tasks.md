@@ -22,7 +22,7 @@ Durable work is a task with phases and checkpoints, scheduled across restarts, w
 - `task-blocked` [kernel, pending harness-run-core] Blocked tasks and reports (R214-222, §5.4): A broken extension's work waits to be fixed, and people are told
 - `task-migration` [kernel] Task migrations (§5.4): Running tasks survive a new version
 - `task-handover` [kernel] Task handover (§5.4): One task passes its work to another without a gap
-- `task-restart-count` [kernel, pending harness-run-core] Restarts counted per task (§5.4): One bad task stops, others go on
+- `task-restart-count` [kernel] Restarts counted per task (§5.4): One bad task stops, others go on
 - `task-inspect` [kernel] `inspect` (§2.2): See what is running and why
 - `task-abort` [kernel] `abortTask` (§5.4): Stop one piece of work
 - `task-wait-for` [kernel] `waitForTask` (§5.4): Wait for a result

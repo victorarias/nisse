@@ -15,7 +15,7 @@ A run stops at its limits with a named reason, survives provider hiccups and cra
 - `run-abort-mark` [kernel] Abort commits a mark before stopping (§5.4): A crash between Esc and the stop still ends the run as interrupted
 - `run-phases` [kernel] Generation phases stored: prepare, request, retry, poll, tools, finish, drain (§8.3): A restart resumes the exact step
 - `run-deferred` [kernel] Deferred responses and polling (§8.3): A very long request survives a restart by polling for the result
-- `run-error-classes` [kernel, pending harness-compaction] Provider error classification: retryable, overflow, fatal (§8.3): The right recovery runs for each failure
+- `run-error-classes` [kernel] Provider error classification: retryable, overflow, fatal (§8.3): The right recovery runs for each failure
 - `run-crash-charges-retry` [kernel] A request the host died during counts as a failed attempt and ends `interrupted` when no retry is left; a clean close re-sends without charge.
 
 ## How to get to it

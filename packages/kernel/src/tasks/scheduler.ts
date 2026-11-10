@@ -14,7 +14,8 @@
 // phase, a runtime commit, an abort mark, and the reconcile pass that marks cascades, `failFast` waits and finalizes
 // held outcomes. Handlers run off the line, one invocation per task. Nothing is woken from the line (F6): publications
 // signal through queues and microtasks.
-import { type Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Layer, Queue } from "effect"
+import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Queue, Tracer } from "effect"
+import { DurableMetrics, spanTime, TracePropagation, updateMetric } from "../telemetry.ts"
 import type { AnyDocToken, DocAddressArgs } from "../documents/definition.ts"
 import { errorMessage, InvocationEnded, SessionClosed, SessionFailed, type StorageError } from "../errors.ts"
 import type {
@@ -95,7 +96,7 @@ export type TaskReport =
   /** A running task keeps its old definition because the registered one cannot take it. */
   | { readonly kind: "task_outdated"; readonly task: ReportTask; readonly reason: BlockedReason }
   /** A host callback threw: the registry, or the per-phase services. */
-  | { readonly kind: "host_error"; readonly callback: "registry" | "services" | "settle" }
+  | { readonly kind: "host_error"; readonly callback: "registry" | "services" | "settle" | "telemetry" }
 
 /** What one phase or abort handler runs with; the per-phase services are built from it. */
 export type PhaseInfo<Svc> = {
@@ -134,7 +135,7 @@ export type TaskSchedulerOptions<Svc> = {
    * `snapshot`, for a report from a running invocation, is the registry snapshot its current handler runs under, so the
    * host can name the definition that ran after the registry moved on.
    */
-  readonly report?: (error: unknown, report: TaskReport, snapshot?: TaskSnapshot<Svc>) => void
+  readonly report?: (error: unknown, report: TaskReport, snapshot?: TaskSnapshot<Svc>, span?: Tracer.Span) => void
   /** Open only loads live tasks: nothing is written or run, and no wakeup is needed. */
   readonly readOnly?: boolean
 }
@@ -215,7 +216,8 @@ export const openTaskScheduler = <Svc = never>(
 ): Effect.Effect<TaskScheduler, CommitError | ReadError> =>
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
-    const scheduler = new Scheduler(options, clock, yield* Queue.dropping<void, Cause.Done>(1))
+    const telemetry = { context: yield* Effect.context<never>(), propagation: yield* TracePropagation }
+    const scheduler = new Scheduler(options, clock, yield* Queue.dropping<void, Cause.Done>(1), telemetry)
     yield* scheduler.open()
     return scheduler
   })
@@ -252,6 +254,9 @@ type Invocation = {
   readonly endedSignal: Deferred.Deferred<void>
 }
 
+/** The span of a phase invocation and its decision commit, and the task's record as of its latest publication. */
+type PhaseSpan = { readonly span: Tracer.Span; record: TaskRecord }
+
 type Reservation = { readonly invocation: Invocation; readonly task: AnyTask<unknown>; snapshot: TaskSnapshot<unknown> }
 
 type StepPlan =
@@ -286,7 +291,16 @@ class Scheduler<Svc> implements TaskScheduler {
   readonly #settleOutcome: SettleOutcome
   readonly #withdrawInputs: TaskSchedulerOptions<unknown>["withdrawInputs"]
   readonly #queuedInputs: TaskSchedulerOptions<unknown>["queuedInputs"]
-  readonly #report: (error: unknown, report: TaskReport, snapshot?: TaskSnapshot<unknown>) => void
+  readonly #report: (error: unknown, report: TaskReport, snapshot?: TaskSnapshot<unknown>, span?: Tracer.Span) => void
+  /** The context the scheduler opened in, whose metric registry it records to, and the host's trace propagation. */
+  readonly #telemetry: {
+    readonly context: Context.Context<never>
+    readonly propagation: TracePropagation | undefined
+  }
+  /** Tasks loaded at open whose first phase in this process has not started yet. */
+  readonly #resumed = new Set<TaskId>()
+  /** The phase span of each task in a phase invocation now. */
+  readonly #phases = new Map<TaskId, PhaseSpan>()
   readonly #readOnly: boolean
   readonly #clock: Clock.Clock
   /** Wakes the driver fiber, which runs reconcile and reservation passes. */
@@ -338,7 +352,13 @@ class Scheduler<Svc> implements TaskScheduler {
   #enabled = false
   #closing = false
 
-  constructor(options: TaskSchedulerOptions<Svc>, clock: Clock.Clock, wakeup: Queue.Queue<void, Cause.Done>) {
+  constructor(
+    options: TaskSchedulerOptions<Svc>,
+    clock: Clock.Clock,
+    wakeup: Queue.Queue<void, Cause.Done>,
+    telemetry: { readonly context: Context.Context<never>; readonly propagation: TracePropagation | undefined },
+  ) {
+    this.#telemetry = telemetry
     this.#session = options.session
     this.#internals = internals(options.session)
     this.#registry = options.registry as TaskRegistry<unknown>
@@ -350,10 +370,10 @@ class Scheduler<Svc> implements TaskScheduler {
     this.#withdrawInputs = options.withdrawInputs as TaskSchedulerOptions<unknown>["withdrawInputs"]
     this.#queuedInputs = options.queuedInputs
     const report = options.report ?? (() => {})
-    this.#report = (error, info, snapshot) => {
+    this.#report = (error, info, snapshot, span) => {
       try {
         // The scheduler erases its services' type; a snapshot it holds is one `options.registry` made.
-        report(error, info, snapshot as TaskSnapshot<Svc> | undefined)
+        report(error, info, snapshot as TaskSnapshot<Svc> | undefined, span)
       } catch {
         // A report handler that throws loses that report; it never fails what reported.
       }
@@ -398,7 +418,10 @@ class Scheduler<Svc> implements TaskScheduler {
             } while (cursor !== undefined)
           }
           // Their chains load later, off open's path: until then each counts as inside every scope.
-          for (const record of loaded) this.#track(undefined, record, undefined)
+          for (const record of loaded) {
+            this.#track(undefined, record, undefined)
+            this.#resumed.add(record.id)
+          }
           if (this.#readOnly) return
           for (const record of loaded) {
             if (record.abandonOnRestart === true) this.#abandoned.add(record.id)
@@ -424,6 +447,8 @@ class Scheduler<Svc> implements TaskScheduler {
   /** Close listener: runs synchronously once admission is sealed, or when the Session fails. */
   #seal(): void {
     if (this.#closing) return
+    for (const live of this.#live.values()) this.#countActive(-1, live.record.kind)
+    this.#resumed.clear()
     this.#closing = true
     try {
       this.#unsubscribeRegistry()
@@ -762,6 +787,14 @@ class Scheduler<Svc> implements TaskScheduler {
     created: ReadonlyMap<ConversationId, ConversationRecord> | undefined,
   ): void {
     const id = record.id
+    const phase = this.#phases.get(id)
+    if (phase !== undefined) phase.record = record
+    if (!this.#closing) {
+      if (record.state.status === "terminal") {
+        if (previous !== undefined) this.#countActive(-1, record.kind)
+        this.#resumed.delete(id)
+      } else if (previous === undefined) this.#countActive(1, record.kind)
+    }
     if (previous?.state.status === "waiting") for (const on of previous.state.on) deleteFrom(this.#waiters, on, id)
     this.#sleeping.delete(id)
     this.#intent.delete(id)
@@ -1486,18 +1519,24 @@ class Scheduler<Svc> implements TaskScheduler {
             ? Effect.die(new Error(`Task ${task.kind} has no phase ${checkpoint.phase}`))
             : // Built inside the handler's fiber, so a handler that throws fails its phase instead of the invocation.
               Effect.suspend(() => phase(task as RunningTask<JsonValue, never, JsonValue>, runtime))
-        const exit = yield* this.#handle(invocation, handler, {
-          mode: "run",
-          task: state.task,
-          record: task,
-          snapshot: state.snapshot,
-          runtime,
-        })
-        // A phase can fail with any value, `undefined` included, so the exit says whether it failed.
-        const previous = Exit.isFailure(exit)
-          ? { checkpoint, failed: true, failure: causeError(exit.cause) }
-          : { checkpoint, failed: false, failure: undefined }
-        current = yield* this.#step(invocation, (next) => this.#rules(next, previous), state)
+        current = yield* this.#phase(
+          invocation,
+          task,
+          Effect.gen({ self: this }, function* () {
+            const exit = yield* this.#handle(invocation, handler, {
+              mode: "run",
+              task: state.task,
+              record: task,
+              snapshot: state.snapshot,
+              runtime,
+            })
+            // A phase can fail with any value, `undefined` included, so the exit says whether it failed.
+            const previous = Exit.isFailure(exit)
+              ? { checkpoint, failed: true, failure: causeError(exit.cause) }
+              : { checkpoint, failed: false, failure: undefined }
+            return yield* this.#step(invocation, (next) => this.#rules(next, previous), state)
+          }),
+        )
       }
     })
   }
@@ -1510,16 +1549,22 @@ class Scheduler<Svc> implements TaskScheduler {
       if (current === undefined || this.#closing) return
       const state = { task: reservation.task, snapshot: reservation.snapshot, reported: UNREPORTED as unknown }
       const runtime = this.#runtime(invocation, state)
-      const exit = yield* this.#handle(
+      yield* this.#phase(
         invocation,
-        Effect.suspend(() =>
-          erased(reservation.task).abort(current as RunningTask<JsonValue, never, JsonValue>, runtime),
-        ),
-        { mode: "abort", task: reservation.task, record: current, snapshot: reservation.snapshot, runtime },
+        current,
+        Effect.gen({ self: this }, function* () {
+          const exit = yield* this.#handle(
+            invocation,
+            Effect.suspend(() =>
+              erased(reservation.task).abort(current as RunningTask<JsonValue, never, JsonValue>, runtime),
+            ),
+            { mode: "abort", task: reservation.task, record: current, snapshot: reservation.snapshot, runtime },
+          )
+          const message = `Abort handler of task ${invocation.taskId} returned without a terminal outcome`
+          const error = Exit.isFailure(exit) ? causeError(exit.cause) : new Error(message)
+          yield* this.#step(invocation, () => ({ kind: "fault", error }), state)
+        }),
       )
-      const message = `Abort handler of task ${invocation.taskId} returned without a terminal outcome`
-      const error = Exit.isFailure(exit) ? causeError(exit.cause) : new Error(message)
-      yield* this.#step(invocation, () => ({ kind: "fault", error }), state)
     })
   }
 
@@ -1541,17 +1586,8 @@ class Scheduler<Svc> implements TaskScheduler {
         this.#report(error, { kind: "host_error", callback: "services" })
         return Exit.die(error)
       }
-      const checkpoint = (phase.record.state as { readonly checkpoint?: Checkpoint }).checkpoint
       const provided = (handler as Effect.Effect<void, unknown, never>).pipe(
         Effect.provide(layer as Layer.Layer<never>),
-        Effect.withSpan("pi.durable.phase", {
-          attributes: {
-            "task.id": invocation.taskId,
-            "task.name": invocation.kind,
-            phase: checkpoint?.phase ?? "abort",
-            kind: invocation.mode,
-          },
-        }),
       )
       const fiber = yield* Effect.forkChild(provided, { startImmediately: true })
       invocation.handler = fiber
@@ -1560,6 +1596,83 @@ class Scheduler<Svc> implements TaskScheduler {
       invocation.handler = undefined
       return exit
     })
+  }
+
+  /**
+   * Runs `body`, a phase invocation and its decision commit, in a `pi.durable.phase` span (spec 5.1): a child of the
+   * span the task's `trace` names, linked to its `links`, else a trace of its own. It ends with the phase's outcome and
+   * an error status for a faulted, failed or orphaned task, and its duration is measured.
+   */
+  #phase<A>(invocation: Invocation, record: TaskRecord, body: Effect.Effect<A, unknown>): Effect.Effect<A, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const { propagation } = this.#telemetry
+      const checkpoint = (record.state as { readonly checkpoint?: Checkpoint & { readonly attempt?: unknown } })
+        .checkpoint
+      const phaseName = checkpoint?.phase ?? "abort"
+      const attempt = checkpoint?.attempt
+      const resumed = this.#resumed.delete(record.id)
+      // Host telemetry must not stop the phase: a tracer or propagation that throws here is reported, and the phase
+      // runs without a span. Failing instead would put the unchanged task back to run, and fail again, forever.
+      const opened = yield* Effect.exit(
+        Effect.suspend(() => {
+          const parent = record.trace === undefined ? undefined : propagation?.extract(record.trace)
+          const links: Tracer.SpanLink[] = []
+          for (const carrier of record.links ?? []) {
+            const span = propagation?.extract(carrier)
+            if (span !== undefined) links.push({ span, attributes: {} })
+          }
+          return Effect.makeSpan("pi.durable.phase", {
+            ...(parent === undefined ? { root: true } : { parent }),
+            links,
+            attributes: {
+              "task.id": record.id,
+              "task.name": record.kind,
+              phase: phaseName,
+              kind: invocation.mode,
+              resumed,
+              ...(typeof attempt === "number" ? { attempt } : {}),
+            },
+          })
+        }),
+      )
+      if (Exit.isFailure(opened)) {
+        this.#report(Cause.squash(opened.cause), { kind: "host_error", callback: "telemetry" })
+        return yield* body
+      }
+      const span = opened.value
+      const phase: PhaseSpan = { span, record }
+      this.#phases.set(record.id, phase)
+      const started = performance.now()
+      const exit = yield* Effect.exit(Effect.withParentSpan(body, span))
+      this.#phases.delete(record.id)
+      const end = phaseEnd(phase.record, invocation.ended || this.#closing)
+      try {
+        span.attribute("outcome", end.outcome)
+        span.end(spanTime(), end.error === undefined ? Exit.void : Exit.fail(end.error))
+      } catch (error) {
+        this.#report(error, { kind: "host_error", callback: "telemetry" })
+      }
+      const duration = performance.now() - started
+      const attributes = { task: record.kind, phase: phaseName, outcome: end.outcome }
+      // The phase span is the measurement's context, so an adapter can tie it to the trace.
+      const context = Context.add(this.#telemetry.context, Tracer.ParentSpan, span)
+      updateMetric(DurableMetrics.phaseDuration, duration, attributes, context, (error) =>
+        this.#report(error, { kind: "host_error", callback: "telemetry" }),
+      )
+      return yield* exit
+    })
+  }
+
+  /** The phase span a task's invocation runs in now, if any. */
+  phaseSpan(taskId: TaskId): Tracer.Span | undefined {
+    return this.#phases.get(taskId)?.span
+  }
+
+  /** Counts a task in or out of `pi.durable.tasks.active`; a throwing registry is reported, as publication goes on. */
+  #countActive(delta: 1 | -1, kind: string): void {
+    updateMetric(DurableMetrics.tasksActive, delta, { task: kind }, this.#telemetry.context, (error) =>
+      this.#report(error, { kind: "host_error", callback: "telemetry" }),
+    )
   }
 
   #signalInvocation(invocation: Invocation): void {
@@ -1632,6 +1745,7 @@ class Scheduler<Svc> implements TaskScheduler {
           fault.error,
           { kind: "task_faulted", task: reportTask(invocation), reason: "threw" },
           invocation.snapshot,
+          this.phaseSpan(invocation.taskId),
         )
       }
       return continued
@@ -1709,15 +1823,19 @@ class Scheduler<Svc> implements TaskScheduler {
           let interrupted:
             | { readonly message: string; readonly reason: InterruptReason; readonly restarts: number }
             | undefined
+          let checkpoint: string | undefined
           yield* this.#gated(invocation, (tx, current) =>
             Effect.gen({ self: this }, function* () {
               const next = yield* change(tx, current as RunningTask<JsonValue, never, JsonValue>)
               if (next === undefined) return
               yield* this.#commitState(tx, invocation, current, next as NextTaskState<JsonValue, JsonValue>)
+              const phase = (next as { readonly checkpoint?: Checkpoint }).checkpoint?.phase
+              if (next.status === "running" && (checkpointOf(current) as Checkpoint).phase !== phase) checkpoint = phase
               const ending = next.status === "terminal" ? endedForCrashes(next) : undefined
               if (ending !== undefined) interrupted = { ...ending, restarts: current.restarts ?? 0 }
             }),
           )
+          const span = this.phaseSpan(invocation.taskId)
           // Reported once stored, so a host keeps a crash-loop signal.
           if (interrupted !== undefined) {
             const { message, reason, restarts } = interrupted
@@ -1725,7 +1843,15 @@ class Scheduler<Svc> implements TaskScheduler {
               new Error(message),
               { kind: "task_interrupted", task: reportTask(invocation), reason, restarts },
               invocation.snapshot,
+              span,
             )
+          }
+          if (checkpoint !== undefined && span !== undefined) {
+            try {
+              span.event("pi.durable.checkpoint", spanTime(), { phase: checkpoint })
+            } catch (error) {
+              this.#report(error, { kind: "host_error", callback: "telemetry" })
+            }
           }
         }),
       memo: ((name: string, ...rest: readonly JsonValue[]) => {
@@ -1806,7 +1932,12 @@ class Scheduler<Svc> implements TaskScheduler {
       },
       report: (error) => {
         if (invocation.ended) throw new InvocationEnded({ message: `Task ${invocation.taskId} invocation has ended` })
-        this.#report(error, { kind: "task_error", task: reportTask(invocation) }, invocation.snapshot)
+        this.#report(
+          error,
+          { kind: "task_error", task: reportTask(invocation) },
+          invocation.snapshot,
+          this.phaseSpan(invocation.taskId),
+        )
       },
     }
     return runtime
@@ -2136,4 +2267,24 @@ function deleteFrom<K, V>(map: Map<K, Set<V>>, key: K, value: V): void {
   if (values === undefined) return
   values.delete(value)
   if (values.size === 0) map.delete(key)
+}
+
+/**
+ * How a phase ended, from its task's latest record (spec 5.1): `done`, `aborted` or `faulted` for a terminal or held
+ * outcome, `waiting` or `sleeping`, `aborted` for an invocation that ended without a decision, else `next=<phase>`. A
+ * faulted, failed or orphaned outcome is an error named `task_<status>`, its message cut to 500 characters.
+ */
+function phaseEnd(record: TaskRecord, ended: boolean): { readonly outcome: string; readonly error?: Error } {
+  const state = record.state
+  if (state.status === "terminal" || state.status === "completing") {
+    const outcome = state.outcome
+    if (outcome.status === "completed") return { outcome: "done" }
+    if (outcome.status === "aborted") return { outcome: "aborted" }
+    const error = new Error((outcome.status === "orphaned" ? outcome.reason : outcome.error.message).slice(0, 500))
+    error.name = `task_${outcome.status}`
+    return { outcome: "faulted", error }
+  }
+  if (state.status === "waiting" || state.status === "sleeping") return { outcome: state.status }
+  if (ended || state.status !== "running") return { outcome: "aborted" }
+  return { outcome: `next=${(state.checkpoint as Checkpoint).phase}` }
 }

@@ -30,6 +30,7 @@ import {
   type TaskSnapshot,
   type Tx,
   type TypedEntry,
+  currentSpan,
 } from "@nisse/kernel"
 import {
   validateToolArguments,
@@ -261,7 +262,7 @@ export const ToolTask: Task<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, T
     call: phase<"call">((task, ctx) =>
       Effect.gen(function* () {
         const { runtime, api } = ctx
-        const call = yield* readCall(runtime, task.input)
+        const call = yield* readCall(runtime, api, task.input)
         if (cutOffTooOften(task, api.settings().restartLimit)) return yield* endCutOff(ctx, task, call)
         const tool = isUnoffered(task.input) ? undefined : yield* resolveTool(ctx, task.input, call.name)
         if (tool === undefined) {
@@ -323,7 +324,7 @@ export const ToolTask: Task<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, T
       Effect.gen(function* () {
         const { runtime, api } = ctx
         const { arguments: args, replay } = task.state.checkpoint
-        const call = yield* readCall(runtime, task.input)
+        const call = yield* readCall(runtime, api, task.input)
         // Also before an interruption result: its `afterTool` hooks may be what cut the task off.
         if (cutOffTooOften(task, api.settings().restartLimit)) return yield* endCutOff(ctx, task, call)
         const tool = yield* resolveTool(ctx, task.input, call.name)
@@ -352,7 +353,7 @@ export const ToolTask: Task<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, T
     Effect.gen(function* () {
       const api = yield* TaskServices
       const ctx: Ctx = { runtime, api }
-      const call = yield* readCall(runtime, task.input)
+      const call = yield* readCall(runtime, api, task.input)
       // Abandoned after a restart (`abandonOnRestart`): say whether the call may have run. An unoffered call could not
       // run in any case, and its result says so.
       const [code, message] = isUnoffered(task.input)
@@ -466,8 +467,22 @@ function outputLimits(tool: ToolRegistration | undefined): OutputLimits {
   }
 }
 
+/** The call, named on the phase span. A tracer that throws is reported, and the call goes on. */
+const readCall = (runtime: Runtime, api: TaskApi, input: ToolTaskInput): Effect.Effect<ToolHookCall, unknown> =>
+  Effect.gen(function* () {
+    const call = yield* findCall(runtime, input)
+    const span = currentSpan()
+    try {
+      span?.attribute("tool.name", call.name)
+      span?.attribute("tool.call_id", call.id)
+    } catch (error) {
+      api.report(error, { kind: "host", callback: "telemetry" })
+    }
+    return call
+  })
+
 /** The call: from the input for a nested call, which hooks see with its parent, else from the assistant entry. */
-const readCall = (runtime: Runtime, input: ToolTaskInput): Effect.Effect<ToolHookCall, unknown> => {
+const findCall = (runtime: Runtime, input: ToolTaskInput): Effect.Effect<ToolHookCall, unknown> => {
   if (input.kind === "nested") {
     return Effect.succeed({ ...input.call, parent: { taskId: input.parent, callId: input.parentCallId } })
   }

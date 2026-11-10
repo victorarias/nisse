@@ -1904,13 +1904,6 @@
     "useCases": ["usage-context-live"]
   },
   {
-    "id": "U7",
-    "area": "U",
-    "feature": "Spending limit",
-    "verdict": "adapt",
-    "useCases": ["usage-spending-limit"]
-  },
-  {
     "id": "V1",
     "area": "V",
     "feature": "Spans for runs, requests and tools (R78-90, `harness/telemetry`)",

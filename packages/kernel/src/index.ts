@@ -92,3 +92,12 @@ export {
   type TaskSchedulerOptions,
   type Wake,
 } from "./tasks/scheduler.ts"
+export {
+  CONTENT_FREE_FAILURE,
+  currentSpan,
+  DurableMetrics,
+  spanOf,
+  spanTime,
+  TracePropagation,
+  updateMetric,
+} from "./telemetry.ts"

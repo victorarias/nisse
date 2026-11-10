@@ -17,8 +17,10 @@ import {
 	type Tx as KernelTx,
 } from "../../../../../kernel/src/index.ts";
 import type { Transaction as KernelTransaction } from "../../../../../kernel/src/session/transaction.ts";
-import { BACKGROUND_CONTEXT, type Context, withoutAbortSignal } from "../../../chord/src/context/index.ts";
+import { BACKGROUND_CONTEXT, type Context, withoutAbortSignal, withTelemetry } from "../../../chord/src/context/index.ts";
 import type { WatchEnd } from "../../../chord/src/watch.ts";
+import { NOOP_TELEMETRY_CONTEXT } from "../../../telemetry/src/index.ts";
+import { adopt, telemetryOfSpan } from "../telemetry-bridge.ts";
 import {
 	errorMessage,
 	ReadAfterWrite,
@@ -106,12 +108,23 @@ function rejection(cause: Cause.Cause<unknown>, context: Context | undefined): u
 	return new Error("interrupted");
 }
 
+/**
+ * `effect` under the span of the caller's `context.telemetry`, as upstream records a call's spans and commit events
+ * there; a context without telemetry leaves the effect's parent as it is.
+ */
+function underCaller<A, E, R>(effect: Effect.Effect<A, E, R>, context: Context | undefined): Effect.Effect<A, E, R> {
+	const telemetry = context?.telemetry;
+	return telemetry === undefined || telemetry === NOOP_TELEMETRY_CONTEXT
+		? effect
+		: Effect.withParentSpan(effect, adopt(telemetry));
+}
+
 /** Runs a kernel Effect as a Promise; aborting `context` interrupts it. */
 export function run<A>(effect: Effect.Effect<A, unknown>, context?: Context): Promise<A> {
 	const signal = context?.abortSignal;
 	if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("aborted"));
 	return new Promise<A>((resolve, reject) => {
-		const fiber = Effect.runFork(effect);
+		const fiber = Effect.runFork(underCaller(effect, context));
 		const abort = (): void => void Effect.runFork(Fiber.interrupt(fiber));
 		signal?.addEventListener("abort", abort, { once: true });
 		fiber.addObserver((exit) => {
@@ -132,7 +145,7 @@ export function runCommit<A>(build: (returned: () => void) => Effect.Effect<A, u
 	if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("aborted"));
 	let returned = false;
 	return new Promise<A>((resolve, reject) => {
-		const fiber = Effect.runFork(build(() => void (returned = true)));
+		const fiber = Effect.runFork(underCaller(build(() => void (returned = true)), context));
 		const abort = (): void => {
 			if (!returned) Effect.runFork(Fiber.interrupt(fiber));
 		};
@@ -665,7 +678,10 @@ export class SessionImpl {
 			this.#kernel.observeCommits({
 				advance: (publication) =>
 					void queueMicrotask(() => {
-						for (const guarded of [...observers]) guarded.advance(publication, BACKGROUND_CONTEXT);
+						// Upstream gives observers the commit's span as `context.telemetry`, so their reports land on it.
+						const span = telemetryOfSpan(publication.span);
+						const context = span === undefined ? BACKGROUND_CONTEXT : withTelemetry(span, BACKGROUND_CONTEXT);
+						for (const guarded of [...observers]) guarded.advance(publication, context);
 					}),
 				// After the last publication's dispatch, which is a microtask behind it.
 				end: (end) =>
