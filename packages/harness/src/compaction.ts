@@ -296,7 +296,8 @@ export const CompactionTask: Task<CompactionInput, CompactionCheckpoint, Compact
  */
 export const createCompaction = (tx: Tx, conversationId: ConversationId, input: CompactionInput, owner?: TaskId) =>
   Effect.gen(function* () {
-    const ownership = owner === undefined ? ({ kind: "conversation" } as const) : { kind: "task" as const, taskId: owner }
+    const ownership =
+      owner === undefined ? ({ kind: "conversation" } as const) : { kind: "task" as const, taskId: owner }
     const background = owner === undefined && input.reason !== "manual"
     const taskId = yield* tx.createTask(CompactionTask, input, { ownership, conversationId, background })
     const status = { taskId, trigger: input.reason, blocking: owner !== undefined, attempt: 1 }
@@ -548,4 +549,3 @@ const failNoModel = ({ runtime }: Ctx, ref: ModelRef | undefined) => {
     }),
   )
 }
-

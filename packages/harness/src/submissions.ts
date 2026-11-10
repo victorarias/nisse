@@ -4,6 +4,7 @@ import { copyJson } from "@nisse/delta/json"
 import {
   type CommitError,
   type CommitPublication,
+  CONTENT_FREE_FAILURE,
   type ConversationId,
   type JsonObject,
   ReadAfterWrite,
@@ -12,11 +13,13 @@ import {
   type Session,
   SessionClosed,
   SessionFailed,
+  spanTime,
   type SubmissionId,
   type SubmissionRecord,
+  type TracePropagation,
   type Tx,
 } from "@nisse/kernel"
-import { Data, Effect, Exit, Queue } from "effect"
+import { Data, Effect, Exit, Option, Queue, Tracer } from "effect"
 import { startRun } from "./generation.ts"
 import {
   appendInput,
@@ -59,6 +62,11 @@ export type AdmissionError = ConversationBusy | ConversationIdle
 
 export type AbortResult = "aborted" | "already_placed" | "settled"
 type Admission = { readonly id: SubmissionId; readonly status: "queued" | "placed" | "done" }
+/** The `pi.durable.submit` span of one admission, with the propagation that names it in the records it writes. */
+export interface SubmitTrace {
+  readonly span: Tracer.Span
+  readonly propagation: TracePropagation
+}
 type Waiter = Queue.Queue<Exit.Exit<SettledSubmissionRecord, SessionFailed | SessionClosed>>
 
 /** A durably admitted submission. */
@@ -79,11 +87,22 @@ export class Submissions {
   readonly #queueModes: () => QueueModes
   /** Enables task scheduling; submitting or waiting asks for progress. */
   readonly #resume: Effect.Effect<void, unknown>
+  readonly #propagation: TracePropagation | undefined
+  /** The tracer of the context the Harness opened in, which records submit spans whatever context submits. */
+  readonly #tracer: Tracer.Tracer
   readonly #waiters = new Map<SubmissionId, Set<Waiter>>()
   #closed = false
 
-  constructor(session: Session, now: () => number, queueModes: () => QueueModes, resume: Effect.Effect<void, unknown>) {
+  constructor(
+    session: Session,
+    now: () => number,
+    queueModes: () => QueueModes,
+    resume: Effect.Effect<void, unknown>,
+    telemetry: { readonly propagation: TracePropagation | undefined; readonly tracer: Tracer.Tracer },
+  ) {
     this.#session = session
+    this.#propagation = telemetry.propagation
+    this.#tracer = telemetry.tracer
     this.#now = now
     this.#queueModes = queueModes
     this.#resume = resume
@@ -102,9 +121,11 @@ export class Submissions {
     draft: SubmissionDraft,
   ): Effect.Effect<Submission, AdmissionError | ReadError | CommitError> {
     return Effect.gen({ self: this }, function* () {
-      yield* Effect.ignore(this.#resume)
-      const { id } = yield* this.#session.commit((tx) =>
-        admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes()),
+      // The commit runs in the submit span, so its entry and submission events land there.
+      const { id } = yield* this.#traced(conversationId, draft, (trace) =>
+        this.#session.commit((tx) =>
+          admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), trace),
+        ),
       )
       return this.handle(id)
     })
@@ -123,9 +144,44 @@ export class Submissions {
       if (!this.#session.owns(tx)) return yield* Effect.die(new Error("The transaction belongs to another Session"))
       // Enforced on every path: admission reads tables only on some (request IDs, an idle boundary).
       if (tx.hasTableWrite) return yield* Effect.die(new ReadAfterWrite("submit(tx, draft)"))
-      yield* Effect.ignore(this.#resume)
-      const admission = yield* admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes())
+      const admission = yield* this.#traced(conversationId, draft, (trace) =>
+        admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), trace),
+      )
       return admission.id
+    })
+  }
+
+  /**
+   * Runs one admission in its `pi.durable.submit` span, asking for progress first, as the run it starts needs it.
+   * Inputs and continues start runs, so their spans start traces of their own, linked to the caller's span; a write's
+   * is a child of the caller's. A failed admission ends the span with an error status and no error, which may carry
+   * caller content.
+   */
+  #traced<E, R>(
+    conversationId: ConversationId,
+    draft: SubmissionDraft,
+    admit: (trace: SubmitTrace | undefined) => Effect.Effect<Admission, E, R>,
+  ): Effect.Effect<Admission, E, R> {
+    return Effect.gen({ self: this }, function* () {
+      yield* Effect.ignore(this.#resume)
+      const startsRun = draft.type !== "write"
+      const caller = Option.getOrUndefined(yield* Effect.serviceOption(Tracer.ParentSpan))
+      const span = yield* Effect.withTracer(
+        Effect.makeSpan("pi.durable.submit", {
+          attributes: { "submission.type": draft.type, "conversation.id": conversationId },
+          ...(startsRun ? { root: true, links: caller === undefined ? [] : [{ span: caller, attributes: {} }] } : {}),
+        }),
+        this.#tracer,
+      )
+      const propagation = this.#propagation
+      const trace = propagation === undefined ? undefined : { span, propagation }
+      const exit = yield* Effect.exit(Effect.withParentSpan(admit(trace), span))
+      if (Exit.isSuccess(exit)) {
+        span.attribute("submission.id", exit.value.id)
+        span.attribute("result", exit.value.status)
+      }
+      span.end(spanTime(), Exit.isSuccess(exit) ? Exit.void : CONTENT_FREE_FAILURE)
+      return yield* exit
     })
   }
 
@@ -261,6 +317,7 @@ export const admitSubmission = (
   draft: SubmissionDraft,
   now: number,
   queueModes: QueueModes,
+  trace?: SubmitTrace,
 ): Effect.Effect<Admission, AdmissionError | ReadError> =>
   Effect.gen(function* () {
     if (draft.type === "input" && draft.entry !== undefined) yield* checkInputEntry(draft.entry)
@@ -275,7 +332,12 @@ export const admitSubmission = (
         return { id: existing.id, status: existing.status === "unanswered" ? "done" : existing.status } as Admission
       }
     }
-    const fields = { conversationId, ...(draft.requestId === undefined ? {} : { requestId: draft.requestId }) }
+    const carrier = trace?.propagation.inject(trace.span)
+    const fields = {
+      conversationId,
+      ...(draft.requestId === undefined ? {} : { requestId: draft.requestId }),
+      ...(carrier === undefined ? {} : { trace: carrier }),
+    }
     if (
       draft.type === "write" &&
       isDisplayOnly(draft.entry) &&
@@ -287,6 +349,12 @@ export const admitSubmission = (
     }
     const live = yield* tx.doc(LiveDoc, conversationId)
     const busy = live.run !== undefined
+    if (draft.type === "input" && draft.whenBusy === "steer" && live.run !== undefined && trace !== undefined) {
+      // A steer joins the running run: its span links to the run's trace.
+      const run = yield* tx.task(live.run.taskId)
+      const target = run?.trace === undefined ? undefined : trace.propagation.extract(run.trace)
+      if (target !== undefined) trace.span.addLinks([{ span: target, attributes: {} }])
+    }
     if (busy && draft.type === "input" && draft.whenBusy === "reject") {
       return yield* Effect.fail(ConversationBusy.of(conversationId))
     }

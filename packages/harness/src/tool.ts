@@ -446,8 +446,14 @@ function outputLimits(tool: ToolRegistration | undefined): OutputLimits {
   }
 }
 
+/** The call, named on the phase span. */
+const readCall = (runtime: Runtime, input: ToolTaskInput): Effect.Effect<ToolHookCall, unknown> =>
+  Effect.tap(findCall(runtime, input), (call) =>
+    Effect.annotateCurrentSpan({ "tool.name": call.name, "tool.call_id": call.id }),
+  )
+
 /** The call: from the input for a nested call, which hooks see with its parent, else from the assistant entry. */
-const readCall = (runtime: Runtime, input: ToolTaskInput): Effect.Effect<ToolHookCall, unknown> => {
+const findCall = (runtime: Runtime, input: ToolTaskInput): Effect.Effect<ToolHookCall, unknown> => {
   if (input.kind === "nested") {
     return Effect.succeed({ ...input.call, parent: { taskId: input.parent, callId: input.parentCallId } })
   }

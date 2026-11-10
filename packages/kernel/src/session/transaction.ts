@@ -49,6 +49,7 @@ import type {
   TaskId,
   TaskQuery,
   TaskRecord,
+  TelemetryCarrier,
 } from "../records.ts"
 import type { ReadError, Storage } from "../storage.ts"
 import type { Task, TaskOptions } from "../tasks/task.ts"
@@ -260,6 +261,20 @@ export type TransactionHost = {
   readonly retire: (addressId: string, recordId: DocumentId) => void
   /** The Session's creation hook, run inside every call that creates or forks a conversation, before it returns. */
   readonly conversationCreated?: (tx: Tx, record: ConversationRecord) => Effect.Effect<void, unknown>
+  /** The carrier of the span the commit was made in, which tasks it creates inherit; `undefined` without one. */
+  readonly trace: () => TelemetryCarrier | undefined
+}
+
+/** A new task's `trace` and `links`: given, inherited from the commit's span when omitted, or none for `"root"`. */
+function traceOf(
+  options: TaskOptions,
+  inherited: () => TelemetryCarrier | undefined,
+): { readonly trace?: TelemetryCarrier; readonly links?: readonly TelemetryCarrier[] } {
+  const trace = options.trace === "root" ? undefined : (options.trace ?? inherited())
+  return {
+    ...(trace === undefined ? {} : { trace }),
+    ...(options.links === undefined || options.links.length === 0 ? {} : { links: options.links }),
+  }
 }
 
 type SubmissionChange = SubmissionSettlement | { readonly status: "placed"; readonly entry: EntryId }
@@ -593,6 +608,7 @@ export class Transaction implements Tx {
         }
         yield* this.#requireConversation(conversationId)
         this.#assertOpen()
+        const traced = options.traceFrom === undefined ? options : yield* this.#traceFrom(options, options.traceFrom)
         const definition = task.definition
         const checkpoint = definition.initial(input)
         const id = yield* this.#mint<TaskId<R>>()
@@ -608,11 +624,26 @@ export class Transaction implements Tx {
           abortRequested: false,
           ...(options.abandonOnRestart === true ? { abandonOnRestart: true } : {}),
           state: { status: "pending", checkpoint },
+          ...traceOf(traced, this.#host.trace),
         })
         this.#taskEntry(id).write = { kind: "create", record }
         return id
       }),
     )
+  }
+
+  /** `options` with the trace of the first submission of `ids` and links to the others', staged ones first. */
+  #traceFrom(options: TaskOptions, ids: readonly SubmissionId[]): Effect.Effect<TaskOptions, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      let trace: TelemetryCarrier | "root" = "root"
+      const links: TelemetryCarrier[] = []
+      for (const [index, id] of ids.entries()) {
+        const record = this.#submissions.get(id) ?? (yield* this.#storageCall(this.#host.storage.submission(id)))
+        if (index === 0) trace = record?.trace ?? "root"
+        else if (record?.trace !== undefined) links.push(record.trace)
+      }
+      return { ...options, trace, links }
+    })
   }
 
   // The scheduler's side

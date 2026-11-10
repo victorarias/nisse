@@ -1707,7 +1707,8 @@
   ],
   "upstream/test/harness-inbox.test.ts :: usage > totals assistant usage per model and tool usage per tool, and sums the Session": [
     "usage-per-tool",
-    "usage-per-model"
+    "usage-per-model",
+    "usage-cost"
   ],
   "upstream/test/harness-input-entries.test.ts :: data-only writes > appends a data-only write at once behind a non-empty inbox, and still queues writes with model or edits": [
     "submission-display-only"

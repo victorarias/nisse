@@ -1224,14 +1224,25 @@ export const startRun = (
 ) =>
   Effect.gen(function* () {
     const { inputs, first } = run
-    const taskId = yield* createGeneration(tx, conversationId)
+    const taskId = yield* createGeneration(tx, conversationId, inputs)
     live.run = { taskId, inputs, turns: 0, ...(first === undefined ? {} : { first }) }
     if (options?.keepFailure !== true) delete live.runFailure
   })
 
-/** A generation owned by its conversation. */
-const createGeneration = (tx: Tx, conversationId: ConversationId) =>
-  tx.createTask(GenerationTask, {}, { ownership: { kind: "conversation" }, conversationId })
+/**
+ * A generation owned by its conversation. A run's first generation takes its trace from its first input's submit span
+ * and links to the other inputs'; a later one continues the trace of the commit that creates it.
+ */
+const createGeneration = (tx: Tx, conversationId: ConversationId, inputs?: readonly SubmissionId[]) =>
+  tx.createTask(
+    GenerationTask,
+    {},
+    {
+      ownership: { kind: "conversation" },
+      conversationId,
+      ...(inputs === undefined ? {} : { traceFrom: inputs }),
+    },
+  )
 
 /** Hand run control from `from` to `to`; the run's inputs move with it. */
 export function handOver(live: Draft<LiveState>, from: TaskId, to: TaskId): void {

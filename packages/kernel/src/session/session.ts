@@ -11,7 +11,8 @@
 // completer's call, which on the line would run that fiber's code before the next job; outcomes therefore go back
 // through a queue, whose waiter resumes later. Observers are called on the line, so they must only capture.
 import { type Op, track } from "@nisse/delta"
-import { Cause, Clock, Deferred, Effect, Exit, Fiber, Queue, type Scope } from "effect"
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Option, Queue, type Scope, Tracer } from "effect"
+import { spanTime, TracePropagation } from "../telemetry.ts"
 import {
   type AnyDocDefinition,
   type AnyDocToken,
@@ -34,6 +35,7 @@ import type {
   JsonObject,
   Seq,
   StorageWrite,
+  TelemetryCarrier,
 } from "../records.ts"
 import type { ReadError, Storage } from "../storage.ts"
 import {
@@ -54,7 +56,12 @@ export type CommitChange =
   | DocumentCommitChange
 
 /** Every change one storage transaction stored, with its `seq`. Change order is unspecified. */
-export type CommitPublication = { readonly seq: Seq; readonly changes: readonly CommitChange[] }
+export type CommitPublication = {
+  readonly seq: Seq
+  readonly changes: readonly CommitChange[]
+  /** The span the commit was made in, if any: its entry and settlement events are recorded on it. */
+  readonly span?: Tracer.AnySpan
+}
 
 /**
  * How an observer ended: the Session closed after its last publication (`ended`), failed (`failed`), or the
@@ -128,6 +135,11 @@ export type SessionOptions = {
    * holds what it writes (spec 7.1). A failure fails that commit.
    */
   readonly conversationCreated?: (tx: Tx, record: ConversationRecord) => Effect.Effect<void, unknown>
+  /**
+   * Receives a telemetry failure while a commit is published, such as a throwing tracer or metric registry; the commit
+   * stands. Default: dropped.
+   */
+  readonly reportTelemetry?: (error: unknown) => void
 }
 
 export interface Session {
@@ -280,6 +292,9 @@ class SessionImpl implements Session, SessionInternals {
   readonly #documentObservers = new Map<string, Set<Attached>>()
   readonly #now: () => number
   readonly #conversationCreated: SessionOptions["conversationCreated"]
+  readonly #reportTelemetry: (error: unknown) => void
+  /** The host's trace propagation, from the context the Session opened in. */
+  readonly #propagation: TracePropagation | undefined
   #line: Fiber.Fiber<void> | undefined
   /** The first error that failed the Session. */
   #failure: { readonly error: unknown } | undefined
@@ -306,8 +321,18 @@ class SessionImpl implements Session, SessionInternals {
     jobs: Queue.Queue<Job, Cause.Done>,
     closed: Deferred.Deferred<SessionEnd>,
     clock: Clock.Clock,
+    propagation: TracePropagation | undefined,
   ) {
     this.#storage = storage
+    this.#propagation = propagation
+    const reportTelemetry = options.reportTelemetry ?? (() => {})
+    this.#reportTelemetry = (error) => {
+      try {
+        reportTelemetry(error)
+      } catch {
+        // Dropped: reporting it would report again.
+      }
+    }
     this.#readOnly = options.readOnly === true
     this.#conversationCreated = options.conversationCreated
     this.#jobs = jobs
@@ -345,6 +370,7 @@ class SessionImpl implements Session, SessionInternals {
         yield* Queue.unbounded<Job, Cause.Done>(),
         yield* Deferred.make<SessionEnd>(),
         yield* Clock.Clock,
+        yield* TracePropagation,
       )
       // Detached: the line ends when close ends its queue, never by interruption.
       session.#line = yield* Effect.forkDetach(session.#runLine())
@@ -382,12 +408,13 @@ class SessionImpl implements Session, SessionInternals {
       Effect.gen({ self: this }, function* () {
         const refused = this.#admissionError()
         if (refused !== undefined) return yield* Effect.fail(refused)
+        const span = Option.getOrUndefined(yield* Effect.serviceOption(Tracer.ParentSpan))
         const reply = yield* Queue.bounded<Exit.Exit<A, E | CommitError>>(1)
         const job: Job = {
           cancelled: false,
           callback: undefined,
           storing: false,
-          run: Effect.suspend(() => (job.cancelled ? Effect.void : this.#runCommit(job, scope, body, reply))),
+          run: Effect.suspend(() => (job.cancelled ? Effect.void : this.#runCommit(job, scope, body, reply, span))),
         }
         if (!(yield* Queue.offer(this.#jobs, job)))
           return yield* Effect.fail(this.#admissionError() ?? SessionClosed.instance)
@@ -633,6 +660,7 @@ class SessionImpl implements Session, SessionInternals {
     scope: CommitScope,
     body: (tx: Transaction) => Effect.Effect<A, E>,
     reply: Queue.Queue<Exit.Exit<A, E | CommitError>>,
+    span: Tracer.AnySpan | undefined,
   ) {
     const deliver = (exit: Exit.Exit<A, E | CommitError>) => Queue.offer(reply, exit)
     return Effect.gen({ self: this }, function* () {
@@ -646,6 +674,7 @@ class SessionImpl implements Session, SessionInternals {
         load: (definition, id, address) => this.#loadDocument(definition, id, address),
         install: (document) => this.#cache.install(document),
         retire: (id, recordId) => this.#cache.retire(id, recordId),
+        trace: this.#traceOf(span),
         ...(this.#conversationCreated === undefined ? {} : { conversationCreated: this.#conversationCreated }),
       })
       const callback = yield* Effect.forkChild(
@@ -696,7 +725,7 @@ class SessionImpl implements Session, SessionInternals {
       let seq: Seq | undefined
       const stored = yield* Effect.exit(this.#storage.commit([writes], (_index, received) => void (seq = received)))
       // A commit Storage gave a receipt for is durable: it is adopted and published even when the call then fails.
-      if (seq !== undefined) this.#publish(seq, writes, tx)
+      if (seq !== undefined) this.#publish(seq, writes, tx, span)
       else tx.abort()
       if (Exit.isFailure(stored)) {
         const error = failureOf(stored)
@@ -718,7 +747,7 @@ class SessionImpl implements Session, SessionInternals {
   }
 
   /** Adopts a stored commit's document changes, then shows it to document observers and commit observers. */
-  #publish(seq: Seq, writes: readonly StorageWrite[], tx: Transaction): void {
+  #publish(seq: Seq, writes: readonly StorageWrite[], tx: Transaction, span: Tracer.AnySpan | undefined): void {
     let documents: readonly DocumentCommitChange[]
     try {
       documents = tx.adopt(seq)
@@ -737,11 +766,12 @@ class SessionImpl implements Session, SessionInternals {
       )
         changes.push(write)
     }
+    if (span?._tag === "Span") this.#recordEvents(span, writes)
     for (const change of documents) {
       changes.push(change)
       if (change.type === "document") this.#advanceDocumentObservers(change)
     }
-    const publication: CommitPublication = { seq, changes }
+    const publication: CommitPublication = { seq, changes, ...(span === undefined ? {} : { span }) }
     for (const observer of [...this.#observers]) {
       if (!this.#observers.has(observer)) continue
       try {
@@ -755,6 +785,41 @@ class SessionImpl implements Session, SessionInternals {
     const after = this.#afterPublication
     this.#afterPublication = []
     for (const task of after) task()
+  }
+
+  /**
+   * The content-free events of a stored commit on the span it was made in: each entry it appends, and each submission
+   * it settles. A throwing tracer is reported; the commit stands.
+   */
+  #recordEvents(span: Tracer.Span, writes: readonly StorageWrite[]): void {
+    try {
+      for (const write of writes) {
+        if (write.type === "entry") {
+          span.event("pi.durable.entry", spanTime(), { "entry.id": write.value.id, "entry.kind": write.value.kind })
+        } else if (write.type === "submission") {
+          const record = write.value
+          if (record.status !== "done" && record.status !== "unanswered") continue
+          span.event("pi.durable.submission", spanTime(), {
+            "submission.id": record.id,
+            status: record.status,
+            ...(record.answer === undefined ? {} : { "answer.entry_id": record.answer }),
+          })
+        }
+      }
+    } catch (error) {
+      this.#reportTelemetry(error)
+    }
+  }
+
+  /** The carrier of `span` in the host's propagation, injected once, when a task created in the commit needs it. */
+  #traceOf(span: Tracer.AnySpan | undefined): () => TelemetryCarrier | undefined {
+    const propagation = this.#propagation
+    if (span === undefined || propagation === undefined) return () => undefined
+    let carrier: { readonly value: TelemetryCarrier | undefined } | undefined
+    return () => {
+      carrier ??= { value: propagation.inject(span) }
+      return carrier.value
+    }
   }
 
   afterPublication(task: () => void): void {
