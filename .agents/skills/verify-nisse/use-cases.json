@@ -2,6 +2,10 @@
   "amended/env-node.test.ts :: NodeExecutionEnv filesystem > creates temporary directories and files": [
     "env-filesystem"
   ],
+  "amended/harness-after-run.test.ts :: endRun > copies a failed run's first entry into runFailure": ["hook-after-run"],
+  "amended/harness-after-run.test.ts :: endRun > leaves a run it does not own alone, and ends an answered run without a failure": [
+    "hook-after-run"
+  ],
   "amended/harness-idle-scopes.test.ts :: kept context ranges > applies a longer retention to idle ranges at an unrelated commit": [
     "settings-context-retention"
   ],
@@ -29,6 +33,9 @@
   "amended/harness-live-deltas.test.ts :: pi.live deltas > keeps a complete base exactly while nothing runs": [
     "view-live"
   ],
+  "amended/harness-nested-tools.test.ts :: nested tool calls > rejects a nested call of an aborted caller and leaves no document for it": [
+    "tool-execute-tool"
+  ],
   "amended/harness-scheduler-retention.test.ts :: scheduler retention > aborts work created in a forgotten conversation below an abort-marked owner before it runs": [
     "task-scheduling-ownership"
   ],
@@ -36,6 +43,21 @@
     "task-scheduling-ownership"
   ],
   "amended/harness-scheduler-retention.test.ts :: scheduler retention > withdraws an input queued two ended levels below an owner whose intent appears later": [
+    "task-scheduling-ownership"
+  ],
+  "amended/harness-structured-recovery.test.ts :: recovery > finalizes a held outcome whose work drained before the crash, and keeps one whose work lives": [
+    "task-scheduling-ownership"
+  ],
+  "amended/harness-structured-recovery.test.ts :: recovery > marks failFast siblings a crash left unmarked": [
+    "task-scheduling-ownership"
+  ],
+  "amended/harness-structured-recovery.test.ts :: recovery > resumes a bottom-up abort a crash interrupted before the cascade": [
+    "task-scheduling-ownership"
+  ],
+  "amended/harness-structured-recovery.test.ts :: recovery > resumes a parent whose awaited children finished before the crash": [
+    "task-scheduling-ownership"
+  ],
+  "amended/harness-structured-recovery.test.ts :: recovery through ownership edges > shows an abort-marked owner waiting for work in its owned conversation before resume after reopen": [
     "task-scheduling-ownership"
   ],
   "amended/harness-structured.test.ts :: waiting > keeps running phases after spawning and waits on subsets in sequence": [

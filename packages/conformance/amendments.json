@@ -539,6 +539,13 @@
   "private": "Transaction.setTask() via cast"
  },
  {
+  "test": "upstream/test/harness-structured.test.ts :: waiting > keeps running phases after spawning and waits on subsets in sequence",
+  "owner": "harness-tools",
+  "spec": "5.5",
+  "rewrite": "Await the opened child's wait instead of sampling it after one setTimeout(0).",
+  "private": "timing: a commit and its wake within one timer turn"
+ },
+ {
   "test": "upstream/test/harness-submissions.test.ts :: submissions > settles submissions by their current record in the transaction",
   "owner": "harness-run-core",
   "spec": "3.3",
@@ -565,6 +572,20 @@
   "spec": "3.2",
   "rewrite": "Keep the atomicity assertions and show task documents retired through snapshots, dropping the counter.",
   "private": "SessionImpl.documentCacheSizes"
+ },
+ {
+  "test": "upstream/test/harness-tasks.test.ts :: task runtime > reads committed documents and context through the runtime, and forwards the clock and reports",
+  "owner": "harness-run-core",
+  "spec": "5.1",
+  "rewrite": "Await the invocation's end before asserting that reads through the finished runtime reject, instead of sampling after one setTimeout(0).",
+  "private": "timing: the end of an invocation within one timer turn"
+ },
+ {
+  "test": "upstream/test/harness-tools-recovery.test.ts :: tool recovery > reruns a safe tool whose running slot a crash after its intent lost, or a sibling stored, and shows it running",
+  "owner": "harness-tools",
+  "spec": "8.2 (D5: persistWithinMs)",
+  "rewrite": "Expect the running slot to survive the crash with or without a sibling's commit, since it is committed before the tool runs.",
+  "private": "deferred commits holding the running slot in memory"
  },
  {
   "test": "upstream/test/harness-view-run.test.ts :: a run as the conversation view shows it > rebuilds a sliding tail window from output trims and appends",
