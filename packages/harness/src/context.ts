@@ -342,7 +342,10 @@ const deriveContext = (
 ): Effect.Effect<ContextView, ReadFailure> =>
   bounds === undefined
     ? Effect.succeed(emptyView())
-    : Effect.map(scanRange(session, conversationId, rangeQuery(bounds)), (entries) => deriveRange(bounds, entries, false).view)
+    : Effect.map(
+        scanRange(session, conversationId, rangeQuery(bounds)),
+        (entries) => deriveRange(bounds, entries, false).view,
+      )
 
 /**
  * Reads the bounds in one step on the line: the newest entry (from `latest` when it knows it) or the visible cutoff
