@@ -125,20 +125,28 @@ export class PartialChanges {
   ): void {
     const committedBlocks = generation.message?.content.length ?? 0
     const apply: [number, readonly JsonChange[]][] = []
+    // Calls whose arguments this commit assigns from their snapshot instead of applying changes.
+    const assigned = new Set<number>()
     for (const [index, { changes, snapshot }] of commit.toolCalls) {
       const call = this.#toolCalls.get(index)
-      if (call === undefined) continue
       const block = message.content[index]
+      if (call === undefined) {
+        // The call ended after `take()`: its changes may no longer fit, so its snapshot is what this commit writes.
+        if (block?.type === "toolCall") block.arguments = snapshot
+        assigned.add(index)
+        continue
+      }
       if (index >= committedBlocks && call.committed && block?.type === "toolCall") {
         // The earlier changes are not in the committed message: commit the snapshot and stop tracking the call.
         this.#toolCalls.delete(index)
         block.arguments = snapshot
+        assigned.add(index)
         continue
       }
       call.committed = true
       apply.push([index, changes])
     }
-    assignJson(generation, "message", message as Draft<PartialMessage> & JsonValue, commit.plan)
+    assignJson(generation, "message", message as Draft<PartialMessage> & JsonValue, withoutKeep(commit.plan, assigned))
     const content = generation.message?.content ?? []
     for (const [index, changes] of apply) {
       const block = content[index]
@@ -154,6 +162,16 @@ export class PartialChanges {
       if (call !== undefined) call.changes = [...changes, ...call.changes]
     }
   }
+}
+
+/** `plan` with the arguments of the blocks in `assigned` written by `assignJson()` rather than kept for changes. */
+function withoutKeep(plan: AssignPlan, assigned: ReadonlySet<number>): AssignPlan {
+  if (assigned.size === 0 || plan.kind !== "fields") return plan
+  const content = plan.fields.get("content")
+  if (content?.kind !== "fields") return plan
+  const blocks = new Map(content.fields)
+  for (const index of assigned) blocks.delete(index)
+  return { kind: "fields", fields: new Map([...plan.fields, ["content", { kind: "fields", fields: blocks }]]) }
 }
 
 /** Applies one argument change to the committed arguments of `block`. */
