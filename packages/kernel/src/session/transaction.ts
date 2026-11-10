@@ -213,8 +213,19 @@ export class Transaction implements Tx {
         let owner: ConversationRecord["owner"]
         if (ownership.kind === "task") {
           const task = yield* this.#storageCall(this.#host.storage.task(ownership.taskId))
-          if (task === undefined)
-            return yield* Effect.die(new Error(`Conversation owner task ${ownership.taskId} does not exist`))
+          // New owned work needs a live owner (spec 5.5). This transaction cannot write tasks yet, so the stored record
+          // is the owner's final state; once it can, this check moves to where the writes are assembled.
+          const refusal =
+            task === undefined
+              ? "does not exist"
+              : task.state.status === "completing" || task.state.status === "terminal"
+                ? `is ${task.state.status}`
+                : task.abortRequested
+                  ? "is abort-marked"
+                  : undefined
+          if (task === undefined || refusal !== undefined) {
+            return yield* Effect.die(new Error(`Conversation owner task ${ownership.taskId} ${refusal}`))
+          }
           owner = { conversationId: task.conversationId, taskId: ownership.taskId }
         }
         const id = yield* this.#mint<ConversationId>()

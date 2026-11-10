@@ -220,6 +220,8 @@ class SessionImpl implements Session {
       const writes = assembled.value
       if (writes.length === 0) return yield* deliver(done)
       if (this.#readOnly) return yield* deliver(Exit.fail(ReadOnlySession.instance))
+      // A caller that stopped waiting while the writes were assembled abandons the commit: it has not reached Storage.
+      if (job.cancelled) return
 
       job.storing = true
       let seq: Seq | undefined
@@ -249,13 +251,19 @@ class SessionImpl implements Session {
     for (const observer of [...this.#observers]) {
       if (!this.#observers.has(observer)) continue
       try {
-        observer.advance(publication)
+        // An `advance` may be async; its promise is watched, never awaited on the line.
+        const returned: unknown = observer.advance(publication)
+        if (isPromiseLike(returned)) returned.then(undefined, (error: unknown) => this.#observerFailed(observer, error))
       } catch (error) {
-        // A plain Session drops reports (spec 10.1); the observer is detached and told why.
-        this.#observers.delete(observer)
-        contain(() => observer.end({ kind: "listener_error", error }))
+        this.#observerFailed(observer, error)
       }
     }
+  }
+
+  /** A plain Session drops reports (spec 10.1): the observer is detached and told why, once. */
+  #observerFailed(observer: CommitObserver, error: unknown): void {
+    if (!this.#observers.delete(observer)) return
+    contain(() => observer.end({ kind: "listener_error", error }))
   }
 
   // Failure and close
@@ -306,6 +314,9 @@ class SessionImpl implements Session {
     })
   }
 }
+
+const isPromiseLike = (value: unknown): value is PromiseLike<unknown> =>
+  typeof value === "object" && value !== null && typeof (value as { then?: unknown }).then === "function"
 
 /** Runs a callback that must not fail its caller. A plain Session drops what it throws (spec 10.1). */
 function contain(callback: () => void): void {

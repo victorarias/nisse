@@ -20,6 +20,8 @@ import {
   type Storage,
   StorageError,
   type SubmissionRecord,
+  type TaskId,
+  type TaskRecord,
 } from "../src/index.ts"
 
 const homes: string[] = []
@@ -41,6 +43,8 @@ const databasePath = (): string => {
 type TestStorage = {
   readonly storage: Storage
   holding: boolean
+  /** Like `holding`, for single-submission reads. */
+  holdingReads: boolean
   failCommits: boolean
   closed: boolean
   readonly stored: number[]
@@ -54,6 +58,7 @@ const testStorage = (path: string): Effect.Effect<TestStorage, StorageError> =>
     const control: TestStorage = {
       storage: undefined as unknown as Storage,
       holding: false,
+      holdingReads: false,
       failCommits: false,
       closed: false,
       stored: [],
@@ -72,11 +77,20 @@ const testStorage = (path: string): Effect.Effect<TestStorage, StorageError> =>
           receive(index, seq)
         })
       })
+    const submission: Storage["submission"] = (id) =>
+      Effect.gen(function* () {
+        if (control.holdingReads) {
+          yield* Queue.offer(control.arrived, undefined)
+          yield* Queue.take(control.releases)
+        }
+        return yield* inner.submission(id)
+      })
     const close: Storage["close"] = () => Effect.tap(inner.close(), () => Effect.sync(() => (control.closed = true)))
     ;(control as { storage: Storage }).storage = new Proxy(inner, {
       get(target, key) {
         if (key === "commit") return commit
         if (key === "close") return close
+        if (key === "submission") return submission
         const value = Reflect.get(target, key)
         return typeof value === "function" ? value.bind(target) : value
       },
@@ -526,6 +540,98 @@ describe("Session", () => {
         expect(published).toHaveLength(1)
         expect(ends).toEqual([{ kind: "ended" }])
         expect(control.closed).toBe(true)
+      }),
+    ))
+  test("commit-tx-api: a caller that stops waiting before its commit reaches storage abandons it, also while its writes are assembled", () =>
+    run(
+      Effect.gen(function* () {
+        const control = yield* testStorage(databasePath())
+        const session = yield* openSession(control.storage)
+        const conversationId = yield* newConversation(session)
+        const { entry, queued } = yield* session.commit((tx) =>
+          Effect.gen(function* () {
+            const entry = yield* tx.appendEntry(conversationId, { kind: "user" })
+            const queued = yield* tx.createSubmission({ conversationId, type: "input", status: "queued" })
+            return { entry, queued }
+          }),
+        )
+        const storedBefore = control.stored.length
+
+        // Placing a submission this commit did not create reads it from storage once the callback is done.
+        control.holdingReads = true
+        const caller = yield* Effect.forkChild(session.commit((tx) => tx.placeSubmission(queued.id, entry.id)))
+        yield* Queue.take(control.arrived)
+        yield* Fiber.interrupt(caller)
+        control.holdingReads = false
+        yield* Queue.offer(control.releases, undefined)
+
+        // The next commit runs after the abandoned one left the line.
+        yield* note(session, conversationId, "after")
+        expect(control.stored.length).toBe(storedBefore + 1)
+        expect((yield* control.storage.submission(queued.id))?.status).toBe("queued")
+      }),
+    ))
+
+  test("commit-atomic: an observer whose async advance rejects is detached and ended listener_error, and commits go on", () =>
+    run(
+      Effect.gen(function* () {
+        const control = yield* testStorage(databasePath())
+        const session = yield* openSession(control.storage)
+        const ends = yield* Queue.unbounded<CommitObserverEnd>()
+        let advanced = 0
+        const failure = new Error("observer broke")
+        session.observeCommits({
+          advance: (async () => {
+            advanced++
+            throw failure
+          }) as () => void,
+          end: (end) => Queue.offerUnsafe(ends, end),
+        })
+        const conversationId = yield* newConversation(session)
+        expect(yield* Queue.take(ends)).toEqual({ kind: "listener_error", error: failure })
+        yield* note(session, conversationId, "after")
+        expect(advanced).toBe(1)
+      }),
+    ))
+
+  test("commit-tx-api: a conversation cannot be owned by a task that is finishing, finished or abort-marked", () =>
+    run(
+      Effect.gen(function* () {
+        const control = yield* testStorage(databasePath())
+        const session = yield* openSession(control.storage)
+        const conversationId = yield* newConversation(session)
+        // The Session cannot create tasks yet, so they are stored through the Storage port.
+        const task = (state: TaskRecord["state"], abortRequested = false) =>
+          Effect.gen(function* () {
+            const id = yield* control.storage.mintId<TaskId>()
+            const record = {
+              id,
+              conversationId,
+              kind: "test.task",
+              version: 1,
+              input: null,
+              background: false,
+              abortRequested,
+              state,
+            } as TaskRecord
+            yield* control.storage.commit([[{ type: "task", value: record }]], () => {})
+            return id
+          })
+        const live = yield* task({ status: "running", checkpoint: null })
+        const completing = yield* task({ status: "completing", outcome: { status: "completed", result: null } })
+        const terminal = yield* task({ status: "terminal", outcome: { status: "completed", result: null } })
+        const aborting = yield* task({ status: "running", checkpoint: null }, true)
+        const own = (taskId: TaskId) =>
+          Effect.exit(session.commit((tx) => tx.createConversation({ ownership: { kind: "task", taskId } })))
+
+        expect(Exit.isSuccess(yield* own(live))).toBe(true)
+        for (const [taskId, why] of [
+          [completing, "is completing"],
+          [terminal, "is terminal"],
+          [aborting, "is abort-marked"],
+        ] as const) {
+          expect((defectOf(yield* own(taskId)) as Error).message).toBe(`Conversation owner task ${taskId} ${why}`)
+        }
       }),
     ))
 })
