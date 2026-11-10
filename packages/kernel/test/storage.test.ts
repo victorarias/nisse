@@ -116,6 +116,15 @@ describe("Storage port", () => {
     expect(log).toEqual(["released", "closed"])
   })
 
+  test("storage-port: an open interrupted while it migrates closes the database it was given", async () => {
+    const { database, reached, log, arm } = await holdingDatabase()
+    arm()
+    const opening = Effect.runFork(SqliteStorage.open(database))
+    await reached.promise
+    await Effect.runPromise(Fiber.interrupt(opening))
+    expect(log).toEqual(["closed"])
+  })
+
   test("storage-port: a close whose first caller is interrupted still completes for the next caller", async () => {
     const { storage, database, log } = await held()
     const reading = Effect.runPromise(storage.document(DOCUMENT, "current"))
@@ -131,10 +140,10 @@ describe("Storage port", () => {
 const DOCUMENT = idFromNumber<DocumentId>(2)
 
 /**
- * Storage over a database whose next transaction suspends at its first query until `release`, as a database on another
- * runtime may: storage holding one document, and a log of when the database closed.
+ * A database whose next query, once `arm` is called, suspends until `release`, as a database on another runtime may,
+ * and a log of when it closed.
  */
-const held = async () => {
+const holdingDatabase = async () => {
   const real = await Effect.runPromise(openSqliteDatabase(":memory:"))
   const log: string[] = []
   const reached = Promise.withResolvers<void>()
@@ -164,6 +173,12 @@ const held = async () => {
         Effect.sync(() => log.push("closed")),
       ),
   }
+  return { database, reached, release, log, arm: () => (armed = true) }
+}
+
+/** Storage holding one document over a holding database, armed. */
+const held = async () => {
+  const { database, reached, release, log, arm } = await holdingDatabase()
   const storage = await Effect.runPromise(SqliteStorage.open(database))
   await Effect.runPromise(
     storage.commit(
@@ -179,6 +194,6 @@ const held = async () => {
       () => {},
     ),
   )
-  armed = true
+  arm()
   return { storage, database: { reached, release }, log }
 }

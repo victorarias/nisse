@@ -82,7 +82,8 @@ export const openSqliteStorage = (
   path: string,
   options: SqliteDatabaseOptions = {},
 ): Effect.Effect<SqliteStorage, StorageError> =>
-  Effect.flatMap(openSqliteDatabase(path, options), (database) => SqliteStorage.open(database))
+  // Uninterruptible, so no interruption falls between opening the database and handing it to storage.
+  Effect.uninterruptible(Effect.flatMap(openSqliteDatabase(path, options), (database) => SqliteStorage.open(database)))
 
 /** The storage contract over a `SqliteDatabase`, which it owns. */
 export class SqliteStorage implements Storage {
@@ -98,13 +99,13 @@ export class SqliteStorage implements Storage {
     this.#nextId = nextId
   }
 
-  /** Opens storage over `db`, migrating it to the current schema. A failure closes `db`. */
+  /** Opens storage over `db`, migrating it to the current schema. A failure or an interruption closes `db`. */
   static open(db: SqliteDatabase): Effect.Effect<SqliteStorage, StorageError> {
     return Effect.gen(function* () {
       yield* applySqliteMigrations(db)
       const metadata = yield* readMetadata(db)
       return new SqliteStorage(db, Number(metadata.next_id))
-    }).pipe(Effect.tapError(() => Effect.ignore(db.close())))
+    }).pipe(Effect.onError(() => Effect.ignore(db.close())))
   }
 
   /**
