@@ -277,6 +277,42 @@ describe("tasks", () => {
       }),
     ))
 
+  test("task-wait-for: a wait interrupted while the scheduler reads for it keeps no waiter behind", () =>
+    run(
+      Effect.gen(function* () {
+        const inner = yield* openSqliteStorage(databasePath())
+        const reading = Deferred.makeUnsafe<void>()
+        const released = Deferred.makeUnsafe<void>()
+        let hold = false
+        const storage = new Proxy(inner, {
+          get(target, key) {
+            if (key === "conversation")
+              return (...args: Parameters<Storage["conversation"]>) =>
+                hold
+                  ? Effect.andThen(
+                      Effect.andThen(Deferred.succeed(reading, undefined), Deferred.await(released)),
+                      inner.conversation(...args),
+                    )
+                  : inner.conversation(...args)
+            const value = Reflect.get(target, key)
+            return typeof value === "function" ? value.bind(target) : value
+          },
+        }) as Storage
+        const session = yield* openSession(storage)
+        // A read-only scheduler loads a new task's ownership chain only when a wait needs it; the test holds that read
+        // open.
+        const scheduler = yield* openTaskScheduler({ session, registry: registry(forever), readOnly: true })
+        yield* start(session, yield* conversation(session), forever, null)
+        hold = true
+        const waiting = yield* Effect.forkChild(scheduler.waitForIdle())
+        yield* Deferred.await(reading)
+        yield* Fiber.interrupt(waiting)
+        yield* Deferred.succeed(released, undefined)
+        yield* session.read(() => Effect.void)
+        expect(scheduler.indexSizes.waiters).toBe(0)
+      }),
+    ))
+
   test("session-clock, task-lifecycle-times: a TestClock drives a durable sleep, and the receipt stores when the task started and ended", () =>
     run(
       Effect.gen(function* () {

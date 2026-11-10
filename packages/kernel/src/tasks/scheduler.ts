@@ -159,7 +159,12 @@ export interface TaskScheduler {
     ReadFailure
   >
   /** For tests that bound memory: what the scheduler indexes hold. */
-  readonly indexSizes: { readonly live: number; readonly below: number; readonly conversations: number }
+  readonly indexSizes: {
+    readonly live: number
+    readonly below: number
+    readonly conversations: number
+    readonly waiters: number
+  }
 }
 
 /**
@@ -463,23 +468,33 @@ class Scheduler<Svc> implements TaskScheduler {
 
   waitForTask<R>(id: TaskId<R>): Effect.Effect<SettledTask<R>, ReadFailure> {
     return Effect.gen({ self: this }, function* () {
-      // Checked and registered on the line, so no terminal publication falls between them.
-      const found = yield* this.#session.read((storage) =>
-        Effect.gen({ self: this }, function* () {
-          if (this.#closing) return { waiter: undefined, exit: this.#closedError() }
-          if (this.#live.has(id)) {
-            const waiter: Waiter<TaskRecord> =
-              yield* Queue.bounded<Exit.Exit<TaskRecord, SessionFailed | SessionClosed>>(1)
-            addTo(this.#taskWaiters, id, waiter)
-            return { waiter, exit: undefined }
-          }
-          const record = yield* storage.task(id)
-          if (record === undefined) return yield* Effect.die(new Error(`Task ${id} does not exist`))
-          return { waiter: undefined, exit: Exit.succeed(record) }
-        }),
-      )
-      const exit =
-        found.exit ?? (yield* this.#await(found.waiter!, () => deleteFrom(this.#taskWaiters, id, found.waiter!)))
+      // An interrupted read does not wait for its body, so the body registers only a wait not yet interrupted, and
+      // the interruption unregisters one the body already registered.
+      const waiter: Waiter<TaskRecord> = yield* Queue.bounded<Exit.Exit<TaskRecord, SessionFailed | SessionClosed>>(1)
+      let interrupted = false
+      const exit = yield* this.#session
+        .read((storage) =>
+          // Checked and registered on the line, so no terminal publication falls between them.
+          Effect.gen({ self: this }, function* () {
+            if (this.#closing) return this.#closedError()
+            if (this.#live.has(id)) {
+              if (!interrupted) addTo(this.#taskWaiters, id, waiter)
+              return undefined
+            }
+            const record = yield* storage.task(id)
+            if (record === undefined) return yield* Effect.die(new Error(`Task ${id} does not exist`))
+            return Exit.succeed(record)
+          }),
+        )
+        .pipe(
+          Effect.flatMap((settled) => (settled === undefined ? Queue.take(waiter) : Effect.succeed(settled))),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted = true
+              deleteFrom(this.#taskWaiters, id, waiter)
+            }),
+          ),
+        )
       return (yield* exit) as SettledTask<R>
     })
   }
@@ -487,18 +502,28 @@ class Scheduler<Svc> implements TaskScheduler {
   waitForIdle(conversationId?: ConversationId): Effect.Effect<void, ReadFailure> {
     return Effect.gen({ self: this }, function* () {
       const key = conversationId ?? ALL
-      const found = yield* this.#session.read(() =>
-        Effect.gen({ self: this }, function* () {
-          if (this.#closing) return { waiter: undefined, exit: this.#closedError() }
-          yield* this.#loadChains()
-          if (this.#idle(conversationId)) return { waiter: undefined, exit: Exit.void }
-          const waiter: Waiter<void> = yield* Queue.bounded<Exit.Exit<void, SessionFailed | SessionClosed>>(1)
-          addTo(this.#idleWaiters, key, waiter)
-          return { waiter, exit: undefined }
-        }),
-      )
-      const exit =
-        found.exit ?? (yield* this.#await(found.waiter!, () => deleteFrom(this.#idleWaiters, key, found.waiter!)))
+      // Registered as waitForTask registers its waiter.
+      const waiter: Waiter<void> = yield* Queue.bounded<Exit.Exit<void, SessionFailed | SessionClosed>>(1)
+      let interrupted = false
+      const exit = yield* this.#session
+        .read(() =>
+          Effect.gen({ self: this }, function* () {
+            if (this.#closing) return this.#closedError()
+            yield* this.#loadChains()
+            if (this.#idle(conversationId)) return Exit.void
+            if (!interrupted) addTo(this.#idleWaiters, key, waiter)
+            return undefined
+          }),
+        )
+        .pipe(
+          Effect.flatMap((settled) => (settled === undefined ? Queue.take(waiter) : Effect.succeed(settled))),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted = true
+              deleteFrom(this.#idleWaiters, key, waiter)
+            }),
+          ),
+        )
       return yield* exit
     })
   }
@@ -582,7 +607,10 @@ class Scheduler<Svc> implements TaskScheduler {
   get indexSizes() {
     let below = 0
     for (const ids of this.#below.values()) below += ids.size
-    return { live: this.#live.size, below, conversations: this.#conversations.size }
+    let waiters = 0
+    for (const set of this.#taskWaiters.values()) waiters += set.size
+    for (const set of this.#idleWaiters.values()) waiters += set.size
+    return { live: this.#live.size, below, conversations: this.#conversations.size, waiters }
   }
 
   #inspectTask(record: TaskRecord, snapshot: TaskSnapshot<unknown> | undefined): TaskInspection["state"] {
@@ -1796,13 +1824,6 @@ class Scheduler<Svc> implements TaskScheduler {
 
   #now(): number {
     return this.#internals.now()
-  }
-
-  // Waiting
-
-  /** Waits for a waiter's delivery; a caller that stops waiting unregisters it. */
-  #await<A>(waiter: Waiter<A>, unregister: () => void): Effect.Effect<Exit.Exit<A, SessionFailed | SessionClosed>> {
-    return Effect.onInterrupt(Queue.take(waiter), () => Effect.sync(unregister))
   }
 }
 
