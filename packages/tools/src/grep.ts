@@ -1,6 +1,7 @@
 // `grep`: regular expression search of file contents through the call's environment.
 import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@nisse/harness"
 import { bool, obj, opt, type Static, str } from "@nisse/schema"
+import type { ExecutionEnv, FileError } from "@nisse/env"
 import { Effect } from "effect"
 import { requireEnv, resolveToolPath } from "./environment.ts"
 import { filesBelow, globMatcher } from "./files.ts"
@@ -47,23 +48,55 @@ export function createGrepTool() {
         const matches: string[] = []
         for (const file of files) {
           if (file !== "" && !wanted(file)) continue
-          const bytes = yield* Effect.option(env.readBinaryFile(file === "" ? root : yield* env.joinPath([root, file])))
-          if (bytes._tag === "None" || bytes.value.subarray(0, BINARY_PROBE).includes(0)) continue
+          const path = file === "" ? root : yield* env.joinPath([root, file])
+          if (!(yield* Effect.orElseSucceed(isText(env, path), () => false))) continue
           const shown = file === "" ? (input.path ?? root) : shownRoot === "" ? file : `${shownRoot}/${file}`
-          const lines = new TextDecoder().decode(bytes.value).split(/\r?\n/)
-          if (lines.at(-1) === "") lines.pop()
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i]!
-            if (!regex.test(line)) continue
-            matches.push(
-              `${shown}:${i + 1}:${line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS)} [line cut]` : line}`,
-            )
-            if (matches.length === MATCH_LIMIT) {
-              return text(`${matches.join("\n")}\n[stopped at ${MATCH_LIMIT} matches; narrow the pattern or path]`)
-            }
+          yield* Effect.orElseSucceed(
+            searchLines(env, path, regex, (number, line) => {
+              matches.push(
+                `${shown}:${number}:${line.length > LINE_CHARS ? `${line.slice(0, LINE_CHARS)} [line cut]` : line}`,
+              )
+              return matches.length < MATCH_LIMIT
+            }),
+            () => undefined,
+          )
+          if (matches.length === MATCH_LIMIT) {
+            return text(`${matches.join("\n")}\n[stopped at ${MATCH_LIMIT} matches; narrow the pattern or path]`)
           }
         }
         return text(matches.length === 0 ? "No matches." : matches.join("\n"))
       }),
   })
 }
+
+/** Whether the file's first bytes hold no NUL, read without loading the rest. */
+const isText = (env: ExecutionEnv, path: string) =>
+  Effect.acquireUseRelease(
+    env.openBinaryReader(path),
+    (reader) => Effect.map(reader.read(0, BINARY_PROBE), (head) => !head.includes(0)),
+    (reader) => reader.close(),
+  )
+
+/**
+ * Hands each line of the file that matches `regex` to `found`, one line in memory at a time, until `found` returns
+ * false.
+ */
+const searchLines = (
+  env: ExecutionEnv,
+  path: string,
+  regex: RegExp,
+  found: (number: number, line: string) => boolean,
+): Effect.Effect<void, FileError> =>
+  Effect.acquireUseRelease(
+    env.openTextLineReader(path),
+    (reader) =>
+      Effect.gen(function* () {
+        for (let number = 1; ; number++) {
+          const line = yield* reader.readLine()
+          if (line === undefined) return
+          const text = line.text.endsWith("\r") ? line.text.slice(0, -1) : line.text
+          if (regex.test(text) && !found(number, text)) return
+        }
+      }),
+    (reader) => reader.close(),
+  )

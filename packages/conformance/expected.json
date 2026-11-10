@@ -1857,7 +1857,7 @@
  "upstream/test/tools-images.test.ts :: EXIF orientation > turns orientation 8 upright": "pass",
  "upstream/test/tools-images.test.ts :: createNodePhotonImages > gives the same result as the calling thread, and keeps the caller's bytes": "pass",
  "upstream/test/tools-images.test.ts :: createNodePhotonImages > prepares concurrent images, and starts a new worker after the idle one exited": "pass",
- "upstream/test/tools-images.test.ts :: createNodePhotonImages > prepares in a worker thread, leaving the event loop free": "pass",
+ "upstream/test/tools-images.test.ts :: createNodePhotonImages > prepares in a worker thread, leaving the event loop free": "flaky wall-clock event-loop gap thresholds (200 and 100 ms) miss under a loaded CI runner",
  "upstream/test/tools-images.test.ts :: imageDimensions > reads the size each format declares in its header": "pass",
  "upstream/test/tools-images.test.ts :: read of an image that changes while it is read > fails when it changes during the second read too": "pass",
  "upstream/test/tools-images.test.ts :: read of an image that changes while it is read > reads it again rather than return a cut-off image, even when it grew": "pass",

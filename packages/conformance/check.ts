@@ -51,6 +51,10 @@ const baseline = (mode: Mode): Record<string, string> => {
 	return (JSON.parse(readFileSync(path, "utf8")) as Record<Mode, Record<string, string>>)[mode];
 };
 
+/** The first lines of a failure message, indented under its problem. */
+const why = (message: string | undefined): string =>
+	message ? `\n${message.split("\n").slice(0, 12).map((line) => `      ${line}`).join("\n")}` : "";
+
 function judgeAdapter(mode: Mode, result: RunResult): void {
 	for (const [id, status] of result.tests) {
 		const row = expected[id];
@@ -59,7 +63,7 @@ function judgeAdapter(mode: Mode, result: RunResult): void {
 			continue;
 		}
 		const state = stateName(stateOf(row, mode));
-		if (state === "pass" && status !== "passed") problems.push(`${mode}: expected pass, got ${status}: ${id}`);
+		if (state === "pass" && status !== "passed") problems.push(`${mode}: expected pass, got ${status}: ${id}${why(result.failures.get(id))}`);
 	}
 	for (const [id, row] of Object.entries(expected)) {
 		if (stateName(stateOf(row, mode)) === "pass" && !result.tests.has(id)) problems.push(`${mode}: expected pass, test did not run: ${id}`);
