@@ -17,17 +17,40 @@ packages are built beside the code the binary runs and replace it in one
 change. Until then `packages/nisse` and `packages/protocol` are what runs, and
 their tests guard it.
 
-Plans live in the garden, not in this repository. The rebuild is the plot
-`rebuild-nisse-durable-kernel-written-effect` (`attn seed show s-032v2x`). A
-step name such as `kernel-storage`, in a `pending` marker or a README, is one
-of its seeds, and a decision number such as `D5` is one of its decisions.
+## Domain language
 
-## Words
+These terms are nisse's domain model. Use them with these meanings in code,
+tests, docs and conversation.
 
-A **conversation** is a transcript. An **entry** is one immutable record in it.
-A **commit** is one atomic write. A **submission** is input handed to a
-conversation. A **run** goes from an input to its `run_end`. A **turn** is one
-model response and its tool calls.
+```text
+home                    one directory of state, NISSE_HOME; like a tenant
+├─ server (at most 1)   the process that owns the home's state and runs its work
+├─ conversation (0..n)
+├─ provider (1..n)      a way to reach models: Claude Code or a ChatGPT sign-in
+└─ extension (0..n)     TypeScript the server loads to add tools and hooks
+```
+
+```text
+conversation            one transcript and the work done in it; like one chat
+├─ entry (0..n)         one immutable record in the transcript: a message, a
+│                       tool call, a result, an approval, a run_end
+├─ submission (0..n)    input handed to the conversation; it starts a run, or
+│                       waits in the queue while a run works
+├─ run (0..n)           the work from one input to its run_end; 1 at a time
+│  ├─ turn (1..n)       one model response and its tool calls
+│  └─ run_end (1)       the entry that says how the run ended
+├─ model (1)            a provider, a model and a reasoning effort
+└─ subagent (0..n)      a conversation started by this one, under it in a tree
+```
+
+```text
+commit                  one atomic write to the store; the only way state
+                        changes, and what clients are shown
+client                  a program connected to the server's socket that draws
+                        committed state and sends input; the TUI is one
+approval                a tool call waiting for a person to allow or deny it;
+                        the first answer counts
+```
 
 ## Rules that keep it what it is
 
