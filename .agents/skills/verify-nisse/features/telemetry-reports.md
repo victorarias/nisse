@@ -4,7 +4,7 @@ Runs, requests and tools emit spans and metrics, and problems nobody asked about
 
 ## Sub-features
 
-- `telemetry-spans` [kernel, pending codemode-package] Spans for runs, requests and tools (R78-90, `harness/telemetry`): Diagnose slow or failing runs
+- `telemetry-spans` [kernel] Spans for runs, requests and tools (R78-90, `harness/telemetry`): Diagnose slow or failing runs
 - `telemetry-metrics` [kernel, pending harness-compaction] Metrics (R78-90): Dashboards
 - `telemetry-trace-carriers` [kernel] Trace carriers across calls (R78-90): One trace crosses tools and subagents
 - `telemetry-identity` [kernel, pending chatgpt-provider] Identity on Context (R78-90): Actions are attributed to a user or service
