@@ -51,6 +51,7 @@ import {
 import { Cause, Clock, Deferred, Effect, Exit, Layer, Scope } from "effect"
 import { AgentDoc, agentHooks, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"
+import { createCompaction } from "./compaction.ts"
 import { ContextReads } from "./context.ts"
 import { ProviderDoc } from "./documents.ts"
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts"
@@ -62,6 +63,7 @@ import { type ConversationHandle, type ReportFrom, type TaskApi, TaskServices } 
 import type {
   Agent,
   AgentChange,
+  CompactionResult,
   ContextView,
   DocumentReader,
   HarnessSettings,
@@ -146,6 +148,11 @@ export interface Conversation {
    * the reset waits in the inbox, as every write does.
    */
   reset(handoff?: string): Effect.Effect<void, ReadError | CommitError>
+  /**
+   * Starts a manual compaction of the conversation, focused by `instructions` (spec 8.7). It never takes run control:
+   * its summary is placed like a write. `Conversation.abort()` aborts it.
+   */
+  compact(instructions?: string): Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession>
   /** Admits a submission in its own commit (spec 6). */
   submit(draft: SubmissionDraft): Effect.Effect<Submission, AdmissionError | ReadError | CommitError>
   /** Admits a submission inside `tx`, before the commit's first table write; it is stored or lost with that commit. */
@@ -536,6 +543,13 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       },
       configure: (change) => this.session.commit((tx) => configure(tx, id, change)) as Effect.Effect<void, CommitError>,
       reset: (handoff) => this.#reset(id, handoff),
+      compact: (instructions) => {
+        const input = { reason: "manual" as const, ...(instructions === undefined ? {} : { instructions }) }
+        return Effect.andThen(
+          this.resume,
+          commitIn(this.session, { conversationId: id }, (tx) => createCompaction(tx, id, input)),
+        ) as Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession>
+      },
       submit: ((first: SubmissionDraft | Tx, second?: SubmissionDraft) =>
         isDraft(first)
           ? this.submissions.submit(id, first)

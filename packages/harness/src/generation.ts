@@ -38,7 +38,7 @@ import { Cause, Effect, Exit, Fiber, Queue, Stream } from "effect"
 import { addTools, agentHooks, sectionExtension } from "./agent.ts"
 import { compactionPolicy, createCompaction, estimateContext, selectCut } from "./compaction.ts"
 import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "./entries.ts"
-import { ProviderDoc } from "./documents.ts"
+import { providerSessionId } from "./documents.ts"
 import { applyBoundary, type Boundary, hasQueuedReset, prepareBoundary, withdrawQueuedInputs } from "./inbox.ts"
 import {
   appendAssistant,
@@ -725,24 +725,6 @@ const providerPayload = (ctx: Ctx, model: Model<Api>, payload: unknown): Effect.
       ),
       current,
     ).pipe(Effect.map(() => current))
-  })
-
-/** The provider-facing session ID of the task's conversation, created on first use. */
-const providerSessionId = (runtime: Runtime) =>
-  Effect.gen(function* () {
-    const existing = yield* runtime.snapshot(ProviderDoc, runtime.conversationId)
-    if (existing !== undefined) return existing.sessionId
-    let created: string | undefined
-    yield* runtime.commit((tx) =>
-      Effect.map(tx.doc(ProviderDoc, runtime.conversationId), (doc) => {
-        created = doc.sessionId
-        return undefined
-      }),
-    )
-    if (created === undefined) {
-      return yield* Effect.die(new Error(`Conversation ${runtime.conversationId} has no provider session ID`))
-    }
-    return created
   })
 
 /**

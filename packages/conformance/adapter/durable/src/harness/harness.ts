@@ -82,8 +82,8 @@ class ConversationImpl {
 		return this.#harness.usable(() => upstreamSubmit(this.#conversation.submit.bind(this.#conversation) as Any)(first, second));
 	}
 
-	compact(): never {
-		return unimplemented("Conversation.compact", "harness-compaction")();
+	compact(instructions: string | undefined, context: Context) {
+		return this.#harness.usable(() => run(this.#conversation.compact(instructions), context));
 	}
 
 	watch(): never {
