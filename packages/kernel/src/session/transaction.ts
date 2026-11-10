@@ -629,6 +629,11 @@ export class Transaction implements Tx {
     return candidate !== undefined ? Effect.succeed(candidate) : this.#committedTask(id)
   }
 
+  /** The task's candidate in this commit, if it created or replaced it. */
+  stagedTask(id: TaskId): TaskRecord | undefined {
+    return this.#tasks.get(id)?.write?.record
+  }
+
   /** The candidates of the tasks this commit created or replaced so far. */
   stagedTasks(): readonly TaskRecord[] {
     const records: TaskRecord[] = []

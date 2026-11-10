@@ -662,6 +662,36 @@ describe("tasks", () => {
       }),
     ))
 
+  test("task-memory-bounded: an ownership chain a thousand tasks deep costs the scheduler one index entry per task, and nothing once it ends", () =>
+    run(
+      Effect.gen(function* () {
+        const { session, scheduler } = yield* open(yield* openSqliteStorage(databasePath()), {
+          registry: registry(forever),
+        })
+        const conversationId = yield* conversation(session)
+        const depth = 1000
+        const top = yield* session.commit((tx) =>
+          Effect.gen(function* () {
+            const top = yield* tx.createTask(forever, null, { ownership: { kind: "conversation" }, conversationId })
+            let owner = top
+            for (let n = 0; n < depth; n++) {
+              owner = yield* tx.createTask(forever, null, {
+                ownership: { kind: "task", taskId: owner },
+                conversationId,
+              })
+            }
+            return top
+          }),
+        )
+        // Each task is listed once, under its owner, whatever its depth.
+        expect(scheduler.indexSizes).toEqual({ live: depth + 1, below: depth + 1, conversations: 1, waiters: 0 })
+        yield* scheduler.abortTask(top)
+        expect((yield* scheduler.waitForTask(top)).state.outcome.status).toBe("aborted")
+        yield* scheduler.waitForIdle()
+        expect(scheduler.indexSizes).toEqual({ live: 0, below: 0, conversations: 0, waiters: 0 })
+      }),
+    ))
+
   test("session-failed: a reservation whose commit fails fails the Session, and it still closes", () =>
     run(
       Effect.gen(function* () {

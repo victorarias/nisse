@@ -37,7 +37,7 @@ Durable work is a task with phases and checkpoints, scheduled across restarts, w
 - `task-graph-rpc` [pending surface-conversations] The client path for Task graph view (R799-814, §9.4): See and draw all work and its dependencies
 - `task-tool-rounds` [kernel, pending harness-tools] Tool rounds as tasks (§8.5): A round finishes or restarts as a unit
 - `task-scheduling-ownership` [kernel, pending harness-tools] Scheduling ownership on one process (§5.4): Restart picks up exactly the unfinished work
-- `task-memory-bounded` [kernel] Long chains of ended tasks leave the scheduler's indexes and the document cache as they were: memory does not grow with the work done.
+- `task-memory-bounded` [kernel] The scheduler's memory and the cost of each task follow the work alive, not how deep its ownership chain runs, and work that ended leaves nothing behind.
 - `task-id-order` [kernel] Live and ended tasks are listed in a stable order through ids that always increase.
 
 ## How to get to it
