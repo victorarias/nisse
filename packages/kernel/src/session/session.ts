@@ -11,7 +11,7 @@
 // completer's call, which on the line would run that fiber's code before the next job; outcomes therefore go back
 // through a queue, whose waiter resumes later. Observers are called on the line, so they must only capture.
 import { type Op, track } from "@nisse/delta"
-import { type Cause, Deferred, Effect, Exit, Fiber, Queue, type Scope } from "effect"
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Queue, type Scope } from "effect"
 import {
   type AnyDocDefinition,
   type AnyDocToken,
@@ -34,7 +34,7 @@ import {
   type DocumentCacheSizes,
   type LoadedDocument,
 } from "./documents.ts"
-import { type DocumentCommitChange, Transaction, type Tx } from "./transaction.ts"
+import { type CommitScope, type DocumentCommitChange, Transaction, type Tx } from "./transaction.ts"
 import { type DocumentWatch, makeWatch } from "./watch.ts"
 
 /** How a Session ended: closed, or failed with the first error (spec 10.1). */
@@ -105,7 +105,10 @@ export type SessionOptions = {
    * healthy; a commit that writes nothing succeeds.
    */
   readonly readOnly?: boolean
-  /** The clock document retention is measured by, in ms. Default `Date.now`. */
+  /**
+   * The clock document retention and task lifecycle times are measured by, in ms. Default: Effect's `Clock` of the
+   * context that opens the Session, so a `TestClock` controls it.
+   */
   readonly now?: () => number
   /**
    * How long a loaded document with no observer stays in memory after its last use, in ms, read at each use; `0` drops
@@ -187,6 +190,25 @@ export const openSession = (
 export const makeSession = (storage: Storage, options: SessionOptions = {}): Effect.Effect<Session> =>
   SessionImpl.make(storage, options)
 
+/** What the task scheduler needs of a Session beyond its public surface. Not exported from the package. */
+export interface SessionInternals {
+  /** `commit` with a bound scope, whose callback gets the transaction with its scheduler operations. */
+  commitIn<A, E>(scope: CommitScope, body: (tx: Transaction) => Effect.Effect<A, E>): Effect.Effect<A, E | CommitError>
+  /**
+   * Adds a step closing runs after the line drained and every observer ended, before Storage closes: nothing is
+   * published any more, and `store` writes straight to Storage. A failed write fails the Session.
+   */
+  onClosing(step: (store: (writes: readonly StorageWrite[]) => Effect.Effect<void>) => Effect.Effect<void>): void
+  /** Fails the Session with an error of the scheduler's own commits. */
+  fail(error: unknown): void
+  /** The Session's clock, in ms. */
+  now(): number
+  /** Storage's reads behind the failure rule, for code that runs inside a job on the line, such as a commit callback. */
+  readonly lineReads: StorageReads
+}
+
+export const internals = (session: Session): SessionInternals => session as SessionImpl
+
 type Job = {
   /** Set by the caller once it stops waiting; the line skips a job not started, and interrupts its callback. */
   cancelled: boolean
@@ -216,7 +238,7 @@ const NO_OPS: readonly Op[] = []
 /** The longest delay `setTimeout` takes: 2^31 - 1 ms. */
 const MAX_TIMER_MS = 2_147_483_647
 
-class SessionImpl implements Session {
+class SessionImpl implements Session, SessionInternals {
   readonly #storage: Storage
   readonly #readOnly: boolean
   readonly #jobs: Queue.Queue<Job, Cause.Done>
@@ -239,6 +261,8 @@ class SessionImpl implements Session {
   #closeError: StorageError | undefined
   /** Storage's reads, each behind the failure rule. */
   readonly #reads: StorageReads
+  readonly #closingSteps: ((store: (writes: readonly StorageWrite[]) => Effect.Effect<void>) => Effect.Effect<void>)[] =
+    []
   /** The pending cache sweep: a job queued on the line, or a timer and the time it fires. */
   #sweep: { readonly at: number; readonly timer: ReturnType<typeof setTimeout> | undefined } | undefined
 
@@ -247,13 +271,14 @@ class SessionImpl implements Session {
     options: SessionOptions,
     jobs: Queue.Queue<Job, Cause.Done>,
     closed: Deferred.Deferred<SessionEnd>,
+    clock: Clock.Clock,
   ) {
     this.#storage = storage
     this.#readOnly = options.readOnly === true
     this.#jobs = jobs
     this.#closedEnd = closed
     this.#reads = guardedReads(storage, (call) => this.#storageCall(call))
-    const now = options.now ?? Date.now
+    const now = options.now ?? (() => clock.currentTimeMillisUnsafe())
     // Cache bookkeeping never changes the outcome of what it follows: a throwing clock or retention is the default.
     this.#now = () => {
       try {
@@ -284,6 +309,7 @@ class SessionImpl implements Session {
         options,
         yield* Queue.unbounded<Job, Cause.Done>(),
         yield* Deferred.make<SessionEnd>(),
+        yield* Clock.Clock,
       )
       // Detached: the line ends when close ends its queue, never by interruption.
       session.#line = yield* Effect.forkDetach(session.#runLine())
@@ -292,6 +318,31 @@ class SessionImpl implements Session {
   }
 
   commit<A, E>(body: (tx: Tx) => Effect.Effect<A, E>): Effect.Effect<A, E | CommitError> {
+    return this.commitIn(NO_SCOPE, body)
+  }
+
+  onClosing(step: (store: (writes: readonly StorageWrite[]) => Effect.Effect<void>) => Effect.Effect<void>): void {
+    this.#closingSteps.push(step)
+  }
+
+  now(): number {
+    return this.#now()
+  }
+
+  get lineReads(): StorageReads {
+    return this.#reads
+  }
+
+  fail(error: unknown): void {
+    this.#fail(error)
+    // A failure outside a job starts closing at once: no job may come to notice it.
+    this.#beginClose()
+  }
+
+  commitIn<A, E>(
+    scope: CommitScope,
+    body: (tx: Transaction) => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E | CommitError> {
     return Effect.uninterruptibleMask((restore) =>
       Effect.gen({ self: this }, function* () {
         const refused = this.#admissionError()
@@ -301,7 +352,7 @@ class SessionImpl implements Session {
           cancelled: false,
           callback: undefined,
           storing: false,
-          run: Effect.suspend(() => (job.cancelled ? Effect.void : this.#runCommit(job, body, reply))),
+          run: Effect.suspend(() => (job.cancelled ? Effect.void : this.#runCommit(job, scope, body, reply))),
         }
         if (!(yield* Queue.offer(this.#jobs, job)))
           return yield* Effect.fail(this.#admissionError() ?? SessionClosed.instance)
@@ -515,17 +566,24 @@ class SessionImpl implements Session {
     )
   }
 
-  #runCommit<A, E>(job: Job, body: (tx: Tx) => Effect.Effect<A, E>, reply: Queue.Queue<Exit.Exit<A, E | CommitError>>) {
+  #runCommit<A, E>(
+    job: Job,
+    scope: CommitScope,
+    body: (tx: Transaction) => Effect.Effect<A, E>,
+    reply: Queue.Queue<Exit.Exit<A, E | CommitError>>,
+  ) {
     const deliver = (exit: Exit.Exit<A, E | CommitError>) => Queue.offer(reply, exit)
     return Effect.gen({ self: this }, function* () {
       if (this.#failure !== undefined) return yield* deliver(Exit.fail(this.#sessionFailed()))
       const tx = new Transaction({
         storage: this.#storage,
+        now: this.#now,
+        scope,
         failed: (error) => this.#fail(error),
         cached: (id) => this.#cache.get(id),
         load: (definition, id, address) => this.#loadDocument(definition, id, address),
         install: (document) => this.#cache.install(document),
-        evict: (id, recordId) => this.#cache.evict(id, recordId),
+        retire: (id, recordId) => this.#cache.retire(id, recordId),
       })
       const callback = yield* Effect.forkChild(
         Effect.suspend(() => body(tx)),
@@ -843,9 +901,19 @@ class SessionImpl implements Session {
         if (this.#observers.delete(observer)) contain(() => observer.end(end))
       }
       this.#cache.clear()
+      for (const step of this.#closingSteps.splice(0)) {
+        const stepped = yield* Effect.exit(step((writes) => this.#storeAtClose(writes)))
+        if (Exit.isFailure(stepped)) this.#fail(Cause.squash(stepped.cause))
+      }
       const closed = yield* Effect.exit(this.#storage.close())
       if (failure !== undefined)
         return yield* Deferred.succeed(this.#closedEnd, { kind: "failed", error: failure.error })
+      // A closing step's write that failed fails the close, as Storage's own close does.
+      const stepFailure = this.#failure
+      if (stepFailure !== undefined) {
+        if (stepFailure.error instanceof StorageError) this.#closeError = stepFailure.error
+        return yield* Deferred.succeed(this.#closedEnd, { kind: "failed", error: stepFailure.error })
+      }
       if (Exit.isFailure(closed)) {
         const error = failureOf(closed)
         this.#failure = { error }
@@ -855,7 +923,19 @@ class SessionImpl implements Session {
       yield* Deferred.succeed(this.#closedEnd, { kind: "closed" })
     })
   }
+
+  /** Writes straight to Storage while closing, after the line: nothing is published. A failure fails the Session. */
+  #storeAtClose(writes: readonly StorageWrite[]): Effect.Effect<void> {
+    if (writes.length === 0 || this.#failure !== undefined || this.#readOnly) return Effect.void
+    return Effect.flatMap(Effect.exit(this.#storage.commit([writes], () => {})), (stored) => {
+      if (Exit.isFailure(stored)) this.#fail(failureOf(stored))
+      else if (stored.value.refused !== undefined) this.#fail(stored.value.refused)
+      return Effect.void
+    })
+  }
 }
+
+const NO_SCOPE: CommitScope = {}
 
 const noop = (): void => {}
 

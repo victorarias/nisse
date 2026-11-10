@@ -19,7 +19,7 @@ Typed JSON documents are committed with entries, scoped, forked, migrated and wa
 - `doc-deltas` [kernel] Document deltas to watchers (§9.1): A client updates a big document cheaply
 - `doc-provider` [kernel, pending harness-run-core] Built-in `pi.provider` (§2.2): Provider session survives forks and switches
 - `doc-definitions` [kernel] A document definition declares its version, scope and history, and bad definitions fail at definition time.
-- `doc-tables` [kernel, pending harness-shell] A transaction reads and writes keyed tables as part of the same commit.
+- `doc-tables` [kernel] A transaction reads and writes keyed tables as part of the same commit.
 
 ## How to get to it
 

@@ -50,6 +50,7 @@ import type {
   TaskRecord,
 } from "../records.ts"
 import type { ReadError, Storage } from "../storage.ts"
+import type { Task, TaskOptions } from "../tasks/task.ts"
 import type { LoadedDocument } from "./documents.ts"
 import type { Entry, EntryDraft, TypedEntry, TypedEntryDraft } from "./entry.ts"
 
@@ -158,6 +159,16 @@ export interface Tx {
   settleSubmission(id: SubmissionId, settlement: SubmissionSettlement): Effect.Effect<void>
   /** Places a queued submission at `entry`: an input becomes `placed`, a write `done`. Resolved like a settlement. */
   placeSubmission(id: SubmissionId, entry: EntryId): Effect.Effect<void>
+  /**
+   * Creates a `pending` task at the definition's initial checkpoint (spec 5.1, 5.5). A child task lives in its owner's
+   * conversation and is never background; the owner must be live, not `completing` or abort-marked, in this commit's
+   * final records. Only the scheduler runs it.
+   */
+  createTask<I, S extends { readonly phase: string }, R>(
+    task: Task<I, S, R, never>,
+    input: I,
+    options: TaskOptions,
+  ): Effect.Effect<TaskId<R>, StorageError>
 
   /**
    * The document at an address as a draft this commit changes, created from the token's initializer when absent and
@@ -214,9 +225,15 @@ export interface Tx {
   ): Effect.Effect<void, DocError>
 }
 
+/** Defaults a commit binds to: the conversation `createTask()` uses, and the task its appended entries name. */
+export type CommitScope = { readonly conversationId?: ConversationId; readonly taskId?: TaskId }
+
 /** What a transaction needs from its Session. */
 export type TransactionHost = {
   readonly storage: Storage
+  /** The clock task lifecycle times are stamped with. */
+  readonly now: () => number
+  readonly scope: CommitScope
   /** Fails the Session with a storage error that a call of this transaction hit. */
   readonly failed: (error: StorageError) => void
   /** The cached incarnation at an address, noting the use. */
@@ -228,7 +245,7 @@ export type TransactionHost = {
     address: DocumentAddress,
   ) => Effect.Effect<LoadedDocument | undefined, ReadError>
   readonly install: (document: LoadedDocument) => void
-  readonly evict: (addressId: string, recordId: DocumentId) => void
+  readonly retire: (addressId: string, recordId: DocumentId) => void
 }
 
 type SubmissionChange = SubmissionSettlement | { readonly status: "placed"; readonly entry: EntryId }
@@ -264,6 +281,12 @@ function applySubmissionChange(current: SubmissionRecord, change: SubmissionChan
   }
   // Queued and placed records carry no answer, reason or detail; an unanswered input keeps its entry.
   return { ...current, ...change } as SubmissionRecord
+}
+
+/** One task a transaction touched: its committed record once read, and the candidate it writes. */
+type TransactionTask = {
+  committed?: { readonly record: TaskRecord | undefined }
+  write?: { readonly kind: "create" | "replace"; readonly record: TaskRecord }
 }
 
 /** Where one staged incarnation comes from. */
@@ -326,7 +349,7 @@ type DocumentPlan = {
   /** Creation, copy or change content; absent when only a retirement is written. */
   content?: Extract<StorageWrite, { readonly type: "document.create" | "document.copy" | "document.change" }>
   /** A tracked incarnation's prepared change; absent for copies and retirement-only entries. */
-  readonly change?: {
+  change?: {
     readonly tracker: Tracker<JsonObject>
     readonly prepared: Prepared<JsonObject>
     readonly version: number
@@ -356,8 +379,8 @@ export class Transaction implements Tx {
   /** Submissions this transaction created or changed, by ID, at their latest staged record. */
   readonly #submissions = new Map<SubmissionId, SubmissionRecord>()
   readonly #submissionChanges: { readonly id: SubmissionId; readonly change: SubmissionChange }[] = []
-  /** Committed task records this transaction looked up, for task document checks. */
-  readonly #tasks = new Map<TaskId, TaskRecord | undefined>()
+  /** Each task this transaction looked up, created or replaced: its committed record once read, and its candidate. */
+  readonly #tasks = new Map<TaskId, TransactionTask>()
   /** Every acquisition, copy and retirement, in staging order. */
   readonly #documents: DocumentEntry[] = []
   /** The latest entry at each address. */
@@ -463,7 +486,13 @@ export class Transaction implements Tx {
         this.#assertOpen()
         const { head, ...rest } = draft
         // An undefined `head` is left out by the copy.
-        const record = freeze<EntryRecord>({ ...rest, id, conversationId, head: head === "self" ? id : head })
+        const record = freeze<EntryRecord>({
+          ...rest,
+          id,
+          conversationId,
+          head: head === "self" ? id : head,
+          byTaskId: this.#host.scope.taskId,
+        })
         this.#writes.push({ type: "entry", value: record })
         return record
       }),
@@ -491,6 +520,102 @@ export class Transaction implements Tx {
     return this.#stageChange(id, { status: "placed", entry })
   }
 
+  createTask<I, S extends { readonly phase: string }, R>(
+    task: Task<I, S, R, never>,
+    input: I,
+    options: TaskOptions,
+  ): Effect.Effect<TaskId<R>, StorageError> {
+    return this.#tableWrite(
+      Effect.gen({ self: this }, function* () {
+        const ownership = options.ownership
+        let owner: TaskRecord | undefined
+        if (ownership.kind === "task") {
+          // Its liveness is checked on the owner's final candidate when the writes are assembled.
+          owner = yield* this.currentTask(ownership.taskId)
+          this.#assertOpen()
+          if (owner === undefined) return yield* Effect.die(new Error(`Task owner ${ownership.taskId} does not exist`))
+          if (options.background === true) return yield* Effect.die(new TypeError("A child task cannot be background"))
+          if (options.conversationId !== undefined && options.conversationId !== owner.conversationId) {
+            return yield* Effect.die(
+              new Error(`A child task lives in its owner's conversation ${owner.conversationId}`),
+            )
+          }
+        }
+        const conversationId = owner?.conversationId ?? options.conversationId ?? this.#host.scope.conversationId
+        if (conversationId === undefined) {
+          return yield* Effect.die(new TypeError("Tx.createTask() requires options.conversationId"))
+        }
+        yield* this.#requireConversation(conversationId)
+        this.#assertOpen()
+        const definition = task.definition
+        const checkpoint = definition.initial(input)
+        const id = yield* this.#mint<TaskId<R>>()
+        this.#assertOpen()
+        const record = freeze<TaskRecord>({
+          id,
+          conversationId,
+          kind: definition.name,
+          version: definition.version,
+          input,
+          ...(owner === undefined ? {} : { owner: owner.id }),
+          background: options.background ?? false,
+          abortRequested: false,
+          ...(options.abandonOnRestart === true ? { abandonOnRestart: true } : {}),
+          state: { status: "pending", checkpoint },
+        })
+        this.#taskEntry(id).write = { kind: "create", record }
+        return id
+      }),
+    )
+  }
+
+  // The scheduler's side
+
+  /**
+   * Replaces one task record completely, as the commit's candidate. Tasks change their own state through their runtime;
+   * only the scheduler calls this. Lifecycle times are stamped here: `startedAt` at the first `running`, `endedAt` at
+   * `terminal`, each kept once set. A first table write; misuse throws.
+   */
+  setTask(value: TaskRecord): void {
+    this.#assertOpen()
+    this.#hasTableWrite = true
+    const task = this.#taskEntry(value.id)
+    const candidate = task.write?.record
+    if (candidate?.state.status === "terminal") throw new Error(`Task ${value.id} already has a terminal candidate`)
+    if (candidate !== undefined && candidate.conversationId !== value.conversationId) {
+      throw new Error(`Task ${value.id} cannot change conversations`)
+    }
+    task.write = {
+      kind: task.write?.kind === "create" ? "create" : "replace",
+      record: freeze<TaskRecord>(this.#stampTimes(value, candidate)),
+    }
+  }
+
+  /** The task's candidate in this commit, else its committed record. Not a caller table read. */
+  currentTask(id: TaskId): Effect.Effect<TaskRecord | undefined, StorageError> {
+    const candidate = this.#tasks.get(id)?.write?.record
+    return candidate !== undefined ? Effect.succeed(candidate) : this.#committedTask(id)
+  }
+
+  /** The candidates of the tasks this commit created or replaced so far. */
+  stagedTasks(): readonly TaskRecord[] {
+    const records: TaskRecord[] = []
+    for (const task of this.#tasks.values()) if (task.write !== undefined) records.push(task.write.record)
+    return records
+  }
+
+  /** Whether this commit creates the task. */
+  createsTask(id: TaskId): boolean {
+    return this.#tasks.get(id)?.write?.kind === "create"
+  }
+
+  /** The conversations this commit created or forked so far. */
+  stagedConversations(): readonly ConversationRecord[] {
+    const records: ConversationRecord[] = []
+    for (const write of this.#writes) if (write.type === "conversation") records.push(write.value)
+    return records
+  }
+
   // Documents
 
   doc(token: AnyDocToken, ...args: readonly unknown[]): Effect.Effect<Draft<never>, DocError> {
@@ -499,6 +624,11 @@ export class Transaction implements Tx {
         this.#assertOpen()
         const definition = token.definition
         const resolved = resolveAddress(definition, args)
+        const scope = resolved.address.scope
+        // Settlement retires a terminal task's documents, so none is handed out after its terminal candidate.
+        if (scope.kind === "task" && this.#tasks.get(scope.taskId)?.write?.record.state.status === "terminal") {
+          return Effect.die(new Error(`Task ${scope.taskId} is terminal`))
+        }
         const latest = this.#latest.get(resolved.id)
         if (latest !== undefined && !latest.retire) {
           if (latest.draft !== undefined) {
@@ -592,8 +722,11 @@ export class Transaction implements Tx {
         if (current === undefined) return yield* Effect.die(new Error(`Submission ${id} does not exist`))
         this.#submissions.set(id, freeze(applySubmissionChange(current, change)))
       }
+      yield* this.#validateTasks()
       const writes = [...this.#writes]
       for (const value of this.#submissions.values()) writes.push({ type: "submission", value })
+      for (const task of this.#tasks.values())
+        if (task.write !== undefined) writes.push({ type: "task", value: task.write.record })
       yield* this.#planDocuments()
       for (const plan of this.#plans) {
         if (plan.content !== undefined) writes.push(plan.content)
@@ -637,7 +770,11 @@ export class Transaction implements Tx {
           })
         }
       }
-      if (plan.retire && isCommitted(plan.record)) this.#host.evict(plan.addressId, record.id)
+      if (plan.retire && isCommitted(plan.record)) {
+        this.#host.retire(plan.addressId, record.id)
+        // The incarnation ended: a stale reference to its tracker, such as a finished generator's, keeps no value.
+        plan.change?.tracker.release()
+      }
       const published = describe(plan, record)
       if (published !== undefined) changes.push(published)
     }
@@ -659,6 +796,18 @@ export class Transaction implements Tx {
    * stale reference to a finished transaction holds no document value.
    */
   #release(): void {
+    // Closures and generators of this commit may still reference an entry or a plan (JavaScriptCore scans stacks
+    // conservatively), so each drops what reaches a document value, not only the lists that hold them.
+    for (const document of this.#documents) {
+      delete document.draft
+      delete document.target
+      delete document.change
+      delete document.prepared
+    }
+    for (const plan of this.#plans) {
+      delete plan.change
+      delete plan.content
+    }
     this.#documents.length = 0
     this.#plans.length = 0
     this.#latest.clear()
@@ -673,19 +822,10 @@ export class Transaction implements Tx {
     return Effect.gen({ self: this }, function* () {
       let owner: ConversationRecord["owner"]
       if (ownership.kind === "task") {
-        const task = yield* this.#committedTask(ownership.taskId)
-        // New owned work needs a live owner (spec 5.5). This transaction cannot write tasks yet, so the stored record
-        // is the owner's final state; once it can, this check moves to where the writes are assembled.
-        const refusal =
-          task === undefined
-            ? "does not exist"
-            : task.state.status === "completing" || task.state.status === "terminal"
-              ? `is ${task.state.status}`
-              : task.abortRequested
-                ? "is abort-marked"
-                : undefined
-        if (task === undefined || refusal !== undefined) {
-          return yield* Effect.die(new Error(`Conversation owner task ${ownership.taskId} ${refusal}`))
+        // Its liveness is checked on the owner's final candidate when the writes are assembled (spec 5.5).
+        const task = yield* this.currentTask(ownership.taskId)
+        if (task === undefined) {
+          return yield* Effect.die(new Error(`Conversation owner task ${ownership.taskId} does not exist`))
         }
         owner = { conversationId: task.conversationId, taskId: ownership.taskId }
       }
@@ -898,12 +1038,13 @@ export class Transaction implements Tx {
         if (plan !== undefined) plans.push(plan)
       }
       this.#rejectForkSourceWrites(plans)
+      yield* this.#retireTaskDocuments(plans)
       for (const plan of plans) {
         if (!publishes(plan)) continue
         const scope = plan.record.scope
         if (scope.kind === "conversation") plan.conversationId = scope.conversationId
         if (scope.kind === "task") {
-          const task = yield* this.#committedTask(scope.taskId)
+          const task = yield* this.currentTask(scope.taskId)
           if (task !== undefined) plan.conversationId = task.conversationId
         }
       }
@@ -1002,9 +1143,9 @@ export class Transaction implements Tx {
     )
   }
 
-  /** A task document needs a task that exists and is not terminal. Not a caller table read. */
+  /** A task document needs a task that exists and is not terminal in this commit. Not a caller table read. */
   #requireOpenTask(id: TaskId): Effect.Effect<void, StorageError> {
-    return Effect.flatMap(this.#committedTask(id), (task) => {
+    return Effect.flatMap(this.currentTask(id), (task) => {
       if (task === undefined) return Effect.die(new Error(`Task ${id} does not exist`))
       if (task.state.status === "terminal") return Effect.die(new Error(`Task ${id} is terminal`))
       return Effect.void
@@ -1012,10 +1153,113 @@ export class Transaction implements Tx {
   }
 
   #committedTask(id: TaskId): Effect.Effect<TaskRecord | undefined, StorageError> {
-    if (this.#tasks.has(id)) return Effect.succeed(this.#tasks.get(id))
-    return Effect.tap(this.#storageCall(this.#host.storage.task(id)), (task) =>
-      Effect.sync(() => this.#tasks.set(id, task)),
+    const known = this.#tasks.get(id)?.committed
+    if (known !== undefined) return Effect.succeed(known.record)
+    return Effect.tap(this.#storageCall(this.#host.storage.task(id)), (record) =>
+      Effect.sync(() => {
+        this.#taskEntry(id).committed = { record }
+      }),
     )
+  }
+
+  #taskEntry(id: TaskId): TransactionTask {
+    let task = this.#tasks.get(id)
+    if (task === undefined) {
+      task = {}
+      this.#tasks.set(id, task)
+    }
+    return task
+  }
+
+  /** Lifecycle times (spec 5.3): each is stamped once, by the Session clock, and carried over from then on. */
+  #stampTimes(value: TaskRecord, candidate: TaskRecord | undefined): TaskRecord {
+    const status = value.state.status
+    const startedAt = candidate?.startedAt ?? value.startedAt ?? (status === "running" ? this.#host.now() : undefined)
+    const endedAt = candidate?.endedAt ?? value.endedAt ?? (status === "terminal" ? this.#host.now() : undefined)
+    if (startedAt === value.startedAt && endedAt === value.endedAt) return value
+    return {
+      ...value,
+      ...(startedAt === undefined ? {} : { startedAt }),
+      ...(endedAt === undefined ? {} : { endedAt }),
+    }
+  }
+
+  /**
+   * Before Storage: new owned work needs a live owner in this commit's final records, neither `completing`, terminal nor
+   * abort-marked, so a task cannot create owned work in the commit that finishes it (spec 5.5). A replaced task must
+   * exist, not be terminal, and keep its conversation.
+   */
+  #validateTasks(): Effect.Effect<void, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const owners: { readonly what: string; readonly taskId: TaskId }[] = []
+      for (const write of this.#writes) {
+        if (write.type === "conversation" && write.value.owner !== undefined) {
+          owners.push({ what: "Conversation owner task", taskId: write.value.owner.taskId })
+        }
+      }
+      for (const task of this.#tasks.values()) {
+        const owner = task.write?.kind === "create" ? task.write.record.owner : undefined
+        if (owner !== undefined) owners.push({ what: "Task owner", taskId: owner })
+      }
+      for (const { what, taskId } of owners) {
+        const task = yield* this.currentTask(taskId)
+        if (task === undefined) return yield* Effect.die(new Error(`${what} ${taskId} does not exist`))
+        if (task.state.status === "terminal" || task.state.status === "completing") {
+          return yield* Effect.die(new Error(`${what} ${taskId} is ${task.state.status}`))
+        }
+        if (task.abortRequested) return yield* Effect.die(new Error(`${what} ${taskId} is abort-marked`))
+      }
+      for (const [id, task] of this.#tasks) {
+        if (task.write?.kind !== "replace") continue
+        const committed = yield* this.#committedTask(id)
+        if (committed === undefined) return yield* Effect.die(new Error(`Task ${id} does not exist`))
+        if (committed.state.status === "terminal") return yield* Effect.die(new Error(`Task ${id} is already terminal`))
+        if (committed.conversationId !== task.write.record.conversationId) {
+          return yield* Effect.die(new Error(`Task ${id} cannot change conversations`))
+        }
+      }
+    })
+  }
+
+  /**
+   * Terminal settlement retires every document of the task, including ones this commit created (spec 5.3). The stored
+   * ones are found by a scan; a task this commit creates has none stored.
+   */
+  #retireTaskDocuments(plans: DocumentPlan[]): Effect.Effect<void, StorageError> {
+    return Effect.gen({ self: this }, function* () {
+      const terminal = new Set<TaskId>()
+      for (const task of this.#tasks.values()) {
+        if (task.write?.record.state.status === "terminal") terminal.add(task.write.record.id)
+      }
+      if (terminal.size === 0) return
+      const retiring = new Set<DocumentId>()
+      for (const plan of plans) {
+        const scope = plan.record.scope
+        if (scope.kind !== "task" || !terminal.has(scope.taskId)) continue
+        plan.retire = true
+        retiring.add(plan.record.id)
+      }
+      for (const taskId of terminal) {
+        if (this.createsTask(taskId)) continue
+        let cursor: Cursor | undefined
+        do {
+          // The scan is the transaction's own, so a refused request is a defect.
+          const page = yield* this.#storageCall(
+            this.#host.storage.scanDocuments(
+              { scope: { kind: "task", taskId }, at: "current" },
+              SCAN_PAGE_SIZE,
+              cursor,
+            ),
+          ).pipe(Effect.catchTag("StorageRequestError", (error) => Effect.die(error)))
+          for (const record of page.items) {
+            if (retiring.has(record.id)) continue
+            retiring.add(record.id)
+            plans.push({ addressId: addressId(record), record, retire: true })
+          }
+          cursor = page.next
+        } while (cursor !== undefined)
+      }
+    })
   }
 
   #mint<I extends Id<string>>(): Effect.Effect<I, StorageError> {
