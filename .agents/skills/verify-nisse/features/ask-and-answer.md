@@ -96,6 +96,11 @@ Preconditions:
 
 ## Tests
 
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- answer-wire, answer-shared: every client of a conversation sees the prompt, the answer and how the run ended
+- answer-failed: a model failure is recorded after what was said and the conversation goes idle
+
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - answer-wire, answer-shared: every client of a conversation sees the prompt and the same answer

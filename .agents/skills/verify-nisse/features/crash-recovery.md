@@ -10,7 +10,7 @@ server three times in a row ends instead of looping.
 
 - `crash-tui` [pending tui-views] finishes the answer in the open TUI after the server is killed.
 - `crash-exec` finishes the answer for a waiting `nisse exec`, which exits 0.
-- `crash-committed` [pending wire-complete] commits the answer once, in a run that ends `answered`.
+- `crash-committed` commits the answer once, in a run that ends `answered`.
 - `crash-call` records a running call as
   `interrupted; it may or may not have taken effect` and goes on.
 - `crash-limit` ends the run with `restart_limit` after the server stopped
@@ -115,9 +115,23 @@ have taken effect`.
 
 ## Contexts
 
+- **On the kernel.** In a run made with `drive.ts r up --kernel` and a script
+  whose step speaks slowly, submit with a background
+  `drive.ts r watch <id> --submit again --until run_end`, wait for a live
+  word, `drive.ts r kill-server`, `drive.ts r serve`, and
+  `drive.ts r watch <id> --save after-crash`: what was said before the crash
+  stays as a `pi.assistant` entry with `"stopReason": "aborted"`, the run is
+  answered once after it, and one `nisse.run_end` says `answered`. The
+  restarted server's script starts over, so the answer is the script's first
+  step.
+
 - **Provider.** On every provider a running call is recorded as interrupted. Claude Code is also told which calls were cut off.
 
 ## Tests
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- crash-committed: a run cut off by a crashed server is answered once after the server comes back
 
 Stack, `packages/nisse/test/stack.test.ts`:
 

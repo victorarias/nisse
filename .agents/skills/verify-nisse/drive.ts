@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import * as Net from "node:net"
+import { applyImmutable, type Op } from "../../../packages/delta/src/delta/index.ts"
 import { signIn } from "../../../packages/nisse/test/support/openai.ts"
 
 const REPO = resolve(import.meta.dir, "../../..")
@@ -13,7 +14,7 @@ const ROWS = "30"
 
 const usage = `usage: drive.ts <run> <command> [args]
 
-  up [--script steps.json] [--fake-openai fixture,...] [--openai-refreshes N] [--openai-signed-out]
+  up [--kernel] [--script steps.json] [--fake-openai fixture,...] [--openai-refreshes N] [--openai-signed-out]
      [--fake-claude fixture | --real-claude] [--openai-auth file]
                                    make the run's home and evidence folders. --fake-openai serves a
                                    fake ChatGPT replaying fixtures/openai/<fixture>.ndjson in order,
@@ -21,7 +22,10 @@ const usage = `usage: drive.ts <run> <command> [args]
                                    claude is a fake replaying fixtures/claude/<fixture>.ndjson, by
                                    default models (signed in, no turns); --real-claude runs the
                                    claude on PATH with your own login. --openai-auth copies a real
-                                   ChatGPT sign-in in, and down writes it back if a refresh rotated it
+                                   ChatGPT sign-in in, and down writes it back if a refresh rotated it.
+                                   --kernel runs every server of the run with NISSE_KERNEL=1: rpc,
+                                   watch, serve, kill-server, idle, doctor and down work; the TUI,
+                                   nisse exec, watch-auth and watch-status wait for later steps
   doctor                           is this run's instance worth driving?
   nisse <args...>                  run the nisse CLI against the run's home
   serve                            start the run's server in the foreground of a tmux window
@@ -31,7 +35,10 @@ const usage = `usage: drive.ts <run> <command> [args]
   watch <conversation> [--since N] [--submit TEXT] [--until TAG] [--timeout MS] [--save NAME]
                                    subscribe and print each delivery as one JSON line;
                                    --submit sends TEXT as ada once the first delivery arrives;
-                                   without --until it returns after a second with no delivery
+                                   without --until it returns after a second with no delivery.
+                                   On --kernel it watches the view: the view, then each change; --from N
+                                   starts its window at entry N; --until run_end or an entry kind
+                                   returns once a change brings such an entry
   watch-auth [--until PHASE] [--timeout MS] [--save NAME]
                                    follow every sign-in and print each state as one JSON line;
                                    --until returns once a state reaches PHASE, such as waiting
@@ -68,6 +75,7 @@ const openaiPort = join(dir, "fake-openai.port")
 const claudeFixture = join(dir, "fake-claude.ndjson")
 const openaiAuth = join(home, "auth", "openai.json")
 const openaiAuthSource = join(dir, "openai-auth.source")
+const kernelMarker = join(dir, "kernel")
 const FIXTURES = join(REPO, "fixtures")
 
 const fakes = (): Record<string, string> => ({
@@ -85,6 +93,7 @@ const env = (): Record<string, string> => ({
   ...(process.env as Record<string, string>),
   NISSE_HOME: home,
   NISSE_MODEL_SCRIPT: existsSync(scriptPath) ? scriptPath : "",
+  ...(existsSync(kernelMarker) ? { NISSE_KERNEL: "1" } : {}),
   USER: "ada",
   TERM: "xterm-256color",
   ...fakes(),
@@ -118,6 +127,12 @@ const switchOn = (name: string) => {
 
 const requireUp = () => {
   if (!existsSync(home)) fail(`run ${run} is not up: drive.ts ${run} up`)
+}
+
+const onKernel = () => existsSync(kernelMarker)
+
+const notOnKernel = (what: string, step: string) => {
+  if (onKernel()) fail(`${what} does not run on the kernel yet; ${step} brings it. Drive it in a run without --kernel`)
 }
 
 const sh = (cmd: Array<string>, options: { env?: Record<string, string> } = {}) => {
@@ -331,6 +346,75 @@ const describeFakes = () => {
     console.log(`openai   real sign-in from ${readFileSync(openaiAuthSource, "utf8")}, written back by down`)
 }
 
+const RUN_END = "nisse.run_end"
+
+/** `watch` on the kernel: the conversation's view, then each change, applied as a client keeps it. */
+const watchView = async () => {
+  const from = flag("--from")
+  const untilKind = flag("--until")
+  const ms = Number(flag("--timeout") ?? 10_000)
+  const name = flag("--save")
+  const submit = flag("--submit")
+  const [conversation] = args
+  if (!conversation) fail(usage)
+  const kind = untilKind === "run_end" ? RUN_END : untilKind
+  record(
+    `watch ${conversation}${from ? ` from ${from}` : ""}${submit ? ` submit ${JSON.stringify(submit)}` : ""}${untilKind ? ` until ${untilKind}` : ""}`,
+  )
+  const out: Array<string> = []
+  const client = await connect()
+  const done = Promise.withResolvers<boolean>()
+  let quiet: ReturnType<typeof setTimeout> | undefined
+  const settleAfterQuiet = () => {
+    if (kind !== undefined) return
+    clearTimeout(quiet)
+    quiet = setTimeout(() => done.resolve(true), 1000)
+  }
+  let view: any
+  const held = new Set<number>()
+  let submitted = submit === undefined
+  lines(client, (message) => {
+    if (message.id === 2) {
+      out.push(JSON.stringify(message))
+      return console.log(out.at(-1))
+    }
+    if (message.id !== 1) return
+    if (!message.chunk) {
+      out.push(JSON.stringify(message))
+      console.log(out.at(-1))
+      return done.resolve(kind === undefined)
+    }
+    for (const item of message.result) {
+      out.push(JSON.stringify(item))
+      console.log(out.at(-1))
+      const first = item._tag === "view"
+      view = first ? item.view : applyImmutable(view, item.ops as Array<Op>)
+      for (const entry of view.entries) {
+        if (!first && !held.has(entry.id) && entry.kind === kind) done.resolve(true)
+        held.add(entry.id)
+      }
+    }
+    settleAfterQuiet()
+    if (!submitted) {
+      submitted = true
+      const params = { conversation, requestId: crypto.randomUUID(), text: submit }
+      client.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "conversation/submit", params }) + "\n")
+    }
+    client.write(JSON.stringify({ jsonrpc: "2.0", method: "@effect/rpc/Ack", params: { requestId: 1 } }) + "\n")
+  })
+  const window = from === undefined ? {} : { window: { from: Number(from) } }
+  client.write(
+    JSON.stringify({ jsonrpc: "2.0", id: 1, method: "conversation/watch", params: { conversation, ...window } }) + "\n",
+  )
+  const timer = setTimeout(() => done.resolve(kind === undefined), ms)
+  const met = await done.promise
+  clearTimeout(timer)
+  clearTimeout(quiet)
+  client.destroy()
+  if (name) save(`${name}.ndjson`, out.join("\n") + "\n")
+  if (!met) fail(`no ${untilKind} entry arrived in ${ms}ms`)
+}
+
 const commands: Record<string, () => Promise<void> | void> = {
   up: async () => {
     const script = flag("--script")
@@ -339,6 +423,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     const signedOut = switchOn("--openai-signed-out")
     const auth = flag("--openai-auth")
     const realClaude = switchOn("--real-claude")
+    const kernel = switchOn("--kernel")
     const fakeClaude = flag("--fake-claude")
     if (realClaude && fakeClaude) fail("--real-claude and --fake-claude exclude each other")
     const claude = realClaude ? undefined : (fakeClaude ?? "models")
@@ -347,7 +432,8 @@ const commands: Record<string, () => Promise<void> | void> = {
     mkdirSync(home, { recursive: true, mode: 0o700 })
     mkdirSync(evidence, { recursive: true })
     if (script) writeFileSync(scriptPath, readFileSync(script))
-    record(`up home=${home}${script ? ` script=${script}` : ""}`)
+    if (kernel) writeFileSync(kernelMarker, "")
+    record(`up home=${home}${script ? ` script=${script}` : ""}${kernel ? " kernel" : ""}`)
     if (claude) {
       writeFileSync(claudeFixture, readFileSync(fixture("claude", claude)))
       rmSync(join(evidence, "fake-claude"), { recursive: true, force: true })
@@ -363,6 +449,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     }
     if (openai) await fakeOpenAi(openai, refreshes, signedOut)
     console.log(`home     ${home}\nevidence ${evidence}\nscript   ${existsSync(scriptPath) ? scriptPath : "echo"}`)
+    if (kernel) console.log("kernel   NISSE_KERNEL=1, kernel.sqlite and the kernel wire")
     describeFakes()
   },
 
@@ -375,6 +462,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     console.log(`checkout ${REPO} ${commit}${dirty ? " (uncommitted changes)" : ""}`)
     console.log(`home     ${home}`)
     console.log(`script   ${existsSync(scriptPath) ? scriptPath : "none: nisse echoes"}`)
+    if (onKernel()) console.log("kernel   NISSE_KERNEL=1")
     describeFakes()
     if (
       existsSync(openaiPort) &&
@@ -404,6 +492,7 @@ const commands: Record<string, () => Promise<void> | void> = {
 
   nisse: async () => {
     requireUp()
+    if (args[0] !== "schema") notOnKernel(`nisse ${args[0] ?? ""}`.trim(), "wire-complete")
     const line = `nisse ${args.join(" ")}`
     record(line)
     const child = Bun.spawn([MAIN, ...args], { env: env(), stdout: "pipe", stderr: "pipe", cwd: REPO })
@@ -479,6 +568,7 @@ const commands: Record<string, () => Promise<void> | void> = {
 
   watch: async () => {
     requireUp()
+    if (onKernel()) return watchView()
     const since = flag("--since")
     const untilTag = flag("--until")
     const ms = Number(flag("--timeout") ?? 10_000)
@@ -543,15 +633,20 @@ const commands: Record<string, () => Promise<void> | void> = {
     if (!met) fail(`no ${untilTag} entry arrived in ${ms}ms`)
   },
 
-  "watch-auth": () => follow("watch-auth", "auth/watch", ({ item, until }) => item.phase === until),
+  "watch-auth": () => {
+    notOnKernel("watch-auth", "provider-registry")
+    return follow("watch-auth", "auth/watch", ({ item, until }) => item.phase === until)
+  },
 
-  "watch-status": () =>
-    follow("watch-status", "status/watch", ({ item, until, conversation }) => {
+  "watch-status": () => {
+    notOnKernel("watch-status", "nisse-surface")
+    return follow("watch-status", "status/watch", ({ item, until, conversation }) => {
       const trees: Array<any> = item._tag === "trees" ? item.trees : [item]
       const mine = trees.filter((tree) => !conversation || tree.conversation === conversation)
       if (item._tag === "trees" && until === "idle" && conversation && mine.length === 0) return true
       return mine.some((tree) => tree.status === until)
-    }),
+    })
+  },
 
   tui: async () => {
     requireUp()
@@ -559,6 +654,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     args.splice(0, 1)
     switch (sub) {
       case "start": {
+        notOnKernel("The TUI", "tui-views")
         if (tuiOpen()) fail("a TUI is already open in this run: tui stop first")
         openWindow("tui", [MAIN, ...rest])
         record(`tui start ${rest.join(" ")}`)
@@ -628,6 +724,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     rmSync(scriptPath, { force: true })
     rmSync(openaiPort, { force: true })
     rmSync(claudeFixture, { force: true })
+    rmSync(kernelMarker, { force: true })
     console.log(`stopped; evidence kept in ${evidence}`)
   },
 }

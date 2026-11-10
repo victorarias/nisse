@@ -924,6 +924,10 @@ const answer = (ctx: Ctx, message: AssistantMessage) =>
           const held = yield* holdRun(tx, live, runtime, { reason: "answer", answer: entry.id, last: entry.id })
           if (held !== undefined) return held
         }
+        if (continues === undefined) {
+          // The run ends before the boundary places what is queued, so what it ends with precedes the next run's inputs.
+          yield* endRun(tx, live, runtime.taskId, { status: "done", answer: entry.id }, ctx.api.runOwner)
+        }
         const { users, first } = yield* applyBoundary(tx, boundary, "final", runtime.now())
         if (continues !== undefined) {
           const user = { role: "user", content: continues, timestamp: runtime.now() }
@@ -936,7 +940,6 @@ const answer = (ctx: Ctx, message: AssistantMessage) =>
           delete live.generation
           return result
         }
-        yield* endRun(tx, live, runtime.taskId, { status: "done", answer: entry.id }, ctx.api.runOwner)
         if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
         return result
       }),
@@ -1032,8 +1035,8 @@ const endAnsweredRun = (ctx: Ctx, answer: EntryId) =>
       const conversationId = runtime.conversationId
       const boundary = yield* prepareBoundary(tx, conversationId, api.settings())
       const live = yield* tx.doc(LiveDoc, conversationId)
-      const { users, first } = yield* applyBoundary(tx, boundary, "final", runtime.now())
       yield* endRun(tx, live, runtime.taskId, { status: "done", answer }, ctx.api.runOwner)
+      const { users, first } = yield* applyBoundary(tx, boundary, "final", runtime.now())
       if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
       return { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
     }),
@@ -1177,8 +1180,8 @@ const finishToolRound = (ctx: Ctx, assistant: EntryId, tools: readonly TaskId<To
           : undefined
         if (held !== undefined) return held
         if (terminate) {
-          const { users, first } = yield* applyBoundary(tx, boundary, "final", now)
           yield* endRun(tx, live, runtime.taskId, { status: "done", answer: assistant }, ctx.api.runOwner)
+          const { users, first } = yield* applyBoundary(tx, boundary, "final", now)
           if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
         } else if (maxTurns !== undefined && turns >= maxTurns) {
           // The turn limit ends the run like a failure: `afterFailedRun` decides the queued items, and a continue resumes
@@ -1190,20 +1193,19 @@ const finishToolRound = (ctx: Ctx, assistant: EntryId, tools: readonly TaskId<To
             reason: "turn_limit",
             detail: turns === 1 ? "1 turn" : `${turns} turns`,
           })
-        } else {
-          const { users, first, reset } = yield* applyBoundary(tx, boundary, "postTools", now)
-          if (reset) {
-            // The queued reset cut the run's context before an answer.
-            yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "reset" }, ctx.api.runOwner)
-            if (users.length > 0) {
-              yield* startRun(tx, conversationId, live, { inputs: users, first }, { keepFailure: true })
-            }
-          } else {
-            delete live.tools
-            delete live.nestedTools
-            if (live.run?.taskId === runtime.taskId) live.run.inputs.push(...users)
-            handOver(live, runtime.taskId, yield* createGeneration(tx, conversationId))
+        } else if (hasQueuedReset(boundary.inbox.items)) {
+          // The queued reset cuts the run's context before an answer. The run ends before the boundary places it.
+          yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "reset" }, ctx.api.runOwner)
+          const { users, first } = yield* applyBoundary(tx, boundary, "postTools", now)
+          if (users.length > 0) {
+            yield* startRun(tx, conversationId, live, { inputs: users, first }, { keepFailure: true })
           }
+        } else {
+          const { users } = yield* applyBoundary(tx, boundary, "postTools", now)
+          delete live.tools
+          delete live.nestedTools
+          if (live.run?.taskId === runtime.taskId) live.run.inputs.push(...users)
+          handOver(live, runtime.taskId, yield* createGeneration(tx, conversationId))
         }
         return { status: "terminal", outcome: { status: "completed", result: { entryId: assistant } } }
       }),

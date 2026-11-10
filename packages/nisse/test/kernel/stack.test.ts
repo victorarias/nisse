@@ -1,10 +1,12 @@
 // The `nisse` binary on the kernel (NISSE_KERNEL=1), over its socket: stop, kill, restart.
 import { afterEach, expect, test } from "bun:test"
+import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { deadline, RawClient } from "../support/raw.ts"
 import { kernelEnv, servingKernel, settled, start, submit, transcript, watchView } from "../support/kernel.ts"
 import { tempHome } from "../support/server.ts"
-import { stopServer } from "../support/terminal.ts"
+import { nisse, stopServer } from "../support/terminal.ts"
 
 const homes: Array<ReturnType<typeof tempHome>> = []
 const home = () => {
@@ -84,8 +86,8 @@ test("idle-server: a server on the kernel with no run in flight uses no CPU", as
   await Bun.sleep(1000)
   const before = cpuSeconds(server.pid)
   await Bun.sleep(3000)
-  // The measuring tick is a hundredth of a second.
-  expect(cpuSeconds(server.pid) - before).toBeLessThanOrEqual(0.02)
+  // The measuring tick is a hundredth of a second; two ticks in three seconds is flat.
+  expect(Math.round((cpuSeconds(server.pid) - before) * 100)).toBeLessThanOrEqual(2)
   client.close()
 }, 20_000)
 
@@ -98,4 +100,14 @@ test("server-old-home: a home the shipping server used starts on the kernel and 
   expect(readFileSync(nisseHome.database, "utf8")).toBe("the shipping server's store")
   expect(existsSync(nisseHome.kernel)).toBe(true)
   client.close()
+})
+
+test("wire-schema: nisse schema --kernel prints the kernel wire's schema, the one committed beside the code", async () => {
+  const printed = nisse(["schema", "--kernel"], await kernelEnv(home()))
+  const [code, stdout] = await Promise.all([printed.exited, new Response(printed.stdout).text()])
+  expect(code).toBe(0)
+  const schema = JSON.parse(stdout)
+  expect(schema).toMatchObject({ title: "Nisse kernel protocol", protocol: KERNEL_PROTOCOL_VERSION })
+  expect(Object.keys(schema.methods)).toContain("conversation/watch")
+  expect(stdout).toBe(readFileSync(join(import.meta.dir, "../../../../schema/nisse.kernel.schema.json"), "utf8"))
 })

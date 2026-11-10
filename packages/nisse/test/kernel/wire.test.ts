@@ -13,6 +13,8 @@ import {
   watchView,
 } from "../support/kernel.ts"
 import { tempHome } from "../support/server.ts"
+import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
+import { VERSION } from "../../src/version.ts"
 
 const opened = (watch: ViewWatch) => watch.until(() => true)
 
@@ -65,7 +67,10 @@ test("queue-idempotent: submitting again with the same request id is answered on
 })
 
 test("queue-run: prompts sent while nisse is working wait and run in order, each to its own end", async () => {
-  await using server = await runningKernelServer([{ text: "first answer", delayMs: 50 }, { text: "second answer" }])
+  await using server = await runningKernelServer([
+    { text: "the first answer", delayMs: 100 },
+    { text: "second answer" },
+  ])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
   const view = watchView(client, conversation)
@@ -75,7 +80,7 @@ test("queue-run: prompts sent while nisse is working wait and run in order, each
   await view.until(settled(2))
   expect(transcript(view.view().entries)).toEqual([
     "user: one",
-    "assistant: first answer",
+    "assistant: the first answer",
     "run_end: answered",
     "user: two",
     "assistant: second answer",
@@ -110,7 +115,7 @@ test("answer-failed: a model failure is recorded after what was said and the con
   await view.until(settled(1))
   expect(transcript(view.view().entries)).toEqual([
     "user: hi",
-    "assistant: half",
+    "assistant: half [error]",
     "run_end: failed (provider went away)",
   ])
   client.close()
@@ -165,5 +170,36 @@ test("server-stop: stopping the server answers the caller, then the server exits
   const client = await RawClient.connect(home.socket)
   expect(await client.call("server/stop", null)).toMatchObject({ result: null })
   await deadline(served.exited, 5000, "server exit")
+  client.close()
+})
+
+test("wire-initialize: a client is answered with the server's version and the kernel protocol", async () => {
+  await using server = await runningKernelServer()
+  const client = await RawClient.connect(server.home.socket)
+  const reply = await client.call("initialize", { client: "test", version: "0", protocol: KERNEL_PROTOCOL_VERSION })
+  expect(reply.result).toEqual({ version: VERSION, protocol: KERNEL_PROTOCOL_VERSION })
+  client.close()
+})
+
+test("watch-rpc: a watch through a window opens on the newest entries, and from a position gets only what followed", async () => {
+  await using server = await runningKernelServer([{ text: "a" }, { text: "b" }, { text: "c" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const all = watchView(client, conversation)
+  for (const [i, text] of ["one", "two", "three"].entries()) {
+    await submit(client, conversation, text)
+    await all.until(settled(i + 1))
+  }
+  const entries = all.view().entries
+  expect(entries).toHaveLength(9)
+
+  const newest = watchView(client, conversation, { min: 3, max: 6 })
+  await newest.until(() => true)
+  expect(transcript(newest.view().entries)).toEqual(["user: three", "assistant: c", "run_end: answered"])
+  expect(newest.view().before).toBe(entries[5]!.id)
+
+  const resumed = watchView(client, conversation, { from: entries[3]!.id })
+  await resumed.until(() => true)
+  expect(resumed.view().entries.map((entry) => entry.id)).toEqual(entries.slice(3).map((entry) => entry.id))
   client.close()
 })
