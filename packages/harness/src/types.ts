@@ -60,6 +60,11 @@ export type ToolRegistration = Tool & {
   readonly prepareArguments?: (args: JsonObject) => JsonObject
   /** Bounds the output the model gets; unset fields take the defaults. */
   readonly outputLimits?: Partial<OutputLimits>
+  /**
+   * JSON Schema of the value programs get (`executeTool()` callers): the tool must then return a matching
+   * `structuredOutput` unless `isError`. Without one, programs get the tool's bounded output.
+   */
+  readonly structuredOutputSchema?: object
   // biome-ignore lint: the tool task types the arguments and API
   readonly execute: (args: any, api: any) => Effect.Effect<unknown, unknown, any>
 }
@@ -326,6 +331,10 @@ export type ToolControl = {
 export type ToolExecutionResult = {
   /** For the model. Omitted: the retained `output()` text. */
   readonly output?: ToolResultMessage["content"]
+  /**
+   * For programs. Required unless `isError` when the tool declares `structuredOutputSchema`, and validated against it;
+   * not allowed without one, where programs get the output itself.
+   */
   readonly structuredOutput?: JsonValue
   readonly isError?: boolean
   /** Omitted: the last `details()` value becomes the details. */
@@ -335,6 +344,28 @@ export type ToolExecutionResult = {
   /** Spend of the execution itself, such as a model call; stored on the result and in `pi.usage.tools`. */
   readonly usage?: Usage
   readonly control?: ToolControl
+}
+
+/**
+ * Result of a nested call, as `executeTool()` returns it. Programs read `structuredOutput`; the output for the model is
+ * not kept, and `control` does not apply.
+ */
+export type NestedToolExecutionResult = {
+  /** The nested call's tool task. */
+  readonly taskId: TaskId
+  /**
+   * The tool's value for programs. A tool with `structuredOutputSchema`: its validated `structuredOutput`, also on an
+   * error result that has one; absent otherwise, and an error's text is then in an error diagnostic. A tool without:
+   * its bounded output, success or error, as a string for one text item, an image as itself, `""` for none, and the
+   * content list otherwise. Absent on an error result the Harness wrote itself (unavailable, invalid, blocked,
+   * interrupted, aborted); `diagnostics` say what went wrong.
+   */
+  readonly structuredOutput?: JsonValue
+  readonly isError: boolean
+  readonly details?: JsonValue
+  readonly diagnostics: readonly ToolDiagnostic[]
+  readonly usage?: Usage
+  readonly durationMs?: number
 }
 
 /** A compaction's result: its summary entry, or none when it found nothing to compact or was declined. */

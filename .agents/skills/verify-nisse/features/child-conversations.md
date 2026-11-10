@@ -8,7 +8,7 @@ Delegated work runs in a child conversation owned by the task or conversation th
 - `child-foreground` [kernel] Foreground: the parent's turn waits on the child through a task (R725-770): A delegation behaves as one tool call, also across a restart
 - `child-background` [kernel] Background: a reporter delivers the result (R725-770, §7.3): Work continues while the parent does other things
 - `child-abort-cascade` [kernel] Abort cascades to children (R725-770, §5.5): Stop means everything stops
-- `child-abort-background` [kernel, pending harness-tools] `abort({ background: true })` (R725-770): plain `abort()` leaves background work running, and `{ background: true }` aborts it too
+- `child-abort-background` [kernel] `abort({ background: true })` (R725-770): plain `abort()` leaves background work running, and `{ background: true }` aborts it too
 - `child-tools` [kernel, pending nisse-surface] Subagent tools for the model: spawn, send, follow up, wait, list, interrupt: The model manages helpers
 
 ## How to get to it

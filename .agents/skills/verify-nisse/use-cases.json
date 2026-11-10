@@ -41,6 +41,9 @@
   "amended/harness-tasks.test.ts :: task phases > commits results with entries atomically, keeps memos until terminal, and retires task documents": [
     "task-memo"
   ],
+  "amended/harness-tools-recovery.test.ts :: tool recovery > reruns a safe tool whose running slot a crash after its intent lost, or a sibling stored, and shows it running": [
+    "tool-replay-policy"
+  ],
   "amended/sqlite-storage.test.ts :: Pico SqliteStorage > rolls SQL rows and sequence allocation back as one transaction": [
     "storage-conformance"
   ],
@@ -1707,7 +1710,8 @@
   ],
   "upstream/test/harness-inbox.test.ts :: usage > totals assistant usage per model and tool usage per tool, and sums the Session": [
     "usage-per-tool",
-    "usage-per-model"
+    "usage-per-model",
+    "tool-usage"
   ],
   "upstream/test/harness-input-entries.test.ts :: data-only writes > appends a data-only write at once behind a non-empty inbox, and still queues writes with model or edits": [
     "submission-display-only"
@@ -1820,10 +1824,13 @@
     "tool-nested-key"
   ],
   "upstream/test/harness-nested-tools-restart.test.ts :: nested tool calls across a restart > abandons the child tasks a replay-unsafe tool created and awaited in memory": [
-    "tool-nested-key"
+    "tool-nested-key",
+    "tool-api-create",
+    "tool-abandon-on-restart"
   ],
   "upstream/test/harness-nested-tools-restart.test.ts :: nested tool calls across a restart > abandons the work an abandoned nested call owns, which never runs a phase again": [
-    "tool-nested-key"
+    "tool-nested-key",
+    "tool-abandon-on-restart"
   ],
   "upstream/test/harness-nested-tools-restart.test.ts :: nested tool calls across a restart > aborts a nested call an earlier attempt of a replay-safe caller left running and the rerun never made again": [
     "tool-nested-key"
@@ -1835,7 +1842,8 @@
     "tool-nested-key"
   ],
   "upstream/test/harness-nested-tools-restart.test.ts :: nested tool calls across a restart > leaves background work under an abandoned nested call running, and settles without it": [
-    "tool-nested-key"
+    "tool-nested-key",
+    "tool-abandon-on-restart"
   ],
   "upstream/test/harness-nested-tools-restart.test.ts :: nested tool calls across a restart > lets a replay-safe caller's unfinished nested calls recover and reattaches to them by key": [
     "tool-nested-key"
@@ -1901,7 +1909,8 @@
     "tool-execute-tool"
   ],
   "upstream/test/harness-nested-tools.test.ts :: nested tool calls > records a nested call's usage under its tool": [
-    "tool-execute-tool"
+    "tool-execute-tool",
+    "tool-usage"
   ],
   "upstream/test/harness-nested-tools.test.ts :: nested tool calls > rejects a nested call of an aborted caller and leaves no document for it": [
     "tool-execute-tool"
@@ -2409,10 +2418,12 @@
     "error-model"
   ],
   "upstream/test/harness-structured-output.test.ts :: structured output > gives callers a schema tool's error text as a diagnostic, never as structured output": [
-    "tool-structured-output"
+    "tool-structured-output",
+    "tool-output-schema"
   ],
   "upstream/test/harness-structured-output.test.ts :: structured output > gives callers a schema tool's validated structured output, which the transcript does not store": [
-    "tool-structured-output"
+    "tool-structured-output",
+    "tool-output-schema"
   ],
   "upstream/test/harness-structured-output.test.ts :: structured output > gives callers a schema-less tool's output: one text as a string, one image as itself, else the list": [
     "tool-structured-output"
@@ -2424,19 +2435,22 @@
     "tool-structured-output"
   ],
   "upstream/test/harness-structured-output.test.ts :: structured output > gives callers the bounded output, as the model sees it, without the rendered diagnostics": [
-    "tool-structured-output"
+    "tool-structured-output",
+    "tool-output-limits"
   ],
   "upstream/test/harness-structured-output.test.ts :: structured output > gives callers the output of an error result of a tool without a schema": [
     "tool-structured-output"
   ],
   "upstream/test/harness-structured-output.test.ts :: structured output > keeps structured output when afterTool replaces the output, and validates one afterTool replaces": [
-    "tool-structured-output"
+    "tool-structured-output",
+    "tool-output-schema"
   ],
   "upstream/test/harness-structured-output.test.ts :: structured output > stores exactly what callers and events get, without the model's output, and keeps a stored null": [
     "tool-structured-output"
   ],
   "upstream/test/harness-structured-output.test.ts :: structured output > turns structured output that breaks the schema into an error result for callers, and a report for the model's calls": [
-    "tool-structured-output"
+    "tool-structured-output",
+    "tool-output-schema"
   ],
   "upstream/test/harness-structured.test.ts :: abort order > cascades through task and conversation edges, bottom-up": [
     "task-abort-bottom-up"
@@ -3049,13 +3063,15 @@
     "hook-after-tool"
   ],
   "upstream/test/harness-tool-hooks.test.ts :: afterTool on results rebuilt from the slot > runs on an abandoned nested call's result": [
-    "hook-after-tool"
+    "hook-after-tool",
+    "tool-abandon-on-restart"
   ],
   "upstream/test/harness-tool-hooks.test.ts :: afterTool on results rebuilt from the slot > runs on an abort result, but not on the aborted results of calls that never started": [
     "hook-after-tool"
   ],
   "upstream/test/harness-tool-hooks.test.ts :: afterTool on results rebuilt from the slot > runs on an interrupted call; a replaced output loses the slot's truncation diagnostic": [
-    "hook-after-tool"
+    "hook-after-tool",
+    "tool-diagnostics"
   ],
   "upstream/test/harness-tool-hooks.test.ts :: afterTool on results rebuilt from the slot > sees the held progress of an aborted call, and the result stores it": [
     "hook-after-tool"
@@ -3162,13 +3178,16 @@
   ],
   "upstream/test/harness-tools.test.ts :: tool execution api > builds the environment per call from the conversation's cwd and runs commits, memos, and child tasks": [
     "task-memo",
-    "env-per-conversation"
+    "env-per-conversation",
+    "tool-api-commit",
+    "tool-api-create"
   ],
   "upstream/test/harness-tools.test.ts :: tool progress and lifetime > answers an aborted tool with only its durable output, discarding buffered output": [
     "tool-output-throttle"
   ],
   "upstream/test/harness-tools.test.ts :: tool progress and lifetime > applies the default output limits": [
-    "tool-output-throttle"
+    "tool-output-throttle",
+    "tool-output-limits"
   ],
   "upstream/test/harness-tools.test.ts :: tool progress and lifetime > drops control keys set to undefined instead of faulting": [
     "tool-output-throttle"
@@ -3198,7 +3217,9 @@
     "tool-add-tools"
   ],
   "upstream/test/harness-tools.test.ts :: tool results > bounds explicit text content and keeps other content": [
-    "tool-output-channel"
+    "tool-output-channel",
+    "tool-diagnostics",
+    "tool-output-limits"
   ],
   "upstream/test/harness-tools.test.ts :: tool results > chains afterTool replacements and observes the round with afterTools": [
     "hook-after-tools"
@@ -3223,7 +3244,9 @@
     "tool-crash-result"
   ],
   "upstream/test/harness-tools.test.ts :: tool results > uses retained output and the last details when the result omits them, with diagnostics in order": [
-    "tool-details"
+    "tool-details",
+    "tool-diagnostics",
+    "tool-streamed-output"
   ],
   "upstream/test/harness-tools.test.ts :: tool results > validates arguments before and after beforeTool and applies blocks and replacements": [
     "hook-before-tool"
@@ -3248,7 +3271,8 @@
     "tool-parallel"
   ],
   "upstream/test/harness-tools.test.ts :: tool round > runs a round in parallel by default and sequentially when configured or required by a tool": [
-    "tool-execution-mode"
+    "tool-execution-mode",
+    "settings-tool-execution"
   ],
   "upstream/test/harness-tools.test.ts :: tool round > runs input, tool call, tool result, and answer, and settles the input": [
     "tool-parallel"
