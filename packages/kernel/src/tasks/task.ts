@@ -63,6 +63,8 @@ export interface TaskRuntime<I, S, R> {
   readonly signal: AbortSignal
   /** The registry snapshot of the current phase; refreshed at every phase boundary. */
   readonly registry: TaskSnapshot<unknown>
+  /** Runs `effect` unless the invocation has ended; for services that act for this invocation. */
+  guard<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | InvocationEnded, R>
 
   /**
    * One commit on the Session line, after rereading the task: it fails with `InvocationEnded` when the invocation ended,

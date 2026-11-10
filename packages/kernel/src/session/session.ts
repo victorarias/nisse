@@ -26,7 +26,15 @@ import {
   resolveAddress,
 } from "../documents/definition.ts"
 import { type CommitRefused, ReadOnlySession, SessionClosed, SessionFailed, StorageError } from "../errors.ts"
-import type { DocumentAddress, DocumentId, EntryId, JsonObject, Seq, StorageWrite } from "../records.ts"
+import type {
+  ConversationRecord,
+  DocumentAddress,
+  DocumentId,
+  EntryId,
+  JsonObject,
+  Seq,
+  StorageWrite,
+} from "../records.ts"
 import type { ReadError, Storage } from "../storage.ts"
 import {
   DEFAULT_DOCUMENT_RETENTION_MS,
@@ -115,6 +123,11 @@ export type SessionOptions = {
    * it after each use and `Infinity` keeps it. Default ten minutes.
    */
   readonly documentRetentionMs?: () => number | undefined
+  /**
+   * Runs inside every `Tx` call that creates or forks a conversation, before the call returns, so the creating commit
+   * holds what it writes (spec 7.1). A failure fails that commit.
+   */
+  readonly conversationCreated?: (tx: Tx, record: ConversationRecord) => Effect.Effect<void, unknown>
 }
 
 export interface Session {
@@ -249,6 +262,7 @@ class SessionImpl implements Session, SessionInternals {
   /** Attached document observers by address. */
   readonly #documentObservers = new Map<string, Set<Attached>>()
   readonly #now: () => number
+  readonly #conversationCreated: SessionOptions["conversationCreated"]
   #line: Fiber.Fiber<void> | undefined
   /** The first error that failed the Session. */
   #failure: { readonly error: unknown } | undefined
@@ -275,6 +289,7 @@ class SessionImpl implements Session, SessionInternals {
   ) {
     this.#storage = storage
     this.#readOnly = options.readOnly === true
+    this.#conversationCreated = options.conversationCreated
     this.#jobs = jobs
     this.#closedEnd = closed
     this.#reads = guardedReads(storage, (call) => this.#storageCall(call))
@@ -584,6 +599,7 @@ class SessionImpl implements Session, SessionInternals {
         load: (definition, id, address) => this.#loadDocument(definition, id, address),
         install: (document) => this.#cache.install(document),
         retire: (id, recordId) => this.#cache.retire(id, recordId),
+        ...(this.#conversationCreated === undefined ? {} : { conversationCreated: this.#conversationCreated }),
       })
       const callback = yield* Effect.forkChild(
         Effect.suspend(() => body(tx)),
@@ -994,3 +1010,13 @@ function failureOf(exit: Exit.Failure<unknown, StorageError>): StorageError {
   if (reason?._tag === "Fail") return reason.error
   return StorageError.of(reason?._tag === "Die" ? reason.defect : new Error("Storage call was interrupted"))
 }
+
+/**
+ * `Session.commit` bound to a scope: `tx.createTask()` defaults to its conversation, and entries the commit appends
+ * record its task as `byTaskId`.
+ */
+export const commitIn = <A, E>(
+  session: Session,
+  scope: CommitScope,
+  body: (tx: Tx) => Effect.Effect<A, E>,
+): Effect.Effect<A, E | CommitError> => internals(session).commitIn(scope, body)

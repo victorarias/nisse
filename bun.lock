@@ -35,6 +35,17 @@
         "effect": "4.0.6",
       },
     },
+    "packages/harness": {
+      "name": "@nisse/harness",
+      "version": "0.1.0",
+      "dependencies": {
+        "@nisse/delta": "workspace:*",
+        "@nisse/env": "workspace:*",
+        "@nisse/kernel": "workspace:*",
+        "@nisse/models": "workspace:*",
+        "effect": "4.0.6",
+      },
+    },
     "packages/kernel": {
       "name": "@nisse/kernel",
       "version": "0.1.0",
@@ -188,6 +199,8 @@
     "@nisse/delta": ["@nisse/delta@workspace:packages/delta"],
 
     "@nisse/env": ["@nisse/env@workspace:packages/env"],
+
+    "@nisse/harness": ["@nisse/harness@workspace:packages/harness"],
 
     "@nisse/kernel": ["@nisse/kernel@workspace:packages/kernel"],
 

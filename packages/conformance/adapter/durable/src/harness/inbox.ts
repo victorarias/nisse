@@ -1,6 +1,6 @@
+export { InboxDoc } from "../../../../../harness/src/index.ts";
 import { unimplemented } from "../../../../unimplemented.ts";
 
-export const InboxDoc = unimplemented("InboxDoc", "harness-shell");
 export const appendInput = unimplemented("appendInput", "harness-shell");
 export const applyBoundary = unimplemented("applyBoundary", "harness-shell");
 export const hasQueuedReset = unimplemented("hasQueuedReset", "harness-shell");

@@ -4,18 +4,18 @@ Extensions package tools, hooks, sections, tasks, entries and documents, install
 
 ## Sub-features
 
-- `extension-shape` [kernel, pending harness-run-core] Extension shape with tools, hooks, sections, tasks, entries, documents (R224-243, §7.1): One unit packages everything an add-on needs
-- `extension-install` [kernel, pending harness-run-core] Registry install and uninstall at runtime (§7.1, example 37): Add or remove one extension while running
-- `extension-replace` [kernel, pending harness-shell] Replace one extension in place (§7.1): Update without touching the others
-- `extension-per-conversation` [kernel, pending harness-shell] Per-conversation extension selection (§7.1): A conversation chooses its add-ons
-- `extension-reload` [kernel, pending harness-shell] Reload semantics: running work finishes on old code, boundaries switch (R465-475, §7.5): Reload never breaks a running call
-- `extension-tool-override` [kernel, pending harness-shell] Same-name tool override (R245-305): Replace a built-in tool
-- `extension-wrap-tool` [kernel, pending harness-shell] `wrapTool` (§7.1): Add behavior around any tool without replacing it
-- `extension-tool-metadata` [kernel, pending harness-shell] Typed tool metadata in the registry (§7.1): Extensions read and filter on tool facts
-- `extension-state` [kernel, pending harness-shell] Extension-owned durable state via documents (§3): An add-on remembers across restarts and forks
-- `extension-conversation-access` [kernel, pending harness-shell] Extension access to its conversation (§7.2, §7.3): An add-on reads entries, writes, submits
-- `extension-stored-by-name` [kernel, pending harness-shell] Conversations store extension and tool names, so a selection survives uninstall and restart, stops applying while the code is absent, and binds to what is installed later.
-- `registry-install-conflict` [kernel, pending harness-shell] Installing an extension whose task name is taken is refused.
+- `extension-shape` [kernel] Extension shape with tools, hooks, sections, tasks, entries, documents (R224-243, §7.1): One unit packages everything an add-on needs
+- `extension-install` [kernel] Registry install and uninstall at runtime (§7.1, example 37): Add or remove one extension while running
+- `extension-replace` [kernel] Replace one extension in place (§7.1): Update without touching the others
+- `extension-per-conversation` [kernel] Per-conversation extension selection (§7.1): A conversation chooses its add-ons
+- `extension-reload` [kernel] Reload semantics: running work finishes on old code, boundaries switch (R465-475, §7.5): Reload never breaks a running call
+- `extension-tool-override` [kernel] Same-name tool override (R245-305): Replace a built-in tool
+- `extension-wrap-tool` [kernel] `wrapTool` (§7.1): Add behavior around any tool without replacing it
+- `extension-tool-metadata` [kernel] Typed tool metadata in the registry (§7.1): Extensions read and filter on tool facts
+- `extension-state` [kernel] Extension-owned durable state via documents (§3): An add-on remembers across restarts and forks
+- `extension-conversation-access` [kernel, pending harness-run-core] Extension access to its conversation (§7.2, §7.3): An add-on reads entries, writes, submits
+- `extension-stored-by-name` [kernel] Conversations store extension and tool names, so a selection survives uninstall and restart, stops applying while the code is absent, and binds to what is installed later.
+- `registry-install-conflict` [kernel] Installing an extension whose task name is taken is refused.
 
 ## How to get to it
 

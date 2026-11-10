@@ -4,15 +4,15 @@ A conversation is created with its settings, listed, reopened, owned by a task o
 
 ## Sub-features
 
-- `conversation-options` [kernel, pending harness-run-core] Create a conversation with options (§2.2): Start with model, instructions, tools, extensions and limits
+- `conversation-options` [kernel] Create a conversation with options (§2.2): Start with model, instructions, tools, extensions and limits
 - `conversation-owner` [kernel, pending harness-tools] Ownership kinds (§2, §3): A conversation is owned by a task or another conversation, and goes away with it
-- `fork-at-entry` [kernel, pending harness-run-core] Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
+- `fork-at-entry` [kernel] Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
 - `fork-rpc` [pending surface-conversations] The client path for Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
 - `fork-document-policy` [kernel] Fork document policies: asOf, current, initial (§3.7): Each kind of state chooses what a fork inherits
-- `fork-provider-identity` [kernel, pending harness-shell] Each fork has its own provider session identity (§3.7, R716): Forks don't collide in provider session or cache
-- `conversation-list` [kernel, pending harness-shell] Conversation list (§2.2): Find conversations
-- `conversation-reopen` [kernel, pending harness-shell] Reopen by id and continue (§2.2): Come back to a conversation
-- `conversation-init` [kernel, pending harness-run-core] `init` on create, fork and root writes per-call data in the creating commit.
+- `fork-provider-identity` [kernel] Each fork has its own provider session identity (§3.7, R716): Forks don't collide in provider session or cache
+- `conversation-list` [kernel] Conversation list (§2.2): Find conversations
+- `conversation-reopen` [kernel] Reopen by id and continue (§2.2): Come back to a conversation
+- `conversation-init` [kernel] `init` on create, fork and root writes per-call data in the creating commit.
 
 ## How to get to it
 

@@ -28,9 +28,12 @@ const read = <A>(promise: () => Promise<A>): Effect.Effect<A, StorageError | Sto
 				: StorageError.of(error),
 	});
 
-/** The kernel Storage behind `storage`: the kernel's own SQLite storage unwrapped, any other bridged call by call. */
+/**
+ * The kernel Storage behind `storage`: the kernel's own SQLite storage unwrapped, any other bridged call by call. A
+ * SQLite storage whose methods a test replaced on the instance is bridged too, so the replacements see the calls.
+ */
 export function kernelStorage(storage: Storage): KernelStorage {
-	if (storage instanceof SqliteStorage) return storage.kernel;
+	if (storage instanceof SqliteStorage && !overridden(storage)) return storage.kernel;
 	return {
 		commit: (batches, receive) =>
 			Effect.map(
@@ -68,4 +71,11 @@ export function kernelStorage(storage: Storage): KernelStorage {
 			read(() => storage.scanDocuments(query as never, limit, cursor, context)) as never,
 		close: () => call(() => storage.close(context)),
 	};
+}
+
+/** Whether a method was assigned on the instance, over its class's. */
+function overridden(storage: object): boolean {
+	return Object.getOwnPropertyNames(storage).some(
+		(name) => typeof (storage as Record<string, unknown>)[name] === "function",
+	);
 }

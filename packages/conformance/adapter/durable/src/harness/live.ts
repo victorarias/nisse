@@ -1,7 +1,7 @@
+export { LiveDoc } from "../../../../../harness/src/index.ts";
 import { unimplemented } from "../../../../unimplemented.ts";
 
 export const LIMITS_RESTARTS = unimplemented("LIMITS_RESTARTS", "harness-run-core");
-export const LiveDoc = unimplemented("LiveDoc", "harness-run-core");
 export const PROGRESS_COMMIT = unimplemented("PROGRESS_COMMIT", "harness-run-core");
 export const addCompactionStatus = unimplemented("addCompactionStatus", "harness-run-core");
 export const clearProgress = unimplemented("clearProgress", "harness-run-core");

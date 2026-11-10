@@ -1,0 +1,16 @@
+{
+  "name": "@nisse/harness",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@nisse/delta": "workspace:*",
+    "@nisse/env": "workspace:*",
+    "@nisse/kernel": "workspace:*",
+    "@nisse/models": "workspace:*",
+    "effect": "4.0.6"
+  }
+}

@@ -23,6 +23,7 @@ import {
   type TaskDocToken,
 } from "../documents/definition.ts"
 import { ReadAfterWrite, StorageError } from "../errors.ts"
+import { ROOT_CONVERSATION_ID } from "../records.ts"
 import type {
   ConversationId,
   ConversationQuery,
@@ -137,6 +138,8 @@ export interface Tx {
   createConversation(options: {
     readonly ownership: ConversationOwnership
   }): Effect.Effect<ConversationRecord, StorageError>
+  /** Creates the ownerless root with the reserved ID `ROOT_CONVERSATION_ID`; a defect when it exists already. */
+  createRootConversation(): Effect.Effect<ConversationRecord, StorageError>
   /**
    * Creates a conversation whose transcript is the parent's through the visible entry `at` (spec 3.7). Its conversation
    * documents follow their fork policy: `asOf` copies the value at `at`'s commit, `current` the committed value, and
@@ -166,10 +169,10 @@ export interface Tx {
   /**
    * Creates a `pending` task at the definition's initial checkpoint (spec 5.1, 5.5). A child task lives in its owner's
    * conversation and is never background; the owner must be live, not `completing` or abort-marked, in this commit's
-   * final records. Only the scheduler runs it.
+   * final records. Only the scheduler runs it, with the services its handlers need.
    */
-  createTask<I, S extends { readonly phase: string }, R>(
-    task: Task<I, S, R, never>,
+  createTask<I, S extends { readonly phase: string }, R, Svc>(
+    task: Task<I, S, R, Svc>,
     input: I,
     options: TaskOptions,
   ): Effect.Effect<TaskId<R>, StorageError>
@@ -250,6 +253,8 @@ export type TransactionHost = {
   ) => Effect.Effect<LoadedDocument | undefined, ReadError>
   readonly install: (document: LoadedDocument) => void
   readonly retire: (addressId: string, recordId: DocumentId) => void
+  /** The Session's creation hook, run inside every call that creates or forks a conversation, before it returns. */
+  readonly conversationCreated?: (tx: Tx, record: ConversationRecord) => Effect.Effect<void, unknown>
 }
 
 type SubmissionChange = SubmissionSettlement | { readonly status: "placed"; readonly entry: EntryId }
@@ -458,10 +463,16 @@ export class Transaction implements Tx {
 
   createConversation(options: { readonly ownership: ConversationOwnership }) {
     // Without a parent nothing is read but records, whose failures are storage errors.
-    return this.#tableWrite(this.#stageConversation(undefined, options.ownership)) as Effect.Effect<
+    return this.#created(this.#tableWrite(this.#stageConversation(undefined, options.ownership))) as Effect.Effect<
       ConversationRecord,
       StorageError
     >
+  }
+
+  createRootConversation() {
+    return this.#created(
+      this.#tableWrite(this.#stageConversation(undefined, { kind: "ownerless" }, ROOT_CONVERSATION_ID)),
+    ) as Effect.Effect<ConversationRecord, StorageError>
   }
 
   forkConversation(
@@ -469,7 +480,22 @@ export class Transaction implements Tx {
     at: EntryId,
     options: { readonly ownership: ConversationOwnership },
   ) {
-    return this.#tableWrite(this.#stageConversation({ conversationId: parentConversationId, at }, options.ownership))
+    return this.#created(
+      this.#tableWrite(this.#stageConversation({ conversationId: parentConversationId, at }, options.ownership)),
+    )
+  }
+
+  /** Runs the creation hook on a staged conversation; a hook failure fails the commit (spec 7.1). */
+  #created<E>(staged: Effect.Effect<ConversationRecord, E>): Effect.Effect<ConversationRecord, E> {
+    const hook = this.#host.conversationCreated
+    if (hook === undefined) return staged
+    // A Tx call of its own: counted while it runs, and a hook that dies poisons the commit.
+    return Effect.tap(staged, (record) =>
+      this.#call(
+        () => {},
+        () => Effect.orDie(hook(this, record)),
+      ),
+    )
   }
 
   appendEntry(conversationId: ConversationId, draft: EntryDraft): Effect.Effect<EntryRecord, StorageError>
@@ -526,8 +552,8 @@ export class Transaction implements Tx {
     return this.#stageChange(id, { status: "placed", entry })
   }
 
-  createTask<I, S extends { readonly phase: string }, R>(
-    task: Task<I, S, R, never>,
+  createTask<I, S extends { readonly phase: string }, R, Svc>(
+    task: Task<I, S, R, Svc>,
     input: I,
     options: TaskOptions,
   ): Effect.Effect<TaskId<R>, StorageError> {
@@ -821,6 +847,7 @@ export class Transaction implements Tx {
   #stageConversation(
     parent: NonNullable<ConversationRecord["parent"]> | undefined,
     ownership: ConversationOwnership,
+    reservedId?: ConversationId,
   ): Effect.Effect<ConversationRecord, ReadError> {
     return Effect.gen({ self: this }, function* () {
       let owner: ConversationRecord["owner"]
@@ -832,7 +859,7 @@ export class Transaction implements Tx {
         }
         owner = { conversationId: task.conversationId, taskId: ownership.taskId }
       }
-      const id = yield* this.#mint<ConversationId>()
+      const id = reservedId ?? (yield* this.#mint<ConversationId>())
       const copies = parent === undefined ? [] : yield* this.#forkCopies(parent.conversationId, parent.at, id)
       this.#assertOpen()
       const record = freeze<ConversationRecord>({
