@@ -1434,7 +1434,16 @@ class Scheduler<Svc> implements TaskScheduler {
     return Effect.gen({ self: this }, function* () {
       const invocation = reservation.invocation
       const state = { task: reservation.task, snapshot: reservation.snapshot, reported: UNREPORTED as unknown }
-      let current = yield* this.#step(invocation, (task) => this.#rules(task, undefined), state)
+      // The reservation just stored the task running and no phase has committed yet, so the first decision needs no
+      // line round trip unless its chain must load: a phase that may start does so even while the line waits on Storage.
+      const reserved = this.#live.get(invocation.taskId)?.record
+      let current =
+        reserved?.state.status === "running" &&
+        !this.#closing &&
+        !this.#unloaded.has(reserved.id) &&
+        this.#rules(reserved, undefined).kind === "continue"
+          ? reserved
+          : yield* this.#step(invocation, (task) => this.#rules(task, undefined), state)
       while (current !== undefined && !this.#closing) {
         const task = current
         const checkpoint = task.state.checkpoint as Checkpoint
