@@ -1,4 +1,4 @@
 import { unimplemented } from "../../../unimplemented.ts";
 
-export const hostTimers = unimplemented("hostTimers", "kernel-session");
-export const nativeTimer = unimplemented("nativeTimer", "kernel-session");
+export const hostTimers = unimplemented("hostTimers", "kernel-tasks");
+export const nativeTimer = unimplemented("nativeTimer", "kernel-tasks");

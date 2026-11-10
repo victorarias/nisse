@@ -54,7 +54,7 @@ implemented is `unimplemented(name, owner)`: it loads, and throws naming the
 owner on first use. A child replaces the exports it owns with thin wrappers over
 its package. `derive.ts adapter` generated the first version and is not rerun
 once children edit it. `setDefaultDocumentRetention` is real, because the setup
-file calls it in every run; `kernel-session` connects it.
+file calls it in every run; `kernel-documents` connects it, with the Promise wrapper over `packages/kernel`'s Session.
 
 Test doubles behind the Storage port: `adapter/durable/src/storage/memory.ts` is
 upstream's `MemoryStorage` copied unchanged, and `ControlledStorage` stays in

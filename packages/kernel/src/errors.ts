@@ -42,3 +42,37 @@ export class CommitRefused extends Data.TaggedError("CommitRefused")<{
   readonly message: string
   readonly cause?: unknown
 }> {}
+
+/**
+ * The Session failed: a storage error ended it, or its own bookkeeping did (spec 10.1). Every call after the first
+ * failure fails with this, `cause` being that first error. Reopen the storage to continue.
+ */
+export class SessionFailed extends Data.TaggedError("SessionFailed")<{
+  readonly message: string
+  readonly cause: unknown
+}> {
+  static of(cause: unknown): SessionFailed {
+    return new SessionFailed({ message: `Session failed: ${errorMessage(cause)}`, cause })
+  }
+}
+
+/** The Session is closing or closed, and admits no more commits. */
+export class SessionClosed extends Data.TaggedError("SessionClosed")<{ readonly message: string }> {
+  static readonly instance = new SessionClosed({ message: "Session is closed" })
+}
+
+/** A read-only Session refused a commit with writes, before it reached storage. The Session stays healthy. */
+export class ReadOnlySession extends Data.TaggedError("ReadOnlySession")<{ readonly message: string }> {
+  static readonly instance = new ReadOnlySession({ message: "Session is read-only" })
+}
+
+/**
+ * A commit read a table after its first table write (spec 4). The order is a rule of the commit callback, so this is a
+ * defect of that callback, not a failure to handle: read everything a commit needs before it writes.
+ */
+export class ReadAfterWrite extends Error {
+  constructor(read: string) {
+    super(`${read} reads a table after this commit's first table write; read before writing`)
+    this.name = "ReadAfterWrite"
+  }
+}

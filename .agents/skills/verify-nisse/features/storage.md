@@ -6,7 +6,7 @@ Durable state lives behind a storage contract with a SQLite backend, bounded rea
 
 - `storage-sqlite` [kernel] SQLite backend (§11): Durable local storage
 - `storage-port` [kernel] Storage interface, custom backend (R863-921, §10): Plug another store in
-- `storage-test-double` [kernel, pending kernel-session] Memory backend (R863-921): Fast tests
+- `storage-test-double` [kernel] Memory backend (R863-921): Fast tests
 - `storage-cursors` [kernel] Cursors and scans in the contract (§10): Big reads stay bounded
 - `storage-id-minting` [kernel] Id minting that always increases, also across reopen (§10, 1.5.0): Ids sort by creation
 - `storage-conformance` [kernel] Storage conformance suite (`testing/storage-conformance`, 2,099 lines): Any backend can be proven against the contract
