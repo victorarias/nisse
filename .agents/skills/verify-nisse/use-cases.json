@@ -38,6 +38,9 @@
   "amended/harness-scheduler-retention.test.ts :: scheduler retention > withdraws an input queued two ended levels below an owner whose intent appears later": [
     "task-scheduling-ownership"
   ],
+  "amended/harness-structured.test.ts :: waiting > keeps running phases after spawning and waits on subsets in sequence": [
+    "task-wait"
+  ],
   "amended/harness-tasks.test.ts :: task phases > commits results with entries atomically, keeps memos until terminal, and retires task documents": [
     "task-memo"
   ],
