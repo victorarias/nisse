@@ -32,9 +32,26 @@ export {
   type CommitObserver,
   type CommitObserverEnd,
   type CommitPublication,
+  type DocumentChange,
+  type DocumentObservation,
+  type DocumentObserver,
+  type DocumentObserverEnd,
+  makeSession,
   openSession,
+  type ReadFailure,
   type Session,
   type SessionEnd,
   type SessionOptions,
+  type StorageReads,
 } from "./session/session.ts"
-export type { ConversationOwnership, SubmissionCreate, SubmissionSettlement, Tx } from "./session/transaction.ts"
+export type { DocumentWatch } from "./session/watch.ts"
+export { DEFAULT_DOCUMENT_RETENTION_MS, type DocumentCacheSizes } from "./session/documents.ts"
+export type {
+  ConversationOwnership,
+  DocError,
+  DocumentCommitChange,
+  SubmissionCreate,
+  SubmissionSettlement,
+  Tx,
+} from "./session/transaction.ts"
+export * from "./documents/definition.ts"

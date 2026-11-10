@@ -58,6 +58,11 @@ export class SqliteStorage {
 		this.#kernel = kernel;
 	}
 
+	/** The kernel storage behind it, which a Session uses directly. */
+	get kernel(): KernelStorage {
+		return this.#kernel;
+	}
+
 	static async open(database: PromiseDatabase, options: { readonly prefix?: string } = {}): Promise<SqliteStorage> {
 		if (options.prefix !== undefined) throw new Error("conformance adapter: the table prefix is removed (D5)");
 		return new SqliteStorage(await run(KernelStorage.open(kernelDatabase(database))));
