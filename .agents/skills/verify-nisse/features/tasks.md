@@ -18,21 +18,21 @@ Durable work is a task with phases and checkpoints, scheduled across restarts, w
 - `task-fail-fast` [kernel, pending harness-tools] `failFast` and `allSettled` (§5.5): Choose how a group of children fails
 - `task-cycle-check` [kernel, pending harness-tools] Cycle check (§5.5): Tasks waiting on each other fail clearly
 - `task-abort-bottom-up` [kernel, pending harness-tools] Abort bottom-up (§5.5): Children stop before their parent
-- `task-orphaned` [kernel, pending harness-run-core] Orphaned tasks (§5.4): Work whose definition is gone is marked and kept
+- `task-orphaned` [kernel] Orphaned tasks (§5.4): Work whose definition is gone is marked and kept
 - `task-blocked` [kernel, pending harness-run-core] Blocked tasks and reports (R214-222, §5.4): A broken extension's work waits to be fixed, and people are told
 - `task-migration` [kernel, pending harness-tools] Task migrations (§5.4): Running tasks survive a new version
 - `task-handover` [kernel] Task handover (§5.4): One task passes its work to another without a gap
 - `task-restart-count` [kernel, pending harness-run-core] Restarts counted per task (§5.4): One bad task stops, others go on
-- `task-inspect` [kernel, pending harness-run-core] `inspect` (§2.2): See what is running and why
-- `task-abort` [kernel, pending harness-run-core] `abortTask` (§5.4): Stop one piece of work
+- `task-inspect` [kernel] `inspect` (§2.2): See what is running and why
+- `task-abort` [kernel] `abortTask` (§5.4): Stop one piece of work
 - `task-wait-for` [kernel] `waitForTask` (§5.4): Wait for a result
 - `task-wait-for-idle` [kernel] `waitForIdle` (§5.4): Hosts and tests wait for quiet on a real signal
 - `task-owned` [kernel] `ownedTasks` (§5.4): See a conversation's work
 - `task-lifecycle-times` [kernel] Lifecycle times and outcomes stored (§5.3): Timing and history of work
 - `task-extension-defined` [kernel] Extension-defined tasks (§7.1, R772-797): An add-on runs durable work of its own
-- `task-after-run` [kernel, pending harness-run-core] After-run tasks (R659-714): Durable work starts when a run ends
+- `task-after-run` [kernel, pending harness-tools] After-run tasks (R659-714): Durable work starts when a run ends
 - `task-children-from-tools` [kernel] Child tasks from tools (R772-797): A tool fans out durable work
-- `task-builtin` [kernel, pending harness-run-core] Built-in tasks `pi.generation`, `pi.tool`, `pi.compaction` (§8.3, §8.4, §8.7): The agent loop is observable and restartable by the same rules
+- `task-builtin` [kernel] Built-in tasks `pi.generation`, `pi.tool`, `pi.compaction` (§8.3, §8.4, §8.7): The agent loop is observable and restartable by the same rules
 - `task-graph` [kernel, pending harness-views] Task graph view (R799-814, §9.4): See and draw all work and its dependencies
 - `task-graph-rpc` [pending surface-conversations] The client path for Task graph view (R799-814, §9.4): See and draw all work and its dependencies
 - `task-tool-rounds` [kernel, pending harness-tools] Tool rounds as tasks (§8.5): A round finishes or restarts as a unit

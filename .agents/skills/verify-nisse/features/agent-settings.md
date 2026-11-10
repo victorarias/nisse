@@ -13,13 +13,13 @@ A conversation's configuration is durable, forkable and watchable, and harness s
 - `agent-tools-filter` [kernel] `configure()`: tools filter (R380-404): Limit which tools a conversation has
 - `agent-inherit` [kernel] Children and forks inherit agent settings (§3.7): A subagent starts with its parent's setup
 - `agent-visible` [kernel] Agent changes visible on the watch and rewindable (§2.2): Every client sees configuration changes and forks can read old ones
-- `settings-live` [kernel, pending harness-run-core] Live harness settings (R406-428): Change policy without a restart
+- `settings-live` [kernel] Live harness settings (R406-428): Change policy without a restart
 - `settings-default-extensions` [kernel] Default extension selection (R406-428): New conversations get a chosen extension set
 - `settings-tool-execution` [kernel, pending harness-tools] `toolExecution`: parallel or sequential (R406-428, §8.5): Trade speed against ordering
 - `settings-progress-intervals` [kernel] Output progress intervals (§8.2): Tune how often running output is stored
-- `settings-as-functions` [kernel, pending harness-run-core] `models` and `settings` given as functions are read at each decision.
+- `settings-as-functions` [kernel] `models` and `settings` given as functions are read at each decision.
 - `agent-resolved` [kernel] `conversation.agent()` returns the resolved agent: model, extensions, offered and callable tools, sections and working directory.
-- `settings-context-retention` [kernel, pending harness-run-core] `contextRetentionMs` sets how long an idle conversation's context read is kept.
+- `settings-context-retention` [kernel] `contextRetentionMs` sets how long an idle conversation's context read is kept.
 
 ## How to get to it
 

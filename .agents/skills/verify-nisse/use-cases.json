@@ -1,4 +1,46 @@
 {
+  "amended/env-node.test.ts :: NodeExecutionEnv filesystem > creates temporary directories and files": [
+    "env-filesystem"
+  ],
+  "amended/harness-idle-scopes.test.ts :: kept context ranges > applies a longer retention to idle ranges at an unrelated commit": [
+    "settings-context-retention"
+  ],
+  "amended/harness-idle-scopes.test.ts :: kept context ranges > applies a shorter retention to idle ranges at an unrelated commit": [
+    "settings-context-retention"
+  ],
+  "amended/harness-idle-scopes.test.ts :: kept context ranges > applies a zero retention to idle ranges at an unrelated commit": [
+    "settings-context-retention"
+  ],
+  "amended/harness-idle-scopes.test.ts :: kept context ranges > drops a range past its retention when a task change makes it busy again, with background timers declined": [
+    "settings-context-retention"
+  ],
+  "amended/harness-idle-scopes.test.ts :: kept context ranges > drops a range that goes idle with zero retention": [
+    "settings-context-retention"
+  ],
+  "amended/harness-idle-scopes.test.ts :: kept context ranges > drops every idle range when retention becomes zero, also one that went idle after the clock's now (review)": [
+    "settings-context-retention"
+  ],
+  "amended/harness-idle-scopes.test.ts :: kept context ranges > keeps an idle range's expiry when another task reads it again": [
+    "settings-context-retention"
+  ],
+  "amended/harness-live-deltas.test.ts :: pi.live deltas > bounds the delta chain of a long generation or tool round with a base": [
+    "view-live"
+  ],
+  "amended/harness-live-deltas.test.ts :: pi.live deltas > keeps a complete base exactly while nothing runs": [
+    "view-live"
+  ],
+  "amended/harness-scheduler-retention.test.ts :: scheduler retention > aborts work created in a forgotten conversation below an abort-marked owner before it runs": [
+    "task-scheduling-ownership"
+  ],
+  "amended/harness-scheduler-retention.test.ts :: scheduler retention > holds a live owner for work later created in a forgotten conversation, loading its chain again": [
+    "task-scheduling-ownership"
+  ],
+  "amended/harness-scheduler-retention.test.ts :: scheduler retention > withdraws an input queued two ended levels below an owner whose intent appears later": [
+    "task-scheduling-ownership"
+  ],
+  "amended/harness-tasks.test.ts :: task phases > commits results with entries atomically, keeps memos until terminal, and retires task documents": [
+    "task-memo"
+  ],
   "amended/sqlite-storage.test.ts :: Pico SqliteStorage > rolls SQL rows and sequence allocation back as one transaction": [
     "storage-conformance"
   ],
@@ -667,10 +709,12 @@
     "hook-after-run"
   ],
   "upstream/test/harness-after-run.test.ts :: afterRun > asks the hooks again after a crash before the tasks exist, and never once they do": [
-    "hook-after-run"
+    "hook-after-run",
+    "hook-replay"
   ],
   "upstream/test/harness-after-run.test.ts :: afterRun > creates a requested task from the installed definition, calling its initial() once, off the line": [
-    "hook-after-run"
+    "hook-after-run",
+    "task-after-run"
   ],
   "upstream/test/harness-after-run.test.ts :: afterRun > ends an answered run completed, without a failure, once finish was cut off restartLimit times": [
     "hook-after-run"
@@ -736,7 +780,8 @@
     "hook-after-run"
   ],
   "upstream/test/harness-after-run.test.ts :: afterRun > waits for the tasks an answer's hooks ask for: inputs done at the answer, the run busy until they end": [
-    "hook-after-run"
+    "hook-after-run",
+    "task-after-run"
   ],
   "upstream/test/harness-after-run.test.ts :: endRun > copies a failed run's first entry into runFailure": [
     "hook-after-run"
@@ -748,7 +793,8 @@
     "task-restart-count"
   ],
   "upstream/test/harness-blocked.test.ts :: tasks that cannot run > does not count the same checkpoint committed again as progress": [
-    "task-restart-count"
+    "task-restart-count",
+    "run-crash-count-resets"
   ],
   "upstream/test/harness-blocked.test.ts :: tasks that cannot run > faults a task whose abort handler is cut off restartLimit times": [
     "task-restart-count"
@@ -772,7 +818,8 @@
     "task-blocked"
   ],
   "upstream/test/harness-blocked.test.ts :: tasks that cannot run > starts the count over when the task makes progress": [
-    "task-restart-count"
+    "task-restart-count",
+    "run-crash-count-resets"
   ],
   "upstream/test/harness-blocked.test.ts :: tasks that cannot run > tells the graph and the host when a migration fails": [
     "task-blocked"
@@ -1066,7 +1113,8 @@
     "compaction-stale"
   ],
   "upstream/test/harness-compaction.test.ts :: overflow compaction > compacts and retries with the same attempt, leaving the error out of the retry": [
-    "compaction-overflow"
+    "compaction-overflow",
+    "run-error-classes"
   ],
   "upstream/test/harness-compaction.test.ts :: overflow compaction > fails a second overflow with its error entry": [
     "compaction-overflow"
@@ -1229,7 +1277,8 @@
     "submission-continue"
   ],
   "upstream/test/harness-continue.test.ts :: continue > is rejected while busy, after request ID deduplication": [
-    "submission-continue"
+    "submission-continue",
+    "submission-admission"
   ],
   "upstream/test/harness-continue.test.ts :: continue > is submitted by a tool through the handle of a conversation it owns, and rejected there while busy": [
     "submission-continue"
@@ -1256,7 +1305,8 @@
     "agent-document"
   ],
   "upstream/test/harness-conversations.test.ts :: Harness agent > replaces whole fields, clears them with null, and leaves undefined fields alone": [
-    "agent-document"
+    "agent-document",
+    "section-base"
   ],
   "upstream/test/harness-conversations.test.ts :: Harness lifecycle > forwards generic Session document APIs": [
     "error-model"
@@ -1271,13 +1321,16 @@
     "conversation-init"
   ],
   "upstream/test/harness-conversations.test.ts :: Harness root and conversations > creates the root lazily with its agent change and init in one commit": [
-    "conversation-root"
+    "conversation-root",
+    "session-init",
+    "doc-provider"
   ],
   "upstream/test/harness-conversations.test.ts :: Harness root and conversations > forks at a concrete entry with the as-of agent and applies agent and init overrides": [
     "fork-at-entry"
   ],
   "upstream/test/harness-conversations.test.ts :: Harness root and conversations > keeps root and conversation identity and state across reopen": [
-    "conversation-root"
+    "conversation-root",
+    "doc-provider"
   ],
   "upstream/test/harness-conversations.test.ts :: Harness root and conversations > paginates fork-aware history through deep ancestor caps and same-commit prefixes": [
     "fork-at-entry"
@@ -1310,7 +1363,8 @@
     "submission-after-failed-run"
   ],
   "upstream/test/harness-failed-run-inbox.test.ts :: inputs queued behind a failed run > settle unanswered with run_failed with withdraw": [
-    "submission-after-failed-run"
+    "submission-after-failed-run",
+    "submission-settled"
   ],
   "upstream/test/harness-failed-run-inbox.test.ts :: inputs queued behind a failed run > start the next run with continue": [
     "submission-after-failed-run"
@@ -1364,16 +1418,19 @@
     "run-partial-kept"
   ],
   "upstream/test/harness-generation.test.ts :: generation > creates and persists provider state before a legacy conversation's request": [
-    "provider-session-id"
+    "provider-session-id",
+    "doc-provider"
   ],
   "upstream/test/harness-generation.test.ts :: generation > fails a non-retryable error without retrying": [
-    "run-retry"
+    "run-retry",
+    "run-error-classes"
   ],
   "upstream/test/harness-generation.test.ts :: generation > fails a retryable error without retrying when the retry policy is disabled": [
     "run-retry"
   ],
   "upstream/test/harness-generation.test.ts :: generation > fails with model_error once retries are exhausted": [
-    "run-retry"
+    "run-retry",
+    "submission-settled"
   ],
   "upstream/test/harness-generation.test.ts :: generation > fails with no_model when no model is configured or the model is unknown": [
     "run-failure-reasons"
@@ -1385,7 +1442,8 @@
     "run-stream-options"
   ],
   "upstream/test/harness-generation.test.ts :: generation > keeps provider session IDs request-local across concurrent conversations": [
-    "provider-session-id"
+    "provider-session-id",
+    "doc-provider"
   ],
   "upstream/test/harness-generation.test.ts :: generation > orphans a blocked run task with full run cleanup": [
     "task-orphaned"
@@ -1409,13 +1467,17 @@
     "run-deferred"
   ],
   "upstream/test/harness-generation.test.ts :: generation > reports section wrapper failures while preparing": [
-    "section-contributed"
+    "section-contributed",
+    "section-wrap"
   ],
   "upstream/test/harness-generation.test.ts :: generation > resolves settings over the built-in defaults": [
     "settings-live"
   ],
   "upstream/test/harness-generation.test.ts :: generation > retries a retryable error after a durable backoff and then answers": [
-    "run-retry"
+    "run-retry",
+    "run-retry-live",
+    "run-failed-attempt",
+    "run-error-classes"
   ],
   "upstream/test/harness-generation.test.ts :: generation > still ends a run whose input something else already settled": [
     "run-phases"
@@ -1466,10 +1528,13 @@
     "task-scheduler"
   ],
   "upstream/test/harness-hook-reads.test.ts :: entry reads for hooks and tasks > pages a task's conversation history by entry ID range": [
-    "hook-reads"
+    "hook-reads",
+    "entries-paged"
   ],
   "upstream/test/harness-hook-reads.test.ts :: entry reads for hooks and tasks > reads raw history and single entries from a hook": [
-    "hook-reads"
+    "hook-reads",
+    "hook-api",
+    "extension-conversation-access"
   ],
   "upstream/test/harness-host-inputs.test.ts :: HarnessOptions.models and settings as functions > generation reads the current return value of a settings function": [
     "settings-as-functions"
@@ -1528,10 +1593,13 @@
     "task-wake"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > adds every steer to the run at the postTools boundary with steeringMode all": [
-    "submission-queue-modes"
+    "submission-queue-modes",
+    "submission-steer"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > adds steers to the run at the postTools boundary and holds follow-ups for the final boundary": [
-    "submission-queue-modes"
+    "submission-queue-modes",
+    "submission-steer",
+    "submission-follow-up"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > commits inbox changes as positional Chord operations and a base when empty": [
     "inbox-document"
@@ -1583,7 +1651,8 @@
     "reset-at-boundary"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > places every follow-up in one successor run with followUpMode all": [
-    "submission-queue-modes"
+    "submission-queue-modes",
+    "submission-follow-up"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > places queued writes and steers after the handoff text and adds the steers to the continuing run": [
     "tool-handoff"
@@ -1592,7 +1661,9 @@
     "submission-boundaries"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > queues busy submissions and places writes before user items at the final boundary, one follow-up per run": [
-    "submission-boundaries"
+    "submission-boundaries",
+    "submission-write",
+    "submission-admission"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > reads queue modes when the final boundary's commit runs on the Session line": [
     "submission-queue-modes"
@@ -1607,7 +1678,8 @@
     "context-stale-head"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > starts a queued follow-up after a terminating round": [
-    "submission-boundaries"
+    "submission-boundaries",
+    "submission-follow-up"
   ],
   "upstream/test/harness-inbox.test.ts :: inbox > stores the inbox as a base exactly when it becomes empty": [
     "inbox-document"
@@ -1634,7 +1706,8 @@
     "usage-conversation"
   ],
   "upstream/test/harness-inbox.test.ts :: usage > totals assistant usage per model and tool usage per tool, and sums the Session": [
-    "usage-per-tool"
+    "usage-per-tool",
+    "usage-per-model"
   ],
   "upstream/test/harness-input-entries.test.ts :: data-only writes > appends a data-only write at once behind a non-empty inbox, and still queues writes with model or edits": [
     "submission-display-only"
@@ -1927,22 +2000,26 @@
     "doc-task-scope"
   ],
   "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > aborts a subagent run with its parent's conversation, rejecting the waiting tool": [
-    "child-foreground"
+    "child-foreground",
+    "child-abort-cascade"
   ],
   "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > aborts the children of a tool call that throws or is interrupted, while the run continues": [
     "child-foreground"
   ],
   "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > gives a tool an invocation-bound handle whose submissions stay durable after the call ends": [
-    "child-foreground"
+    "child-foreground",
+    "extension-conversation-access"
   ],
   "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > lets a background supervisor resubmit after a restart without submitting twice": [
-    "child-foreground"
+    "child-foreground",
+    "child-background"
   ],
   "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > lets a running tool abort its owned child and continue": [
     "child-foreground"
   ],
   "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > reruns a replay-safe subagent tool after a restart with the same child and submission": [
-    "child-foreground"
+    "child-foreground",
+    "child-conversation"
   ],
   "upstream/test/harness-ownership.test.ts :: ownership > aborts a background task directly with its ordinary subtree": [
     "task-abort"
@@ -1972,7 +2049,8 @@
     "task-abort"
   ],
   "upstream/test/harness-ownership.test.ts :: ownership > cascades an abort mark to the owned foreground subtree and withdraws its queued inputs": [
-    "task-abort"
+    "task-abort",
+    "child-abort-cascade"
   ],
   "upstream/test/harness-ownership.test.ts :: ownership > cascades from an owner the scheduler orphans": ["task-abort"],
   "upstream/test/harness-ownership.test.ts :: ownership > cascades through ended tasks into an owned background subtree when aborting across background": [
@@ -2060,7 +2138,8 @@
     "section-new-baseline"
   ],
   "upstream/test/harness-prompt.test.ts :: system prompt preparation > renders sections in order with tags, omissions, wrappers, and failures": [
-    "section-order"
+    "section-order",
+    "section-wrap"
   ],
   "upstream/test/harness-prompt.test.ts :: system prompt preparation > replays sections in place, deletes on null, and appends re-additions": [
     "section-deltas"
@@ -2096,7 +2175,9 @@
     "extension-wrap-tool"
   ],
   "upstream/test/harness-registry.test.ts :: agent resolution > orders sections by extension, replaces same keys in place, and renders instructions last and unwrapped": [
-    "section-order"
+    "section-order",
+    "section-wrap",
+    "section-base"
   ],
   "upstream/test/harness-registry.test.ts :: agent resolution > replaces same-name tools in place, wraps the winner, then applies the filter": [
     "extension-tool-override"
@@ -2169,7 +2250,8 @@
     "run-restart-limit"
   ],
   "upstream/test/harness-restart-failure.test.ts :: crash edges (#11139) > ends a run someone aborted as aborted when its abort handler is cut off restartLimit times": [
-    "run-restart-limit"
+    "run-restart-limit",
+    "run-abort-mark"
   ],
   "upstream/test/harness-restart-failure.test.ts :: other tasks cut off restartLimit times in a row (#11139) > ends a tool call with an error result instead of running it again": [
     "task-restart-count"
@@ -2525,7 +2607,9 @@
     "task-fail-fast"
   ],
   "upstream/test/harness-submissions.test.ts :: submissions > appends an idle write and settles it done without a turn": [
-    "submission-status"
+    "submission-status",
+    "submission-write",
+    "submission-admission"
   ],
   "upstream/test/harness-submissions.test.ts :: submissions > appends and reads typed entries through tokens": [
     "submission-status"
@@ -2540,7 +2624,8 @@
     "submission-status"
   ],
   "upstream/test/harness-submissions.test.ts :: submissions > places idle input, and rejects busy input with whenBusy reject without writing": [
-    "submission-busy-reject"
+    "submission-busy-reject",
+    "submission-admission"
   ],
   "upstream/test/harness-submissions.test.ts :: submissions > reacquires a submission after reopen and settles it durably": [
     "submission-status"
@@ -2555,10 +2640,12 @@
     "submission-status"
   ],
   "upstream/test/harness-submissions.test.ts :: submissions > settles submissions by their current record in the transaction": [
-    "submission-status"
+    "submission-status",
+    "submission-settled"
   ],
   "upstream/test/harness-submit-in-commit.test.ts :: submit inside the caller's commit > admits atomically from a tool's commit through its conversation handle": [
-    "submission-in-commit"
+    "submission-in-commit",
+    "extension-conversation-access"
   ],
   "upstream/test/harness-submit-in-commit.test.ts :: submit inside the caller's commit > admits inside a task's terminal commit": [
     "submission-in-commit"
@@ -2594,7 +2681,8 @@
     "submission-in-commit"
   ],
   "upstream/test/harness-submit-in-commit.test.ts :: submit inside the caller's commit > rejects a busy continue and steers with whenIdle inside the commit": [
-    "submission-in-commit"
+    "submission-in-commit",
+    "submission-admission"
   ],
   "upstream/test/harness-submit-in-commit.test.ts :: submit inside the caller's commit > rejects before any write, so the callback may catch the rejection": [
     "submission-in-commit"
@@ -2618,7 +2706,8 @@
     "submission-idle-reject"
   ],
   "upstream/test/harness-submit-in-commit.test.ts :: whenIdle reject > rejects input to an idle conversation without writing": [
-    "submission-idle-reject"
+    "submission-idle-reject",
+    "submission-admission"
   ],
   "upstream/test/harness-submit-in-commit.test.ts :: whenIdle reject > rejects through a tool's conversation handle": [
     "submission-idle-reject"
@@ -2627,7 +2716,9 @@
     "submission-idle-reject"
   ],
   "upstream/test/harness-submit-in-commit.test.ts :: whenIdle reject > steers a working run": [
-    "submission-idle-reject"
+    "submission-idle-reject",
+    "submission-steer",
+    "submission-admission"
   ],
   "upstream/test/harness-task-graph.test.ts :: task graph view > advances with the conversation view at the publication of the one commit that changes both": [
     "task-graph"
@@ -2696,7 +2787,8 @@
     "task-handover"
   ],
   "upstream/test/harness-tasks-recovery.test.ts :: task crash recovery > crash after the mark before the run joins: only the abort handler runs": [
-    "task-scheduling-ownership"
+    "task-scheduling-ownership",
+    "run-abort-mark"
   ],
   "upstream/test/harness-tasks-recovery.test.ts :: task crash recovery > crash after the terminal outcome: nothing runs again": [
     "task-scheduling-ownership"
@@ -3043,7 +3135,11 @@
   "upstream/test/harness-tools.test.ts :: generation hooks > chains beforeProviderRequest over every provider request body": [
     "hook-before-provider-request"
   ],
-  "upstream/test/harness-tools.test.ts :: generation hooks > keeps durable hook decisions in task memos": ["task-memo"],
+  "upstream/test/harness-tools.test.ts :: generation hooks > keeps durable hook decisions in task memos": [
+    "task-memo",
+    "hook-api",
+    "hook-replay"
+  ],
   "upstream/test/harness-tools.test.ts :: generation hooks > keeps the run's input open across an onYield continuation and answers it with the final answer": [
     "hook-before-request"
   ],
@@ -3051,10 +3147,12 @@
     "hook-before-request"
   ],
   "upstream/test/harness-tools.test.ts :: generation hooks > observes responses that arrive by polling a deferred request": [
-    "hook-before-request"
+    "hook-before-request",
+    "hook-after-response"
   ],
   "upstream/test/harness-tools.test.ts :: generation hooks > replaces request messages, observes responses, and continues on yield": [
-    "hook-before-request"
+    "hook-before-request",
+    "hook-after-response"
   ],
   "upstream/test/harness-tools.test.ts :: generation hooks > reports a throwing beforeProviderRequest hook and continues the chain": [
     "hook-before-provider-request"

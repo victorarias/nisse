@@ -4,7 +4,7 @@ The queue of inputs is durable state any client can read.
 
 ## Sub-features
 
-- `inbox-document` [kernel, pending harness-run-core] `pi.inbox` document (§6): The queue is durable state any client can read
+- `inbox-document` [kernel] `pi.inbox` document (§6): The queue is durable state any client can read
 
 ## How to get to it
 

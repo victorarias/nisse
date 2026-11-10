@@ -13,7 +13,7 @@ Extensions package tools, hooks, sections, tasks, entries and documents, install
 - `extension-wrap-tool` [kernel] `wrapTool` (§7.1): Add behavior around any tool without replacing it
 - `extension-tool-metadata` [kernel] Typed tool metadata in the registry (§7.1): Extensions read and filter on tool facts
 - `extension-state` [kernel] Extension-owned durable state via documents (§3): An add-on remembers across restarts and forks
-- `extension-conversation-access` [kernel, pending harness-run-core] Extension access to its conversation (§7.2, §7.3): An add-on reads entries, writes, submits
+- `extension-conversation-access` [kernel] Extension access to its conversation (§7.2, §7.3): An add-on reads entries, writes, submits
 - `extension-stored-by-name` [kernel] Conversations store extension and tool names, so a selection survives uninstall and restart, stops applying while the code is absent, and binds to what is installed later.
 - `registry-install-conflict` [kernel] Installing an extension whose task name is taken is refused.
 
