@@ -3,7 +3,7 @@
 // Derived from pi-durable's `src/session/transaction.ts` and `src/session/forks.ts` at 7d073328e (MIT, see LICENSE).
 import { type Change, type Draft, type Op, type Prepared, type Tracker, track } from "@nisse/delta"
 import { copyJson } from "@nisse/delta/json"
-import { Deferred, Effect, Queue } from "effect"
+import { Deferred, Effect, Exit, Queue } from "effect"
 import {
   type AnyDocDefinition,
   type AnyDocToken,
@@ -480,15 +480,16 @@ export class Transaction implements Tx {
           if (latest.draft !== undefined) return Deferred.await(latest.draft)
           if (latest.target?.kind === "fork-copy") {
             const target = latest.target
-            return this.#memoize(latest, this.#acquireForkCopy(latest, definition, target))
+            return this.#memoize(latest, this.#acquireForkCopy(latest, definition, target), () => {
+              delete latest.draft
+            })
           }
         }
         const seed = definition.family === true ? copyJson(args[resolved.nextArgument]) : undefined
         const entry: DocumentEntry = { addressId: resolved.id, address: resolved.address, definition, retire: false }
-        this.#documents.push(entry)
-        this.#latest.set(entry.addressId, entry)
+        const unstage = this.#stage(entry, latest)
         // A retirement staged before means a new incarnation: the old one is not loaded again.
-        return this.#memoize(entry, this.#acquire(entry, resolved, seed, latest?.retire === true))
+        return this.#memoize(entry, this.#acquire(entry, resolved, seed, latest?.retire === true), unstage)
       }),
     ) as Effect.Effect<Draft<never>, DocError>
   }
@@ -507,14 +508,14 @@ export class Transaction implements Tx {
           return Effect.void
         }
         if (latest?.draft !== undefined) {
-          // The acquired draft's final content is stored before the retirement.
+          // The acquired draft's final content is stored before the retirement. An acquisition that failed unstaged
+          // itself, so the retirement then looks the incarnation up on its own.
           latest.retire = true
-          return Effect.asVoid(Deferred.await(latest.draft))
+          return Effect.catchCause(Effect.asVoid(Deferred.await(latest.draft)), () => this.retireDoc(token, ...args))
         }
         const entry: DocumentEntry = { addressId: resolved.id, address: resolved.address, definition, retire: true }
-        this.#documents.push(entry)
-        this.#latest.set(entry.addressId, entry)
-        return this.#findRetirement(entry)
+        const unstage = this.#stage(entry, latest)
+        return Effect.onError(this.#findRetirement(entry), () => Effect.sync(unstage))
       }),
     )
   }
@@ -804,11 +805,38 @@ export class Transaction implements Tx {
     })
   }
 
-  /** The first acquisition at an address runs `acquire`; later ones wait for the same draft. */
-  #memoize(entry: DocumentEntry, acquire: Effect.Effect<Draft<JsonObject>, DocError>) {
+  /** Stages `entry` as the address's newest; the returned call puts `previous` back, as if `entry` was never staged. */
+  #stage(entry: DocumentEntry, previous: DocumentEntry | undefined): () => void {
+    this.#documents.push(entry)
+    this.#latest.set(entry.addressId, entry)
+    return () => {
+      const index = this.#documents.lastIndexOf(entry)
+      if (index !== -1) this.#documents.splice(index, 1)
+      if (this.#latest.get(entry.addressId) !== entry) return
+      if (previous === undefined) this.#latest.delete(entry.addressId)
+      else this.#latest.set(entry.addressId, previous)
+    }
+  }
+
+  /**
+   * The first acquisition at an address runs `acquire`; later ones wait for the same draft. One that fails or is
+   * interrupted runs `unstage` before its waiters resume, so a later access at the address starts afresh.
+   */
+  #memoize(entry: DocumentEntry, acquire: Effect.Effect<Draft<JsonObject>, DocError>, unstage: () => void) {
     const draft = Deferred.makeUnsafe<Draft<JsonObject>, DocError>()
     entry.draft = draft
-    return acquire.pipe(Effect.onExit((exit) => Deferred.done(draft, exit)))
+    return acquire.pipe(
+      Effect.onExit((exit) =>
+        Effect.suspend(() => {
+          if (Exit.isFailure(exit)) {
+            entry.change?.abort()
+            delete entry.change
+            unstage()
+          }
+          return Deferred.done(draft, exit)
+        }),
+      ),
+    )
   }
 
   /** Plans every staged incarnation and checks what must hold before Storage (spec 3.4, 3.5, 3.7). */

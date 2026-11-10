@@ -18,8 +18,9 @@ import type {
 
 /**
  * A watch of one document address. `value` is the value at acquisition; `changes` delivers every later change, folded
- * while the consumer is busy. The stream ends when the Session closes and fails with `SessionFailed` when it fails. Pull
- * it once: the watch has one consumer.
+ * while the consumer is busy. The stream ends when the Session closes or the watch's scope ends. It fails with
+ * `SessionFailed` when the Session fails.
+ * Pull it once: the watch has one consumer.
  */
 export type DocumentWatch<T> = {
   readonly value: Readonly<T>
@@ -47,7 +48,13 @@ export function makeWatch<T>(
           Queue.offerUnsafe(wake, undefined)
         },
       }),
-      (attached) => Effect.sync(() => attached?.detach()),
+      // The scope's end detaches the observer, which then gets no end of its own: the stream completes here.
+      (attached) =>
+        Effect.sync(() => {
+          pending.finish({ kind: "ended" })
+          Queue.offerUnsafe(wake, undefined)
+          attached?.detach()
+        }),
     )
     if (observation === undefined) return undefined
     const next: Effect.Effect<DocumentChange<T>, SessionFailed | Cause.Done> = Effect.suspend(

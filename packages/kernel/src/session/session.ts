@@ -213,6 +213,9 @@ type Attached = {
 
 const NO_OPS: readonly Op[] = []
 
+/** The longest delay `setTimeout` takes: 2^31 - 1 ms. */
+const MAX_TIMER_MS = 2_147_483_647
+
 class SessionImpl implements Session {
   readonly #storage: Storage
   readonly #readOnly: boolean
@@ -532,14 +535,20 @@ class SessionImpl implements Session {
       const done = yield* Fiber.await(callback)
       job.callback = undefined
       const { pending } = yield* tx.settle(Exit.isSuccess(done))
-      if (job.cancelled) return
+      if (job.cancelled) {
+        tx.abort()
+        return
+      }
       // A callback that failed keeps its own outcome, also when a storage error it passed on failed the Session.
       if (Exit.isFailure(done)) return yield* deliver(done)
       if (pending) {
         return yield* deliver(Exit.die(new Error("Session commit callback settled before its pending Tx operations")))
       }
       // A callback that caught a failed read cannot commit.
-      if (this.#failure !== undefined) return yield* deliver(Exit.fail(this.#sessionFailed()))
+      if (this.#failure !== undefined) {
+        tx.abort()
+        return yield* deliver(Exit.fail(this.#sessionFailed()))
+      }
       const assembled = yield* Effect.exit(tx.writes())
       if (Exit.isFailure(assembled)) return yield* deliver(Exit.failCause(assembled.cause))
       const writes = assembled.value
@@ -762,7 +771,9 @@ class SessionImpl implements Session {
       run()
       return
     }
-    const timer = setTimeout(run, delayMs)
+    // A longer delay overflows the timer into 1 ms. Clamped, the timer fires early, the sweep finds nothing expired and
+    // schedules the rest: one wake per 24.8 days.
+    const timer = setTimeout(run, Math.min(delayMs, MAX_TIMER_MS))
     ;(timer as { unref?: () => void }).unref?.()
     this.#sweep = { at, timer }
   }

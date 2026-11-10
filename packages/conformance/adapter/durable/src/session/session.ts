@@ -420,6 +420,7 @@ export class SessionImpl {
 	#hostObservers: Set<GuardedObserver<Any>> | undefined;
 	/** Calls on the line whose outcome is not delivered yet. */
 	#outstanding = 0;
+	#reads = 0;
 
 	constructor(
 		storage: Any,
@@ -465,8 +466,12 @@ export class SessionImpl {
 	 * Internal, for tests that bound memory: calls on the line without an outcome yet. The kernel publishes each commit
 	 * before its outcome and keeps no read cache, so nothing is ever unpublished or read in flight between jobs.
 	 */
+	/**
+	 * Upstream's line counters, measured at this boundary: calls not yet settled, and of them the reads. The kernel
+	 * publishes a commit in the line job that stores it, with no group commit (D5), so none is ever stored unpublished.
+	 */
 	get lineSizes() {
-		return { outstanding: this.#outstanding, unpublished: 0, reads: 0 };
+		return { outstanding: this.#outstanding, unpublished: 0, reads: this.#reads };
 	}
 
 	get documentCacheSizes() {
@@ -515,21 +520,18 @@ export class SessionImpl {
 
 	observeDoc(token: Any, ...args: Any[]): Promise<Any> {
 		const [address, context, observer] = split(token, args, 0, true);
-		const guarded = guardObserver<Any>(observer, () => kernelObservation?.detach(), (error, ctx) =>
-			this.report(error, { kind: "listener_error" }, ctx),
-		);
-		let kernelObservation: { detach(): void } | undefined;
+		// The kernel detaches an observer that throws or rejects and ends it `listener_error`; the host also reports it.
 		const kernelObserver = {
-			advance: (change: Any) => guarded.advance({ kind: "value", ...change }, BACKGROUND_CONTEXT),
-			end: (end: Any) => guarded.end(end.kind === "ended" ? closeEnds(undefined).observer : observerEnd(end)),
-		};
-		return this.#read((this.#kernel.observeDoc as Any)(token, ...address, kernelObserver), context).then(
-			(attached: Any) => {
-				if (attached === undefined) return undefined;
-				kernelObservation = attached;
-				return observation(attached.value, guarded);
+			advance: (change: Any) => observer.advance({ kind: "value", ...change }, BACKGROUND_CONTEXT),
+			end: (end: Any) => {
+				if (end.kind === "listener_error") this.report(end.error, { kind: "listener_error" }, BACKGROUND_CONTEXT);
+				contained(
+					() => observer.end(end.kind === "ended" ? closeEnds(undefined).observer : observerEnd(end)),
+					(error) => this.report(error, { kind: "listener_error" }),
+				);
 			},
-		);
+		};
+		return this.#read((this.#kernel.observeDoc as Any)(token, ...address, kernelObserver), context);
 	}
 
 	watchDoc(token: Any, ...args: Any[]): Promise<Any> {
@@ -641,7 +643,11 @@ export class SessionImpl {
 		} catch (error) {
 			return Promise.reject(error);
 		}
-		return this.#counted(run(effect, context));
+		this.#reads++;
+		const promise = this.#counted(run(effect, context));
+		const settle = () => void this.#reads--;
+		promise.then(settle, settle);
+		return promise;
 	}
 
 	#counted<A>(promise: Promise<A>): Promise<A> {

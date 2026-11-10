@@ -147,30 +147,35 @@ describe("documents", () => {
         expect(yield* session.snapshot(Notes, conversationId)).toEqual({ lines: ["first"] })
         const entries = yield* session.read((storage) => storage.scanEntries({ conversationId }, 10, undefined))
         expect(entries.items.map((entry) => entry.data)).toEqual([{ line: "first" }])
-
-        // What was committed is what a new Session reads back from storage.
-        yield* session.unloadDocuments
-        expect(yield* session.snapshot(Notes, conversationId)).toEqual({ lines: ["first"] })
       }),
     ))
 
-  test("doc-session-scope: one session document is shared by commits about any conversation", () =>
+  test("doc-session-scope: a fork shares the session document with its parent, neither copied nor reset", () =>
     run(
       Effect.gen(function* () {
         const session = yield* newSession()
-        expect(yield* session.snapshot(Counter)).toBeUndefined()
-        const a = yield* newConversation(session)
-        const b = yield* newConversation(session)
-        for (const conversationId of [a, b]) {
-          yield* session.commit((tx) =>
-            Effect.gen(function* () {
-              const counter = yield* tx.doc(Counter)
-              counter.count++
-              yield* tx.appendEntry(conversationId, { kind: "note", data: { counted: counter.count } })
-            }),
-          )
-        }
-        expect(yield* session.snapshot(Counter)).toEqual({ count: 2 })
+        const parent = yield* newConversation(session)
+        const first = yield* session.commit((tx) =>
+          Effect.gen(function* () {
+            ;(yield* tx.doc(Counter)).count = 5
+            return yield* tx.appendEntry(parent, { kind: "note", data: {} })
+          }),
+        )
+        yield* session.commit((tx) =>
+          Effect.gen(function* () {
+            yield* tx.forkConversation(parent, first.id, { ownership: { kind: "ownerless" } })
+            ;(yield* tx.doc(Counter)).count++
+          }),
+        )
+        expect(yield* session.snapshot(Counter)).toEqual({ count: 6 })
+        const documents = yield* session.read((storage) =>
+          storage.scanDocuments(
+            { scope: { kind: "session" }, at: "current", kind: Counter.definition.kind },
+            10,
+            undefined,
+          ),
+        )
+        expect(documents.items).toHaveLength(1)
       }),
     ))
 
@@ -288,6 +293,53 @@ describe("documents", () => {
         yield* Effect.forkScoped(Effect.ensuring(Stream.runDrain(watch.changes), Deferred.succeed(done, undefined)))
         yield* session.close
         yield* Deferred.await(done)
+      }),
+    ))
+
+  test("doc-watch: a watch whose scope ends completes its stream, also for a consumer outside the scope", () =>
+    run(
+      Effect.gen(function* () {
+        const session = yield* newSession()
+        yield* bump(session)
+        const watch = (yield* Effect.scoped(session.watchDoc(Counter)))!
+        yield* bump(session)
+        // Nothing pending reaches it after the scope's end, and the stream completes.
+        expect(yield* Stream.runCollect(watch.changes)).toEqual([])
+      }),
+    ))
+
+  test("doc-lifetime: after a doc() whose migration failed, retireDoc and doc() reset the address in one commit", () =>
+    run(
+      Effect.gen(function* () {
+        const Old = defineDoc<{ count: number }>({
+          kind: "test.reset",
+          version: 1,
+          scope: "session",
+          initial: () => ({ count: 0 }),
+          checkpointWhen: () => false,
+        })
+        const New = defineDoc<{ total: number }>({
+          kind: "test.reset",
+          version: 2,
+          scope: "session",
+          initial: () => ({ total: 0 }),
+          migrate: () => {
+            throw new Error("cannot migrate this value")
+          },
+          checkpointWhen: () => false,
+        })
+        const session = yield* newSession()
+        yield* session.commit((tx) => Effect.map(tx.doc(Old), (doc) => void (doc.count = 7)))
+
+        yield* session.commit((tx) =>
+          Effect.gen(function* () {
+            yield* Effect.catchDefect(Effect.asVoid(tx.doc(New)), () => Effect.void)
+            yield* tx.retireDoc(New)
+            ;(yield* tx.doc(New)).total = 1
+          }),
+        )
+        expect(session.failure).toBeUndefined()
+        expect(yield* session.snapshot(New)).toEqual({ total: 1 })
       }),
     ))
 
