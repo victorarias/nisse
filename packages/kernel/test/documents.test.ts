@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Deferred, Effect, Exit, Queue, type Scope, Stream } from "effect"
 import {
   type CommitPublication,
@@ -15,6 +15,7 @@ import {
   openSession,
   openSqliteStorage,
   type Session,
+  type Storage,
 } from "../src/index.ts"
 
 const homes: string[] = []
@@ -308,7 +309,7 @@ describe("documents", () => {
       }),
     ))
 
-  test("doc-lifetime: after a doc() whose migration failed, retireDoc and doc() reset the address in one commit", () =>
+  test("doc-lifetime: a reset whose cold doc() dies on its migration fails the commit, and the stored document stays", () =>
     run(
       Effect.gen(function* () {
         const Old = defineDoc<{ count: number }>({
@@ -328,18 +329,47 @@ describe("documents", () => {
           },
           checkpointWhen: () => false,
         })
-        const session = yield* newSession()
-        yield* session.commit((tx) => Effect.map(tx.doc(Old), (doc) => void (doc.count = 7)))
-
-        yield* session.commit((tx) =>
+        const path = join(mkdtempSync(join(tmpdir(), "nisse-documents-")), "kernel.sqlite")
+        homes.push(dirname(path))
+        yield* Effect.scoped(
           Effect.gen(function* () {
-            yield* Effect.catchDefect(Effect.asVoid(tx.doc(New)), () => Effect.void)
-            yield* tx.retireDoc(New)
-            ;(yield* tx.doc(New)).total = 1
+            const session = yield* openSession(yield* openSqliteStorage(path))
+            yield* session.commit((tx) => Effect.map(tx.doc(Old), (doc) => void (doc.count = 7)))
           }),
         )
+        // A fresh Session has nothing cached, and the stored document's lookup yields, so the first doc() is still
+        // loading while the retirement and the replacement start.
+        const stored = yield* openSqliteStorage(path)
+        const storage = new Proxy(stored, {
+          get(target, key) {
+            if (key === "findDocument") {
+              return (...args: Parameters<Storage["findDocument"]>) =>
+                Effect.andThen(Effect.yieldNow, target.findDocument(...args))
+            }
+            const value = Reflect.get(target, key)
+            return typeof value === "function" ? value.bind(target) : value
+          },
+        }) as Storage
+        const session = yield* openSession(storage)
+
+        const exit = yield* Effect.exit(
+          session.commit((tx) =>
+            Effect.gen(function* () {
+              const [load, retire, replace] = yield* Effect.all(
+                [Effect.exit(tx.doc(New)), Effect.exit(tx.retireDoc(New)), Effect.exit(tx.doc(New))],
+                { concurrency: "unbounded" },
+              )
+              expect(Exit.isFailure(load)).toBe(true)
+              if (Exit.isSuccess(replace)) replace.value.total = 1
+              return retire
+            }),
+          ),
+        )
+        expect(
+          String(Exit.isFailure(exit) && exit.cause.reasons[0]?._tag === "Die" && exit.cause.reasons[0].defect),
+        ).toContain("cannot migrate this value")
         expect(session.failure).toBeUndefined()
-        expect(yield* session.snapshot(New)).toEqual({ total: 1 })
+        expect(yield* session.snapshot(Old)).toEqual({ count: 7 })
       }),
     ))
 
@@ -377,14 +407,17 @@ describe("documents", () => {
         ).toContain("two definitions")
         expect(yield* session.snapshot(Old)).toEqual({ count: 1 })
 
-        // A retirement through the other definition, its defect caught, retires nothing.
-        yield* session.commit((tx) =>
-          Effect.gen(function* () {
-            ;(yield* tx.doc(Old)).count = 3
-            yield* Effect.catchDefect(tx.retireDoc(New), () => Effect.void)
-          }),
+        // A retirement through the other definition fails the commit, also when the callback catches its defect.
+        const caught = yield* Effect.exit(
+          session.commit((tx) =>
+            Effect.gen(function* () {
+              ;(yield* tx.doc(Old)).count = 3
+              yield* Effect.catchDefect(tx.retireDoc(New), () => Effect.void)
+            }),
+          ),
         )
-        expect(yield* session.snapshot(Old)).toEqual({ count: 3 })
+        expect(Exit.isFailure(caught)).toBe(true)
+        expect(yield* session.snapshot(Old)).toEqual({ count: 1 })
       }),
     ))
 

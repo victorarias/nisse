@@ -602,6 +602,11 @@ class SessionImpl implements Session, SessionInternals {
       if (pending) {
         return yield* deliver(Exit.die(new Error("Session commit callback settled before its pending Tx operations")))
       }
+      // A callback that caught a defect of a Tx call that had begun changing the transaction cannot commit.
+      if (tx.poison !== undefined) {
+        tx.abort()
+        return yield* deliver(Exit.die(tx.poison.defect))
+      }
       // A callback that caught a failed read cannot commit.
       if (this.#failure !== undefined) {
         tx.abort()
