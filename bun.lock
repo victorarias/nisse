@@ -14,6 +14,7 @@
     "packages/conformance": {
       "name": "@nisse/conformance",
       "dependencies": {
+        "@nisse/env": "workspace:*",
         "@silvia-odwyer/photon": "0.3.3",
         "diff": "8.0.4",
         "quickjs-wasi": "3.6.2",
@@ -27,11 +28,26 @@
       "name": "@nisse/delta",
       "version": "0.1.0",
     },
+    "packages/env": {
+      "name": "@nisse/env",
+      "version": "0.1.0",
+      "dependencies": {
+        "effect": "4.0.6",
+      },
+    },
     "packages/kernel": {
       "name": "@nisse/kernel",
       "version": "0.1.0",
       "dependencies": {
         "@nisse/delta": "workspace:*",
+        "effect": "4.0.6",
+      },
+    },
+    "packages/models": {
+      "name": "@nisse/models",
+      "version": "0.1.0",
+      "dependencies": {
+        "@nisse/schema": "workspace:*",
         "effect": "4.0.6",
       },
     },
@@ -171,7 +187,11 @@
 
     "@nisse/delta": ["@nisse/delta@workspace:packages/delta"],
 
+    "@nisse/env": ["@nisse/env@workspace:packages/env"],
+
     "@nisse/kernel": ["@nisse/kernel@workspace:packages/kernel"],
+
+    "@nisse/models": ["@nisse/models@workspace:packages/models"],
 
     "@nisse/protocol": ["@nisse/protocol@workspace:packages/protocol"],
 

@@ -70,7 +70,7 @@ facade; any other database a test passes, such as a test double, is bridged call
 
 | Stand-in                                                    | Owner                                                                    |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `pi-ai` root, `models`, `providers/faux`                    | `models-seam`, including the faux model's deferred polling and retry     |
+| `pi-ai` root, `models`, `providers/faux`                    | a Promise facade over `packages/models`; `toSeam(models)` gives the Effect seam behind it |
 | `pi-schema`                                                 | re-exports `packages/schema`                                             |
 | `pi-telemetry` contexts                                     | `harness-compaction`, fed by an Effect tracer (D7)                       |
 | chord `context`                                             | copied here, in `adapter/chord/src/context`                              |

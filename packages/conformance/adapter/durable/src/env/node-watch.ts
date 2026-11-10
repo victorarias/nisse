@@ -1,3 +1,1 @@
-import { unimplemented } from "../../../../unimplemented.ts";
-
-export const NodeFileWatcher = unimplemented("NodeFileWatcher", "env-package");
+export { LocalFileWatcher as NodeFileWatcher } from "@nisse/env/local";

@@ -1,0 +1,14 @@
+{
+  "name": "@nisse/models",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./faux": "./src/faux.ts"
+  },
+  "dependencies": {
+    "@nisse/schema": "workspace:*",
+    "effect": "4.0.6"
+  }
+}

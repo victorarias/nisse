@@ -1,0 +1,16 @@
+{
+  "name": "@nisse/env",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./local": "./src/local.ts",
+    "./decode": "./src/decode.ts",
+    "./line-scan": "./src/line-scan.ts",
+    "./truncate": "./src/truncate.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.6"
+  }
+}
