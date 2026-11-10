@@ -1,16 +1,32 @@
+// Upstream's agent functions over @nisse/harness's: Promise transactions, and upstream snapshots and agents.
+import * as H from "../../../../../harness/src/index.ts";
 import { unimplemented } from "../../../../unimplemented.ts";
+import { run } from "../session/session.ts";
+import { harnessSnapshot, upstreamAgent } from "./convert.ts";
 
-export const AgentDoc = unimplemented("AgentDoc", "harness-shell");
-export const DEFAULT_COMPACTION_POLICY = unimplemented("DEFAULT_COMPACTION_POLICY", "harness-shell");
-export const DEFAULT_PROGRESS_POLICY = unimplemented("DEFAULT_PROGRESS_POLICY", "harness-shell");
-export const DEFAULT_RESTART_LIMIT = unimplemented("DEFAULT_RESTART_LIMIT", "harness-shell");
-export const DEFAULT_RETRY_POLICY = unimplemented("DEFAULT_RETRY_POLICY", "harness-shell");
-export const INSTRUCTIONS_KEY = unimplemented("INSTRUCTIONS_KEY", "harness-shell");
-export const addTools = unimplemented("addTools", "harness-shell");
-export const agentHooks = unimplemented("agentHooks", "harness-shell");
-export const configure = unimplemented("configure", "harness-shell");
-export const createAgent = unimplemented("createAgent", "harness-shell");
-export const resolveAgent = unimplemented("resolveAgent", "harness-shell");
-export const resolveSettings = unimplemented("resolveSettings", "harness-shell");
-export const sectionExtension = unimplemented("sectionExtension", "harness-shell");
-export const toolExtension = unimplemented("toolExtension", "harness-shell");
+type Any = any;
+
+export {
+	AgentDoc,
+	DEFAULT_COMPACTION_POLICY,
+	DEFAULT_PROGRESS_POLICY,
+	DEFAULT_RESTART_LIMIT,
+	DEFAULT_RETRY_POLICY,
+	INSTRUCTIONS_KEY,
+	resolveSettings,
+} from "../../../../../harness/src/index.ts";
+
+export const addTools = unimplemented("addTools", "harness-tools");
+
+export const configure = (tx: Any, conversationId: Any, change: Any): Promise<void> =>
+	run(H.configure(tx.kernel, conversationId, change));
+
+export const createAgent = (tx: Any, record: Any): Promise<void> => run(H.createAgent(tx.kernel, record));
+
+export const resolveAgent = (state: Any, snapshot: Any, settings: Any, report: (error: unknown, extension: string) => void) =>
+	upstreamAgent(H.resolveAgent(state, harnessSnapshot(snapshot), settings, report));
+
+// The selection functions read only names and registrations, so upstream's agents serve as they are.
+export const agentHooks = (agent: Any, taskName: string) => H.agentHooks(agent, taskName);
+export const sectionExtension = (agent: Any, key: string) => H.sectionExtension(agent, key);
+export const toolExtension = (agent: Any, name: string) => H.toolExtension(agent, name);

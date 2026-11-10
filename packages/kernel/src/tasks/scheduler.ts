@@ -78,6 +78,8 @@ export type PhaseInfo<Svc> = {
   readonly record: TaskRecord
   /** The registry snapshot of the phase. */
   readonly snapshot: TaskSnapshot<Svc>
+  /** The runtime the handler gets, for services that act for the same invocation. */
+  readonly runtime: TaskRuntime<JsonValue, never, JsonValue>
 }
 
 export type TaskSchedulerOptions<Svc> = {
@@ -1367,6 +1369,7 @@ class Scheduler<Svc> implements TaskScheduler {
           task: state.task,
           record: task,
           snapshot: state.snapshot,
+          runtime,
         })
         // A phase can fail with any value, `undefined` included, so the exit says whether it failed.
         const previous = Exit.isFailure(exit)
@@ -1390,7 +1393,7 @@ class Scheduler<Svc> implements TaskScheduler {
         Effect.suspend(() =>
           erased(reservation.task).abort(current as RunningTask<JsonValue, never, JsonValue>, runtime),
         ),
-        { mode: "abort", task: reservation.task, record: current, snapshot: reservation.snapshot },
+        { mode: "abort", task: reservation.task, record: current, snapshot: reservation.snapshot, runtime },
       )
       const message = `Abort handler of task ${invocation.taskId} returned without a terminal outcome`
       const error = Exit.isFailure(exit) ? causeError(exit.cause) : new Error(message)
@@ -1564,8 +1567,8 @@ class Scheduler<Svc> implements TaskScheduler {
     state: { task: AnyTask<unknown>; snapshot: TaskSnapshot<unknown> },
   ): TaskRuntime<JsonValue, never, JsonValue> {
     const ended = () => Effect.fail(new InvocationEnded({ message: `Task ${invocation.taskId} invocation has ended` }))
-    const read = <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E | InvocationEnded> =>
-      Effect.suspend((): Effect.Effect<A, E | InvocationEnded> => (invocation.ended ? ended() : effect))
+    const read = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | InvocationEnded, R> =>
+      Effect.suspend((): Effect.Effect<A, E | InvocationEnded, R> => (invocation.ended ? ended() : effect))
     const runtime: TaskRuntime<JsonValue, never, JsonValue> = {
       taskId: invocation.taskId as TaskId<JsonValue>,
       conversationId: invocation.conversationId,
@@ -1573,6 +1576,7 @@ class Scheduler<Svc> implements TaskScheduler {
       get registry() {
         return state.snapshot
       },
+      guard: read,
       commit: (change) =>
         this.#gated(invocation, (tx, current) =>
           Effect.gen({ self: this }, function* () {

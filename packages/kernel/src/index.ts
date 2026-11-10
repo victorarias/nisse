@@ -32,6 +32,7 @@ export {
   type CommitObserver,
   type CommitObserverEnd,
   type CommitPublication,
+  commitIn,
   type DocumentChange,
   type DocumentObservation,
   type DocumentObserver,
@@ -47,6 +48,7 @@ export {
 export type { DocumentWatch } from "./session/watch.ts"
 export { DEFAULT_DOCUMENT_RETENTION_MS, type DocumentCacheSizes } from "./session/documents.ts"
 export type {
+  CommitScope,
   ConversationOwnership,
   DocError,
   DocumentCommitChange,

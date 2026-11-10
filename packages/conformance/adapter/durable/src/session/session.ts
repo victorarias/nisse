@@ -5,6 +5,7 @@
 import { Cause, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import {
 	CommitRefused,
+	InvocationEnded,
 	makeSession,
 	ReadOnlySession as KernelReadOnly,
 	type Session as KernelSession,
@@ -58,12 +59,18 @@ export function createSession(
 // Errors
 
 /** The error a kernel failure is as pi-durable throws it. */
-function upstreamError(error: unknown): unknown {
+export function upstreamError(error: unknown): unknown {
+	if (error instanceof InvocationEnded) {
+		// pi-durable words a commit refused by close as its Harness's closed error.
+		return new Error(error.message.endsWith("the scheduler is closing") ? "Harness is closed" : error.message);
+	}
 	if (error instanceof StorageError) return error.cause;
 	if (error instanceof KernelRequestError) return new StorageRequestError(error.message);
 	if (error instanceof KernelSessionFailed) return new SessionFailed(upstreamCause(error.cause));
 	if (error instanceof SessionClosed) return new Error("Session is closed");
-	if (error instanceof KernelReadOnly) return new ReadOnlySession("a commit with writes");
+	if (error instanceof KernelReadOnly) {
+		return new ReadOnlySession(error.message.includes("running tasks") ? "running tasks" : "a commit with writes");
+	}
 	if (error instanceof CommitRefused) return refusal(error);
 	if (error instanceof KernelReadAfterWrite) {
 		const operation = /^(Tx\.\w+\(\))/.exec(error.message)?.[1] ?? "Tx";
@@ -73,7 +80,7 @@ function upstreamError(error: unknown): unknown {
 }
 
 /** What failed a kernel Session, as upstream records it: the storage's own error. */
-function upstreamCause(cause: unknown): unknown {
+export function upstreamCause(cause: unknown): unknown {
 	if (cause instanceof StorageError) return cause.cause;
 	if (cause instanceof CommitRefused) return refusal(cause);
 	return cause;
@@ -94,7 +101,7 @@ function rejection(cause: Cause.Cause<unknown>, context: Context | undefined): u
 }
 
 /** Runs a kernel Effect as a Promise; aborting `context` interrupts it. */
-function run<A>(effect: Effect.Effect<A, unknown>, context?: Context): Promise<A> {
+export function run<A>(effect: Effect.Effect<A, unknown>, context?: Context): Promise<A> {
 	const signal = context?.abortSignal;
 	if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("aborted"));
 	return new Promise<A>((resolve, reject) => {
@@ -110,14 +117,14 @@ function run<A>(effect: Effect.Effect<A, unknown>, context?: Context): Promise<A
 }
 
 /** Runs a synchronous kernel Effect, throwing as upstream does. */
-function runSync<A>(effect: Effect.Effect<A, unknown>): A {
+export function runSync<A>(effect: Effect.Effect<A, unknown>): A {
 	const exit = Effect.runSyncExit(effect);
 	if (Exit.isSuccess(exit)) return exit.value;
 	throw rejection(exit.cause, undefined);
 }
 
 /** The kernel failure of a callback's rejection: the rejection itself, so it passes through unchanged. */
-class CallbackFailed {
+export class CallbackFailed {
 	constructor(readonly error: unknown) {}
 }
 
@@ -134,6 +141,10 @@ export class Transaction {
 	readonly #tx: KernelTx;
 	constructor(tx: KernelTx) {
 		this.#tx = tx;
+	}
+	/** Internal: the kernel Tx, for later children's adapters. */
+	get kernel(): KernelTx {
+		return this.#tx;
 	}
 	conversation(id: Any) {
 		return observed(run(this.#tx.conversation(id)));
@@ -433,15 +444,19 @@ export class SessionImpl {
 		documentRetentionMs: () => number | undefined = () => undefined,
 		_setTimer?: unknown,
 		readOnly = false,
+		/** A kernel Session opened over `storage` already, such as a Harness's. */
+		kernel?: KernelSession,
 	) {
 		this.#storage = storage;
-		this.#kernel = Effect.runSync(
-			makeSession(kernelStorage(storage), {
-				readOnly,
-				now,
-				documentRetentionMs: () => documentRetention(documentRetentionMs()),
-			}),
-		);
+		this.#kernel =
+			kernel ??
+			Effect.runSync(
+				makeSession(kernelStorage(storage), {
+					readOnly,
+					now,
+					documentRetentionMs: () => documentRetention(documentRetentionMs()),
+				}),
+			);
 		this.#kernel.subscribeClose(() => {
 			const listeners = [...this.#closeListeners];
 			this.#closeListeners.clear();
@@ -624,7 +639,15 @@ export class SessionImpl {
 	followCommits(listener: (publication: Any, context: Context) => void): () => void {
 		this.assertUsable();
 		const observation = this.#kernel.observeCommits({
-			advance: (publication) => listener({ kind: "stored", ...publication }, BACKGROUND_CONTEXT),
+			advance: (publication) => {
+				try {
+					listener({ kind: "stored", ...publication }, BACKGROUND_CONTEXT);
+				} catch (error) {
+					// The kernel detaches a throwing observer silently; the host also reports it.
+					this.report(error, { kind: "listener_error" }, BACKGROUND_CONTEXT);
+					throw error;
+				}
+			},
 			end: () => {},
 		});
 		return () => observation.detach();

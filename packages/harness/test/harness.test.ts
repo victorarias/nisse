@@ -1,0 +1,487 @@
+// The harness through its public API over real SQLite storage: conversations, their agents, the registry and tasks.
+// The upstream suite runs the same package through the conformance adapter; these cover what it leaves out.
+import { afterEach, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { Deferred, Effect, Queue, type Scope, Stream } from "effect"
+import {
+  type ConversationId,
+  defineDoc,
+  defineTask,
+  type EntryRecord,
+  openSqliteStorage,
+  type Task,
+  type TaskId,
+} from "@nisse/kernel"
+import { fromProviders } from "@nisse/models"
+import {
+  AgentDoc,
+  type Conversation,
+  createRegistry,
+  defineExtension,
+  defineTool,
+  type Harness,
+  type HarnessOptions,
+  openHarness,
+  ProviderDoc,
+  type Registry,
+  section,
+  TaskServices,
+  type ToolRegistration,
+} from "../src/index.ts"
+
+const homes: string[] = []
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
+})
+
+const databasePath = (): string => {
+  const home = mkdtempSync(join(tmpdir(), "nisse-harness-"))
+  homes.push(home)
+  return join(home, "kernel.sqlite")
+}
+
+const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>): Promise<A> => Effect.runPromise(Effect.scoped(effect))
+
+/** A Harness over the database at `path`, closed with the scope. */
+const open = (
+  path: string,
+  registry: Registry,
+  options: Omit<HarnessOptions, "registry" | "models"> = {},
+): Effect.Effect<Harness, unknown, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.flatMap(openSqliteStorage(path), (storage) =>
+      openHarness(storage, { registry, models: fromProviders([]), ...options }),
+    ),
+    (harness) => Effect.ignore(harness.close),
+  )
+
+const tool = (name: string, fields: Partial<ToolRegistration> = {}): ToolRegistration =>
+  defineTool({
+    name,
+    description: `The ${name} tool`,
+    parameters: { type: "object", properties: {} },
+    execute: () => Effect.succeed(name),
+    ...fields,
+  })
+
+const user = (text: string) => ({ role: "user", content: text, timestamp: 0 })
+
+const note = (conversation: Conversation, text: string): Effect.Effect<EntryRecord, unknown> =>
+  conversation.commit((tx) => tx.appendEntry(conversation.id, { kind: "message", model: [user(text)] }))
+
+/** The text of each user message in a conversation's context. */
+const contextTexts = (conversation: Conversation, at?: EntryRecord) =>
+  Effect.map(conversation.context(at === undefined ? {} : { at: at.id }), (view) =>
+    view.messages.map((message) => (message.role === "user" ? message.content : message.role)),
+  )
+
+/** A task that completes when it runs; the tests that use it only need it to exist. */
+const Plain = defineTask<{ readonly name: string }, { readonly phase: "hold" }, null, TaskServices>({
+  name: "test.plain",
+  version: 1,
+  initial: () => ({ phase: "hold" }),
+  phases: {
+    hold: (_task, runtime) =>
+      runtime.commit(() => Effect.succeed({ status: "terminal", outcome: { status: "completed", result: null } })),
+  },
+  abort: (_task, runtime) =>
+    runtime.commit(() => Effect.succeed({ status: "terminal", outcome: { status: "aborted" } })),
+})
+
+describe("conversation agents", () => {
+  test("agent-model, agent-thinking, agent-instructions, agent-cwd, agent-tools-filter, agent-resolved: configure changes what the agent resolves to, and null gives the field back to the host", async () => {
+    const registry = createRegistry()
+    registry.install(
+      defineExtension({
+        name: "files",
+        tools: [tool("read"), tool("write")],
+        sections: [section("rules", () => Effect.succeed("Keep files small."))],
+      }),
+    )
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), registry)
+        const root = yield* harness.root()
+        yield* root.configure({
+          model: { provider: "openai", modelId: "gpt-5" },
+          thinkingLevel: "high",
+          instructions: "Answer briefly.",
+          cwd: "/work",
+          tools: [{ name: "read" }],
+        })
+        const agent = yield* root.agent
+        expect(agent.model).toEqual({ provider: "openai", modelId: "gpt-5" })
+        expect(agent.thinkingLevel).toBe("high")
+        expect(agent.cwd).toBe("/work")
+        expect(agent.instructions).toBe("Answer briefly.")
+        expect(agent.extensions.map((extension) => extension.name)).toEqual(["files"])
+        expect(agent.tools.map((tool) => tool.name)).toEqual(["read"])
+        expect(agent.callable.map((tool) => tool.name)).toEqual(["read"])
+        expect(agent.sections.map((section) => section.key)).toEqual(["rules", "instructions"])
+
+        yield* root.configure({ model: null, thinkingLevel: null, instructions: null, cwd: null, tools: null })
+        const reset = yield* root.agent
+        expect(reset.model).toBeUndefined()
+        expect(reset.thinkingLevel).toBe("off")
+        expect(reset.cwd).toBeUndefined()
+        expect(reset.tools.map((tool) => tool.name)).toEqual(["read", "write"])
+        expect(reset.sections.map((section) => section.key)).toEqual(["rules"])
+      }),
+    )
+  })
+
+  test("agent-inherit: a conversation a task creates starts with a copy of its owner's agent, and a fork with the agent as of its entry", async () => {
+    const registry = createRegistry()
+    registry.install(defineExtension({ name: "tasks", tasks: [Plain] }))
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), registry)
+        const root = yield* harness.root()
+        yield* root.configure({ instructions: "parent brief", cwd: "/repo" })
+        const taskId = yield* root.commit((tx) =>
+          tx.createTask(Plain, { name: "owner" }, { ownership: { kind: "conversation" } }),
+        )
+        const child = yield* harness.createConversation({ ownership: { kind: "task", taskId } })
+        // A copy, not a reference: the parent's later change stays its own.
+        yield* root.configure({ instructions: "changed later" })
+        expect(yield* harness.session.snapshot(AgentDoc, child.id)).toEqual({
+          instructions: "parent brief",
+          cwd: "/repo",
+        })
+
+        const entry = yield* note(root, "first")
+        yield* root.configure({ instructions: "after the entry" })
+        const fork = yield* root.fork(entry.id, { ownership: { kind: "ownerless" } })
+        expect((yield* fork.agent).instructions).toBe("changed later")
+        expect((yield* root.agent).instructions).toBe("after the entry")
+      }),
+    )
+  })
+
+  test("agent-visible: a document watch sees each agent change, and a read as of an earlier entry sees the agent then", async () => {
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), createRegistry())
+        const root = yield* harness.root()
+        yield* root.configure({ instructions: "one" })
+        const entry = yield* note(root, "between")
+        const watch = (yield* harness.session.watchDoc(AgentDoc, root.id))!
+        expect(watch.value).toEqual({ instructions: "one" })
+        const seen = yield* Queue.unbounded<unknown>()
+        yield* Effect.forkScoped(Stream.runForEach(watch.changes, (change) => Queue.offer(seen, change.value)))
+        yield* root.configure({ instructions: "two" })
+        expect(yield* Queue.take(seen)).toEqual({ instructions: "two" })
+        expect(yield* harness.session.snapshotAsOf(AgentDoc, root.id, entry.id)).toEqual({ instructions: "one" })
+      }),
+    )
+  })
+
+  test("settings-default-extensions: the host's default selection applies to a conversation without its own, which can edit it", async () => {
+    const registry = createRegistry()
+    registry.install(defineExtension({ name: "a", tools: [tool("from-a")] }))
+    registry.install(defineExtension({ name: "b", tools: [tool("from-b")] }))
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), registry, { settings: { extensions: [{ name: "b" }] } })
+        const root = yield* harness.root()
+        expect((yield* root.agent).extensions.map((extension) => extension.name)).toEqual(["b"])
+        yield* root.configure({ extensions: { add: [{ name: "a" }] } })
+        expect((yield* root.agent).extensions.map((extension) => extension.name)).toEqual(["b", "a"])
+      }),
+    )
+  })
+})
+
+describe("conversations", () => {
+  test("fork-provider-identity: the root and each of its forks have their own provider session id", async () => {
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), createRegistry())
+        const root = yield* harness.root()
+        const entry = yield* note(root, "first")
+        const fork = yield* root.fork(entry.id, { ownership: { kind: "ownerless" } })
+        const again = yield* root.fork(entry.id, { ownership: { kind: "ownerless" } })
+        const ids = [root, fork, again].map((conversation) => harness.session.snapshot(ProviderDoc, conversation.id))
+        const sessionIds = (yield* Effect.all(ids)).map((state) => state?.sessionId)
+        for (const id of sessionIds) expect(id).toBeString()
+        expect(new Set(sessionIds).size).toBe(3)
+      }),
+    )
+  })
+
+  test("conversation-list, conversation-reopen: conversations are found again after a restart, with their agent and history", async () => {
+    const path = databasePath()
+    const created = await run(
+      Effect.gen(function* () {
+        const harness = yield* open(path, createRegistry())
+        const root = yield* harness.root()
+        yield* root.configure({ instructions: "kept" })
+        yield* note(root, "hello")
+        const other = yield* harness.createConversation({ ownership: { kind: "ownerless" } })
+        yield* note(other, "elsewhere")
+        return { root: root.id, other: other.id }
+      }),
+    )
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(path, createRegistry())
+        const listed = yield* harness.session.read((storage) => storage.scanConversations({}, 10, undefined))
+        expect(listed.items.map((record) => record.id)).toEqual([created.root, created.other])
+        const root = (yield* harness.conversation(created.root))!
+        expect((yield* harness.root()).id).toBe(created.root)
+        expect((yield* root.agent).instructions).toBe("kept")
+        expect(yield* contextTexts(root)).toEqual(["hello"])
+        expect(yield* contextTexts((yield* harness.conversation(created.other))!)).toEqual(["elsewhere"])
+        expect(yield* harness.conversation(999 as ConversationId)).toBeUndefined()
+      }),
+    )
+  })
+
+  test("reset-context, reset-handoff, fork-at-entry: a fork that resets starts a new context with its handoff, and the original and the fork's earlier entries keep theirs", async () => {
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), createRegistry())
+        const root = yield* harness.root()
+        yield* note(root, "u1")
+        const second = yield* note(root, "u2")
+        yield* note(root, "u3")
+        // Rule 3: the fork sees the parent's entries through `at` and its own after them.
+        const fork = yield* root.fork(second.id, { ownership: { kind: "ownerless" } })
+        const before = yield* note(fork, "f1")
+        expect(yield* contextTexts(fork)).toEqual(["u1", "u2", "f1"])
+        // Rules 1, 2 and 5: the reset is the head; the context is the reset followed by what comes after it.
+        yield* fork.reset("Summary so far")
+        expect(yield* contextTexts(fork)).toEqual(["Summary so far"])
+        yield* note(fork, "f2")
+        expect(yield* contextTexts(fork)).toEqual(["Summary so far", "f2"])
+        const view = yield* fork.context()
+        expect(view.head?.kind).toBe("pi.reset")
+        expect(view.entries[0]).toEqual(view.head!)
+        // History is kept: the context cut off before the reset is the one the fork had, and the parent is untouched.
+        expect(yield* contextTexts(fork, before)).toEqual(["u1", "u2", "f1"])
+        expect(yield* contextTexts(root)).toEqual(["u1", "u2", "u3"])
+        // u1 and u2 through the fork point, then f1, the reset carrying its handoff, and f2.
+        const history = yield* fork.entries({}, 10)
+        expect(history.items.length).toBe(5)
+        // A reset without a handoff leaves an empty context.
+        yield* root.reset()
+        expect(yield* contextTexts(root)).toEqual([])
+        expect(yield* contextTexts(fork)).toEqual(["Summary so far", "f2"])
+      }),
+    )
+  })
+})
+
+describe("registry", () => {
+  test("registry-install-conflict: an extension whose task name another extension has is refused, and nothing is published", async () => {
+    const registry = createRegistry()
+    registry.install(defineExtension({ name: "first", tasks: [Plain] }))
+    let published = 0
+    registry.subscribe(() => published++)
+    const before = registry.snapshot()
+    expect(() => registry.install(defineExtension({ name: "second", tasks: [Plain] }))).toThrow(
+      "Task test.plain of extension second is already installed",
+    )
+    expect(published).toBe(0)
+    expect(registry.snapshot()).toBe(before)
+    expect(registry.snapshot().extension("second")).toBeUndefined()
+  })
+
+  test("extension-tool-metadata: a tool's declared facts reach the registry and decide who may call it", async () => {
+    const registry = createRegistry()
+    const internal = tool("internal", { callers: ["tools"], replay: "safe", executionMode: "sequential" })
+    const later = tool("later", { deferred: true })
+    registry.install(defineExtension({ name: "kit", tools: [tool("plain"), internal, later] }))
+    const listed = registry
+      .snapshot()
+      .tools()
+      .map(({ extension, tool }) => [extension.name, tool.name, tool.replay, tool.callers])
+    expect(listed).toEqual([
+      ["kit", "plain", undefined, undefined],
+      ["kit", "internal", "safe", ["tools"]],
+      ["kit", "later", undefined, undefined],
+    ])
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), registry)
+        const agent = yield* (yield* harness.root()).agent
+        expect(agent.tools.map((tool) => tool.name)).toEqual(["plain"])
+        expect(agent.deferred.map((tool) => tool.name)).toEqual(["later"])
+        expect(agent.callable.map((tool) => tool.name)).toEqual(["plain", "internal", "later"])
+        expect(agent.callable[1]).toBe(internal)
+      }),
+    )
+  })
+
+  test("extension-stored-by-name: a selection names extensions, so it outlives an uninstall and a restart and binds to what is installed later", async () => {
+    const path = databasePath()
+    const registry = createRegistry()
+    registry.install(defineExtension({ name: "search", tools: [tool("find")] }))
+    registry.install(defineExtension({ name: "other" }))
+    const id = await run(
+      Effect.gen(function* () {
+        const harness = yield* open(path, registry)
+        const root = yield* harness.root()
+        yield* root.configure({ extensions: [{ name: "search" }] })
+        registry.uninstall({ name: "search" })
+        // Absent code stops applying, and nothing is rewritten.
+        expect((yield* root.agent).extensions).toEqual([])
+        expect(yield* harness.session.snapshot(AgentDoc, root.id)).toEqual({ extensions: ["search"] })
+        return root.id
+      }),
+    )
+    const later = createRegistry()
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(path, later)
+        const root = (yield* harness.conversation(id))!
+        expect((yield* root.agent).tools).toEqual([])
+        later.install(defineExtension({ name: "search", tools: [tool("find")] }))
+        expect((yield* root.agent).tools.map((tool) => tool.name)).toEqual(["find"])
+      }),
+    )
+  })
+
+  test("extension-state: an extension's own document survives a restart, and a fork reads it as of its entry", async () => {
+    const Notes = defineDoc<{ lines: string[] }>({
+      kind: "test.notes",
+      version: 1,
+      scope: "conversation",
+      history: "rewindable",
+      fork: "asOf",
+      initial: () => ({ lines: [] }),
+      checkpointWhen: () => false,
+    })
+    const path = databasePath()
+    const write = (conversation: Conversation, line: string) =>
+      conversation.commit((tx) =>
+        Effect.gen(function* () {
+          ;(yield* tx.doc(Notes, conversation.id)).lines.push(line)
+          return yield* tx.appendEntry(conversation.id, { kind: "note", data: { line } })
+        }),
+      )
+    const ids = await run(
+      Effect.gen(function* () {
+        const harness = yield* open(path, createRegistry())
+        const root = yield* harness.root()
+        const first = yield* write(root, "first")
+        yield* write(root, "second")
+        return { root: root.id, first: first.id }
+      }),
+    )
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(path, createRegistry())
+        const root = (yield* harness.conversation(ids.root))!
+        expect(yield* harness.session.snapshot(Notes, root.id)).toEqual({ lines: ["first", "second"] })
+        const fork = yield* root.fork(ids.first, { ownership: { kind: "ownerless" } })
+        expect(yield* harness.session.snapshot(Notes, fork.id)).toEqual({ lines: ["first"] })
+      }),
+    )
+  })
+
+  test("extension-reload: reloading an extension mid-run leaves running work on the old code and starts new work on the new", async () => {
+    const started = Deferred.makeUnsafe<void>()
+    const gate = Deferred.makeUnsafe<void>()
+    type Result = { readonly code: string; readonly tools: readonly string[] }
+    const version = (code: string, wait: boolean) =>
+      defineTask<null, { readonly phase: "run" }, Result, TaskServices>({
+        name: "test.work",
+        version: 1,
+        initial: () => ({ phase: "run" }),
+        phases: {
+          run: (_task, runtime) =>
+            Effect.gen(function* () {
+              if (wait) {
+                yield* Deferred.succeed(started, undefined)
+                yield* Deferred.await(gate)
+              }
+              // Resolved after the reload: the agent of the phase's snapshot, as the code is.
+              const agent = yield* (yield* TaskServices).agent
+              const result = { code, tools: agent.tools.map((tool) => tool.name) }
+              yield* runtime.commit(() =>
+                Effect.succeed({ status: "terminal" as const, outcome: { status: "completed" as const, result } }),
+              )
+            }),
+        },
+        abort: () => Effect.void,
+      })
+    const registry = createRegistry()
+    registry.install(defineExtension({ name: "work", tasks: [version("old", true)], tools: [tool("old-tool")] }))
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), registry)
+        const root = yield* harness.root()
+        const create = root.commit((tx) =>
+          tx.createTask(version("any", false), null, { ownership: { kind: "conversation" } }),
+        ) as Effect.Effect<TaskId<Result>, unknown>
+        yield* harness.resume
+        const running = yield* create
+        yield* Deferred.await(started)
+
+        registry.install(defineExtension({ name: "work", tasks: [version("new", false)], tools: [tool("new-tool")] }))
+        const fresh = yield* create
+        const newer = yield* harness.waitForTask(fresh)
+        expect(newer.state.outcome).toEqual({ status: "completed", result: { code: "new", tools: ["new-tool"] } })
+
+        yield* Deferred.succeed(gate, undefined)
+        const older = yield* harness.waitForTask(running)
+        expect(older.state.outcome).toEqual({ status: "completed", result: { code: "old", tools: ["old-tool"] } })
+      }),
+    )
+  })
+})
+
+describe("tasks", () => {
+  test("task-memory-bounded: long chains of ended tasks leave the scheduler and the document cache as they were", async () => {
+    // Each link creates the next, which it owns, then ends; it holds `completing` until the chain below it ends, and
+    // then the chain finalizes from the bottom up.
+    type LinkState = { readonly phase: "run" }
+    const Link: Task<{ readonly left: number }, LinkState, null, TaskServices> = defineTask({
+      name: "test.link",
+      version: 1,
+      initial: () => ({ phase: "run" }),
+      phases: {
+        run: (task, runtime) =>
+          Effect.andThen(
+            runtime.commit((tx) =>
+              Effect.gen(function* () {
+                if (task.input.left > 0) {
+                  const options = { ownership: { kind: "task" as const, taskId: task.id } }
+                  yield* tx.createTask(Link, { left: task.input.left - 1 }, options)
+                }
+                return undefined
+              }),
+            ),
+            runtime.commit(() =>
+              Effect.succeed({ status: "terminal" as const, outcome: { status: "completed" as const, result: null } }),
+            ),
+          ),
+      },
+      abort: () => Effect.void,
+    })
+    const registry = createRegistry()
+    registry.install(defineExtension({ name: "chains", tasks: [Link] }))
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), registry)
+        const root = yield* harness.root()
+        yield* harness.resume
+        const chain = Effect.gen(function* () {
+          const top = yield* root.commit((tx) =>
+            tx.createTask(Link, { left: 200 }, { ownership: { kind: "conversation" } }),
+          )
+          expect((yield* harness.waitForTask(top)).state.outcome.status).toBe("completed")
+          yield* harness.waitForIdle
+          return { scheduler: harness.indexSizes, documents: harness.session.documentCacheSizes }
+        })
+        const first = yield* chain
+        expect(first.scheduler).toEqual({ live: 0, below: 0, conversations: 0, waiters: 0 })
+        for (let round = 0; round < 3; round++) expect(yield* chain).toEqual(first)
+        expect((yield* harness.inspect).tasks).toEqual([])
+      }),
+    )
+  })
+})
