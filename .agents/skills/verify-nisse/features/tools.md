@@ -19,20 +19,20 @@ Tools return separate channels for the model, programs and clients, are bounded 
 - `tool-model-tools` [kernel] `modelTools`: offered versus callable (R333-349): Trim the prompt without removing a capability
 - `tool-deferred-search` [kernel, pending codemode-package] Deferred tools and `tool_search` with BM25 (R333-349, `tool-search`): Hundreds of tools without a huge prompt; loaded tools stay offered after compaction
 - `tool-parallel` [kernel] Parallel tool rounds (§8.5): Several read-only calls finish faster
-- `tool-execution-mode` [kernel, pending harness-tools] `executionMode` per tool (§7.3): A tool forces its call to run alone
+- `tool-execution-mode` [kernel] `executionMode` per tool (§7.3): A tool forces its call to run alone
 - `tool-output-limits` [kernel] Output limits per tool, default 50 KiB, 2000 lines, head or tail (§7.3): No tool can flood the context, and extension tools get it free
 - `tool-sanitize` [kernel] Output sanitizing (§7.3): Control characters and bad bytes never reach the model or terminal
 - `tool-truncated-file` [kernel] Truncated output saved to a file (§7.3): The model can still read what was cut
 - `tool-output-throttle` [kernel] Adaptive throttle on running output (§7.3): A chatty command doesn't overload storage
-- `tool-output-window` [kernel, pending harness-views] `outputWindow`, `skipped` count (§7.3, §8.2): Live view shows head, tail and how much was skipped
+- `tool-output-window` [kernel] `outputWindow`, `skipped` count (§7.3, §8.2): Live view shows head, tail and how much was skipped
 - `tool-unavailable` [kernel] `tool_unavailable` when a call names a tool not offered (§7.3): A model can't call something withheld
 - `tool-retained-output` [kernel] `retainedOutput` kept across a crash (§7.3): Output so far survives
 - `tool-api-env` [kernel] `api.env` in the tool API (§7.3): Tools work on whichever environment the conversation uses
 - `tool-api-commit` [kernel] `api.commit` and `api.memo` in tools (§7.3): A tool stores progress atomically and doesn't repeat steps after a crash
 - `tool-api-create` [kernel] `api.createTask`, `api.conversation` (§7.3, R772-797): A tool starts durable work or a conversation
-- `tool-execute-tool` [kernel, pending harness-tools] `executeTool`: tools calling tools (R307-331): Compose tools with the same hooks and approvals
-- `tool-nested-live` [kernel, pending harness-tools] Live view of nested calls, `nestedTools` (§7.3, §8.2): People see what a script or tool is doing inside
-- `tool-nested-key` [kernel, pending harness-tools] Nested call key and reattach, `NestedCallDoc` (§7.3): A restarted tool finds its running nested call and does not start a new one
+- `tool-execute-tool` [kernel] `executeTool`: tools calling tools (R307-331): Compose tools with the same hooks and approvals
+- `tool-nested-live` [kernel] Live view of nested calls, `nestedTools` (§7.3, §8.2): People see what a script or tool is doing inside
+- `tool-nested-key` [kernel] Nested call key and reattach, `NestedCallDoc` (§7.3): A restarted tool finds its running nested call and does not start a new one
 - `tool-abandon-on-restart` [kernel] `abandonOnRestart` (R351-353, §5.4): A long-lived server-type tool is dropped on restart, not rerun
 - `tool-file-queue` [kernel] Per-file mutation queue (§7.3, `file-mutation-queue`): Two parallel edits to a file don't overwrite each other
 - `tool-edit` [kernel] Edit details: fuzzy matching, line endings, a diff (`edit-diff`): Fewer failed edits and a diff to show

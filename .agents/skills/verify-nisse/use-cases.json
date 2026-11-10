@@ -1,4 +1,10 @@
 {
+  "amended/conversation-transcript.test.ts :: ConversationTranscript > shares one load between concurrent calls of loadEarlier, and of fillGap for one gap": [
+    "view-fill-gap"
+  ],
+  "amended/conversation-transcript.test.ts :: ConversationTranscript loads > shares one load between a stale gap descriptor and the gap it shrank into": [
+    "view-fill-gap"
+  ],
   "amended/env-node.test.ts :: NodeExecutionEnv filesystem > creates temporary directories and files": [
     "env-filesystem"
   ],
@@ -61,6 +67,9 @@
   "amended/harness-scheduler-retention.test.ts :: scheduler retention > withdraws an input queued two ended levels below an owner whose intent appears later": [
     "task-scheduling-ownership"
   ],
+  "amended/harness-storage-failure.test.ts :: listener and report errors > keeps feeding the other observers of a view when one throws": [
+    "error-model"
+  ],
   "amended/harness-structured-recovery.test.ts :: recovery > finalizes a held outcome whose work drained before the crash, and keeps one whose work lives": [
     "task-scheduling-ownership"
   ],
@@ -93,6 +102,9 @@
   ],
   "amended/harness-tools-recovery.test.ts :: tool recovery > reruns a safe tool whose running slot a crash after its intent lost, or a sibling stored, and shows it running": [
     "tool-replay-policy"
+  ],
+  "amended/harness-view.test.ts :: conversation view > publishes one frame per touching commit, whose operations rebuild every revision": [
+    "view-documents"
   ],
   "amended/session-checkpoints-migrations.test.ts :: Session document migrations > writes the required base on the first successful transaction, then writes deltas": [
     "doc-migration"
@@ -327,7 +339,8 @@
     "view-load-earlier"
   ],
   "upstream/test/conversation-transcript.test.ts :: ConversationTranscript > opens a gap when a window does not continue the transcript, and fills it page by page": [
-    "view-fill-gap"
+    "view-fill-gap",
+    "view-gap"
   ],
   "upstream/test/conversation-transcript.test.ts :: ConversationTranscript > rejects loadEarlier before the first merge and returns the view for a gap that is gone": [
     "view-fill-gap"
@@ -345,7 +358,8 @@
     "view-fill-gap"
   ],
   "upstream/test/conversation-transcript.test.ts :: ConversationTranscript loads > keeps one gap for an empty window whose `before` lies inside it": [
-    "view-fill-gap"
+    "view-fill-gap",
+    "view-gap"
   ],
   "upstream/test/conversation-transcript.test.ts :: ConversationTranscript loads > resumes with `resume`: undefined before a merge, `{}` for an empty transcript, `{ from }` after the newest": [
     "view-transcript"
@@ -2088,7 +2102,8 @@
     "doc-task-scope"
   ],
   "upstream/test/harness-observers.test.ts :: task documents > a watch delivers the retirement of the commit that ends its task, then ends `ended`": [
-    "doc-task-scope"
+    "doc-task-scope",
+    "view-watch-end"
   ],
   "upstream/test/harness-observers.test.ts :: task documents > a watch never started when its task ends fails with the Harness": [
     "doc-task-scope"
@@ -3429,7 +3444,8 @@
     "tool-output-window"
   ],
   "upstream/test/harness-view-run.test.ts :: a run as the conversation view shows it > rebuilds every committed partial of thinking, text, and tool-call arguments from the view's operations": [
-    "view-run"
+    "view-run",
+    "view-reasoning"
   ],
   "upstream/test/harness-view-run.test.ts :: a run as the conversation view shows it > shows a tool call's slot from pending through its running output to its result entry": [
     "view-run"
@@ -3450,13 +3466,16 @@
     "view-reasoning"
   ],
   "upstream/test/harness-view.test.ts :: conversation view > ends watches at close and rejects later acquisition": [
-    "view-documents"
+    "view-documents",
+    "view-watch-end"
   ],
   "upstream/test/harness-view.test.ts :: conversation view > folds undelivered commits into one call whose ops reach the newest view": [
-    "view-documents"
+    "view-documents",
+    "view-watch"
   ],
   "upstream/test/harness-view.test.ts :: conversation view > hydrates the newest entries and the built-in documents": [
-    "view-documents"
+    "view-documents",
+    "view-watch"
   ],
   "upstream/test/harness-view.test.ts :: conversation view > keeps head markers in place: a summary and a reset are appended entries": [
     "view-documents"
@@ -3489,7 +3508,8 @@
     "view-documents"
   ],
   "upstream/test/harness-view.test.ts :: conversation view window > advances a resumed window by appends from its start": [
-    "view-window"
+    "view-window",
+    "view-resume"
   ],
   "upstream/test/harness-view.test.ts :: conversation view window > bounds an overflow replacement by `max`": [
     "view-window"
@@ -3507,7 +3527,8 @@
     "view-window"
   ],
   "upstream/test/harness-view.test.ts :: conversation view window > starts at `from` when the entries since fit in `max`, otherwise at the newest `min`": [
-    "view-window"
+    "view-window",
+    "view-resume"
   ],
   "upstream/test/harness-view.test.ts :: conversation view window > starts with the newest `min` entries and the entry before them, or the whole short transcript": [
     "view-window"

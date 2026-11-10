@@ -592,18 +592,26 @@ export class SessionImpl {
 
 	observeDoc(token: Any, ...args: Any[]): Promise<Any> {
 		const [address, context, observer] = split(token, args, 0, true);
-		// The kernel detaches an observer that throws or rejects and ends it `listener_error`; the host also reports it.
+		return this.observeWith((kernelObserver) => (this.#kernel.observeDoc as Any)(token, ...address, kernelObserver), observer, context);
+	}
+
+	/**
+	 * Internal: attaches upstream's `observer` through the kernel observer `attach` takes. The kernel detaches an
+	 * observer that throws or rejects and ends it `listener_error`; the host also reports it.
+	 */
+	observeWith(attach: (observer: Any) => Effect.Effect<Any, unknown>, observer: Any, context: Context | undefined): Promise<Any> {
 		const kernelObserver = {
 			advance: (change: Any) => observer.advance({ kind: "value", ...change }, BACKGROUND_CONTEXT),
 			end: (end: Any) => {
 				if (end.kind === "listener_error") this.report(end.error, { kind: "listener_error" }, BACKGROUND_CONTEXT);
 				contained(
-					() => observer.end(end.kind === "ended" ? closeEnds(undefined).observer : observerEnd(end)),
+					// A task document's end, after its retirement, is `ended`; a plain `ended` is the Session's close.
+					() => observer.end(end.kind === "ended" ? ("retired" in end ? ENDED : closeEnds(undefined).observer) : observerEnd(end)),
 					(error) => this.report(error, { kind: "listener_error" }),
 				);
 			},
 		};
-		return this.#read((this.#kernel.observeDoc as Any)(token, ...address, kernelObserver), context);
+		return this.#read(attach(kernelObserver), context);
 	}
 
 	watchDoc(token: Any, ...args: Any[]): Promise<Any> {

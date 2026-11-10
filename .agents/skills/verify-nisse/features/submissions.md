@@ -10,7 +10,7 @@ Every input handed to a conversation is admitted by written rules, deduplicated,
 - `submission-busy-reject` [kernel] `whenBusy: reject` (R529-591): A script gets a refusal rather than a queue
 - `submission-idle-reject` [kernel] `whenIdle: reject` (R529-591): "Steer only if something is running" does not start a new run
 - `submission-write` [kernel] Write entries without a run (R529-591, §6): Add context the next run will see, without starting one
-- `submission-display-only` [kernel, pending harness-run-core] Display-only writes (§6): Show people a note the model never sees
+- `submission-display-only` [kernel] Display-only writes (§6): Show people a note the model never sees
 - `submission-continue` [kernel] `continue` (R529-591, §6): Let the model go on with no new input, for example after a failure
 - `continue-rpc` [pending surface-conversations] The client path for `continue` (R529-591, §6): Let the model go on with no new input, for example after a failure
 - `submission-withdraw` [kernel] Withdraw a queued input, `Submission.abort` (R529-591): Take back a queued message before it runs

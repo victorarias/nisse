@@ -1,6 +1,6 @@
 // pi-durable's Promise Harness over @nisse/harness's Effect Harness. The Session part is the adapter's Session over the
 // harness's kernel Session; conversations, tasks and the registry are the harness's, with upstream's extension code
-// converted at install (`convert.ts`). Submissions, views, usage and compaction belong to later children.
+// converted at install (`convert.ts`). Compaction belongs to a later child.
 import { Effect } from "effect";
 import * as H from "../../../../../harness/src/index.ts";
 import { ROOT_CONVERSATION_ID } from "../../../../../kernel/src/index.ts";
@@ -26,6 +26,7 @@ import { createTypedMetrics, NOOP_TELEMETRY_METRICS } from "../../../telemetry/s
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import {
 	callback,
+	harnessClosed,
 	harnessReader,
 	promised,
 	signalled,
@@ -90,8 +91,10 @@ class ConversationImpl {
 		return this.#harness.usable(() => run(this.#conversation.compact(instructions), context));
 	}
 
-	watch(): never {
-		return unimplemented("Conversation.watch", "harness-views")();
+	watch(context: Context, window?: Any) {
+		return this.#harness.usable(() =>
+			this.#harness.watchWith(this.#conversation.watch(window), context).catch(harnessClosed),
+		);
 	}
 
 	reset(handoff: string | undefined, context: Context) {
@@ -246,16 +249,22 @@ export class HarnessImpl extends SessionImpl {
 		return this.usable(() => run(this.#harness.usage, context));
 	}
 
-	watchTaskGraph(): never {
-		return unimplemented("Harness.watchTaskGraph", "harness-views")();
+	watchTaskGraph(context: Context) {
+		return this.usable(() => this.watchWith(this.#harness.watchTaskGraph, context).catch(harnessClosed));
 	}
 
-	observeTaskGraph(): never {
-		return unimplemented("Harness.observeTaskGraph", "harness-views")();
+	observeTaskGraph(observer: Any, context: Context) {
+		return this.usable(() =>
+			this.observeWith((kernel) => this.#harness.observeTaskGraph(kernel), observer, context).catch(harnessClosed),
+		);
 	}
 
-	observeConversation(): never {
-		return unimplemented("Harness.observeConversation", "harness-views")();
+	observeConversation(id: Any, observer: Any, context: Context, window?: Any) {
+		return this.usable(() =>
+			this.observeWith((kernel) => this.#harness.observeConversation(id, kernel, window), observer, context).catch(
+				harnessClosed,
+			),
+		);
 	}
 
 	get [SCHEDULER_INDEX_SIZES](): Any {

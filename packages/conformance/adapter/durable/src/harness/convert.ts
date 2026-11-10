@@ -99,7 +99,7 @@ const entry = (read: (id: Any) => Effect.Effect<Any, unknown>) => (...args: Any[
 // Submissions and conversations
 
 /** A Harness operation's rejection: pi-durable words a close of its Session as its Harness's. */
-const harnessClosed = (error: unknown): never => {
+export const harnessClosed = (error: unknown): never => {
 	throw error instanceof Error && error.message === "Session is closed" ? new Error("Harness is closed") : error;
 };
 

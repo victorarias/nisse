@@ -4,11 +4,13 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Clock, Deferred, Effect, Exit, Fiber, Queue, type Scope } from "effect"
+import { Clock, Deferred, Effect, Exit, Fiber, Queue, type Scope, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import {
   type AnyTask,
   type ConversationId,
+  defineDoc,
+  type DocumentChange,
   defineTask,
   fromPromise,
   openSession,
@@ -713,6 +715,72 @@ describe("tasks", () => {
         const conversationId = yield* conversation(session)
         yield* start(session, conversationId, counter, { to: 1 })
         expect(yield* session.closed).toEqual({ kind: "failed", error: StorageError.because("disk full") })
+      }),
+    ))
+})
+
+describe("task documents", () => {
+  const Progress = defineDoc<{ step: number }>({
+    kind: "test.progress",
+    version: 1,
+    scope: "task",
+    initial: () => ({ step: 0 }),
+    checkpointWhen: () => true,
+  })
+
+  /**
+   * Waits for `effect`, or fails naming `what`: each wait here is one commit's publication, microseconds when healthy, so
+   * a second is only reached when a call or the end never comes. The failure interrupts the wait and the scope closes.
+   */
+  const within = <A, E>(effect: Effect.Effect<A, E>, what: string) =>
+    Effect.timeoutOrElse(effect, {
+      duration: "1 second",
+      orElse: () => Effect.die(new Error(`${what} did not arrive within 1 second`)),
+    })
+
+  test("doc-task-scope: a task document's watch follows a retirement while its task runs, and ends after the task's", () =>
+    run(
+      Effect.gen(function* () {
+        const { session, scheduler } = yield* open(yield* openSqliteStorage(databasePath()), {
+          registry: registry(forever),
+        })
+        const conversationId = yield* conversation(session)
+        const id = yield* start(session, conversationId, forever, null)
+        const step = (n: number) =>
+          session.commit((tx) => Effect.map(tx.doc(Progress, id), (doc) => void (doc.step = n)))
+        yield* step(1)
+        const watch = (yield* session.watchDoc(Progress, id))!
+        const seen = yield* Queue.unbounded<DocumentChange<{ step: number }>>()
+        const ended = yield* Deferred.make<void>()
+        yield* Effect.forkScoped(
+          Effect.ensuring(
+            Stream.runForEach(watch.changes, (change) => Queue.offer(seen, change)),
+            Deferred.succeed(ended, undefined),
+          ),
+        )
+
+        // Retired while the task runs: the address can be created again, so the watch goes on.
+        yield* session.commit((tx) => tx.retireDoc(Progress, id))
+        expect(yield* within(Queue.take(seen), "the explicit retirement")).toEqual({
+          value: { step: 1 },
+          ops: [],
+          retired: true,
+        })
+        yield* step(2)
+        expect(yield* within(Queue.take(seen), "the next incarnation")).toEqual({
+          value: { step: 2 },
+          ops: [["r", { step: 2 }]],
+          retired: false,
+        })
+
+        // The task ends: its documents retire for good, and the watch ends after that retirement.
+        yield* scheduler.abortTask(id)
+        expect(yield* within(Queue.take(seen), "the task's retirement")).toEqual({
+          value: { step: 2 },
+          ops: [],
+          retired: true,
+        })
+        yield* within(Deferred.await(ended), "the watch's end")
       }),
     ))
 })

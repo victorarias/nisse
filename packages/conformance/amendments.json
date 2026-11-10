@@ -1188,5 +1188,26 @@
   "spec": "7.3",
   "rewrite": "Assert that a timer set as the image is handed over fires before the prepared image arrives with the worker, and not inline, instead of bounding the longest gap between 5 ms ticks.",
   "private": "timing: wall-clock bounds (100 ms, 200 ms) that a shared CI runner's pauses reach"
+ },
+ {
+  "test": "upstream/test/harness-view.test.ts :: conversation view > publishes one frame per touching commit, whose operations rebuild every revision",
+  "owner": "harness-views",
+  "spec": "9.3",
+  "rewrite": "Expect one frame per touching stored commit: the attempt is an ordinary commit, not a deferred one (D5).",
+  "private": "a deferred commit's extra frame (D5)"
+ },
+ {
+  "test": "upstream/test/conversation-transcript.test.ts :: ConversationTranscript > shares one load between concurrent calls of loadEarlier, and of fillGap for one gap",
+  "owner": "harness-views",
+  "spec": "9.3",
+  "rewrite": "Check one loader call and one result per shared load instead of the identity of the returned Promises.",
+  "private": "Promise identity of concurrent calls; nisse's transcript returns Effects"
+ },
+ {
+  "test": "upstream/test/conversation-transcript.test.ts :: ConversationTranscript loads > shares one load between a stale gap descriptor and the gap it shrank into",
+  "owner": "harness-views",
+  "spec": "9.3",
+  "rewrite": "Check one loader call and one result per shared load instead of the identity of the returned Promises.",
+  "private": "Promise identity of concurrent calls; nisse's transcript returns Effects"
  }
 ]

@@ -54,6 +54,21 @@ import type {
 /** Why a task cannot be reserved: no registered definition can take it. Derived from the registry, never stored. */
 export type BlockedReason = "missing_task" | "task_too_old" | "migration_failed"
 
+/** What a blocked reason reads of a task record: no payloads, so a view can keep it for every live task. */
+export type BlockedSubject = Pick<TaskRecord, "id" | "kind" | "version" | "abortRequested" | "abortReason"> & {
+  readonly state: { readonly status: TaskRecord["state"]["status"] }
+}
+
+/** `record` as `blockedReason` reads it. */
+export const blockedSubject = (record: TaskRecord): BlockedSubject => ({
+  id: record.id,
+  kind: record.kind,
+  version: record.version,
+  abortRequested: record.abortRequested,
+  ...(record.abortReason === undefined ? {} : { abortReason: record.abortReason }),
+  state: { status: record.state.status },
+})
+
 /** Terminal outcomes the scheduler writes without running task code. */
 export type SchedulerOutcome = Extract<TaskOutcome<JsonValue>, { readonly status: "faulted" | "orphaned" }>
 
@@ -168,7 +183,12 @@ export interface TaskScheduler {
     options?: { readonly background?: boolean },
   ): Effect.Effect<void, ReadFailure | CommitError>
   /** Why a live task cannot run, if it cannot. A running, abort-requested or `completing` task is never blocked. */
-  blockedReason(record: TaskRecord): BlockedReason | undefined
+  blockedReason(record: BlockedSubject): BlockedReason | undefined
+  /**
+   * Calls `listener` when a blocked reason may have changed without a commit: the registry changed, or a migration
+   * failed. It runs where that happened, so it must only schedule work. Returns the unsubscribe.
+   */
+  subscribeBlocked(listener: () => void): () => void
   /** From memory, synchronously. */
   wake(): Wake
   /** Scheduling state and every live task with its derived state, read on the line. Runs no task code. */
@@ -323,6 +343,7 @@ class Scheduler<Svc> implements TaskScheduler {
   /** The fiber armed for the earliest sleep, and when it fires. */
   #timer: { readonly at: number; readonly fiber: Fiber.Fiber<void> } | undefined
   #unsubscribeRegistry: () => void = () => {}
+  readonly #blockedListeners = new Set<() => void>()
   #cascadePending = false
   /** When `#wakeDue` last made due sleeps candidates. */
   #wokenAt = -Infinity
@@ -378,6 +399,7 @@ class Scheduler<Svc> implements TaskScheduler {
           this.#unsubscribeRegistry = this.#registry.subscribe(() => {
             for (const id of this.#live.keys()) this.#runnable.add(id)
             this.#kick()
+            this.#blockedMayChange()
           })
         } catch (error) {
           this.#report(error, { kind: "host_error", callback: "registry" })
@@ -619,7 +641,7 @@ class Scheduler<Svc> implements TaskScheduler {
     })
   }
 
-  blockedReason(record: TaskRecord): BlockedReason | undefined {
+  blockedReason(record: BlockedSubject): BlockedReason | undefined {
     const status = record.state.status
     if (status === "running" || status === "completing" || status === "terminal") return undefined
     // An abort request runs its handler or orphans the task; a `restart` mark waits for the definition, blocked.
@@ -629,6 +651,15 @@ class Scheduler<Svc> implements TaskScheduler {
     const fit = this.#fit(record, snapshot.task(record.kind))
     if ("reason" in fit) return fit.reason
     return fit.migrates && fit.task.definition.migrate === undefined ? "migration_failed" : undefined
+  }
+
+  subscribeBlocked(listener: () => void): () => void {
+    this.#blockedListeners.add(listener)
+    return () => void this.#blockedListeners.delete(listener)
+  }
+
+  #blockedMayChange(): void {
+    for (const listener of [...this.#blockedListeners]) listener()
   }
 
   wake(): Wake {
@@ -1400,6 +1431,7 @@ class Scheduler<Svc> implements TaskScheduler {
       return { task: fit.task, record: { ...record, version: definition.version, input, state } as Runnable }
     } catch (error) {
       this.#failedMigrations.set(record.id, { task: fit.task, error })
+      this.#blockedMayChange()
       this.#report(error, { kind: "migration_failed", task: reportTask(record) })
       return { reason: "migration_failed" }
     }

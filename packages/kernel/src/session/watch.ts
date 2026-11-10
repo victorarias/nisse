@@ -43,8 +43,10 @@ export function makeWatch<T>(
           Queue.offerUnsafe(wake, undefined)
         },
         end: (end) => {
-          // An end comes at once: what is pending is dropped, and the watch keeps its last value.
-          pending.finish(end)
+          // An end comes at once: what is pending is dropped, and the watch keeps its last value. A task document's
+          // end follows its retirement, which is delivered first.
+          if (end.kind === "ended" && "retired" in end) pending.finishAfterPending(end)
+          else pending.finish(end)
           Queue.offerUnsafe(wake, undefined)
         },
       }),
@@ -59,6 +61,9 @@ export function makeWatch<T>(
     if (observation === undefined) return undefined
     const next: Effect.Effect<DocumentChange<T>, SessionFailed | Cause.Done> = Effect.suspend(
       function loop(): Effect.Effect<DocumentChange<T>, SessionFailed | Cause.Done> {
+        if (pending.end === undefined && !pending.has && pending.endAfterPending !== undefined) {
+          pending.finish(pending.endAfterPending)
+        }
         const end = pending.end
         if (end?.kind === "failed") return Effect.fail(SessionFailed.of(end.error))
         if (end !== undefined) return Cause.done()
@@ -80,6 +85,16 @@ class PendingState<T> {
   #has = false
   #retired = false
   end: DocumentObserverEnd | undefined
+  /** An end that applies once what is pending was taken: a task document's end after its retirement. */
+  endAfterPending: DocumentObserverEnd | undefined
+
+  get has(): boolean {
+    return this.#has
+  }
+
+  finishAfterPending(end: DocumentObserverEnd): void {
+    if (this.end === undefined) this.endAfterPending = end
+  }
 
   finish(end: DocumentObserverEnd): void {
     this.end = end
