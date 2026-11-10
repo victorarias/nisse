@@ -654,4 +654,36 @@ describe("Session", () => {
         expect(handled.sort()).toEqual(["advance", "close listener", "end"])
       }),
     ))
+  test("commit-atomic: an observer attached while close drains admitted commits gets them, then ends; one attached after close ends at once", () =>
+    run(
+      Effect.gen(function* () {
+        const control = yield* testStorage(databasePath())
+        const session = yield* openSession(control.storage)
+        const conversationId = yield* newConversation(session)
+
+        control.holding = true
+        const admitted = yield* Effect.forkChild(note(session, conversationId, "admitted"))
+        yield* Queue.take(control.arrived)
+        const closing = yield* Effect.forkChild(session.close)
+        yield* Effect.yieldNow
+        const late = recordCommits(session)
+        yield* Queue.offer(control.releases, undefined)
+        yield* Fiber.join(closing)
+        yield* Fiber.join(admitted)
+        expect(late.published).toHaveLength(1)
+        expect(late.ends).toEqual([{ kind: "ended" }])
+
+        let afterClose: CommitObserverEnd | undefined
+        expect(() =>
+          session.observeCommits({
+            advance: () => {},
+            end: (end) => {
+              afterClose = end
+              throw new Error("end threw")
+            },
+          }),
+        ).not.toThrow()
+        expect(afterClose).toEqual({ kind: "ended" })
+      }),
+    ))
 })

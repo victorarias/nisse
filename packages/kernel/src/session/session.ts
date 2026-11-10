@@ -101,6 +101,8 @@ class SessionImpl implements Session {
   /** Admission is sealed: closing or failed. */
   #sealed = false
   #closing: Fiber.Fiber<void> | undefined
+  /** How observers end, set once the line has drained and nothing more can be published. */
+  #observersEnded: CommitObserverEnd | undefined
   /** A failure of `Storage.close()` during a clean close, which `close` fails with. */
   #closeError: StorageError | undefined
 
@@ -158,8 +160,10 @@ class SessionImpl implements Session {
   }
 
   observeCommits(observer: CommitObserver): CommitObservation {
-    if (this.#sealed) {
-      observer.end(this.#failure === undefined ? { kind: "ended" } : { kind: "failed", error: this.#failure.error })
+    // Until the admitted commits have drained, a closing Session still publishes; after that it never will.
+    const ended = this.#observersEnded
+    if (ended !== undefined) {
+      contain(() => observer.end(ended))
       return { detach: () => {} }
     }
     this.#observers.add(observer)
@@ -299,6 +303,7 @@ class SessionImpl implements Session {
       const failure = this.#failure
       const end: CommitObserverEnd =
         failure === undefined ? { kind: "ended" } : { kind: "failed", error: failure.error }
+      this.#observersEnded = end
       for (const observer of [...this.#observers]) contain(() => observer.end(end))
       this.#observers.clear()
       const closed = yield* Effect.exit(this.#storage.close())
