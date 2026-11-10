@@ -35,6 +35,7 @@ import type {
   JsonObject,
   Seq,
   StorageWrite,
+  TaskId,
 } from "../records.ts"
 import type { ReadError, Storage } from "../storage.ts"
 import {
@@ -776,6 +777,8 @@ class SessionImpl implements Session, SessionInternals {
       return
     }
     const changes: CommitChange[] = []
+    // Tasks this commit made terminal: their documents are never created again, so their observers end.
+    const ended = new Set<TaskId>()
     for (const write of writes) {
       if (
         write.type === "conversation" ||
@@ -784,11 +787,13 @@ class SessionImpl implements Session, SessionInternals {
         write.type === "submission"
       )
         changes.push(write)
+      if (write.type === "task" && write.value.state.status === "terminal") ended.add(write.value.id)
     }
     for (const change of documents) {
       changes.push(change)
       if (change.type === "document") this.#advanceDocumentObservers(change)
     }
+    if (ended.size > 0) this.#endTaskDocumentObservers(ended)
     const publication: CommitPublication = { seq, changes }
     for (const observer of [...this.#observers]) {
       if (!this.#observers.has(observer)) continue
@@ -923,11 +928,21 @@ class SessionImpl implements Session, SessionInternals {
           returned.then(undefined, (error: unknown) => this.#documentObserverFailed(attached, error))
       } catch (error) {
         this.#documentObserverFailed(attached, error)
-        continue
       }
-      // A task document is never created again once its task ended: its retirement is the observer's last call.
-      if (call.retired && change.record.scope.kind === "task" && this.#detach(attached) !== undefined) {
-        contain(() => observer.end(TASK_ENDED))
+    }
+  }
+
+  /**
+   * Ends the observers of the documents of tasks that became terminal, after their retirement calls of this commit. An
+   * address retired earlier is ended too: nothing can create it again.
+   */
+  #endTaskDocumentObservers(tasks: ReadonlySet<TaskId>): void {
+    for (const observers of [...this.#documentObservers.values()]) {
+      for (const attached of [...observers]) {
+        const scope = attached.address.scope
+        if (scope.kind !== "task" || !tasks.has(scope.taskId)) continue
+        const observer = this.#detach(attached)
+        if (observer !== undefined) contain(() => observer.end(TASK_ENDED))
       }
     }
   }
