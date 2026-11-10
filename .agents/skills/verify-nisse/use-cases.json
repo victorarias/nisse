@@ -1,4 +1,7 @@
 {
+  "amended/sqlite-storage.test.ts :: Pico SqliteStorage > rolls SQL rows and sequence allocation back as one transaction": [
+    "storage-conformance"
+  ],
   "upstream/test/codemode-checkpoints.test.ts :: built-in document checkpoint policies > checkpoints the codemode store after 64 deltas without changing historical reads or forks": [
     "codemode-documents"
   ],
@@ -4029,7 +4032,8 @@
     "storage-conformance"
   ],
   "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > persists records, sequence allocation, and global ID allocation across reopen": [
-    "storage-id-minting"
+    "storage-id-minting",
+    "storage-sqlite"
   ],
   "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > reclaims current-only revisions only after a base or retirement": [
     "storage-conformance"
@@ -4038,10 +4042,12 @@
     "storage-conformance"
   ],
   "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > rejects a document whose required base is missing": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-sqlite"
   ],
   "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > rejects persisted metadata corruption on reopen": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-sqlite"
   ],
   "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > replays detached root replacements and follow-up edits while rejecting corrupt operations": [
     "storage-conformance"
@@ -4056,7 +4062,8 @@
     "storage-conformance"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage > commits batches in order, each with its seq, checked against the earlier ones": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-commit-writes"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage > commits mixed table writes atomically and rolls all of them back on failure": [
     "storage-conformance"
@@ -4065,7 +4072,8 @@
     "storage-cursors"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage > copies stored document bases independently and rejects ambiguous sources": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-fork-copy-sources"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage > detaches prototype-like JSON keys without changing object prototypes": [
     "storage-conformance"
@@ -4119,7 +4127,8 @@
     "storage-id-minting"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage > resolves a batched copy against the state the earlier batches left": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-fork-copy-sources"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage > rolls back record tables and secondary indexes when a document command fails": [
     "storage-conformance"
@@ -4152,7 +4161,8 @@
     "storage-conformance"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage across reopen > commits batches in order, each with its seq, checked against the earlier ones": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-commit-writes"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage across reopen > commits mixed table writes atomically and rolls all of them back on failure": [
     "storage-conformance"
@@ -4161,7 +4171,8 @@
     "storage-cursors"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage across reopen > copies stored document bases independently and rejects ambiguous sources": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-fork-copy-sources"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage across reopen > detaches prototype-like JSON keys without changing object prototypes": [
     "storage-conformance"
@@ -4215,7 +4226,8 @@
     "storage-id-minting"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage across reopen > resolves a batched copy against the state the earlier batches left": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-fork-copy-sources"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage across reopen > rolls back record tables and secondary indexes when a document command fails": [
     "storage-conformance"
@@ -4260,10 +4272,12 @@
     "storage-conformance"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage batches > rejects the whole call, the batches written before it included, when a copy's source read fails with a synchronous throw": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-fork-copy-sources"
   ],
   "upstream/test/sqlite-storage.test.ts :: SqliteStorage batches > rejects the whole call, the batches written before it included, when a copy's source read fails with a undefined rejection": [
-    "storage-conformance"
+    "storage-conformance",
+    "storage-fork-copy-sources"
   ],
   "upstream/test/tool-args-typebox.test.ts :: tool arguments of a TypeBox schema > are typed by the schema in execute() and prepareArguments()": [
     "tool-prepare-arguments"

@@ -61,6 +61,11 @@ upstream's `MemoryStorage` copied unchanged, and `ControlledStorage` stays in
 `upstream/test/session-support.ts`. A reopen in the suite keeps one store across
 Session close.
 
+Storage is `packages/kernel`'s, run as Promises by `adapter/kernel.ts`: a kernel `StorageError` rejects with the
+driver's own error, a `StorageRequestError` with the upstream class of that name, and a refused batch is a plain
+`Error`, as upstream refuses. `SqliteStorage.open` unwraps the adapter's `NodeSqliteDatabase` to the kernel's own
+facade; any other database a test passes, such as a test double, is bridged call by call.
+
 ## Stand-ins
 
 | Stand-in                                                    | Owner                                                                    |
@@ -71,7 +76,7 @@ Session close.
 | chord `context`                                             | copied here, in `adapter/chord/src/context`                              |
 | chord `json`, `delta`                                       | re-export `packages/delta`                                               |
 | chord `output`                                              | `harness-run-core`                                                       |
-| chord `sqlite`                                              | `kernel-storage`                                                         |
+| chord `sqlite`                                              | real: `NodeSqliteDatabase` wraps `packages/kernel`'s SQLite facade       |
 | chord `watch`                                               | `kernel-documents`                                                       |
 | `pi-codemode`                                               | `codemode-package`                                                       |
 

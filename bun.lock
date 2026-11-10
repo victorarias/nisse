@@ -35,6 +35,14 @@
         "effect": "4.0.6",
       },
     },
+    "packages/kernel": {
+      "name": "@nisse/kernel",
+      "version": "0.1.0",
+      "dependencies": {
+        "@nisse/delta": "workspace:*",
+        "effect": "4.0.6",
+      },
+    },
     "packages/models": {
       "name": "@nisse/models",
       "version": "0.1.0",
@@ -180,6 +188,8 @@
     "@nisse/delta": ["@nisse/delta@workspace:packages/delta"],
 
     "@nisse/env": ["@nisse/env@workspace:packages/env"],
+
+    "@nisse/kernel": ["@nisse/kernel@workspace:packages/kernel"],
 
     "@nisse/models": ["@nisse/models@workspace:packages/models"],
 
