@@ -49,7 +49,10 @@ export function assignJson<T extends object, K extends keyof T & (string | numbe
     typeof current === "string" &&
     typeof value === "string" &&
     !Array.isArray(target) &&
-    current.length + plan.text.length === value.length
+    current.length + plan.text.length === value.length &&
+    // The value may be ahead of the text the plan counted, by exactly the plan's length: a streamed partial is copied
+    // while its provider keeps writing. Its end then differs from the plan's text, and the compare below decides.
+    value.endsWith(plan.text)
   ) {
     // The checks above established that `target[key]` is a string.
     appendText(target as Draft<Record<string, string>>, String(key), plan.text)
