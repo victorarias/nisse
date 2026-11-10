@@ -37,15 +37,18 @@ export {
   type DocumentObservation,
   type DocumentObserver,
   type DocumentObserverEnd,
+  type LineDocument,
+  type LineReads,
   makeSession,
   openSession,
   type ReadFailure,
+  readOnLine,
   type Session,
   type SessionEnd,
   type SessionOptions,
   type StorageReads,
 } from "./session/session.ts"
-export type { DocumentWatch } from "./session/watch.ts"
+export { type DocumentWatch, makeWatch } from "./session/watch.ts"
 export { DEFAULT_DOCUMENT_RETENTION_MS, type DocumentCacheSizes } from "./session/documents.ts"
 export type {
   CommitScope,
@@ -76,6 +79,8 @@ export {
 } from "./tasks/task.ts"
 export {
   type BlockedReason,
+  type BlockedSubject,
+  blockedSubject,
   endedByCrashes,
   openTaskScheduler,
   type PhaseInfo,

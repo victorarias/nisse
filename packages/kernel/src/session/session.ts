@@ -30,6 +30,7 @@ import type {
   ConversationRecord,
   DocumentAddress,
   DocumentId,
+  DocumentRecord,
   EntryId,
   JsonObject,
   Seq,
@@ -83,8 +84,11 @@ export type CommitObservation = { detach(): void }
  */
 export type DocumentChange<T> = { readonly value: Readonly<T>; readonly ops: readonly Op[]; readonly retired: boolean }
 
-/** How a document observer ended: as a commit observer does; `ended` here is the Session's close. */
-export type DocumentObserverEnd = CommitObserverEnd
+/**
+ * How a document observer ended: as a commit observer does; `ended` is the Session's close, or, with `retired`, the end
+ * of a task document's task, right after the retirement call of the commit that ended it (spec 9.1).
+ */
+export type DocumentObserverEnd = CommitObserverEnd | { readonly kind: "ended"; readonly retired: true }
 
 /**
  * Follows one document address, as `observeCommits` does commits: `advance` runs on the line at each publication that
@@ -233,6 +237,23 @@ export interface SessionInternals {
   afterPublication(task: () => void): void
   /** Storage's reads behind the failure rule, for code that runs inside a job on the line, such as a commit callback. */
   readonly lineReads: StorageReads
+  /** See `readOnLine`. */
+  readOnLine<A, E>(
+    body: (reads: LineReads) => Effect.Effect<A, E>,
+    abandon?: (value: A) => void,
+  ): Effect.Effect<A, E | ReadFailure>
+}
+
+/** A document as a job on the line reads it: its incarnation's record, the token's version and the value at it. */
+export type LineDocument<T> = { readonly record: DocumentRecord; readonly version: number; readonly value: Readonly<T> }
+
+/** What a job on the line reads: Storage, and current documents through the Session's cache. */
+export type LineReads = {
+  readonly storage: StorageReads
+  document<K extends AnyDocToken>(
+    token: K,
+    ...address: DocAddressArgs<K>
+  ): Effect.Effect<LineDocument<DocValue<K>> | undefined, ReadError>
 }
 
 export const internals = (session: Session): SessionInternals => session as SessionImpl
@@ -366,6 +387,33 @@ class SessionImpl implements Session, SessionInternals {
 
   get lineReads(): StorageReads {
     return this.#reads
+  }
+
+  readOnLine<A, E>(body: (reads: LineReads) => Effect.Effect<A, E>, abandon?: (value: A) => void) {
+    return Effect.suspend(() => {
+      const refused = this.#admissionError()
+      if (refused !== undefined) return Effect.fail(refused)
+      const reads: LineReads = {
+        storage: this.#reads,
+        document: (token, ...address) => {
+          const definition = token.definition
+          const resolved = resolveAddress(definition, address)
+          return Effect.map(this.#loadDocument(definition, resolved.id, resolved.address), (loaded) =>
+            loaded === undefined
+              ? undefined
+              : {
+                  record: loaded.record,
+                  version: loaded.valueVersion,
+                  value: checkedValue(definition, loaded) as never,
+                },
+          )
+        },
+      }
+      return this.#onLine(
+        Effect.suspend(() => body(reads)),
+        abandon,
+      )
+    })
   }
 
   fail(error: unknown): void {
@@ -875,6 +923,11 @@ class SessionImpl implements Session, SessionInternals {
           returned.then(undefined, (error: unknown) => this.#documentObserverFailed(attached, error))
       } catch (error) {
         this.#documentObserverFailed(attached, error)
+        continue
+      }
+      // A task document is never created again once its task ended: its retirement is the observer's last call.
+      if (call.retired && change.record.scope.kind === "task" && this.#detach(attached) !== undefined) {
+        contain(() => observer.end(TASK_ENDED))
       }
     }
   }
@@ -1043,6 +1096,8 @@ function guardedReads(
 }
 
 /** A loaded document's value, after checking the token agrees with what is stored. */
+const TASK_ENDED: DocumentObserverEnd = { kind: "ended", retired: true }
+
 function checkedValue(definition: AnyDocDefinition, loaded: LoadedDocument): Readonly<JsonObject> {
   checkRecordScope(definition, loaded.record)
   checkRecordVersion(definition, loaded.record, loaded.storedVersion)
@@ -1074,6 +1129,17 @@ function failureOf(exit: Exit.Failure<unknown, StorageError>): StorageError {
  * `Session.commit` bound to a scope: `tx.createTask()` defaults to its conversation, and entries the commit appends
  * record its task as `byTaskId`.
  */
+/**
+ * Runs `body` as a job on the line, between commits, as `Session.read` does, for code that must see one consistent state
+ * and attach to what follows it, such as a view's mount. `abandon` gets a result whose caller stopped waiting after the
+ * job finished, so it can undo what the job registered.
+ */
+export const readOnLine = <A, E>(
+  session: Session,
+  body: (reads: LineReads) => Effect.Effect<A, E>,
+  abandon?: (value: A) => void,
+): Effect.Effect<A, E | ReadFailure> => internals(session).readOnLine(body, abandon)
+
 export const commitIn = <A, E>(
   session: Session,
   scope: CommitScope,

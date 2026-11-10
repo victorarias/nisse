@@ -11,6 +11,10 @@ import {
   type Cursor,
   type JsonValue,
   type DocAddressArgs,
+  type DocumentObservation,
+  type DocumentObserver,
+  type DocumentWatch,
+  makeWatch,
   type EntryId,
   type EntryQuery,
   type EntryRecord,
@@ -58,6 +62,8 @@ import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts"
 import { type AbortResult, type AdmissionError, type Submission, Submissions } from "./submissions.ts"
 import { addUsageState, UsageDoc, type UsageState } from "./usage.ts"
 import { ResetEntry } from "./entries.ts"
+import { type TaskGraph, TaskGraphView } from "./task-graph.ts"
+import { type ConversationView, ConversationViews, type ConversationWindow } from "./view.ts"
 import { type ConversationHandle, type ReportFrom, type TaskApi, TaskServices } from "./services.ts"
 import type {
   Agent,
@@ -165,6 +171,11 @@ export interface Conversation {
   /** Aborts the conversation's live work and succeeds once it is idle (spec 5.4). */
   abort(options?: { readonly background?: boolean }): Effect.Effect<void, ReadFailure | CommitError>
   readonly waitForIdle: Effect.Effect<void, ReadFailure | ReadOnlySession>
+  /**
+   * A watch of the conversation view through `window` (spec 9.3): changes wait, folded, while the consumer is busy. The
+   * scope's end stops it; the Session's close ends it.
+   */
+  watch(window?: ConversationWindow): Effect.Effect<DocumentWatch<ConversationView>, ReadFailure, Scope.Scope>
 }
 
 export type HarnessInspection = {
@@ -202,6 +213,19 @@ export interface Harness<T extends ToolRegistration = ToolRegistration> {
   ): Effect.Effect<AbortResult | "not_found", ReadFailure | CommitError>
   /** Every conversation's committed `pi.usage`, summed. */
   readonly usage: Effect.Effect<UsageState, ReadFailure>
+  /**
+   * Attaches an observer of the conversation view through `window` (spec 9.3), atomically on the Session line. Its
+   * `advance` runs on the line, so it must only capture.
+   */
+  observeConversation(
+    id: ConversationId,
+    observer: DocumentObserver<ConversationView>,
+    window?: ConversationWindow,
+  ): Effect.Effect<DocumentObservation<ConversationView>, ReadFailure>
+  /** A watch of the task graph (spec 9.4); the scope's end stops it. It never enables scheduling. */
+  readonly watchTaskGraph: Effect.Effect<DocumentWatch<TaskGraph>, ReadFailure, Scope.Scope>
+  /** Attaches an observer of the task graph (spec 9.4), atomically on the Session line. */
+  observeTaskGraph(observer: DocumentObserver<TaskGraph>): Effect.Effect<DocumentObservation<TaskGraph>, ReadFailure>
   /** Joins every task invocation, then closes the Session. */
   readonly close: Effect.Effect<void, StorageError>
   /** For tests that bound memory: what the scheduler's indexes hold. */
@@ -304,6 +328,8 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
   #submissions: Submissions | undefined
   #effectClock: Clock.Clock | undefined
   #contexts: ContextReads | undefined
+  #views: ConversationViews | undefined
+  #graph: TaskGraphView | undefined
 
   /** The host's clock behind `safeNow`; `undefined` for Effect's `Clock`. */
   readonly clock: (() => number) | undefined
@@ -322,6 +348,8 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     this.#scheduler = scheduler
     this.#effectClock = clock
     this.#contexts = contexts
+    this.#views = new ConversationViews(session)
+    this.#graph = new TaskGraphView(session, scheduler)
     this.#submissions = new Submissions(
       session,
       () => this.now(),
@@ -497,6 +525,22 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     })
   }
 
+  observeConversation(
+    id: ConversationId,
+    observer: DocumentObserver<ConversationView>,
+    window?: ConversationWindow,
+  ): Effect.Effect<DocumentObservation<ConversationView>, ReadFailure> {
+    return this.#views!.observe(id, observer, window)
+  }
+
+  get watchTaskGraph(): Effect.Effect<DocumentWatch<TaskGraph>, ReadFailure, Scope.Scope> {
+    return watchOf((observer) => this.#graph!.observe(observer))
+  }
+
+  observeTaskGraph(observer: DocumentObserver<TaskGraph>): Effect.Effect<DocumentObservation<TaskGraph>, ReadFailure> {
+    return this.#graph!.observe(observer)
+  }
+
   get close(): Effect.Effect<void, StorageError> {
     return this.session.close
   }
@@ -549,6 +593,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       get waitForIdle() {
         return Effect.andThen(host.resume, host.#tasks.waitForIdle(id))
       },
+      watch: (window) => watchOf((observer) => this.#views!.observe(id, observer, window)),
     }
   }
 
@@ -717,6 +762,11 @@ const sessionEnd = <A, E>(session: Session, otherwise: Effect.Effect<A, E>): Eff
   const failure = session.failure
   return failure === undefined ? otherwise : Effect.fail(SessionFailed.of(failure.error))
 }
+
+/** A watch over an observer the views always attach. */
+const watchOf = <T>(
+  observe: (observer: DocumentObserver<T>) => Effect.Effect<DocumentObservation<T>, ReadFailure>,
+): Effect.Effect<DocumentWatch<T>, ReadFailure, Scope.Scope> => Effect.map(makeWatch(observe), (watch) => watch!)
 
 const isDraft = (value: SubmissionDraft | Tx): value is SubmissionDraft => "type" in value
 

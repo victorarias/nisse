@@ -24,7 +24,7 @@ Tools return separate channels for the model, programs and clients, are bounded 
 - `tool-sanitize` [kernel, pending harness-tools] Output sanitizing (§7.3): Control characters and bad bytes never reach the model or terminal
 - `tool-truncated-file` [kernel, pending harness-tools] Truncated output saved to a file (§7.3): The model can still read what was cut
 - `tool-output-throttle` [kernel, pending harness-tools] Adaptive throttle on running output (§7.3): A chatty command doesn't overload storage
-- `tool-output-window` [kernel, pending harness-views] `outputWindow`, `skipped` count (§7.3, §8.2): Live view shows head, tail and how much was skipped
+- `tool-output-window` [kernel, pending harness-tools] `outputWindow`, `skipped` count (§7.3, §8.2): Live view shows head, tail and how much was skipped
 - `tool-unavailable` [kernel, pending harness-tools] `tool_unavailable` when a call names a tool not offered (§7.3): A model can't call something withheld
 - `tool-retained-output` [kernel] `retainedOutput` kept across a crash (§7.3): Output so far survives
 - `tool-api-env` [kernel, pending harness-tools] `api.env` in the tool API (§7.3): Tools work on whichever environment the conversation uses

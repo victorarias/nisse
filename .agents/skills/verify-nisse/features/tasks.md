@@ -33,7 +33,7 @@ Durable work is a task with phases and checkpoints, scheduled across restarts, w
 - `task-after-run` [kernel, pending harness-tools] After-run tasks (R659-714): Durable work starts when a run ends
 - `task-children-from-tools` [kernel] Child tasks from tools (R772-797): A tool fans out durable work
 - `task-builtin` [kernel] Built-in tasks `pi.generation`, `pi.tool`, `pi.compaction` (§8.3, §8.4, §8.7): The agent loop is observable and restartable by the same rules
-- `task-graph` [kernel, pending harness-views] Task graph view (R799-814, §9.4): See and draw all work and its dependencies
+- `task-graph` [kernel] Task graph view (R799-814, §9.4): See and draw all work and its dependencies
 - `task-graph-rpc` [pending surface-conversations] The client path for Task graph view (R799-814, §9.4): See and draw all work and its dependencies
 - `task-tool-rounds` [kernel, pending harness-tools] Tool rounds as tasks (§8.5): A round finishes or restarts as a unit
 - `task-scheduling-ownership` [kernel, pending harness-tools] Scheduling ownership on one process (§5.4): Restart picks up exactly the unfinished work
