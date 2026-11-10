@@ -641,6 +641,7 @@ export class Transaction implements Tx {
       const published = describe(plan, record)
       if (published !== undefined) changes.push(published)
     }
+    this.#release()
     return changes
   }
 
@@ -650,6 +651,17 @@ export class Transaction implements Tx {
       document.change?.abort()
       document.prepared?.abort()
     }
+    this.#release()
+  }
+
+  /**
+   * Drops the staged documents once the commit is adopted or aborted: the cache and observers own what lives on, and a
+   * stale reference to a finished transaction holds no document value.
+   */
+  #release(): void {
+    this.#documents.length = 0
+    this.#plans.length = 0
+    this.#latest.clear()
   }
 
   // Staging
