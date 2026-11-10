@@ -75,8 +75,8 @@ facade; any other database a test passes, such as a test double, is bridged call
 | `pi-telemetry` contexts                                     | `harness-compaction`, fed by an Effect tracer (D7)                       |
 | chord `context`                                             | copied here, in `adapter/chord/src/context`                              |
 | chord `json`, `delta`                                       | re-export `packages/delta`                                               |
-| chord `output`                                              | unassigned; still a stand-in, used by `harness-tools` and `tools-package` |
-| chord `sqlite`                                              | real: `NodeSqliteDatabase` wraps `packages/kernel`'s SQLite facade        |
+| chord `output`                                              | `harness-run-core`                                                       |
+| chord `sqlite`                                              | real: `NodeSqliteDatabase` wraps `packages/kernel`'s SQLite facade       |
 | chord `watch`                                               | `kernel-documents`                                                       |
 | `pi-codemode`                                               | `codemode-package`                                                       |
 

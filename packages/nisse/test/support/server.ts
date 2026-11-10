@@ -10,6 +10,8 @@ import { Lifetime } from "../../src/lifetime.ts"
 import { serverLayer } from "../../src/server.ts"
 
 // The real path: on macOS /tmp is a link, and a process's working directory is never reported through it.
+export { homeAt }
+
 export const tempHome = () => homeAt(realpathSync(mkdtempSync("/tmp/nisse-")))
 
 export interface ServerOptions {

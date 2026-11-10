@@ -4,20 +4,17 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Deferred, Effect, Exit, Fiber } from "effect"
+import { Deferred, Effect, Exit, Fiber, Scheduler } from "effect"
 import {
   CommitRefused,
   type ConversationId,
-  type DocumentId,
   type EntryId,
   idFromNumber,
+  openSqliteDatabase,
   openSqliteStorage,
   ROOT_CONVERSATION_ID,
   seqFromNumber,
-  openSqliteDatabase,
   type SqliteDatabase,
-  type SqliteExecutor,
-  type SqliteValue,
   SqliteStorage,
   StorageError,
   StorageRequestError,
@@ -28,11 +25,7 @@ afterEach(() => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
 })
 
-const open = (): Promise<SqliteStorage> => {
-  const home = mkdtempSync(join(tmpdir(), "nisse-kernel-"))
-  homes.push(home)
-  return Effect.runPromise(openSqliteStorage(join(home, "kernel.sqlite")))
-}
+const open = (): Promise<SqliteStorage> => Effect.runPromise(openSqliteStorage(join(home(), "kernel.sqlite")))
 
 const failure = async <A, E>(effect: Effect.Effect<A, E>): Promise<E> => {
   const exit = await Effect.runPromiseExit(effect)
@@ -92,108 +85,66 @@ describe("Storage port", () => {
     expect(await failure(storage.task(idFromNumber(5)))).toBeInstanceOf(StorageError)
   })
 
-  test("storage-port: close waits for a document read underway, and the read completes", async () => {
-    const { storage, database, log } = await held()
-    const reading = Effect.runPromise(storage.document(DOCUMENT, "current"))
-    await database.reached.promise
+  test("storage-port: close waits for a read underway, and the read completes", async () => {
+    const { storage } = await openOver()
+    await Effect.runPromise(storage.commit([[{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }]], () => {}))
+    // The scan reads the conversation, then its entries. A fiber that yields every few operations, as a busy runtime
+    // does, lets the close in between the two queries; a budget under 3 never gets past its own yield.
+    const reading = Effect.runPromise(
+      storage
+        .scanEntries({ conversationId: ROOT_CONVERSATION_ID }, 10, undefined)
+        .pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 3)),
+    )
     const closing = Effect.runPromise(storage.close())
-    log.push("released")
-    Deferred.doneUnsafe(database.release, Effect.void)
-    expect((await reading)?.record.id).toBe(DOCUMENT)
+    expect((await reading).items).toEqual([])
     await closing
-    expect(log).toEqual(["released", "closed"])
-  })
-
-  test("storage-port: close waits for a single-query read underway, and the read completes", async () => {
-    const { storage, database, log } = await held()
-    const reading = Effect.runPromise(storage.task(idFromNumber(7)))
-    await database.reached.promise
-    const closing = Effect.runPromise(storage.close())
-    log.push("released")
-    Deferred.doneUnsafe(database.release, Effect.void)
-    expect(await reading).toBeUndefined()
-    await closing
-    expect(log).toEqual(["released", "closed"])
-  })
-
-  test("storage-port: an open interrupted while it migrates closes the database it was given", async () => {
-    const { database, reached, log, arm } = await holdingDatabase()
-    arm()
-    const opening = Effect.runFork(SqliteStorage.open(database))
-    await reached.promise
-    await Effect.runPromise(Fiber.interrupt(opening))
-    expect(log).toEqual(["closed"])
   })
 
   test("storage-port: a close whose first caller is interrupted still completes for the next caller", async () => {
-    const { storage, database, log } = await held()
-    const reading = Effect.runPromise(storage.document(DOCUMENT, "current"))
-    await database.reached.promise
+    const { storage, hold } = await openOver()
+    const release = await hold()
+    const reading = Effect.runPromise(storage.task(idFromNumber(7)))
     await Effect.runPromise(Fiber.interrupt(Effect.runFork(storage.close())))
-    Deferred.doneUnsafe(database.release, Effect.void)
-    await reading
+    release()
+    expect(await reading).toBeUndefined()
     await Effect.runPromise(storage.close())
-    expect(log).toEqual(["closed"])
+  })
+
+  test("storage-port: an open interrupted while it migrates closes the database it was given", async () => {
+    const database = await Effect.runPromise(openSqliteDatabase(join(home(), "kernel.sqlite")))
+    const release = await holdTransaction(database)
+    const opening = Effect.runFork(SqliteStorage.open(database))
+    // The interruption waits for the cleanup, and the cleanup for the transaction holding the database.
+    const interrupted = Effect.runPromise(Fiber.interrupt(opening))
+    release()
+    await interrupted
+    expect(await failure(database.all("SELECT 1"))).toBeInstanceOf(StorageError)
   })
 })
 
-const DOCUMENT = idFromNumber<DocumentId>(2)
-
-/**
- * A database whose next query, once `arm` is called, suspends until `release`, as a database on another runtime may,
- * and a log of when it closed.
- */
-const holdingDatabase = async () => {
-  const real = await Effect.runPromise(openSqliteDatabase(":memory:"))
-  const log: string[] = []
-  const reached = Promise.withResolvers<void>()
-  const release = Deferred.makeUnsafe<void>()
-  let armed = false
-  const pause = Effect.suspend(() => {
-    if (!armed) return Effect.void
-    armed = false
-    reached.resolve()
-    return Deferred.await(release)
-  })
-  const holding = (executor: SqliteExecutor): SqliteExecutor => ({
-    exec: (sql) => Effect.andThen(pause, executor.exec(sql)),
-    run: (sql, ...params) => Effect.andThen(pause, executor.run(sql, ...params)),
-    runCounted: (sql, ...params) => Effect.andThen(pause, executor.runCounted(sql, ...params)),
-    get: <T extends object>(sql: string, ...params: SqliteValue[]) =>
-      Effect.andThen(pause, executor.get<T>(sql, ...params)),
-    all: <T extends object>(sql: string, ...params: SqliteValue[]) =>
-      Effect.andThen(pause, executor.all<T>(sql, ...params)),
-  })
-  const database: SqliteDatabase = {
-    ...holding(real),
-    transaction: (body) => real.transaction((transaction) => body(holding(transaction))),
-    close: () =>
-      Effect.andThen(
-        real.close(),
-        Effect.sync(() => log.push("closed")),
-      ),
-  }
-  return { database, reached, release, log, arm: () => (armed = true) }
+const home = (): string => {
+  const directory = mkdtempSync(join(tmpdir(), "nisse-kernel-"))
+  homes.push(directory)
+  return directory
 }
 
-/** Storage holding one document over a holding database, armed. */
-const held = async () => {
-  const { database, reached, release, log, arm } = await holdingDatabase()
-  const storage = await Effect.runPromise(SqliteStorage.open(database))
-  await Effect.runPromise(
-    storage.commit(
-      [
-        [
-          {
-            type: "document.create",
-            record: { id: DOCUMENT, kind: "note", scope: { kind: "session" } },
-            content: { version: 1, kind: "base", value: { text: "kept" } },
-          },
-        ],
-      ],
-      () => {},
-    ),
+/**
+ * Opens a transaction on `database` that stays open until the returned `release` is called. The database runs one
+ * call at a time, so every storage query waits for it meanwhile.
+ */
+const holdTransaction = async (database: SqliteDatabase): Promise<() => void> => {
+  const started = Promise.withResolvers<void>()
+  const release = Deferred.makeUnsafe<void>()
+  void Effect.runPromise(
+    database.transaction(() => Effect.andThen(Effect.sync(started.resolve), Deferred.await(release))),
   )
-  arm()
-  return { storage, database: { reached, release }, log }
+  await started.promise
+  return () => Deferred.doneUnsafe(release, Effect.void)
+}
+
+/** Storage over a real SQLite database, and a way to hold that database while storage calls are underway. */
+const openOver = async () => {
+  const database = await Effect.runPromise(openSqliteDatabase(join(home(), "kernel.sqlite")))
+  const storage = await Effect.runPromise(SqliteStorage.open(database))
+  return { storage, hold: () => holdTransaction(database) }
 }

@@ -964,6 +964,7 @@ export default Extension.define((ctx) =>
   ctx.tool.hook("execute.before", () => Effect.die(new Error("the guard crashed"))),
 )`,
       "off.ts": `throw new Error("a disabled extension never runs")`,
+      "throws.ts": `throw new Error("the clock broke")`,
     },
     `[extensions.off]\nenabled = false\n`,
   )
@@ -983,6 +984,7 @@ export default Extension.define((ctx) =>
     },
     { name: "crashes", path: join(home.extensions, "crashes", "index.ts"), state: "loaded" },
     { name: "off", path: join(home.extensions, "off.ts"), state: "disabled" },
+    { name: "throws", path: join(home.extensions, "throws.ts"), state: "failed", message: "the clock broke" },
   ])
   const conversation = await start(client)
   const view = client.subscribe({ conversation })

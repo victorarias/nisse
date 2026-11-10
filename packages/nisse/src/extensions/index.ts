@@ -144,7 +144,7 @@ export class Extensions extends Context.Service<
 
         const load = (into: Loaded, scope: Scope.Closeable, extension: Found, options: Record<string, unknown>) =>
           Effect.gen(function* () {
-            const module = yield* Effect.tryPromise(() => import(extension.path))
+            const module = yield* Effect.tryPromise({ try: () => import(extension.path), catch: (error) => error })
             const define = module.default as Extension | undefined
             if (typeof define !== "function") {
               return yield* Effect.fail(new Error("it exports no extension; export default Extension.define(...)"))

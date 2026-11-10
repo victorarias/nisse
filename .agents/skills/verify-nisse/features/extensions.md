@@ -13,7 +13,9 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
 
 - `extensions-load` [pending wire-complete] loads `extensions/<name>.ts` and `extensions/<name>/index.ts`
   in name order, with `[extensions.<name>]` from `config.toml` as
-  `ctx.options`; `enabled = false` there lists it as `disabled`.
+  `ctx.options`; `enabled = false` there lists it as `disabled`. A relative
+  `NISSE_HOME` is taken from the folder nisse runs in, so `nisse extensions`
+  lists each path in full.
 - `extensions-failed` lists an extension that fails to load, or takes over
   10 seconds to, as `failed` with why; the others load. The TUI shows
   `✗ extension <name> failed to load: <why>` when it opens, and
@@ -415,6 +417,10 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - claude-extensions: an extension's rewrite of a call is what Claude Code runs and what the transcript shows
 - claude-extensions: an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
 - execute-after: execute.after sees what Claude Code's tools return, and says so when it can't change it
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- extensions-load: a home named relative to the folder nisse runs in loads its extensions
 
 ## Gotchas
 

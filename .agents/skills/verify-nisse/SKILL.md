@@ -33,7 +33,9 @@ bun install                                                  # once per checkout
 ```
 
 The model is the only thing a run fakes. A script is a JSON array of steps,
-the same format `NISSE_MODEL_SCRIPT` takes (see the README). The server takes
+the same format `NISSE_MODEL_SCRIPT` takes, such as
+`[{"tool": {"name": "Bash", "input": {"command": "ls"}}}, {"text": "hello", "delayMs": 50}, {"text": "half", "fail": "provider went away"}]`.
+The server takes
 the steps in order across all its runs: a step says its `text`, then fails the
 run with `fail`, or calls its `tool` and goes on to the next step in the same
 run, or ends the run. Once the steps run out Nisse echoes, and a restarted
