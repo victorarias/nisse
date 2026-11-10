@@ -259,7 +259,11 @@ export const endRun = (tx: Tx, live: Draft<LiveState>, taskId: TaskId, end: RunE
         for (const id of inputs) yield* tx.settleSubmission(id, { status: "done", answer: end.answer })
       } else if (run.afterRun === undefined) {
         const { reason, detail } = end
-        const settlement = end.settlement ?? { status: "unanswered", reason, ...(detail === undefined ? {} : { detail }) }
+        const settlement = end.settlement ?? {
+          status: "unanswered",
+          reason,
+          ...(detail === undefined ? {} : { detail }),
+        }
         for (const id of inputs) yield* tx.settleSubmission(id, settlement)
         live.runFailure = {
           taskId,

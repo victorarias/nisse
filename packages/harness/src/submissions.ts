@@ -5,7 +5,6 @@ import {
   type CommitError,
   type CommitPublication,
   type ConversationId,
-  type DocError,
   type JsonObject,
   ReadAfterWrite,
   type ReadError,
@@ -13,7 +12,6 @@ import {
   type Session,
   SessionClosed,
   SessionFailed,
-  type StorageError,
   type SubmissionId,
   type SubmissionRecord,
   type Tx,
@@ -99,7 +97,10 @@ export class Submissions {
   }
 
   /** Admits a submission in its own commit; see `admitSubmission`. */
-  submit(conversationId: ConversationId, draft: SubmissionDraft): Effect.Effect<Submission, AdmissionError | CommitError> {
+  submit(
+    conversationId: ConversationId,
+    draft: SubmissionDraft,
+  ): Effect.Effect<Submission, AdmissionError | ReadError | CommitError> {
     return Effect.gen({ self: this }, function* () {
       yield* Effect.ignore(this.#resume)
       const { id } = yield* this.#session.commit((tx) =>
@@ -117,7 +118,7 @@ export class Submissions {
     tx: Tx,
     conversationId: ConversationId,
     draft: SubmissionDraft,
-  ): Effect.Effect<SubmissionId, AdmissionError | ReadError | DocError> {
+  ): Effect.Effect<SubmissionId, AdmissionError | ReadError> {
     return Effect.gen({ self: this }, function* () {
       // Enforced on every path: admission reads tables only on some (request IDs, an idle boundary).
       if (tx.hasTableWrite) return yield* Effect.die(new ReadAfterWrite("submit(tx, draft)"))
@@ -141,14 +142,17 @@ export class Submissions {
 
   /** The handle of an existing submission, or `undefined`. */
   get(id: SubmissionId): Effect.Effect<Submission | undefined, ReadFailure> {
-    return Effect.map(this.#session.read((storage) => storage.submission(id)), (record) =>
-      record === undefined ? undefined : this.handle(record.id),
+    return Effect.map(
+      this.#session.read((storage) => storage.submission(id)),
+      (record) => (record === undefined ? undefined : this.handle(record.id)),
     )
   }
 
   status(id: SubmissionId): Effect.Effect<SubmissionRecord, ReadFailure> {
-    return Effect.flatMap(this.#session.read((storage) => storage.submission(id)), (record) =>
-      record === undefined ? Effect.die(new Error(`Submission ${id} does not exist`)) : Effect.succeed(record),
+    return Effect.flatMap(
+      this.#session.read((storage) => storage.submission(id)),
+      (record) =>
+        record === undefined ? Effect.die(new Error(`Submission ${id} does not exist`)) : Effect.succeed(record),
     )
   }
 
@@ -256,7 +260,7 @@ export const admitSubmission = (
   draft: SubmissionDraft,
   now: number,
   queueModes: QueueModes,
-): Effect.Effect<Admission, AdmissionError | ReadError | DocError | StorageError> =>
+): Effect.Effect<Admission, AdmissionError | ReadError> =>
   Effect.gen(function* () {
     if (draft.type === "input" && draft.entry !== undefined) yield* checkInputEntry(draft.entry)
     if (draft.requestId !== undefined) {

@@ -298,6 +298,41 @@ export function toSeam(models: Models): M.Models {
 	return models[SEAM];
 }
 
+/**
+ * nisse's seam over any pi-ai `Models`, through its Promise methods: a suite that wraps one, as a Proxy overriding
+ * `streamSimple`, is heard. Interruption aborts the request's signal.
+ */
+export function promiseSeam(models: Models): M.Models {
+	const request = <A>(call: (signal: AbortSignal) => PromiseLike<A>): Effect.Effect<A, never> =>
+		Effect.orDie(
+			Effect.tryPromise({ try: (signal) => Promise.resolve(call(signal)), catch: (error) => error }),
+		);
+	return {
+		getModel: (provider, id) => models.getModel(provider, id) as Model<M.Api> | undefined,
+		getModelsOfType: (type, provider) => models.getModelsOfType(type, provider),
+		getModelOfType: (type, provider, id) => models.getModelOfType(type, provider, id),
+		getAvailableOfType: (type, provider) => request(() => models.getAvailableOfType(type, provider)),
+		streamSimple: (model, context, options) =>
+			Stream.unwrap(
+				Effect.sync(() => {
+					const controller = new AbortController();
+					const events = models.streamSimple(model, context as Context, { ...options, signal: controller.signal });
+					return Stream.fromAsyncIterable(events, (error) => error).pipe(
+						Stream.orDie,
+						Stream.ensuring(Effect.sync(() => controller.abort())),
+					);
+				}),
+			),
+		completeSimple: (model, context, options) =>
+			request((signal) => models.completeSimple(model, context as Context, { ...options, signal })),
+		fetchDeferred: (model, handle, options) => request((signal) => models.fetchDeferred(model, handle, { ...options, signal })),
+		cancelDeferred: (model, handle, options) => request((signal) => models.cancelDeferred(model, handle, { ...options, signal })),
+		classify: (model, context, options) => request((signal) => models.classify(model, context, { ...options, signal })),
+		generateImages: (model, context, options) =>
+			request((signal) => models.generateImages(model, context, { ...options, signal })),
+	};
+}
+
 // The pi-ai facade over a seam. `providers` lists the pi-ai providers the seam was built from.
 function facade(seam: M.Models, providers: () => readonly Provider[]): Models {
 	const all = (id?: string) => (id === undefined ? providers() : providers().filter((p) => p.id === id)).flatMap((p) => p.getAllModels());

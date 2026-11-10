@@ -368,3 +368,28 @@ function applyWrap<A>(
     report(error)
   }
 }
+
+/** Adds the tools a tool result's `addTools` control names to the stored selection and the model's loadout (spec 8.5). */
+export const addTools = (
+  tx: Tx,
+  conversationId: ConversationId,
+  added: readonly string[],
+): Effect.Effect<void, DocError> =>
+  Effect.map(tx.doc(AgentDoc, conversationId), (state) => {
+    const tools = state.tools
+    if (Array.isArray(tools)) {
+      for (const name of added) if (!tools.includes(name)) tools.push(name)
+    } else if (tools?.remove.some((name) => added.includes(name))) {
+      state.tools = { remove: tools.remove.filter((name) => !added.includes(name)) }
+    }
+    const modelTools = state.modelTools
+    if (Array.isArray(modelTools)) {
+      for (const name of added) if (!modelTools.includes(name)) modelTools.push(name)
+      return
+    }
+    // Assigned whole; a document write of an equal value records no change.
+    const remove = (modelTools?.remove ?? []).filter((name) => !added.includes(name))
+    const add = [...(modelTools?.add ?? [])]
+    for (const name of added) if (!add.includes(name)) add.push(name)
+    state.modelTools = { ...(remove.length === 0 ? {} : { remove }), add }
+  })

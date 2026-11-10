@@ -36,6 +36,7 @@ import type {
   UserMessage,
 } from "@nisse/models"
 import type { ExecutionEnv } from "@nisse/env"
+import type { OutputLimits } from "./output.ts"
 import type { Effect } from "effect"
 import type { TaskServices } from "./services.ts"
 
@@ -55,16 +56,20 @@ export type ToolRegistration = Tool & {
   readonly callers?: readonly ToolCaller[]
   /** Not offered to the model until `modelTools` loads it; other tools can call it any time. */
   readonly deferred?: true
+  /** Repairs the model's arguments before validation; a throw makes them invalid. */
+  readonly prepareArguments?: (args: JsonObject) => JsonObject
+  /** Bounds the output the model gets; unset fields take the defaults. */
+  readonly outputLimits?: Partial<OutputLimits>
   // biome-ignore lint: the tool task types the arguments and API
   readonly execute: (args: any, api: any) => Effect.Effect<unknown, unknown, any>
 }
 
-/** Committed document reads, for sections and environment builders. */
-export interface DocumentReader {
+/** Committed document reads, for sections, hooks and environment builders; a task's reads also fail once it ended. */
+export interface DocumentReader<E = ReadFailure> {
   snapshot<K extends AnyDocToken>(
     token: K,
     ...address: DocAddressArgs<K>
-  ): Effect.Effect<Readonly<DocValue<K>> | undefined, ReadFailure>
+  ): Effect.Effect<Readonly<DocValue<K>> | undefined, E>
 }
 
 /** Input to rendering the system prompt sections for one request. */
@@ -76,7 +81,7 @@ export type PromptInput<T extends ToolRegistration = ToolRegistration> = {
   readonly env: ExecutionEnv | undefined
   /** Sections already in effect after replaying the active transcript. */
   readonly shown: Readonly<Record<string, string>>
-  readonly read: DocumentReader
+  readonly read: DocumentReader<ReadFailure | InvocationEnded>
 }
 
 /** One system prompt section; the agent's sections render in order before each request. */
@@ -357,7 +362,7 @@ export type ToolHookCall = ToolCall & { readonly parent?: { readonly taskId: Tas
  * What a hook may use: committed reads and the asking task's memos. Hooks run off the Session line, so reads see what
  * is committed when they run; a hook rerun after a crash may see more. Every operation fails once the invocation ended.
  */
-export interface HookApi extends DocumentReader {
+export interface HookApi extends DocumentReader<ReadFailure | InvocationEnded> {
   readonly taskId: TaskId
   readonly conversationId: ConversationId
   /** Aborts when the asking task's invocation ends. */
@@ -393,10 +398,7 @@ export interface GenerationHooks {
   /** After every tool of the round is terminal; `results` are the round's result entries in call order. */
   afterTools(assistant: EntryId, results: readonly EntryId[], api: HookApi): Effect.Effect<void, unknown>
   /** After a run answered; the tasks asked for run as children of the generation, which keeps the run until they end. */
-  afterRun(
-    run: RunSummary,
-    api: HookApi,
-  ): Effect.Effect<{ readonly tasks: readonly RunEndTask[] } | undefined, unknown>
+  afterRun(run: RunSummary, api: HookApi): Effect.Effect<{ readonly tasks: readonly RunEndTask[] } | undefined, unknown>
 }
 
 /** Hooks of the built-in tool task, for model-issued and nested calls. */

@@ -19,7 +19,11 @@ type JsonContainer = Record<string, JsonValue> | JsonValue[]
 export type PartialMessage = Stored<JsonRepresentation<AssistantMessage>>
 
 /** Committed arguments of a streamed tool call. */
-type Arguments = PartialMessage["content"][number] extends infer B ? (B extends { type: "toolCall"; arguments: infer A } ? A : never) : never
+type Arguments = PartialMessage["content"][number] extends infer B
+  ? B extends { type: "toolCall"; arguments: infer A }
+    ? A
+    : never
+  : never
 
 /** What one partial commit writes besides the partial message itself; from `PartialChanges.take()`. */
 export type PartialCommit = {
@@ -114,7 +118,11 @@ export class PartialChanges {
    * its first piece; when the committed message lost a call whose changes were already committed (another writer reset
    * it), the call falls back to its snapshot from now on.
    */
-  commit(generation: Draft<NonNullable<LiveState["generation"]>>, message: PartialMessage, commit: PartialCommit): void {
+  commit(
+    generation: Draft<NonNullable<LiveState["generation"]>>,
+    message: PartialMessage,
+    commit: PartialCommit,
+  ): void {
     const committedBlocks = generation.message?.content.length ?? 0
     const apply: [number, readonly JsonChange[]][] = []
     for (const [index, { changes, snapshot }] of commit.toolCalls) {

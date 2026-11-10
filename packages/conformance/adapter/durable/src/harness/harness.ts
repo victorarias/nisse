@@ -4,7 +4,7 @@
 import { Effect } from "effect";
 import * as H from "../../../../../harness/src/index.ts";
 import { ROOT_CONVERSATION_ID } from "../../../../../kernel/src/index.ts";
-import { toSeam } from "../../../ai/index.ts";
+import { promiseSeam } from "../../../ai/index.ts";
 import { BACKGROUND_CONTEXT, type Context, withoutAbortSignal } from "../../../chord/src/context/index.ts";
 import { unimplemented } from "../../../../unimplemented.ts";
 import {
@@ -408,7 +408,7 @@ export const Harness = {
 		const opened = await run(
 			H.openHarness(kernelStorage(storage), {
 				registry: harnessReader(options.registry, host),
-				models: typeof models === "function" ? () => toSeam(models()) : toSeam(models),
+				models: typeof models === "function" ? () => promiseSeam(models()) : promiseSeam(models),
 				settings: () => {
 					const settings = hostSettings();
 					return { ...settings, documentRetentionMs: documentRetention(settings?.documentRetentionMs) };
