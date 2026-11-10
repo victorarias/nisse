@@ -1,15 +1,15 @@
 import { unimplemented } from "../../../../unimplemented.ts";
 
-export const ENDED = unimplemented("ENDED", "kernel-session");
-export const SessionImpl = unimplemented("SessionImpl", "kernel-session");
-export const closeEndOf = unimplemented("closeEndOf", "kernel-session");
-export const closeEnds = unimplemented("closeEnds", "kernel-session");
-export const contained = unimplemented("contained", "kernel-session");
-export const createSession = unimplemented("createSession", "kernel-session");
-export const documentRetention = unimplemented("documentRetention", "kernel-session");
-export const guardObserver = unimplemented("guardObserver", "kernel-session");
-export const observation = unimplemented("observation", "kernel-session");
-export const persistWithin = unimplemented("persistWithin", "kernel-session");
+export const ENDED = unimplemented("ENDED", "kernel-documents");
+export const SessionImpl = unimplemented("SessionImpl", "kernel-documents");
+export const closeEndOf = unimplemented("closeEndOf", "kernel-documents");
+export const closeEnds = unimplemented("closeEnds", "kernel-documents");
+export const contained = unimplemented("contained", "kernel-documents");
+export const createSession = unimplemented("createSession", "kernel-documents");
+export const documentRetention = unimplemented("documentRetention", "kernel-documents");
+export const guardObserver = unimplemented("guardObserver", "kernel-documents");
+export const observation = unimplemented("observation", "kernel-documents");
+export const persistWithin = unimplemented("persistWithin", "kernel-documents");
 let documentRetentionMs: number | undefined;
 export const defaultDocumentRetention = (): number | undefined => documentRetentionMs;
 export function setDefaultDocumentRetention(ms: number): void {
