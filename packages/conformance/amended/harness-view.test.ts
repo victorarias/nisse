@@ -17,7 +17,7 @@ import {
 	UsageDoc,
 } from "@earendil-works/pi-durable";
 import { describe, expect, it } from "vitest";
-import { chatSetup, openChat, waitFor } from "../upstream/test/chat-support.ts";
+import { chatSetup, openChat } from "../upstream/test/chat-support.ts";
 import { context, onValue } from "../upstream/test/session-support.ts";
 import { aborted, deferred } from "../upstream/test/task-support.ts";
 
@@ -29,12 +29,30 @@ async function record(conversation: Conversation, window?: ConversationWindow) {
 	const watch = await conversation.watch(context, window);
 	const initial = watch.value;
 	const frames: Frame[] = [];
+	const waiters = new Set<() => void>();
 	watch.start(
 		onValue(async ({ value, ops }) => {
 			frames.push({ value, ops });
+			for (const check of [...waiters]) check();
 		}),
 	);
-	return { initial, frames, stop: () => watch.stop() };
+	/** Resolves once `ready()` holds over the frames so far, checked again at each frame; fails after 5 seconds. */
+	const until = (ready: () => boolean, what: string): Promise<void> =>
+		new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				waiters.delete(check);
+				reject(new Error(`${what} did not arrive within 5 seconds (${frames.length} frames)`));
+			}, 5_000);
+			const check = () => {
+				if (!ready()) return;
+				clearTimeout(timer);
+				waiters.delete(check);
+				resolve();
+			};
+			waiters.add(check);
+			check();
+		});
+	return { initial, frames, until, stop: () => watch.stop() };
 }
 
 async function committed(
@@ -64,10 +82,6 @@ function replay(initial: ConversationView, frames: readonly Frame[]): Conversati
 
 function answer(text: string): AssistantMessage {
 	return fauxAssistantMessage([fauxText(text)]);
-}
-
-async function drained(): Promise<void> {
-	await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function touches(harness: Harness, conversation: Conversation): { count: number } {
@@ -100,14 +114,18 @@ describe("conversation view", () => {
 		};
 		setup.faux.setResponses([step]);
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
-		const { initial, frames, stop } = await record(root);
+		const { initial, frames, until, stop } = await record(root);
 		const touching = touches(harness, root);
 		const submission = await root.submit({ type: "input", content: "hi" }, context);
-		await waitFor(() => frames.some((frame) => (frame.value.docs["pi.live"] as { generation?: unknown }).generation));
+		await until(
+			() => frames.some((frame) => (frame.value.docs["pi.live"] as { generation?: unknown }).generation),
+			"the attempt's generation frame",
+		);
 		release.resolve();
 		await submission.wait(context);
 		await harness.waitForIdle(context);
-		await drained();
+		// Every touching commit is stored by now; the watch delivers its frames after their publication.
+		await until(() => frames.length >= touching.count, `${touching.count} frames`);
 		// One frame per touching stored commit; the attempt is one of them (D5).
 		expect(frames).toHaveLength(touching.count);
 		const last = replay(initial, frames);
