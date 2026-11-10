@@ -856,23 +856,23 @@ class Scheduler<Svc> implements TaskScheduler {
 
   /**
    * Whether `owner` has live ordinary owned work (spec 5.5), judged on `tx`'s candidates when given, so work a commit
-   * creates counts and work it ends does not. Chains must be loaded.
+   * creates counts and work it ends does not. The walk does not enter the tasks in `done`, known to have none. Chains
+   * must be loaded.
    */
-  #hasOwnedLive(owner: TaskId, tx: Transaction | undefined): boolean {
-    return this.#ownedLive(owner, tx, true).length > 0
+  #hasOwnedLive(owner: TaskId, tx: Transaction | undefined, done?: ReadonlySet<TaskId>): boolean {
+    return this.#ownedLive(owner, tx, true, done).length > 0
   }
 
-  #ownedLive(owner: TaskId, tx: Transaction | undefined, first: boolean): TaskId[] {
+  #ownedLive(owner: TaskId, tx: Transaction | undefined, first: boolean, done?: ReadonlySet<TaskId>): TaskId[] {
     const top = taskKey(owner)
     const found: TaskId[] = []
-    const staged =
-      tx === undefined ? undefined : new Map<TaskId, TaskRecord>(tx.stagedTasks().map((record) => [record.id, record]))
-    this.#reach(top, false, (live) => {
-      const record = staged?.get(live.id) ?? live
+    const visit = (live: TaskRecord) => {
+      const record = tx?.stagedTask(live.id) ?? live
       if (record.state.status === "terminal") return false
       found.push(record.id)
       return first
-    })
+    }
+    this.#reach(top, false, visit, done === undefined ? undefined : (id) => !done.has(id))
     return found
   }
 
@@ -1113,13 +1113,16 @@ class Scheduler<Svc> implements TaskScheduler {
     return Effect.gen({ self: this }, function* () {
       let round = [...this.#finalizeChecks]
       this.#finalizeChecks.clear()
+      // Finalized here, so without live owned work: walks from the owners above need not enter them again.
+      const done = new Set<TaskId>()
       while (round.length > 0) {
         const next = new Set<TaskId>()
         for (const id of round) {
           const record = yield* tx.currentTask(id)
-          if (record?.state.status !== "completing" || this.#hasOwnedLive(id, tx)) continue
+          if (record?.state.status !== "completing" || this.#hasOwnedLive(id, tx, done)) continue
           const outcome = record.state.outcome
           tx.setTask(withState(record, { status: "terminal", outcome }))
+          done.add(id)
           if (outcome.status === "faulted" || outcome.status === "orphaned") {
             yield* this.#settle(tx, record, outcome)
           }
