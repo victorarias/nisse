@@ -63,14 +63,68 @@
   "amended/harness-structured.test.ts :: waiting > keeps running phases after spawning and waits on subsets in sequence": [
     "task-wait"
   ],
+  "amended/harness-tasks-recovery.test.ts :: definition handover > rejects a runtime commit of the old invocation queued behind its handover commit": [
+    "task-handover"
+  ],
   "amended/harness-tasks-runtime.test.ts :: task runtime > reads committed documents and context through the runtime, and forwards the clock and reports": [
     "task-effect-sandwich"
+  ],
+  "amended/harness-tasks-timing.test.ts :: task abort > does not signal a running abort handler when aborted again, and a cancelled caller leaves the mark durable": [
+    "task-abort"
+  ],
+  "amended/harness-tasks-timing.test.ts :: task phases > resumes a waiting task once every task in `on` is terminal, whatever the outcome": [
+    "task-phases"
   ],
   "amended/harness-tasks.test.ts :: task phases > commits results with entries atomically, keeps memos until terminal, and retires task documents": [
     "task-memo"
   ],
   "amended/harness-tools-recovery.test.ts :: tool recovery > reruns a safe tool whose running slot a crash after its intent lost, or a sibling stored, and shows it running": [
     "tool-replay-policy"
+  ],
+  "amended/session-checkpoints-migrations.test.ts :: Session document migrations > writes the required base on the first successful transaction, then writes deltas": [
+    "doc-migration"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > continues after the tracker cache unloads": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > delivers replayable structural no-op commits instead of suppressing them": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > folds 101 pending commits of one field into one set": [
+    "view-slow-folding"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > folds a retirement into the pending commits' call, which reports it with the last value, and goes on": [
+    "view-slow-folding"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > follows its address across a retirement and a recreation in one commit, in one call": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > hydrates migration without writing and observes the later exact edit": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > keeps earlier immutable revisions stable": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > keeps the acquisition revision until start, then delivers the commits since in one call": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > never folds the in-flight frame into the next call": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > replaces the root once more than 10,000 ops are pending after folding": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > reports a change and a retirement in one commit as the retirement, with the value it was given before": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > serializes callbacks and folds the commits made while one is in flight into the next": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > settles listener failure on only the affected watch": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > takes the version of a recreation written by a newer definition, then its ops": [
+    "doc-watch"
   ],
   "amended/sqlite-storage.test.ts :: Pico SqliteStorage > rolls SQL rows and sequence allocation back as one transaction": [
     "storage-conformance"
