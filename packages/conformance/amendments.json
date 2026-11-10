@@ -553,13 +553,6 @@
   "private": "SessionImpl.commitWith() via cast"
  },
  {
-  "test": "upstream/test/harness-tasks-recovery.test.ts :: definition handover > rejects a runtime commit of the old invocation queued behind its handover commit",
-  "owner": "harness-run-core",
-  "spec": "7.5",
-  "rewrite": "Hold the handover commit itself in storage and make the late commit once it has entered, instead of giving the handover one setTimeout(0) to queue behind a held blocker.",
-  "private": "timing: a handover commit queued within one timer turn"
- },
- {
   "test": "upstream/test/harness-tasks.test.ts :: publication at adoption > calls a host listener added on a Harness during a publication only when one was registered at it",
   "owner": "harness-run-core",
   "spec": "4",

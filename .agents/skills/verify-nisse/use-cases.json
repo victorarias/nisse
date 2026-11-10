@@ -63,9 +63,6 @@
   "amended/harness-structured.test.ts :: waiting > keeps running phases after spawning and waits on subsets in sequence": [
     "task-wait"
   ],
-  "amended/harness-tasks-recovery.test.ts :: definition handover > rejects a runtime commit of the old invocation queued behind its handover commit": [
-    "task-handover"
-  ],
   "amended/harness-tasks-runtime.test.ts :: task runtime > reads committed documents and context through the runtime, and forwards the clock and reports": [
     "task-effect-sandwich"
   ],
