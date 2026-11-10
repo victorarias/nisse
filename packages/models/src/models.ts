@@ -9,6 +9,7 @@
 import { Clock, Effect, Schema, Stream } from "effect"
 import { mergeClientIdentity, type ClientIdentity } from "./identity.ts"
 import { normalizeContext } from "./transcript.ts"
+import { traceRequest } from "./telemetry.ts"
 import type {
   AnyModel,
   Api,
@@ -206,7 +207,7 @@ export function fromProviders(providers: Iterable<Provider>, options: { identity
   const streamSimple: Models["streamSimple"] = (model, context, request) =>
     Stream.unwrap(
       Effect.map(route(model, "streamSimple"), (stream) =>
-        timed(stream(model, normalizeContext(context), withIdentity(request))),
+        traceRequest(model, request?.reasoning, timed(stream(model, normalizeContext(context), withIdentity(request)))),
       ),
     )
   return {

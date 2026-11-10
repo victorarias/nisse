@@ -223,3 +223,11 @@ export const telemetryOfSpan = (span: Tracer.AnySpan | undefined): TelemetrySpan
 		? undefined
 		: (context as TelemetrySpan);
 };
+
+/**
+ * `effect` under `telemetry`, a span a pi-ai caller passed as `options.telemetry`: the spans it starts are that span's
+ * children, as pi-ai starts its request spans under the caller's span.
+ */
+export function underSpan<A, E, R>(effect: Effect.Effect<A, E, R>, telemetry: TelemetrySpan): Effect.Effect<A, E, R> {
+	return Effect.withParentSpan(effect, adopt(telemetry)).pipe(Effect.withTracer(tracerOf(telemetry)));
+}

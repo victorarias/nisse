@@ -1022,7 +1022,7 @@
  "upstream/test/harness-telemetry.test.ts :: Durable telemetry > records a fixed faulted category and a bounded diagnostic": "pass",
  "upstream/test/harness-telemetry.test.ts :: Durable telemetry > records a fixed orphaned category and a bounded diagnostic": "pass",
  "upstream/test/harness-telemetry.test.ts :: Durable telemetry > records checkpoints only when the running phase changes": "pass",
- "upstream/test/harness-telemetry.test.ts :: Durable telemetry > records content-free submit and phase spans, nested parents, checkpoints, entry events, and metrics": "pending harness-compaction",
+ "upstream/test/harness-telemetry.test.ts :: Durable telemetry > records content-free submit and phase spans, nested parents, checkpoints, entry events, and metrics": "pass",
  "upstream/test/harness-telemetry.test.ts :: Durable telemetry > records internal compaction admissions as phase events without a submit span": "pass",
  "upstream/test/harness-telemetry.test.ts :: Durable telemetry > reports hook failures on the phase and clock failures without a phase context": "pass",
  "upstream/test/harness-telemetry.test.ts :: Durable telemetry > reports telemetry adapters that throw while a commit is published, and the commit stands": "pending harness-compaction",
