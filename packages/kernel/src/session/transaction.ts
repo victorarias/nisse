@@ -542,7 +542,13 @@ export class Transaction implements Tx {
           latest.retire = true
           return Effect.matchCauseEffect(Deferred.await(latest.draft), {
             onFailure: () => this.retireDoc(token, ...args),
-            onSuccess: () => sameDefinition(latest, definition),
+            // A retirement through the wrong definition retires nothing, also when the callback catches its defect.
+            onSuccess: () =>
+              Effect.onError(sameDefinition(latest, definition), () =>
+                Effect.sync(() => {
+                  latest.retire = false
+                }),
+              ),
           })
         }
         const entry: DocumentEntry = { addressId: resolved.id, address: resolved.address, definition, retire: true }

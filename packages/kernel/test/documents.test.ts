@@ -376,6 +376,15 @@ describe("documents", () => {
           String(Exit.isFailure(mixed) && mixed.cause.reasons[0]?._tag === "Die" && mixed.cause.reasons[0].defect),
         ).toContain("two definitions")
         expect(yield* session.snapshot(Old)).toEqual({ count: 1 })
+
+        // A retirement through the other definition, its defect caught, retires nothing.
+        yield* session.commit((tx) =>
+          Effect.gen(function* () {
+            ;(yield* tx.doc(Old)).count = 3
+            yield* Effect.catchDefect(tx.retireDoc(New), () => Effect.void)
+          }),
+        )
+        expect(yield* session.snapshot(Old)).toEqual({ count: 3 })
       }),
     ))
 
