@@ -3,7 +3,7 @@
 // Derived from pi-durable's `src/session/transaction.ts` and `src/session/forks.ts` at 7d073328e (MIT, see LICENSE).
 import { type Change, type Draft, type Op, type Prepared, type Tracker, track } from "@nisse/delta"
 import { copyJson } from "@nisse/delta/json"
-import { Deferred, Effect, Exit, Queue } from "effect"
+import { Cause, Deferred, Effect, Queue } from "effect"
 import {
   type AnyDocDefinition,
   type AnyDocToken,
@@ -104,6 +104,10 @@ export type DocError = ReadError
  *
  * A read's `StorageError` fails the Session (spec 10.1), so the commit fails even when the callback catches it. Every
  * operation must finish before the callback does: a commit whose callback returns with one still running fails.
+ *
+ * A call refuses misuse it can see up front, such as `ReadAfterWrite` or a terminal task's document, before it touches
+ * the transaction; a callback may catch that defect and commit. A call that dies or is interrupted after that point
+ * fails the commit with its defect, even when the callback caught it, and nothing is stored.
  */
 export interface Tx {
   conversation(id: ConversationId): Effect.Effect<ConversationRecord | undefined, StorageError>
@@ -371,6 +375,8 @@ export class Transaction implements Tx {
   /** Operations started and not settled, and the queue settlement waits on once sealed. */
   #pending = 0
   #drained: Queue.Queue<void> | undefined
+  /** Why the commit must fail: the first call that died or was interrupted after its checks. */
+  #poison: { readonly defect: unknown } | undefined
   /** Conversation and entry writes, in staging order. */
   readonly #writes: StorageWrite[] = []
   readonly #createdConversations = new Set<ConversationId>()
@@ -619,16 +625,18 @@ export class Transaction implements Tx {
   // Documents
 
   doc(token: AnyDocToken, ...args: readonly unknown[]): Effect.Effect<Draft<never>, DocError> {
-    return this.#track(
-      Effect.suspend(() => {
-        this.#assertOpen()
+    return this.#documentCall(
+      () => {
         const definition = token.definition
         const resolved = resolveAddress(definition, args)
         const scope = resolved.address.scope
         // Settlement retires a terminal task's documents, so none is handed out after its terminal candidate.
         if (scope.kind === "task" && this.#tasks.get(scope.taskId)?.write?.record.state.status === "terminal") {
-          return Effect.die(new Error(`Task ${scope.taskId} is terminal`))
+          throw new Error(`Task ${scope.taskId} is terminal`)
         }
+        return { definition, resolved }
+      },
+      ({ definition, resolved }) => {
         const latest = this.#latest.get(resolved.id)
         if (latest !== undefined && !latest.retire) {
           if (latest.draft !== undefined) {
@@ -638,27 +646,22 @@ export class Transaction implements Tx {
             )
           }
           if (latest.target?.kind === "fork-copy") {
-            const target = latest.target
-            return this.#memoize(latest, this.#acquireForkCopy(latest, definition, target), () => {
-              delete latest.draft
-            })
+            return this.#memoize(latest, this.#acquireForkCopy(latest, definition, latest.target))
           }
         }
         const seed = definition.family === true ? copyJson(args[resolved.nextArgument]) : undefined
         const entry: DocumentEntry = { addressId: resolved.id, address: resolved.address, definition, retire: false }
-        const unstage = this.#stage(entry, latest)
+        this.#stage(entry)
         // A retirement staged before means a new incarnation: the old one is not loaded again.
-        return this.#memoize(entry, this.#acquire(entry, resolved, seed, latest?.retire === true), unstage)
-      }),
+        return this.#memoize(entry, this.#acquire(entry, resolved, seed, latest?.retire === true))
+      },
     ) as Effect.Effect<Draft<never>, DocError>
   }
 
   retireDoc(token: AnyDocToken, ...args: readonly unknown[]): Effect.Effect<void, DocError> {
-    return this.#track(
-      Effect.suspend(() => {
-        this.#assertOpen()
-        const definition = token.definition
-        const resolved = resolveAddress(definition, args)
+    return this.#documentCall(
+      () => ({ definition: token.definition, resolved: resolveAddress(token.definition, args) }),
+      ({ definition, resolved }) => {
         const latest = this.#latest.get(resolved.id)
         if (latest?.retire) return Effect.void
         if (latest?.target?.kind === "fork-copy") {
@@ -667,28 +670,23 @@ export class Transaction implements Tx {
           return Effect.void
         }
         if (latest?.draft !== undefined) {
-          // The acquired draft's final content is stored before the retirement. An acquisition that failed unstaged
-          // itself, so the retirement then looks the incarnation up on its own.
+          // The acquired draft's final content is stored before the retirement.
           latest.retire = true
-          return Effect.matchCauseEffect(Deferred.await(latest.draft), {
-            onFailure: () => this.retireDoc(token, ...args),
-            // A retirement through the wrong definition retires nothing, also when the callback catches its defect.
-            onSuccess: () =>
-              Effect.onError(sameDefinition(latest, definition), () =>
-                Effect.sync(() => {
-                  latest.retire = false
-                }),
-              ),
-          })
+          return Effect.flatMap(Deferred.await(latest.draft), () => sameDefinition(latest, definition))
         }
         const entry: DocumentEntry = { addressId: resolved.id, address: resolved.address, definition, retire: true }
-        const unstage = this.#stage(entry, latest)
-        return Effect.onError(this.#findRetirement(entry), () => Effect.sync(unstage))
-      }),
+        this.#stage(entry)
+        return this.#findRetirement(entry)
+      },
     )
   }
 
   // The Session's side
+
+  /** The defect the commit fails with, when a call died or was interrupted after its checks. */
+  get poison(): { readonly defect: unknown } | undefined {
+    return this.#poison
+  }
 
   /**
    * Ends the callback's access once it settled: every later call is a defect, and every open draft is revoked. Waits
@@ -995,38 +993,20 @@ export class Transaction implements Tx {
     })
   }
 
-  /** Stages `entry` as the address's newest; the returned call puts `previous` back, as if `entry` was never staged. */
-  #stage(entry: DocumentEntry, previous: DocumentEntry | undefined): () => void {
+  /** Stages `entry` as the address's newest. */
+  #stage(entry: DocumentEntry): void {
     this.#documents.push(entry)
     this.#latest.set(entry.addressId, entry)
-    return () => {
-      const index = this.#documents.lastIndexOf(entry)
-      if (index !== -1) this.#documents.splice(index, 1)
-      if (this.#latest.get(entry.addressId) !== entry) return
-      if (previous === undefined) this.#latest.delete(entry.addressId)
-      else this.#latest.set(entry.addressId, previous)
-    }
   }
 
   /**
-   * The first acquisition at an address runs `acquire`; later ones wait for the same draft. One that fails or is
-   * interrupted runs `unstage` before its waiters resume, so a later access at the address starts afresh.
+   * The first acquisition at an address runs `acquire`; later ones wait for the same draft. One that does not succeed
+   * fails the commit (a storage error fails the Session, anything else poisons the transaction), so it stays staged.
    */
-  #memoize(entry: DocumentEntry, acquire: Effect.Effect<Draft<JsonObject>, DocError>, unstage: () => void) {
+  #memoize(entry: DocumentEntry, acquire: Effect.Effect<Draft<JsonObject>, DocError>) {
     const draft = Deferred.makeUnsafe<Draft<JsonObject>, DocError>()
     entry.draft = draft
-    return acquire.pipe(
-      Effect.onExit((exit) =>
-        Effect.suspend(() => {
-          if (Exit.isFailure(exit)) {
-            entry.change?.abort()
-            delete entry.change
-            unstage()
-          }
-          return Deferred.done(draft, exit)
-        }),
-      ),
-    )
+    return Effect.onExit(acquire, (exit) => Deferred.done(draft, exit))
   }
 
   /** Plans every staged incarnation and checks what must hold before Storage (spec 3.4, 3.5, 3.7). */
@@ -1092,45 +1072,71 @@ export class Transaction implements Tx {
   // Helpers
 
   #tableRead<A, E>(name: string, read: Effect.Effect<A, E>): Effect.Effect<A, E | StorageError> {
-    return this.#track(
-      Effect.suspend(() => {
-        this.#assertOpen()
-        if (this.#hasTableWrite) return Effect.die(new ReadAfterWrite(`Tx.${name}`))
-        return this.#storageCall(read)
-      }),
+    return this.#call(
+      () => {
+        if (this.#hasTableWrite) throw new ReadAfterWrite(`Tx.${name}`)
+      },
+      () => this.#storageCall(read),
     )
   }
 
   #tableWrite<A, E>(write: Effect.Effect<A, E>): Effect.Effect<A, E> {
-    return this.#track(
-      Effect.suspend(() => {
-        this.#assertOpen()
+    return this.#call(
+      () => {},
+      () => {
         this.#hasTableWrite = true
         return write
-      }),
+      },
     )
   }
 
   #stageChange(id: SubmissionId, change: SubmissionChange): Effect.Effect<void> {
-    return Effect.sync(() => {
-      this.#assertOpen()
-      this.#hasTableWrite = true
-      this.#submissionChanges.push({ id, change })
-    })
+    return this.#call(
+      () => {},
+      () =>
+        Effect.sync(() => {
+          this.#hasTableWrite = true
+          this.#submissionChanges.push({ id, change })
+        }),
+    )
   }
 
-  /** Counts an operation while it runs, so settlement can tell the callback returned before it. */
-  #track<A, E>(operation: Effect.Effect<A, E>): Effect.Effect<A, E> {
+  /**
+   * A document call. Its own storage reads are well formed, so a refused request is a defect; the only failure left is
+   * a `StorageError`, which fails the Session.
+   */
+  #documentCall<C, A>(check: () => C, stage: (checked: C) => Effect.Effect<A, DocError>): Effect.Effect<A, DocError> {
+    return this.#call(check, (checked) =>
+      Effect.catchTag(stage(checked), "StorageRequestError", (error) => Effect.die(error)),
+    )
+  }
+
+  /**
+   * Every Tx call: `check` refuses misuse before the call touches the transaction, and a defect it throws fails only the
+   * call. Then `stage` runs, counted while it runs so settlement can tell the callback returned before it. A `stage`
+   * that dies or is interrupted may leave the transaction partly changed, so it poisons the commit.
+   */
+  #call<C, A, E>(check: () => C, stage: (checked: C) => Effect.Effect<A, E>): Effect.Effect<A, E> {
     return Effect.suspend(() => {
+      this.#assertOpen()
+      const checked = check()
       this.#pending++
-      return Effect.ensuring(
-        operation,
-        Effect.suspend(() => {
-          this.#pending--
-          return this.#pending === 0 && this.#drained !== undefined
-            ? Queue.offer(this.#drained, undefined)
-            : Effect.void
-        }),
+      return Effect.suspend(() => stage(checked)).pipe(
+        Effect.onError((cause) =>
+          Effect.sync(() => {
+            if (this.#poison !== undefined || !(Cause.hasDies(cause) || Cause.hasInterrupts(cause))) return
+            const died = cause.reasons.find((reason) => reason._tag === "Die")
+            this.#poison = { defect: died?._tag === "Die" ? died.defect : new Error("A Tx call was interrupted") }
+          }),
+        ),
+        Effect.ensuring(
+          Effect.suspend(() => {
+            this.#pending--
+            return this.#pending === 0 && this.#drained !== undefined
+              ? Queue.offer(this.#drained, undefined)
+              : Effect.void
+          }),
+        ),
       )
     })
   }

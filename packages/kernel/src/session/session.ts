@@ -607,6 +607,11 @@ class SessionImpl implements Session, SessionInternals {
         tx.abort()
         return yield* deliver(Exit.fail(this.#sessionFailed()))
       }
+      // Nor can one that caught a defect of a Tx call that had begun changing the transaction.
+      if (tx.poison !== undefined) {
+        tx.abort()
+        return yield* deliver(Exit.die(tx.poison.defect))
+      }
       const assembled = yield* Effect.exit(tx.writes())
       if (Exit.isFailure(assembled)) return yield* deliver(Exit.failCause(assembled.cause))
       const writes = assembled.value

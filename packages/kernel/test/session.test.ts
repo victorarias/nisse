@@ -9,7 +9,9 @@ import {
   type CommitObserverEnd,
   type CommitPublication,
   type ConversationId,
+  defineDoc,
   defineEntry,
+  type EntryId,
   type EntryRecord,
   openSession,
   openSqliteStorage,
@@ -22,6 +24,7 @@ import {
   type SubmissionRecord,
   type TaskId,
   type TaskRecord,
+  type Tx,
 } from "../src/index.ts"
 
 const homes: string[] = []
@@ -354,6 +357,67 @@ describe("Session", () => {
         )
         expect(defectOf(exit)).toBeInstanceOf(ReadAfterWrite)
         expect((yield* control.storage.scanEntries({ conversationId }, 10, undefined)).items).toEqual([])
+      }),
+    ))
+
+  test("commit-tx-api: a Tx call that dies after its checks fails the commit even when the callback caught it, and nothing is stored", () =>
+    run(
+      Effect.gen(function* () {
+        const session = yield* openSession(yield* openSqliteStorage(databasePath()))
+        const conversationId = yield* newConversation(session)
+        const Notes = defineDoc<{ text: string }>({
+          kind: "test.poison",
+          version: 1,
+          scope: "conversation",
+          history: "latest",
+          fork: "current",
+          initial: () => ({ text: "" }),
+          checkpointWhen: () => false,
+        })
+        const missing = 999_999 as ConversationId
+        const calls: readonly (readonly [string, (tx: Tx) => Effect.Effect<unknown, unknown>])[] = [
+          ["appendEntry", (tx) => tx.appendEntry(missing, { kind: "note" })],
+          [
+            "createConversation",
+            (tx) => tx.createConversation({ ownership: { kind: "task", taskId: 999_999 as TaskId } }),
+          ],
+          [
+            "forkConversation",
+            (tx) => tx.forkConversation(conversationId, 999_999 as EntryId, { ownership: { kind: "ownerless" } }),
+          ],
+          ["doc", (tx) => tx.doc(Notes, missing)],
+        ]
+        for (const [name, call] of calls) {
+          const exit = yield* Effect.exit(
+            session.commit((tx) =>
+              Effect.gen(function* () {
+                yield* Effect.catchDefect(Effect.asVoid(call(tx)), () => Effect.void)
+                yield* tx.appendEntry(conversationId, { kind: "note", data: name })
+              }),
+            ),
+          )
+          expect([name, String(defectOf(exit))]).toEqual([name, expect.stringMatching(/does not exist|is not visible/)])
+        }
+        const entries = yield* session.read((reads) => reads.scanEntries({ conversationId }, 10, undefined))
+        expect(entries.items).toEqual([])
+        expect(session.failure).toBeUndefined()
+      }),
+    ))
+
+  test("commit-tx-api: a refusal a Tx call raises before touching the transaction, once caught, still commits", () =>
+    run(
+      Effect.gen(function* () {
+        const session = yield* openSession(yield* openSqliteStorage(databasePath()))
+        const conversationId = yield* newConversation(session)
+        yield* session.commit((tx) =>
+          Effect.gen(function* () {
+            yield* tx.appendEntry(conversationId, { kind: "note", data: "kept" })
+            const refused = yield* Effect.exit(tx.conversation(conversationId))
+            expect(defectOf(refused)).toBeInstanceOf(ReadAfterWrite)
+          }),
+        )
+        const entries = yield* session.read((reads) => reads.scanEntries({ conversationId }, 10, undefined))
+        expect(entries.items.map((entry) => entry.data)).toEqual(["kept"])
       }),
     ))
 
