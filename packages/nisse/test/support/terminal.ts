@@ -19,8 +19,8 @@ export const nisseEnv = (home: ReturnType<typeof tempHome>, extra: Record<string
   ...extra,
 })
 
-export const nisse = (args: Array<string>, env: Record<string, string | undefined>) =>
-  Bun.spawn(["bun", MAIN, ...args], { env, cwd: env.NISSE_HOME!, stdout: "pipe", stderr: "pipe" })
+export const nisse = (args: Array<string>, env: Record<string, string | undefined>, cwd = env.NISSE_HOME!) =>
+  Bun.spawn(["bun", MAIN, ...args], { env, cwd, stdout: "pipe", stderr: "pipe" })
 
 export const stopServer = async (home: ReturnType<typeof tempHome>) => {
   const client = await RawClient.connect(home.socket).catch(() => undefined)

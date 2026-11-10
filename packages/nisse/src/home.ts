@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite"
 import { mkdirSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { Effect, Schema } from "effect"
 
 export interface Home {
@@ -22,7 +22,7 @@ export const homeAt = (dir: string): Home => ({
   extensions: join(dir, "extensions"),
 })
 
-export const defaultHome = () => homeAt(process.env.NISSE_HOME ?? join(homedir(), ".nisse"))
+export const defaultHome = () => homeAt(resolve(process.env.NISSE_HOME ?? join(homedir(), ".nisse")))
 
 export class HomeTaken extends Schema.TaggedError<HomeTaken>()("HomeTaken", { dir: Schema.String }) {}
 

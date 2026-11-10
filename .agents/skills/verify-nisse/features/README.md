@@ -116,7 +116,8 @@ lists when a change touches them.
 - **Inside an agent.** `drive.ts` runs inside a Claude Code or attn session and
   inherits its variables.
 - **macOS.** `/tmp` is a link to `/private/tmp`, so a process reports its
-  working directory under `/private/tmp`. CI runs on Linux only.
+  working directory under `/private/tmp`. CI runs `bun run check` on Linux
+  and macOS.
 
 ## Features
 

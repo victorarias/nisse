@@ -49,6 +49,7 @@ export class FakeOpenAi {
   private readonly tokens: Array<unknown> = []
   private readonly held = new Set<ReadableStreamDefaultController<Uint8Array>>()
   private readonly abandoned = Promise.withResolvers<void>()
+  private readonly awaited: Array<{ count: number; resolve: () => void }> = []
   private readonly server: ReturnType<typeof Bun.serve>
   modelList: unknown
   devicePolls = 1
@@ -113,6 +114,18 @@ export class FakeOpenAi {
     return this.received.filter((request) => request.path === "/codex/responses")
   }
 
+  requested(count: number) {
+    const { promise, resolve } = Promise.withResolvers<void>()
+    this.awaited.push({ count, resolve })
+    this.settleAwaited()
+    return promise
+  }
+
+  private settleAwaited() {
+    const received = this.responses().length
+    for (const waiter of this.awaited) if (received >= waiter.count) waiter.resolve()
+  }
+
   private async answer(request: Request) {
     const path = new URL(request.url).pathname
     const body = await request.text()
@@ -131,7 +144,10 @@ export class FakeOpenAi {
       const tokens = this.tokens.shift()
       return tokens ? Response.json(tokens) : Response.json({ error: "invalid_grant" }, { status: 400 })
     }
-    if (path === "/codex/responses") this.onResponse(JSON.parse(body))
+    if (path === "/codex/responses") {
+      this.onResponse(JSON.parse(body))
+      this.settleAwaited()
+    }
     const reply = this.replies.shift()
     if (!reply) return Response.json({ error: { message: "no reply scripted" } }, { status: 500 })
     if ("http" in reply) return Response.json(reply.http.body, { status: reply.http.status })
