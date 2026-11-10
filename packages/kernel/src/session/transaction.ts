@@ -111,6 +111,11 @@ export type DocError = ReadError
  * fails the commit with its defect, even when the callback caught it, and nothing is stored.
  */
 export interface Tx {
+  /**
+   * Whether this commit staged a table write: an entry, conversation, submission or task. Table reads must come before
+   * the first one (`ReadAfterWrite`), so code that reads tables inside a caller's commit checks it up front.
+   */
+  readonly hasTableWrite: boolean
   conversation(id: ConversationId): Effect.Effect<ConversationRecord | undefined, StorageError>
   entry(id: EntryId): Effect.Effect<EntryRecord | undefined, ReadError>
   /** Undefined when the entry is absent or has another kind. */
@@ -377,6 +382,10 @@ export class Transaction implements Tx {
   readonly #host: TransactionHost
   #sealed = false
   #hasTableWrite = false
+
+  get hasTableWrite(): boolean {
+    return this.#hasTableWrite
+  }
   /** Operations started and not settled, and the queue settlement waits on once sealed. */
   #pending = 0
   #drained: Queue.Queue<void> | undefined

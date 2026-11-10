@@ -1,5 +1,6 @@
 // The harness's entry kinds (spec section 8.1).
-import { defineEntry } from "@nisse/kernel"
+import { defineEntry, type JsonObject } from "@nisse/kernel"
+import type { Message } from "@nisse/models"
 import type { CompactionReason, ToolDiagnostic } from "./types.ts"
 
 /** User input: `model` is `[UserMessage]`. Written by submissions. */
@@ -14,3 +15,6 @@ export const ToolResultEntry = defineEntry<{ diagnostics: ToolDiagnostic[] }>("p
 export const ResetEntry = defineEntry("pi.reset")
 /** A compaction summary: `model` is `[UserMessage]`, `head` the first kept entry. */
 export const CompactionEntry = defineEntry<{ reason: CompactionReason }>("pi.compaction")
+
+/** A model message as an entry's `model` stores it: plain JSON. */
+export const stored = (message: Message): JsonObject => message as unknown as JsonObject

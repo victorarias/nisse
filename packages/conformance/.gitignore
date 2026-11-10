@@ -2,3 +2,4 @@ reference/
 results/
 upstream/src/*
 !upstream/src/testing
+try.ts

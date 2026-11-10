@@ -4,13 +4,37 @@
 import type {
   AnyDocToken,
   AnyTask,
+  CommitError,
   ConversationId,
+  Cursor,
   DocAddressArgs,
   DocValue,
+  EntryDraft,
+  EntryId,
+  EntryQuery,
   EntryRecord,
+  InvocationEnded,
+  JsonObject,
+  JsonValue,
+  Page,
   ReadFailure,
+  SubmissionId,
+  SubmissionRecord,
+  TaskId,
 } from "@nisse/kernel"
-import type { Message, ModelThinkingLevel, Tool } from "@nisse/models"
+import type {
+  Api,
+  AssistantMessage,
+  Message,
+  Model,
+  Models,
+  ModelThinkingLevel,
+  Tool,
+  ToolCall,
+  ToolResultMessage,
+  Usage,
+  UserMessage,
+} from "@nisse/models"
 import type { ExecutionEnv } from "@nisse/env"
 import type { Effect } from "effect"
 import type { TaskServices } from "./services.ts"
@@ -253,3 +277,139 @@ export type ToolDiagnostic = {
 
 /** What started a compaction. */
 export type CompactionReason = "manual" | "threshold" | "overflow"
+
+/** What an input says: its user message's content. */
+export type UserInput = UserMessage["content"]
+
+/**
+ * The entry an input is placed as, instead of `pi.user`: an application kind, and data the transcript shows, such as its
+ * author. Its model message is still the input's user message.
+ */
+export type InputEntry = { readonly kind: string; readonly data?: JsonValue }
+
+/**
+ * Host submission (spec 6): user input that may start a run, a passive entry write, or a continue, a run without a new
+ * user message for an idle conversation whose context the model still owes an answer.
+ */
+export type SubmissionDraft = { readonly requestId?: string } & (
+  | {
+      readonly type: "input"
+      readonly content: UserInput
+      readonly whenBusy?: "steer" | "followUp" | "reject"
+      /** An idle conversation rejects the input with `ConversationIdle` and writes nothing. */
+      readonly whenIdle?: "reject"
+      /** Place the input as this entry; default `pi.user` without data. The kind must not start with `pi.`. */
+      readonly entry?: InputEntry
+    }
+  | { readonly type: "write"; readonly entry: EntryDraft }
+  /** Only when idle: a busy conversation rejects it with `ConversationBusy`, and it never queues. */
+  | { readonly type: "continue" }
+)
+
+export type SettledSubmissionRecord = SubmissionRecord & { readonly status: "done" | "unanswered" }
+
+/** Post-tools controls requested by a tool result. */
+export type ToolControl = {
+  readonly addTools?: readonly string[]
+  /** End the run without another model request when every result of the round sets it to `true`. */
+  readonly terminate?: boolean
+  /** Start a new context with this text as its user message and continue the run there; the last one wins. */
+  readonly handoff?: string
+}
+
+/** What a tool returns: `output` for the model, `structuredOutput` for programs, `details` for UIs. */
+export type ToolExecutionResult = {
+  /** For the model. Omitted: the retained `output()` text. */
+  readonly output?: ToolResultMessage["content"]
+  readonly structuredOutput?: JsonValue
+  readonly isError?: boolean
+  /** Omitted: the last `details()` value becomes the details. */
+  readonly details?: JsonValue
+  /** Added after those recorded through `api.diagnostic()`. */
+  readonly diagnostics?: readonly ToolDiagnostic[]
+  /** Spend of the execution itself, such as a model call; stored on the result and in `pi.usage.tools`. */
+  readonly usage?: Usage
+  readonly control?: ToolControl
+}
+
+/** A compaction's result: its summary entry, or none when it found nothing to compact or was declined. */
+export type CompactionResult = { entryId?: EntryId; submissionId?: SubmissionId }
+
+/** How a run ended, for `afterRun` hooks. */
+export type RunSummary = {
+  /** A final answer, or a tool round whose every call asked to `terminate`. */
+  readonly reason: "answer" | "terminate"
+  /** The run's first entry; the answer itself for a run that has none. */
+  readonly first: EntryId
+  /** The answer, or the terminating round's tool-calling answer. */
+  readonly answer: EntryId
+  /** The run's last entry: the answer; for a `terminate` round its newest result, or the reset of its handoff. */
+  readonly last: EntryId
+}
+
+/** A task an `afterRun` hook asks for. */
+export type RunEndTask = { readonly task: AnyTask<TaskServices>; readonly input: JsonValue }
+
+/** A call as tool hooks see it; `parent` is set for a nested call. */
+export type ToolHookCall = ToolCall & { readonly parent?: { readonly taskId: TaskId; readonly callId: string } }
+
+/**
+ * What a hook may use: committed reads and the asking task's memos. Hooks run off the Session line, so reads see what
+ * is committed when they run; a hook rerun after a crash may see more. Every operation fails once the invocation ended.
+ */
+export interface HookApi extends DocumentReader {
+  readonly taskId: TaskId
+  readonly conversationId: ConversationId
+  /** Aborts when the asking task's invocation ends. */
+  readonly signal: AbortSignal
+  /** The host's models, read at each call. */
+  models(): Models
+  memo<T extends JsonValue>(name: string): Effect.Effect<T | undefined, InvocationEnded>
+  memo<T extends JsonValue>(name: string, candidate: T): Effect.Effect<T, InvocationEnded | CommitError>
+  entry(id: EntryId): Effect.Effect<EntryRecord | undefined, InvocationEnded | ReadFailure>
+  entries(
+    query: Omit<EntryQuery, "conversationId">,
+    limit: number,
+    cursor?: Cursor,
+  ): Effect.Effect<Page<EntryRecord>, InvocationEnded | ReadFailure>
+}
+
+/** Hooks of the built-in generation task; each handler returns an Effect. */
+export interface GenerationHooks {
+  /** Before every request attempt, including recovery; the result is used for that request only. */
+  beforeRequest(
+    request: { readonly messages: readonly Message[] },
+    api: HookApi,
+  ): Effect.Effect<{ readonly messages: readonly Message[] } | undefined, unknown>
+  /** After the provider request body is built; the result replaces the body for that request only. */
+  beforeProviderRequest(
+    request: { readonly model: Model<Api>; readonly payload: unknown },
+    api: HookApi,
+  ): Effect.Effect<{ readonly payload: unknown } | undefined, unknown>
+  /** Every terminal provider message, before classification. */
+  afterResponse(message: AssistantMessage, api: HookApi): Effect.Effect<void, unknown>
+  /** A final answer; the first `continue` appends a user message and continues the run. */
+  onYield(answer: AssistantMessage, api: HookApi): Effect.Effect<{ readonly continue: UserInput } | undefined, unknown>
+  /** After every tool of the round is terminal; `results` are the round's result entries in call order. */
+  afterTools(assistant: EntryId, results: readonly EntryId[], api: HookApi): Effect.Effect<void, unknown>
+  /** After a run answered; the tasks asked for run as children of the generation, which keeps the run until they end. */
+  afterRun(
+    run: RunSummary,
+    api: HookApi,
+  ): Effect.Effect<{ readonly tasks: readonly RunEndTask[] } | undefined, unknown>
+}
+
+/** Hooks of the built-in tool task, for model-issued and nested calls. */
+export interface ToolHooks {
+  /** Before intent; the first `block` wins, otherwise `arguments` replace the call's arguments. A failure blocks. */
+  beforeTool(
+    call: ToolHookCall,
+    api: HookApi,
+  ): Effect.Effect<{ readonly arguments?: JsonObject; readonly block?: string } | undefined, unknown>
+  /** Before the result is committed; replaces the result. Runs on every result the tool task writes. */
+  afterTool(
+    call: ToolHookCall,
+    result: ToolExecutionResult,
+    api: HookApi,
+  ): Effect.Effect<ToolExecutionResult | undefined, unknown>
+}
