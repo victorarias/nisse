@@ -27,10 +27,26 @@
   "amended/harness-idle-scopes.test.ts :: kept context ranges > keeps an idle range's expiry when another task reads it again": [
     "settings-context-retention"
   ],
+  "amended/harness-live-deltas.test.ts :: pi.live deltas > appends head output and then only updates the dropped counts once the window is full": [
+    "view-live"
+  ],
   "amended/harness-live-deltas.test.ts :: pi.live deltas > bounds the delta chain of a long generation or tool round with a base": [
     "view-live"
   ],
+  "amended/harness-live-deltas.test.ts :: pi.live deltas > diffs details leaf by leaf and appends diagnostics": [
+    "view-live"
+  ],
   "amended/harness-live-deltas.test.ts :: pi.live deltas > keeps a complete base exactly while nothing runs": [
+    "view-live"
+  ],
+  "amended/harness-live-deltas.test.ts :: pi.live deltas > slides a tail window as a front trim plus an append": [
+    "tool-output-window"
+  ],
+  "amended/harness-live-deltas.test.ts :: pi.live deltas > streams partial text as appends": ["view-live"],
+  "amended/harness-live-deltas.test.ts :: pi.live deltas > writes an aborted tool's slot with field-level ops": [
+    "view-live"
+  ],
+  "amended/harness-live-deltas.test.ts :: pi.live deltas > writes the whole window when Chord's overlap search cannot find the shared part": [
     "view-live"
   ],
   "amended/harness-nested-tools.test.ts :: nested tool calls > rejects a nested call of an aborted caller and leaves no document for it": [
