@@ -567,11 +567,25 @@
   "private": "followCommits() internal commit listener"
  },
  {
+  "test": "upstream/test/harness-tasks.test.ts :: task abort > does not signal a running abort handler when aborted again, and a cancelled caller leaves the mark durable",
+  "owner": "harness-run-core",
+  "spec": "5.4",
+  "rewrite": "Await the start of the run phase before aborting instead of assuming it started after one setTimeout(0).",
+  "private": "timing: the start of a run phase within one timer turn"
+ },
+ {
   "test": "upstream/test/harness-tasks.test.ts :: task phases > commits results with entries atomically, keeps memos until terminal, and retires task documents",
   "owner": "harness-run-core",
   "spec": "3.2",
   "rewrite": "Keep the atomicity assertions and show task documents retired through snapshots, dropping the counter.",
   "private": "SessionImpl.documentCacheSizes"
+ },
+ {
+  "test": "upstream/test/harness-tasks.test.ts :: task phases > resumes a waiting task once every task in `on` is terminal, whatever the outcome",
+  "owner": "harness-run-core",
+  "spec": "5.5",
+  "rewrite": "Await the waiter's `waiting` commit, signalled by its wait phase, instead of sampling the task after one setTimeout(0).",
+  "private": "timing: a phase's commit within one timer turn"
  },
  {
   "test": "upstream/test/harness-tasks.test.ts :: task runtime > reads committed documents and context through the runtime, and forwards the clock and reports",
@@ -733,6 +747,13 @@
   "spec": "3.6",
   "rewrite": "Force the cold load by reopening a Session over the same Storage.",
   "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "test": "upstream/test/session-checkpoints-migrations.test.ts :: Session document migrations > writes the required base on the first successful transaction, then writes deltas",
+  "owner": "kernel-documents",
+  "spec": "3.6",
+  "rewrite": "Await the older-shape watch's root replacement instead of sampling it after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
  },
  {
   "test": "upstream/test/session-checkpoints-migrations.test.ts :: Session historical document snapshots > migrates current and historical rewindable values independently and follows fork ancestry",
@@ -1036,11 +1057,53 @@
   "private": "SessionImpl.unloadDocuments()"
  },
  {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > continues after the tracker cache unloads",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > delivers replayable structural no-op commits instead of suppressing them",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > folds 101 pending commits of one field into one set",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > folds a retirement into the pending commits' call, which reports it with the last value, and goes on",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > follows its address across a retirement and a recreation in one commit, in one call",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
   "test": "upstream/test/session-watches.test.ts :: Session document watches > hydrates migration without writing and observes the later exact edit",
   "owner": "kernel-documents",
   "spec": "9.1",
   "rewrite": "Force the cold load by reopening a Session or retention 0.",
   "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > hydrates migration without writing and observes the later exact edit",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
  },
  {
   "test": "upstream/test/session-watches.test.ts :: Session document watches > ignores the same kind in another conversation and under another family key",
@@ -1050,11 +1113,67 @@
   "private": "SessionImpl.documentCacheSizes"
  },
  {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > keeps earlier immutable revisions stable",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
   "test": "upstream/test/session-watches.test.ts :: Session document watches > keeps no earlier incarnation alive after a retirement and a recreation, while it goes on",
   "owner": "kernel-documents",
   "spec": "9.1",
   "rewrite": "Force the cold load by reopening a Session or retention 0.",
   "private": "SessionImpl.unloadDocuments()"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > keeps the acquisition revision until start, then delivers the commits since in one call",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > never folds the in-flight frame into the next call",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > replaces the root once more than 10,000 ops are pending after folding",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > reports a change and a retirement in one commit as the retirement, with the value it was given before",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > serializes callbacks and folds the commits made while one is in flight into the next",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > settles listener failure on only the affected watch",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
+ },
+ {
+  "test": "upstream/test/session-watches.test.ts :: Session document watches > takes the version of a recreation written by a newer definition, then its ops",
+  "owner": "kernel-documents",
+  "spec": "9.1",
+  "rewrite": "Await the listener's call instead of sampling the deliveries after one setTimeout(0).",
+  "private": "timing: a watch delivery within one timer turn"
  },
  {
   "test": "upstream/test/sqlite-storage.test.ts :: Pico SqliteStorage > rolls SQL rows and sequence allocation back as one transaction",
