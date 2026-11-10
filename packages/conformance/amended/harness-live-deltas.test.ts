@@ -273,5 +273,4 @@ describe("pi.live deltas", () => {
 		expect(abortCommit).toHaveLength(4);
 		await run.harness.close(context);
 	});
-
 });
