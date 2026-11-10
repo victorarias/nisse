@@ -126,6 +126,10 @@
   "amended/sqlite-storage.test.ts :: Pico SqliteStorage > rolls SQL rows and sequence allocation back as one transaction": [
     "storage-conformance"
   ],
+  "amended/tools-images.test.ts :: createNodePhotonImages > prepares in a worker thread, leaving the event loop free": [
+    "tool-image-preparation",
+    "image-worker"
+  ],
   "upstream/test/codemode-checkpoints.test.ts :: built-in document checkpoint policies > checkpoints the codemode store after 64 deltas without changing historical reads or forks": [
     "codemode-documents"
   ],
