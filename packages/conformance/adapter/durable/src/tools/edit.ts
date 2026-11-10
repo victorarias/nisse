@@ -1,3 +1,4 @@
-import { unimplemented } from "../../../../unimplemented.ts";
+import * as T from "@nisse/tools";
+import { upstreamTool } from "./bridge.ts";
 
-export const createEditTool = unimplemented("createEditTool", "tools-package");
+export const createEditTool = () => upstreamTool(T.createEditTool());

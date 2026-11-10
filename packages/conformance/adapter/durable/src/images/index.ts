@@ -1,3 +1,6 @@
-import { unimplemented } from "../../../../unimplemented.ts";
+import { createPhotonImages as create } from "@nisse/tools/images";
+import { promiseImages } from "../tools/bridge.ts";
 
-export const createPhotonImages = unimplemented("createPhotonImages", "tools-package");
+type Any = any;
+
+export const createPhotonImages = (wasm: Any) => promiseImages(create(wasm));

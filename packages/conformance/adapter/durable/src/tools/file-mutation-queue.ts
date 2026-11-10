@@ -1,3 +1,10 @@
-import { unimplemented } from "../../../../unimplemented.ts";
+import * as T from "@nisse/tools";
+import type { Context } from "../../../chord/src/context/index.ts";
+import { promised } from "../harness/convert.ts";
+import { run } from "../session/session.ts";
+import { effectEnv } from "./bridge.ts";
 
-export const withFileMutationQueue = unimplemented("withFileMutationQueue", "tools-package");
+type Any = any;
+
+export const withFileMutationQueue = <A>(env: Any, path: string, fn: () => Promise<A>, context: Context): Promise<A> =>
+	run(T.withFileMutationQueue(effectEnv(env)!, path, promised(fn)), context);

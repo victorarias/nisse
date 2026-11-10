@@ -20,6 +20,7 @@ import {
 	upstreamError,
 } from "../session/session.ts";
 import { kernelStorage } from "../session/storage-bridge.ts";
+import { effectEnv, promiseEnv } from "../tools/bridge.ts";
 import { withTelemetry } from "../telemetry-bridge.ts";
 import { createTypedMetrics, NOOP_TELEMETRY_METRICS } from "../../../telemetry/src/index.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
@@ -312,7 +313,7 @@ export class HarnessImpl extends SessionImpl {
 			get models() {
 				return typeof models === "function" ? models() : models;
 			},
-			env: (context: Context) => run(entry.current.api.env, context),
+			env: (context: Context) => run(entry.current.api.env, context).then(promiseEnv),
 			hooks: {
 				each: (name: string, invoke: (handler: Any) => Any) =>
 					run(
@@ -429,16 +430,20 @@ export const Harness = {
 				...(options.env === undefined
 					? {}
 					: {
+							// Upstream's environments as the Effect ones the harness hands its tools.
 							env: (target: Any) =>
-								promised((callContext) =>
-									options.env(
-										{
-											conversationId: target.conversationId,
-											...(target.cwd === undefined ? {} : { cwd: target.cwd }),
-											read: harness,
-										},
-										callContext,
+								Effect.map(
+									promised((callContext) =>
+										options.env(
+											{
+												conversationId: target.conversationId,
+												...(target.cwd === undefined ? {} : { cwd: target.cwd }),
+												read: harness,
+											},
+											callContext,
+										),
 									),
+									effectEnv,
 								),
 						}),
 				...(options.conversationCreated === undefined

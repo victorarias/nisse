@@ -1,0 +1,23 @@
+{
+  "name": "@nisse/tools",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./edit-diff": "./src/edit-diff.ts",
+    "./images": "./src/images/photon.ts",
+    "./images/exif": "./src/images/exif.ts",
+    "./images/node": "./src/images/node.ts"
+  },
+  "dependencies": {
+    "@nisse/env": "workspace:*",
+    "@nisse/harness": "workspace:*",
+    "@nisse/kernel": "workspace:*",
+    "@nisse/models": "workspace:*",
+    "@nisse/schema": "workspace:*",
+    "@silvia-odwyer/photon": "0.3.3",
+    "diff": "8.0.4",
+    "effect": "4.0.6"
+  }
+}

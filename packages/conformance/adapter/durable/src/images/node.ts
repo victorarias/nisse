@@ -1,3 +1,4 @@
-import { unimplemented } from "../../../../unimplemented.ts";
+import { createNodePhotonImages as create, type NodePhotonImagesOptions } from "@nisse/tools/images/node";
+import { promiseImages } from "../tools/bridge.ts";
 
-export const createNodePhotonImages = unimplemented("createNodePhotonImages", "tools-package");
+export const createNodePhotonImages = async (options: NodePhotonImagesOptions = {}) => promiseImages(create(options));
