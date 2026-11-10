@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Deferred, Effect, Queue, type Scope, Stream } from "effect"
+import { Deferred, Effect, Queue, Scope, Stream } from "effect"
 import {
   type ConversationId,
   defineDoc,
@@ -435,6 +435,41 @@ describe("registry", () => {
 })
 
 describe("tasks", () => {
+  test("doc-watch: a document watch a task keeps past its handler ends with the invocation", async () => {
+    const handed = Deferred.makeUnsafe<Stream.Stream<unknown, unknown>>()
+    const watcher = defineTask<null, { readonly phase: "run" }, null, TaskServices>({
+      name: "test.watcher",
+      version: 1,
+      initial: () => ({ phase: "run" }),
+      phases: {
+        run: (task, runtime) =>
+          Effect.gen(function* () {
+            // A scope the handler never closes: only the invocation's end stops the watch.
+            const scope = yield* Scope.make()
+            const watch = yield* Scope.provide(scope)((yield* TaskServices).watchDoc(AgentDoc, task.conversationId))
+            yield* Deferred.succeed(handed, watch!.changes)
+            yield* runtime.commit(() =>
+              Effect.succeed({ status: "terminal" as const, outcome: { status: "completed" as const, result: null } }),
+            )
+          }),
+      },
+      abort: () => Effect.void,
+    })
+    const registry = createRegistry()
+    registry.install(defineExtension({ name: "watching", tasks: [watcher] }))
+    await run(
+      Effect.gen(function* () {
+        const harness = yield* open(databasePath(), registry)
+        const root = yield* harness.root()
+        yield* harness.resume
+        const id = yield* root.commit((tx) => tx.createTask(watcher, null, { ownership: { kind: "conversation" } }))
+        yield* harness.waitForTask(id)
+        // The changes end, rather than following the document for as long as the Harness runs.
+        yield* Stream.runDrain(yield* Deferred.await(handed))
+      }),
+    )
+  })
+
   test("task-memory-bounded: long chains of ended tasks leave the scheduler and the document cache as they were", async () => {
     // Each link creates the next, which it owns, then ends; it holds `completing` until the chain below it ends, and
     // then the chain finalizes from the bottom up.

@@ -556,11 +556,16 @@ export class SessionImpl {
 
 	watchDoc(token: Any, ...args: Any[]): Promise<Any> {
 		const [address, context] = split(token, args, 0);
+		return this.watchWith((this.#kernel.watchDoc as Any)(token, ...address), context);
+	}
+
+	/** Internal: upstream's watch handle over a kernel watch `acquire` makes in a scope the handle's stop closes. */
+	watchWith(acquire: Effect.Effect<Any, unknown, Scope.Scope>, context: Context | undefined): Promise<Any> {
 		let scope: Scope.Closeable | undefined;
 		return this.#read(
-			Effect.gen({ self: this }, function* () {
+			Effect.gen(function* () {
 				scope = yield* Scope.make();
-				return yield* Scope.provide(scope)((this.#kernel.watchDoc as Any)(token, ...address));
+				return yield* Scope.provide(scope)(acquire);
 			}) as Effect.Effect<Any, unknown>,
 			context,
 		).then(

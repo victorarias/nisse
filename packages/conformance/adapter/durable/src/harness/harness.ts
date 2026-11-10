@@ -383,16 +383,13 @@ export class HarnessImpl extends SessionImpl {
 				return (harness.observeDoc as Any)(...args);
 			},
 			watchDoc: async (token: Any, ...args: Any[]) => {
-				await ended();
-				// The invocation's end stops the watch, not the handler context's abort.
+				// The invocation's end stops the watch, not the handler context's abort. The harness ends the kernel watch;
+				// upstream names that end `stopped`, which only a stop gives the handle.
 				const [address, context] = split(token, args);
-				const watch = await (harness.watchDoc as Any)(token, ...address, withoutAbortSignal(context ?? BACKGROUND_CONTEXT));
-				if (watch === undefined) return undefined;
-				if (entry.current.runtime.signal.aborted) {
-					void watch.stop();
-					await ended();
-				}
-				entry.current.runtime.signal.addEventListener("abort", () => void watch.stop(), { once: true });
+				const acquire = (entry.current.api.watchDoc as Any)(token, ...address);
+				const watch = await harness.watchWith(acquire, withoutAbortSignal(context ?? BACKGROUND_CONTEXT));
+				const signal = entry.current.runtime.signal;
+				if (watch !== undefined) signal.addEventListener("abort", () => void watch.stop(), { once: true });
 				return watch;
 			},
 		};

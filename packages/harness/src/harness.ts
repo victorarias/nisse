@@ -37,7 +37,7 @@ import {
   type Wake,
 } from "@nisse/kernel"
 import type { Models } from "@nisse/models"
-import { Cause, Clock, Deferred, Effect, Exit, Layer } from "effect"
+import { Cause, Clock, Deferred, Effect, Exit, Layer, Scope } from "effect"
 import { AgentDoc, agentHooks, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"
 import { readContext } from "./context.ts"
@@ -461,8 +461,21 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       context: (id, options) => runtime.guard(readContext(this.session, id, options?.at)),
       snapshotAsOf: <K extends AnyDocToken>(token: K, ...address: RewindableAddressArgs<K>) =>
         runtime.guard(this.session.snapshotAsOf(token, ...address)),
+      // The watch lives in a scope of its own, closed by the caller's scope or the invocation's end, whichever is first.
       watchDoc: <K extends AnyDocToken>(token: K, ...address: DocAddressArgs<K>) =>
-        runtime.guard(this.session.watchDoc(token, ...address)),
+        runtime.guard(
+          Effect.gen({ self: this }, function* () {
+            const outer = yield* Effect.scope
+            const inner = yield* Scope.fork(outer)
+            const watch = yield* Scope.provide(inner)(this.session.watchDoc(token, ...address))
+            if (runtime.signal.aborted) {
+              yield* Scope.close(inner, Exit.void)
+              return yield* ended
+            }
+            yield* Effect.forkIn(Effect.andThen(aborted(runtime.signal), Scope.close(inner, Exit.void)), outer)
+            return watch
+          }),
+        ),
       conversation: (id) =>
         runtime.guard(
           Effect.map(
@@ -476,10 +489,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
                     waitForIdle: runtime.guard(
                       Effect.raceFirst(
                         this.#tasks.waitForIdle(record.id),
-                        Effect.andThen(
-                          Effect.promise(() => aborted(runtime.signal)),
-                          ended,
-                        ),
+                        Effect.andThen(aborted(runtime.signal), ended),
                       ),
                     ),
                   },
@@ -524,11 +534,13 @@ type CreateTarget =
       readonly ownership: ConversationOwnership
     }
 
-/** Settles once `signal` aborts. */
-const aborted = (signal: AbortSignal): Promise<void> =>
-  new Promise((resolve) => {
-    if (signal.aborted) resolve()
-    else signal.addEventListener("abort", () => resolve(), { once: true })
+/** Succeeds once `signal` aborts; interrupting it removes its listener. */
+const aborted = (signal: AbortSignal): Effect.Effect<void> =>
+  Effect.callback<void>((resume) => {
+    if (signal.aborted) return resume(Effect.void)
+    const listener = () => resume(Effect.void)
+    signal.addEventListener("abort", listener, { once: true })
+    return Effect.sync(() => signal.removeEventListener("abort", listener))
   })
 
 /**
