@@ -34,7 +34,7 @@ const git = (cwd: string) => {
   if (done.exitCode !== 0) throw new Error(`git init failed: ${done.stderr}`)
 }
 
-test("tool-grep: grep finds matching lines by path and line, skipping binary and git-ignored files, and honours its options", () =>
+test("tool-grep: grep finds matching lines by path and line, skipping binary and git-ignored files, and honours its options, its glob too when the path is a file", () =>
   run(
     Effect.gen(function* () {
       const chat = yield* openChat({
@@ -45,6 +45,8 @@ test("tool-grep: grep finds matching lines by path and line, skipping binary and
           ["grep", { pattern: "needle", path: "src" }],
           ["grep", { pattern: "(" }],
           ["grep", { pattern: "x", path: "nowhere" }],
+          ["grep", { pattern: "needle", path: "src/a.ts", glob: "*.md" }],
+          ["grep", { pattern: "needle", path: "src/a.ts", glob: "*.ts" }],
         ),
       })
       files(chat)
@@ -57,8 +59,10 @@ test("tool-grep: grep finds matching lines by path and line, skipping binary and
         "src/a.ts:1:const needle = 1\nsrc/a.ts:3:export { needle }",
         "bad pattern: Invalid regular expression: missing )",
         "nowhere does not exist",
+        "No matches.",
+        "src/a.ts:1:const needle = 1\nsrc/a.ts:3:export { needle }",
       ])
-      expect(results.map((result) => result.isError)).toEqual([false, false, false, true, true])
+      expect(results.map((result) => result.isError)).toEqual([false, false, false, true, true, false, false])
     }),
   ))
 

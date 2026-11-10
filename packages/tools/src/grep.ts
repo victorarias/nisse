@@ -47,7 +47,8 @@ export function createGrepTool() {
         const shownRoot = input.path === undefined || input.path === "." ? "" : input.path.replace(/\/+$/, "")
         const matches: string[] = []
         for (const file of files) {
-          if (file !== "" && !wanted(file)) continue
+          // A file named by `path` is matched as the model wrote it.
+          if (!wanted(file === "" ? (input.path ?? "") : file)) continue
           const path = file === "" ? root : yield* env.joinPath([root, file])
           if (!(yield* Effect.orElseSucceed(isText(env, path), () => false))) continue
           const shown = file === "" ? (input.path ?? root) : shownRoot === "" ? file : `${shownRoot}/${file}`
