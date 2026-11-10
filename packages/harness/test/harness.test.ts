@@ -628,19 +628,70 @@ describe("tasks", () => {
   })
 })
 
+/** A tracer whose spans named `name` are broken by `broken`; every other span records as Effect's own do. */
+const breakingTracer = (name: string, broken: (span: Tracer.NativeSpan) => void): Tracer.Tracer =>
+  Tracer.make({
+    span(options) {
+      const span = new Tracer.NativeSpan(options)
+      if (options.name === name) broken(span)
+      return span
+    },
+  })
+
+/** One input answered by a faux model under `tracer`: how its submission settled, and what the Harness reported. */
+const answerUnder = async (tracer: Tracer.Tracer) => {
+  const reports: unknown[] = []
+  const faux = fauxProvider()
+  faux.setResponses([fauxAssistantMessage("answer")])
+  const settled = await run(
+    Effect.gen(function* () {
+      const storage = yield* openSqliteStorage(databasePath())
+      const harness = yield* Effect.acquireRelease(
+        openHarness(storage, {
+          registry: createRegistry(),
+          models: fromProviders([faux.provider]),
+          onReport: (report) => reports.push(report),
+        }),
+        (opened) => Effect.ignore(opened.close),
+      )
+      const root = yield* harness.root({ agent: { model: { provider: "faux", modelId: "faux-1" } } })
+      const submission = yield* root.submit({ type: "input", content: "hi" })
+      return yield* submission.wait
+    }).pipe(Effect.withTracer(tracer)),
+  )
+  return { settled, reports }
+}
+
 describe("telemetry", () => {
-  test("telemetry-spans: a tracer that throws on a submit span is reported, and the stored submission still reaches its caller", async () => {
-    const reports: unknown[] = []
+  test("telemetry-spans: a tracer that cannot open phase spans is reported, and the run still answers", async () => {
     const tracer = Tracer.make({
       span(options) {
-        const span = new Tracer.NativeSpan(options)
-        if (options.name === "pi.durable.submit") {
-          span.end = () => {
-            throw new Error("tracer broke")
-          }
-        }
-        return span
+        if (options.name === "pi.durable.phase") throw new Error("tracer broke")
+        return new Tracer.NativeSpan(options)
       },
+    })
+    const { settled, reports } = await answerUnder(tracer)
+    expect(settled.status).toBe("done")
+    expect(reports.length).toBeGreaterThan(0)
+    expect(reports).toMatchObject(reports.map(() => ({ kind: "host_error", callback: "telemetry" })))
+  })
+
+  test("telemetry-spans: a tracer that throws on a model request's span leaves the run's answer", async () => {
+    const tracer = breakingTracer("pi.ai.request", (span) => {
+      span.end = () => {
+        throw new Error("tracer broke")
+      }
+    })
+    const { settled } = await answerUnder(tracer)
+    expect(settled.status).toBe("done")
+  })
+
+  test("telemetry-spans: a tracer that throws on a submit span is reported, and the stored submission still reaches its caller", async () => {
+    const reports: unknown[] = []
+    const tracer = breakingTracer("pi.durable.submit", (span) => {
+      span.end = () => {
+        throw new Error("tracer broke")
+      }
     })
     const status = await run(
       Effect.gen(function* () {

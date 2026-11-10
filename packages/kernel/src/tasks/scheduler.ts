@@ -14,7 +14,7 @@
 // phase, a runtime commit, an abort mark, and the reconcile pass that marks cascades, `failFast` waits and finalizes
 // held outcomes. Handlers run off the line, one invocation per task. Nothing is woken from the line (F6): publications
 // signal through queues and microtasks.
-import { type Cause, Clock, Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Queue, Tracer } from "effect"
+import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Queue, Tracer } from "effect"
 import { DurableMetrics, spanTime, TracePropagation, updateMetric } from "../telemetry.ts"
 import type { AnyDocToken, DocAddressArgs } from "../documents/definition.ts"
 import { errorMessage, InvocationEnded, SessionClosed, SessionFailed, type StorageError } from "../errors.ts"
@@ -1574,28 +1574,40 @@ class Scheduler<Svc> implements TaskScheduler {
   #phase<A>(invocation: Invocation, record: TaskRecord, body: Effect.Effect<A, unknown>): Effect.Effect<A, unknown> {
     return Effect.gen({ self: this }, function* () {
       const { propagation } = this.#telemetry
-      const parent = record.trace === undefined ? undefined : propagation?.extract(record.trace)
-      const links: Tracer.SpanLink[] = []
-      for (const carrier of record.links ?? []) {
-        const span = propagation?.extract(carrier)
-        if (span !== undefined) links.push({ span, attributes: {} })
-      }
       const checkpoint = (record.state as { readonly checkpoint?: Checkpoint & { readonly attempt?: unknown } })
         .checkpoint
       const phaseName = checkpoint?.phase ?? "abort"
       const attempt = checkpoint?.attempt
-      const span = yield* Effect.makeSpan("pi.durable.phase", {
-        ...(parent === undefined ? { root: true } : { parent }),
-        links,
-        attributes: {
-          "task.id": record.id,
-          "task.name": record.kind,
-          phase: phaseName,
-          kind: invocation.mode,
-          resumed: this.#resumed.delete(record.id),
-          ...(typeof attempt === "number" ? { attempt } : {}),
-        },
-      })
+      const resumed = this.#resumed.delete(record.id)
+      // Host telemetry must not stop the phase: a tracer or propagation that throws here is reported, and the phase
+      // runs without a span. Failing instead would put the unchanged task back to run, and fail again, forever.
+      const opened = yield* Effect.exit(
+        Effect.suspend(() => {
+          const parent = record.trace === undefined ? undefined : propagation?.extract(record.trace)
+          const links: Tracer.SpanLink[] = []
+          for (const carrier of record.links ?? []) {
+            const span = propagation?.extract(carrier)
+            if (span !== undefined) links.push({ span, attributes: {} })
+          }
+          return Effect.makeSpan("pi.durable.phase", {
+            ...(parent === undefined ? { root: true } : { parent }),
+            links,
+            attributes: {
+              "task.id": record.id,
+              "task.name": record.kind,
+              phase: phaseName,
+              kind: invocation.mode,
+              resumed,
+              ...(typeof attempt === "number" ? { attempt } : {}),
+            },
+          })
+        }),
+      )
+      if (Exit.isFailure(opened)) {
+        this.#report(Cause.squash(opened.cause), { kind: "host_error", callback: "telemetry" })
+        return yield* body
+      }
+      const span = opened.value
       const phase: PhaseSpan = { span, record }
       this.#phases.set(record.id, phase)
       const started = performance.now()
