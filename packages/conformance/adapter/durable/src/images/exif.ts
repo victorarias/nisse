@@ -1,3 +1,1 @@
-import { unimplemented } from "../../../../unimplemented.ts";
-
-export const exifOrientation = unimplemented("exifOrientation", "tools-package");
+export { exifOrientation } from "@nisse/tools/images/exif";

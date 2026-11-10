@@ -69,37 +69,90 @@ export class NodeExecutionEnv {
 		this.cwd = this.#env.cwd;
 	}
 
-	absolutePath = (path: string, context: Context) => file(context)(this.#env.absolutePath(path));
-	joinPath = (parts: string[], context: Context) => file(context)(this.#env.joinPath(parts));
-	readTextFile = (path: string, context: Context) => file(context)(this.#env.readTextFile(path));
-	readTextLines = (path: string, options: { maxLines?: number } | undefined, context: Context) =>
-		file(context)(this.#env.readTextLines(path, options));
-	readBinaryFile = (path: string, context: Context) => file(context)(this.#env.readBinaryFile(path));
-	writeFile = (path: string, content: string | Uint8Array, context: Context) => file(context)(this.#env.writeFile(path, content));
-	appendFile = (path: string, content: string | Uint8Array, context: Context) => file(context)(this.#env.appendFile(path, content));
-	truncateFile = (path: string, size: number, context: Context) => file(context)(this.#env.truncateFile(path, size));
-	flushFile = (path: string, context: Context) => file(context)(this.#env.flushFile(path));
-	renameFile = (source: string, destination: string, context: Context) => file(context)(this.#env.renameFile(source, destination));
-	fileInfo = (path: string, context: Context) => file(context)(this.#env.fileInfo(path));
-	listDir = (path: string, context: Context) => file(context)(this.#env.listDir(path));
-	canonicalPath = (path: string, context: Context) => file(context)(this.#env.canonicalPath(path));
-	exists = (path: string, context: Context) => file(context)(this.#env.exists(path));
-	createDir = (path: string, options: { recursive?: boolean } | undefined, context: Context) =>
-		file(context)(this.#env.createDir(path, options));
-	remove = (path: string, options: { recursive?: boolean; force?: boolean } | undefined, context: Context) =>
-		file(context)(this.#env.remove(path, options));
+	// Methods, so a subclass overrides them; the wrapped environment is found also from an `Object.create` of this one.
+	static #innerOf(self: object): Bridged {
+		for (let at: object | null = self; at !== null; at = Object.getPrototypeOf(at)) {
+			if (#env in at) return (at as NodeExecutionEnv).#env;
+		}
+		throw new TypeError("not a NodeExecutionEnv");
+	}
+
+	absolutePath(path: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).absolutePath(path));
+	}
+
+	joinPath(parts: string[], context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).joinPath(parts));
+	}
+
+	readTextFile(path: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).readTextFile(path));
+	}
+
+	readTextLines(path: string, options: { maxLines?: number } | undefined, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).readTextLines(path, options));
+	}
+
+	readBinaryFile(path: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).readBinaryFile(path));
+	}
+
+	writeFile(path: string, content: string | Uint8Array, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).writeFile(path, content));
+	}
+
+	appendFile(path: string, content: string | Uint8Array, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).appendFile(path, content));
+	}
+
+	truncateFile(path: string, size: number, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).truncateFile(path, size));
+	}
+
+	flushFile(path: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).flushFile(path));
+	}
+
+	renameFile(source: string, destination: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).renameFile(source, destination));
+	}
+
+	fileInfo(path: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).fileInfo(path));
+	}
+
+	listDir(path: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).listDir(path));
+	}
+
+	canonicalPath(path: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).canonicalPath(path));
+	}
+
+	exists(path: string, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).exists(path));
+	}
+
+	createDir(path: string, options: { recursive?: boolean } | undefined, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).createDir(path, options));
+	}
+
+	remove(path: string, options: { recursive?: boolean; force?: boolean } | undefined, context: Context) {
+		return file(context)(NodeExecutionEnv.#innerOf(this).remove(path, options));
+	}
+
 	// Methods, not fields, so that a subclass can override them.
 	createTempDir(prefix: string | undefined, context: Context): Promise<Result<string, FileError>> {
-		return file(context)(this.#env.localTempDir(prefix));
+		return file(context)(NodeExecutionEnv.#innerOf(this).localTempDir(prefix));
 	}
 
 
 	createTempFile(options: { prefix?: string; suffix?: string } | undefined, context: Context): Promise<Result<string, FileError>> {
-		return file(context)(this.#env.localTempFile(options));
+		return file(context)(NodeExecutionEnv.#innerOf(this).localTempFile(options));
 	}
 
 	async openTextLineReader(path: string, context: Context) {
-		const opened = await file(context)(this.#env.openTextLineReader(path));
+		const opened = await file(context)(NodeExecutionEnv.#innerOf(this).openTextLineReader(path));
 		if (!opened.ok) return opened;
 		const reader = opened.value;
 		return ok({
@@ -109,7 +162,7 @@ export class NodeExecutionEnv {
 	}
 
 	async openBinaryReader(path: string, options: { noFollow?: boolean } | undefined, context: Context) {
-		const opened = await file(context)(this.#env.openBinaryReader(path, options));
+		const opened = await file(context)(NodeExecutionEnv.#innerOf(this).openBinaryReader(path, options));
 		if (!opened.ok) return opened;
 		const reader = opened.value;
 		return ok({
@@ -121,7 +174,7 @@ export class NodeExecutionEnv {
 	}
 
 	async openDirReader(path: string, context: Context) {
-		const opened = await file(context)(this.#env.openDirReader(path));
+		const opened = await file(context)(NodeExecutionEnv.#innerOf(this).openDirReader(path));
 		if (!opened.ok) return opened;
 		const reader = opened.value;
 		return ok({
@@ -131,7 +184,7 @@ export class NodeExecutionEnv {
 	}
 
 	async watch(targets: Parameters<ExecutionEnv["watch"]>[0], onChange: Parameters<ExecutionEnv["watch"]>[1], context: Context) {
-		const opened = await file(context)(this.#env.watch(targets, onChange));
+		const opened = await file(context)(NodeExecutionEnv.#innerOf(this).watch(targets, onChange));
 		if (!opened.ok) return opened;
 		const watcher = opened.value;
 		return ok({
@@ -154,7 +207,7 @@ export class NodeExecutionEnv {
 		let spillPath: string | undefined;
 		const { onOutput, ...rest } = options ?? {};
 		return run(
-			this.#env.exec(command, {
+			NodeExecutionEnv.#innerOf(this).exec(command, {
 				...rest,
 				onSpill: (path) => {
 					spillPath = path;
@@ -170,5 +223,8 @@ export class NodeExecutionEnv {
 		);
 	}
 
-	cleanup = (context: Context) => closing(this.#env.cleanup(), context);
+	cleanup(context: Context) {
+		return closing(NodeExecutionEnv.#innerOf(this).cleanup(), context);
+	}
+
 }

@@ -6,6 +6,7 @@ import { defineTask as kernelDefineTask, fromPromise } from "../../../../../kern
 import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "../../../chord/src/context/index.ts";
 import { promiseModels } from "../../../ai/index.ts";
 import { CallbackFailed, run, Transaction, upstreamError } from "../session/session.ts";
+import { promiseEnv } from "../tools/bridge.ts";
 
 type Any = any;
 
@@ -25,7 +26,7 @@ function cached<T extends object>(value: T, make: (value: T) => Any): Any {
 }
 
 /** The upstream form of a harness object, made once; an upstream object comes back as itself. */
-function upstream<T extends object>(value: T, make: (value: T) => Any): Any {
+export function upstream<T extends object>(value: T, make: (value: T) => Any): Any {
 	const known = toUpstream.get(value);
 	if (known !== undefined) return known;
 	if (toHarness.has(value)) return value;
@@ -171,7 +172,7 @@ export function upstreamToolApi(api: H.ToolExecutionApi): Any {
 			return promiseModels(api.models());
 		},
 		get env() {
-			return api.env;
+			return promiseEnv(api.env);
 		},
 		now: () => sync(() => api.now()),
 		output: (chunk: Any, skipped?: Any) => sync(() => api.output(chunk, skipped)),
