@@ -343,6 +343,13 @@ describe("observeDoc", () => {
 		};
 		const { observation, last } = await retire();
 		await collect();
+		const leaked = last.deref() as Record<string, unknown> | undefined;
+		if (leaked !== undefined || process.env.LEAK_FORCE) {
+			const marked = leaked ?? ((globalThis as any).__forced = { forced: true });
+			marked.__leak_marker = { leakMarker: 1 };
+			const dir = process.env.LEAK_DIR ?? "/tmp";
+			await Bun.write(`${dir}/leak-${process.pid}-${Date.now()}.heapsnapshot`, Bun.generateHeapSnapshot("v8", "arraybuffer"));
+		}
 		expect(last.deref()).toBeUndefined();
 		observation.detach();
 		await session.close(context);
