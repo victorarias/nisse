@@ -49,6 +49,10 @@ const mutationKey = (env: ExecutionEnv, path: string) =>
     return `${env.id}\0${yield* canonical(env, absolutePath)}`
   })
 
+/** Whether two paths in `env` name one file, through symlinks too. */
+export const sameFile = (env: ExecutionEnv, a: string, b: string): Effect.Effect<boolean, Error> =>
+  Effect.map(Effect.all([mutationKey(env, a), mutationKey(env, b)]), ([x, y]) => x === y)
+
 /**
  * The canonical path; for a file that does not exist yet, its canonical parent joined with its name, so a `write` that
  * creates a file and a later mutation of it share one key even under a symlinked directory.
@@ -72,32 +76,43 @@ const canonical = (env: ExecutionEnv, absolutePath: string): Effect.Effect<strin
  * Serializes `edit`, `write` and `apply_patch` mutations of one file within this process: same file system id and
  * canonical path, whichever environment object the call got. Other files, and other file systems, never wait.
  * Concurrent calls on one file run in the order their keys resolve. An interrupted mutation holds the file until the
- * work it started has settled. Not a lock against `bash` or other processes.
+ * work it started has settled, and a call interrupted while waiting holds it until the calls before it have. Not a lock
+ * against `bash` or other processes.
+ *
+ * Given several paths, `work` holds each distinct file, taken in one order so two calls on the same files cannot wait on
+ * each other; two paths to one file hold it once.
  */
 export const withFileMutationQueue = <A, E, R>(
   env: ExecutionEnv,
-  path: string,
+  paths: string | ReadonlyArray<string>,
   work: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | Error, R> =>
-  Effect.flatMap(mutationKey(env, path), (key) =>
-    Effect.acquireUseRelease(
-      // The slot is taken in one step, so no other call can take it in between.
+  Effect.flatMap(
+    Effect.forEach(typeof paths === "string" ? [paths] : paths, (path) => mutationKey(env, path)),
+    (keys) => [...new Set(keys)].sort().reduceRight<Effect.Effect<A, E, R>>((inner, key) => queued(key, inner), work),
+  )
+
+const queued = <A, E, R>(key: string, work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(
+    // The slot is taken in one step, so no other call can take it in between.
+    Effect.sync(() => {
+      const previous = queues.get(key) ?? Promise.resolve()
+      const done = Promise.withResolvers<void>()
+      const tail = previous.then(() => done.promise)
+      queues.set(key, tail)
+      return { previous, release: done.resolve, tail }
+    }),
+    ({ previous }) =>
+      Effect.andThen(
+        Effect.promise(() => previous),
+        work,
+      ),
+    // The entry stays until its tail settles: a call interrupted while waiting still holds the place of those before it.
+    ({ release, tail }) =>
       Effect.sync(() => {
-        const previous = queues.get(key) ?? Promise.resolve()
-        const done = Promise.withResolvers<void>()
-        const tail = previous.then(() => done.promise)
-        queues.set(key, tail)
-        return { previous, release: done.resolve, tail }
-      }),
-      ({ previous }) =>
-        Effect.andThen(
-          Effect.promise(() => previous),
-          work,
-        ),
-      ({ release, tail }) =>
-        Effect.sync(() => {
-          release()
+        release()
+        void tail.then(() => {
           if (queues.get(key) === tail) queues.delete(key)
-        }),
-    ),
+        })
+      }),
   )

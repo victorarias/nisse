@@ -4,7 +4,7 @@ import type { ExecutionEnv } from "@nisse/env"
 import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@nisse/harness"
 import { obj, type Static, str } from "@nisse/schema"
 import { Effect } from "effect"
-import { requireEnv, resolveToolPath, withFileMutationQueue } from "./environment.ts"
+import { requireEnv, resolveToolPath, sameFile, withFileMutationQueue } from "./environment.ts"
 
 type Change =
   | { readonly kind: "add"; readonly path: string; readonly content: string }
@@ -161,11 +161,9 @@ const apply = (env: ExecutionEnv, change: Change): Effect.Effect<string, Error> 
               error instanceof PatchError ? new PatchError(`${change.path}: ${error.message}`) : (error as Error),
           })
           yield* write(env, target, content)
-          if (target !== path) yield* env.remove(path)
+          if (!(yield* sameFile(env, path, target))) yield* env.remove(path)
         })
-        // A move holds both files, taken in one order so two opposite moves cannot wait on each other.
-        const [first, second] = [path, target].sort() as [string, string]
-        yield* withFileMutationQueue(env, first, first === second ? update : withFileMutationQueue(env, second, update))
+        yield* withFileMutationQueue(env, [path, target], update)
         return `M ${targetName}`
       }
     }
