@@ -4430,7 +4430,8 @@
     "storage-fork-copy-sources"
   ],
   "upstream/test/tool-args-typebox.test.ts :: tool arguments of a TypeBox schema > are typed by the schema in execute() and prepareArguments()": [
-    "tool-prepare-arguments"
+    "tool-prepare-arguments",
+    "tool-args-typebox"
   ],
   "upstream/test/tool-search.test.ts :: deferred tools and tool_search > appends each loaded tool in load order, not registry order": [
     "tool-deferred-search"
@@ -4468,13 +4469,16 @@
   "upstream/test/tools-images.test.ts :: EXIF orientation > turns orientation 7 upright": ["tool-image-preparation"],
   "upstream/test/tools-images.test.ts :: EXIF orientation > turns orientation 8 upright": ["tool-image-preparation"],
   "upstream/test/tools-images.test.ts :: createNodePhotonImages > gives the same result as the calling thread, and keeps the caller's bytes": [
-    "tool-image-preparation"
+    "tool-image-preparation",
+    "image-worker"
   ],
   "upstream/test/tools-images.test.ts :: createNodePhotonImages > prepares concurrent images, and starts a new worker after the idle one exited": [
-    "tool-image-preparation"
+    "tool-image-preparation",
+    "image-worker"
   ],
   "upstream/test/tools-images.test.ts :: createNodePhotonImages > prepares in a worker thread, leaving the event loop free": [
-    "tool-image-preparation"
+    "tool-image-preparation",
+    "image-worker"
   ],
   "upstream/test/tools-images.test.ts :: imageDimensions > reads the size each format declares in its header": [
     "tool-image-preparation"
@@ -4531,7 +4535,8 @@
     "tool-image-preparation"
   ],
   "upstream/test/tools-images.test.ts :: read of images, without an image processor > says when the model sees a placeholder instead of the image": [
-    "tool-image-preparation"
+    "tool-image-preparation",
+    "image-placeholder"
   ],
   "upstream/test/tools-images.test.ts :: toBase64 > encodes a 3 MiB image within a 128 MB heap": [
     "tool-image-preparation"
@@ -4553,16 +4558,21 @@
     "tool-bash"
   ],
   "upstream/test/tools.test.ts :: durable tools > bash > prepares command, cwd, and an explicit environment with the call's api": [
-    "tool-bash"
+    "tool-bash",
+    "tool-bash-prefix"
   ],
-  "upstream/test/tools.test.ts :: durable tools > bash > reports the spill of a command that times out": ["tool-bash"],
+  "upstream/test/tools.test.ts :: durable tools > bash > reports the spill of a command that times out": [
+    "tool-bash",
+    "tool-truncated-file"
+  ],
   "upstream/test/tools.test.ts :: durable tools > bash > streams combined stdout and stderr, returns no output of its own, and repeats it with the exit code": [
     "tool-bash"
   ],
   "upstream/test/tools.test.ts :: durable tools > bash > streams every byte and spills complete output beyond the default limits": [
-    "tool-bash"
+    "tool-bash",
+    "tool-truncated-file"
   ],
-  "upstream/test/tools.test.ts :: durable tools > bash > supports command prefixes": ["tool-bash"],
+  "upstream/test/tools.test.ts :: durable tools > bash > supports command prefixes": ["tool-bash", "tool-bash-prefix"],
   "upstream/test/tools.test.ts :: durable tools > edit > applies disjoint edits and returns both diff formats": [
     "tool-edit"
   ],
@@ -4621,7 +4631,10 @@
     "tool-read"
   ],
   "upstream/test/tools.test.ts :: durable tools > read > rejects offsets beyond the file": ["tool-read"],
-  "upstream/test/tools.test.ts :: durable tools > read > returns images by content as one image block": ["tool-read"],
+  "upstream/test/tools.test.ts :: durable tools > read > returns images by content as one image block": [
+    "tool-read",
+    "image-tool-result"
+  ],
   "upstream/test/tools.test.ts :: durable tools > read > shows the start of a line longer than the byte limit": [
     "tool-read"
   ],

@@ -5,15 +5,15 @@ Tools return separate channels for the model, programs and clients, are bounded 
 ## Sub-features
 
 - `tool-output-channel` [kernel] Result channel `output` for the model, with text and images (R279): Model gets prepared content
-- `tool-structured-output` [kernel, pending tools-package] Result channel `structuredOutput` for programs (R279): Scripts and other tools get typed values, not parsed text
+- `tool-structured-output` [kernel] Result channel `structuredOutput` for programs (R279): Scripts and other tools get typed values, not parsed text
 - `tool-details` [kernel] Result channel `details` for UIs (R279, §7.3): A client draws a diff or a table without the model paying for it
 - `tool-diagnostics` [kernel] Diagnostics, delivered in a `<harness>` block (§7.3): Model learns output was cut or an image dropped, without polluting results
 - `tool-usage` [kernel] Usage on a tool result (§7.3, §8.6): A tool that calls a model has its cost counted
 - `tool-terminate` [kernel] `control.terminate` (§7.3): A tool ends the run with no further model call
 - `tool-add-tools` [kernel] `control.addTools` (§7.3): A tool makes more tools available at the next step
 - `tool-handoff` [kernel] `control.handoff` (§7.3): A tool resets context and carries a brief
-- `tool-replay-policy` [kernel, pending tools-package] Replay policy safe or unsafe (§7.3, §8.4): Read-only calls rerun after a crash; the rest are marked interrupted
-- `tool-prepare-arguments` [kernel, pending tools-package] `prepareArguments` (§7.3): Normalize odd model arguments before validation and hooks
+- `tool-replay-policy` [kernel] Replay policy safe or unsafe (§7.3, §8.4): Read-only calls rerun after a crash; the rest are marked interrupted
+- `tool-prepare-arguments` [kernel] `prepareArguments` (§7.3): Normalize odd model arguments before validation and hooks
 - `tool-output-schema` [kernel] `structuredOutputSchema` validation (R279, §7.3): Programs can trust a declared shape
 - `tool-callers` [kernel] `callers`: who may call a tool (R333-349): A tool can be reachable only from scripts or only from the model
 - `tool-model-tools` [kernel] `modelTools`: offered versus callable (R333-349): Trim the prompt without removing a capability
@@ -22,7 +22,7 @@ Tools return separate channels for the model, programs and clients, are bounded 
 - `tool-execution-mode` [kernel, pending harness-tools] `executionMode` per tool (§7.3): A tool forces its call to run alone
 - `tool-output-limits` [kernel] Output limits per tool, default 50 KiB, 2000 lines, head or tail (§7.3): No tool can flood the context, and extension tools get it free
 - `tool-sanitize` [kernel] Output sanitizing (§7.3): Control characters and bad bytes never reach the model or terminal
-- `tool-truncated-file` [kernel, pending tools-package] Truncated output saved to a file (§7.3): The model can still read what was cut
+- `tool-truncated-file` [kernel] Truncated output saved to a file (§7.3): The model can still read what was cut
 - `tool-output-throttle` [kernel] Adaptive throttle on running output (§7.3): A chatty command doesn't overload storage
 - `tool-output-window` [kernel, pending harness-views] `outputWindow`, `skipped` count (§7.3, §8.2): Live view shows head, tail and how much was skipped
 - `tool-unavailable` [kernel] `tool_unavailable` when a call names a tool not offered (§7.3): A model can't call something withheld
@@ -34,19 +34,23 @@ Tools return separate channels for the model, programs and clients, are bounded 
 - `tool-nested-live` [kernel, pending harness-tools] Live view of nested calls, `nestedTools` (§7.3, §8.2): People see what a script or tool is doing inside
 - `tool-nested-key` [kernel, pending harness-tools] Nested call key and reattach, `NestedCallDoc` (§7.3): A restarted tool finds its running nested call and does not start a new one
 - `tool-abandon-on-restart` [kernel] `abandonOnRestart` (R351-353, §5.4): A long-lived server-type tool is dropped on restart, not rerun
-- `tool-file-queue` [kernel, pending tools-package] Per-file mutation queue (§7.3, `file-mutation-queue`): Two parallel edits to a file don't overwrite each other
-- `tool-edit` [kernel, pending tools-package] Edit details: fuzzy matching, line endings, a diff (`edit-diff`): Fewer failed edits and a diff to show
-- `tool-read` [kernel, pending tools-package] `read` with text and images (R245-305): Reads handle pictures
-- `tool-write` [kernel, pending tools-package] `write` (R245-305): Create or replace a file
-- `tool-bash` [kernel, pending tools-package] `bash` with streaming and timeouts (R245-305): Run commands
-- `tool-bash-prefix` [kernel, pending tools-package] `commandPrefix` and `prepare` on `bash` (`tools/bash.ts`): Set up shells or wrap commands per deployment
+- `tool-file-queue` [kernel] Per-file mutation queue (§7.3, `file-mutation-queue`): Two parallel edits to a file don't overwrite each other
+- `tool-edit` [kernel] Edit details: fuzzy matching, line endings, a diff (`edit-diff`): Fewer failed edits and a diff to show
+- `tool-read` [kernel] `read` with text and images (R245-305): Reads handle pictures
+- `tool-write` [kernel] `write` (R245-305): Create or replace a file
+- `tool-bash` [kernel] `bash` with streaming and timeouts (R245-305): Run commands
+- `tool-bash-prefix` [kernel] `commandPrefix` and `prepare` on `bash` (`tools/bash.ts`): Set up shells or wrap commands per deployment
 - `tool-argument-validation` [kernel] Argument coercion and validation (R245-305): A bad call returns a readable error
 - `tool-crash-result` [kernel] A tool crash becomes an error result (§7.3): One broken tool doesn't kill the run
-- `tool-search-ranking` [kernel, pending tools-package] BM25 ranking and tokenizing order what `tool_search` finds.
-- `tool-image-preparation` [kernel, pending tools-package] Reading images resizes them, honours EXIF orientation and re-reads a file that changed.
-- `tool-args-typebox` [kernel, pending tools-package] Tool arguments declared with a TypeBox schema are validated the same way as JSON Schema.
-- `tool-powershell` [kernel, pending tools-package] `powershell` runs on Windows hosts.
+- `tool-search-ranking` [kernel] BM25 ranking and tokenizing order what `tool_search` finds.
+- `tool-image-preparation` [kernel] Reading images resizes them, honours EXIF orientation and re-reads a file that changed.
+- `tool-args-typebox` [kernel] Tool arguments declared with a TypeBox schema are validated the same way as JSON Schema.
+- `tool-powershell` [kernel] `powershell` runs on Windows hosts.
 - `tool-streamed-output` [kernel] `api.output()` streams from a custom tool and becomes the result when `execute()` returns no output.
+- `tool-grep` [kernel] `grep` searches file contents with a regular expression through the conversation's environment, skipping binary and git-ignored files.
+- `tool-glob` [kernel] `glob` lists files matching a glob, newest first, through the conversation's environment.
+- `tool-apply-patch` [kernel] `apply_patch` adds, updates, moves and deletes files from one patch in the Codex format, under the per-file mutation queue.
+- `tool-root-env-kernel` [kernel] `bash` with `rootConversationEnv` sets `NISSE_ROOT_CONVERSATION` to the conversation people started, also in a conversation a task owns.
 
 ## How to get to it
 
