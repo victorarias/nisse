@@ -9,7 +9,7 @@ Hooks let an extension shape requests, react to responses and tools, keep a run 
 - `hook-after-response` [kernel] `afterResponse` (§7.2): React to or revise a finished response
 - `hook-on-yield` [kernel] `onYield` (§7.2): Keep the run going when the model wants to stop, for example for a checklist
 - `hook-after-tools` [kernel] `afterTools` (§7.2): React after a whole tool round
-- `hook-after-run` [kernel, pending harness-tools] `afterRun` (§7.2, R659-714): Start durable after-run work such as summarizing or notifying
+- `hook-after-run` [kernel] `afterRun` (§7.2, R659-714): Start durable after-run work such as summarizing or notifying
 - `hook-before-tool` [kernel] `beforeTool`: block or rewrite (§7.2): Enforce policy on every call
 - `hook-after-tool` [kernel] `afterTool` (§7.2): Change or annotate results
 - `hook-api` [kernel] Hook API: read state, write entries, memos (§7.2): A hook makes durable, replay-safe decisions

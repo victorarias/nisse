@@ -1,12 +1,13 @@
 // Upstream's Promise-and-Context extension code as @nisse/harness's Effect-shaped code, and back. Every conversion is
 // cached both ways, so an object the suite installed comes back from a snapshot as itself.
-import { Effect } from "effect";
+import { Effect, Option, Tracer } from "effect";
 import * as H from "../../../../../harness/src/index.ts";
 import { defineTask as kernelDefineTask, fromPromise } from "../../../../../kernel/src/index.ts";
-import { BACKGROUND_CONTEXT, type Context, withAbortSignal } from "../../../chord/src/context/index.ts";
+import { BACKGROUND_CONTEXT, type Context, withAbortSignal, withTelemetry } from "../../../chord/src/context/index.ts";
 import { promiseModels } from "../../../ai/index.ts";
 import { CallbackFailed, run, Transaction, upstreamError } from "../session/session.ts";
 import { promiseEnv } from "../tools/bridge.ts";
+import { telemetryOfSpan } from "../telemetry-bridge.ts";
 
 type Any = any;
 
@@ -41,7 +42,14 @@ export const signalled = (signal: AbortSignal): Context => withAbortSignal(signa
 
 /** Upstream Promise work as an Effect, with a context whose signal the Effect's interruption aborts. */
 export const promised = <A>(work: (context: Context) => PromiseLike<A> | A): Effect.Effect<A, unknown> =>
-	fromPromise((signal) => Promise.resolve().then(() => work(signal === undefined ? BACKGROUND_CONTEXT : signalled(signal))));
+	Effect.flatMap(Effect.serviceOption(Tracer.ParentSpan), (parent) => {
+		// Upstream code reads the span it runs in, such as a phase's, as `context.telemetry`.
+		const span = telemetryOfSpan(Option.getOrUndefined(parent));
+		const traced = (context: Context): Context => (span === undefined ? context : withTelemetry(span, context));
+		return fromPromise((signal) =>
+			Promise.resolve().then(() => work(traced(signal === undefined ? BACKGROUND_CONTEXT : signalled(signal)))),
+		);
+	});
 
 // Commits
 

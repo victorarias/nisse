@@ -40,6 +40,11 @@ import {
   type TaskScheduler,
   type Tx,
   type Wake,
+  currentSpan,
+  DurableMetrics,
+  spanTime,
+  TracePropagation,
+  updateMetric,
 } from "@nisse/kernel"
 import {
   type ClientIdentity,
@@ -48,20 +53,28 @@ import {
   PI_ATTRIBUTION,
   withClientIdentity,
 } from "@nisse/models"
-import { Cause, Clock, Deferred, Effect, Exit, Layer, Scope } from "effect"
+import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Scope, type Tracer } from "effect"
 import { AgentDoc, agentHooks, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"
+import { createCompaction } from "./compaction.ts"
 import { ContextReads } from "./context.ts"
 import { ProviderDoc } from "./documents.ts"
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts"
 import { LIMITS_RESTARTS, LiveDoc, settleSchedulerOutcome } from "./live.ts"
-import { type AbortResult, type AdmissionError, type Submission, Submissions } from "./submissions.ts"
+import {
+  type AbortResult,
+  type AdmissionError,
+  type Submission,
+  Submissions,
+  type SubmitTelemetry,
+} from "./submissions.ts"
 import { addUsageState, UsageDoc, type UsageState } from "./usage.ts"
 import { ResetEntry } from "./entries.ts"
 import { type ConversationHandle, type ReportFrom, type TaskApi, TaskServices } from "./services.ts"
 import type {
   Agent,
   AgentChange,
+  CompactionResult,
   ContextView,
   DocumentReader,
   HarnessSettings,
@@ -146,6 +159,11 @@ export interface Conversation {
    * the reset waits in the inbox, as every write does.
    */
   reset(handoff?: string): Effect.Effect<void, ReadError | CommitError>
+  /**
+   * Starts a manual compaction of the conversation, focused by `instructions` (spec 8.7). It never takes run control:
+   * its summary is placed like a write. `Conversation.abort()` aborts it.
+   */
+  compact(instructions?: string): Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession>
   /** Admits a submission in its own commit (spec 6). */
   submit(draft: SubmissionDraft): Effect.Effect<Submission, AdmissionError | ReadError | CommitError>
   /** Admits a submission inside `tx`, before the commit's first table write; it is stored or lost with that commit. */
@@ -223,13 +241,14 @@ export const openHarness = <T extends ToolRegistration>(
       const names = missing.map((task) => task.definition.name).join(", ")
       return yield* Effect.die(new Error(`Registry lacks built-in tasks ${names}; create it with createRegistry()`))
     }
-    const host = new HarnessHost(options)
+    const host = new HarnessHost(options, yield* Effect.context<never>())
     const now = host.clock
     const session = yield* makeSession(storage, {
       readOnly: options.readOnly === true,
       ...(now === undefined ? {} : { now }),
       documentRetentionMs: () => host.hostSettings()?.documentRetentionMs,
       conversationCreated: (tx, record) => host.conversationCreated(tx, record),
+      reportTelemetry: (error) => host.report(error, { kind: "host_error", callback: "telemetry" }),
     })
     // The Session's failure is reported once: at the seal when it failed the Session, or when the close ends failed, for
     // a failure the close itself met (Storage's close, a write still in flight). Watched before the scheduler opens, so
@@ -259,7 +278,7 @@ export const openHarness = <T extends ToolRegistration>(
         settleOutcome: settleSchedulerOutcome,
         withdrawInputs: (tx, conversationId) => withdrawQueuedInputs(tx, conversationId),
         queuedInputs: (reads) => queuedConversations(reads),
-        report: (error, report, snapshot) => host.report(error, host.taskReport(report, snapshot)),
+        report: (error, report, snapshot, span) => host.report(error, host.taskReport(report, snapshot), span),
         readOnly: options.readOnly === true,
       }),
       () => Effect.ignore(session.close),
@@ -271,7 +290,11 @@ export const openHarness = <T extends ToolRegistration>(
       waitForIdle: (conversationId) => scheduler.waitForIdle(conversationId),
       clock,
     })
-    return host.bind(session, scheduler, clock, contexts)
+    return host.bind(session, scheduler, clock, contexts, {
+      propagation: yield* TracePropagation,
+      tracer: yield* Effect.tracer,
+      report: (error) => host.report(error, { kind: "host_error", callback: "telemetry" }),
+    })
   })
 
 /** Conversations with queued submissions, from a scan of every queued one. */
@@ -308,8 +331,12 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
   /** The host's clock behind `safeNow`; `undefined` for Effect's `Clock`. */
   readonly clock: (() => number) | undefined
 
-  constructor(options: HarnessOptions<T>) {
+  /** The context the Harness opened in, whose metric registry reports are counted in. */
+  readonly #telemetry: Context.Context<never>
+
+  constructor(options: HarnessOptions<T>, telemetry: Context.Context<never>) {
     this.#options = options
+    this.#telemetry = telemetry
     const now = options.now
     this.clock =
       now === undefined
@@ -317,7 +344,13 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
         : safeNow(now, (error) => this.report(error, { kind: "host_error", callback: "now" }))
   }
 
-  bind(session: Session, scheduler: TaskScheduler, clock: Clock.Clock, contexts: ContextReads): this {
+  bind(
+    session: Session,
+    scheduler: TaskScheduler,
+    clock: Clock.Clock,
+    contexts: ContextReads,
+    telemetry: SubmitTelemetry,
+  ): this {
     this.#session = session
     this.#scheduler = scheduler
     this.#effectClock = clock
@@ -327,6 +360,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       () => this.now(),
       () => this.settings(),
       this.#options.readOnly === true ? Effect.void : scheduler.resume,
+      telemetry,
     )
     return this
   }
@@ -390,12 +424,18 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     return extension === undefined ? report : { ...report, extension: extension.name }
   }
 
-  report(error: unknown, info: ReportInfo): void {
+  /**
+   * Forwards a report to the host, then counts it in `pi.durable.reports` and records its content-free event on `span`,
+   * the span it was raised in, if any. A throwing host callback, metric or event is dropped: reporting it would report
+   * again.
+   */
+  report(error: unknown, info: ReportInfo, span?: Tracer.Span): void {
     try {
       this.#options.onReport?.({ ...info, error })
     } catch {
       // Dropped: see above.
     }
+    recordReport(info, span, this.#telemetry)
   }
 
   /**
@@ -536,6 +576,13 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       },
       configure: (change) => this.session.commit((tx) => configure(tx, id, change)) as Effect.Effect<void, CommitError>,
       reset: (handoff) => this.#reset(id, handoff),
+      compact: (instructions) => {
+        const input = { reason: "manual" as const, ...(instructions === undefined ? {} : { instructions }) }
+        return Effect.andThen(
+          this.resume,
+          commitIn(this.session, { conversationId: id }, (tx) => createCompaction(tx, id, input)),
+        ) as Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession>
+      },
       submit: ((first: SubmissionDraft | Tx, second?: SubmissionDraft) =>
         isDraft(first)
           ? this.submissions.submit(id, first)
@@ -599,7 +646,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
                 if (Exit.isSuccess(exit)) continue
                 if (runtime.signal.aborted || Cause.hasInterruptsOnly(exit.cause))
                   return yield* Effect.failCause(exit.cause)
-                host.report(Cause.squash(exit.cause), { kind: "extension_error", extension, task })
+                host.report(Cause.squash(exit.cause), { kind: "extension_error", extension, task }, currentSpan())
               }
             }),
           ),
@@ -682,6 +729,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
           from.kind === "extension"
             ? { kind: "extension_error", task, ...(from.extension === undefined ? {} : { extension: from.extension }) }
             : { kind: "host_error", callback: from.callback, task },
+          currentSpan(),
         )
       },
     }
@@ -746,5 +794,29 @@ export function safeNow(now: () => number, report: (error: unknown) => void): ()
       }
       return Date.now()
     }
+  }
+}
+
+/**
+ * Counts a report in `pi.durable.reports` by its kind and records its fixed fields as a `pi.durable.report` event on
+ * `span`; never the error itself. Telemetry that throws is dropped, as reporting it would report again.
+ */
+export function recordReport(info: ReportInfo, span: Tracer.Span | undefined, context: Context.Context<never>): void {
+  updateMetric(DurableMetrics.reports, 1, { type: info.kind }, context, () => {})
+  if (span === undefined) return
+  const fields = info as {
+    readonly reason?: string
+    readonly extension?: string
+    readonly task?: { readonly id: TaskId }
+  }
+  try {
+    span.event("pi.durable.report", spanTime(), {
+      type: info.kind,
+      ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+      ...(fields.extension === undefined ? {} : { extension: fields.extension }),
+      ...(fields.task === undefined ? {} : { "task.id": fields.task.id }),
+    })
+  } catch {
+    // Dropped: see above.
   }
 }

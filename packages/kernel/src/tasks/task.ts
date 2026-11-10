@@ -11,10 +11,12 @@ import type {
   JoinPolicy,
   JsonValue,
   Page,
+  SubmissionId,
   TaskId,
   TaskOutcome,
   TaskRecord,
   TaskState,
+  TelemetryCarrier,
 } from "../records.ts"
 import type { CommitError, ReadFailure } from "../session/session.ts"
 import type { Tx } from "../session/transaction.ts"
@@ -31,6 +33,15 @@ export type TaskOptions = {
   readonly background?: boolean
   /** Its creator awaits it only in memory and does not resume after a restart (spec 5.4). */
   readonly abandonOnRestart?: boolean
+  /**
+   * The span its phases continue, as a carrier of the host's propagation. Omitted: the span the commit was made in.
+   * `"root"`: none, so each phase starts a trace of its own.
+   */
+  readonly trace?: TelemetryCarrier | "root"
+  /** Spans its phases link to, such as the other inputs of a run. */
+  readonly links?: readonly TelemetryCarrier[]
+  /** A run's inputs: the trace of the first submission's span, links to the others'. Replaces `trace` and `links`. */
+  readonly traceFrom?: readonly SubmissionId[]
 }
 
 /** A task record whose state is `running`. */

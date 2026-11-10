@@ -1,3 +1,6 @@
-import { unimplemented } from "../../../../unimplemented.ts";
-
-export const createTelemetryAdapterConformance = unimplemented("createTelemetryAdapterConformance", "harness-shell");
+export { createTelemetryAdapterConformance } from "./conformance.ts";
+export type {
+	TelemetryAdapterConformanceCase,
+	TelemetryAdapterFixture,
+	TelemetryAdapterFixtureFactory,
+} from "./types.ts";

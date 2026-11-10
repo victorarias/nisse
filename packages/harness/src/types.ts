@@ -446,3 +446,22 @@ export interface ToolHooks {
     api: HookApi,
   ): Effect.Effect<ToolExecutionResult | undefined, unknown>
 }
+
+/** Hooks of the built-in compaction task. */
+export interface CompactionHooks {
+  /**
+   * After range selection, before summarizing; the first decision wins. `entries` are the active entries the summary
+   * replaces, the head marker first, and `messages` their model context, the summarizer's source; `firstKept` is the
+   * first entry kept verbatim.
+   */
+  beforeCompact(
+    compaction: {
+      readonly reason: CompactionReason
+      readonly entries: readonly EntryRecord[]
+      readonly messages: readonly Message[]
+      readonly firstKept: EntryId
+      readonly instructions?: string
+    },
+    api: HookApi,
+  ): Effect.Effect<{ readonly decline: true } | { readonly summary: string } | undefined, unknown>
+}
