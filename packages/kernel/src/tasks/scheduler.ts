@@ -216,6 +216,8 @@ type Fit = { readonly task: AnyTask<unknown>; readonly migrates: boolean } | { r
 type Waiter<A> = Queue.Queue<Exit.Exit<A, SessionFailed | SessionClosed>>
 
 const DEFAULT_RESTART_LIMIT = 5
+/** No outdated definition reported yet; `undefined` is a definition outcome too (none registered). */
+const UNREPORTED = Symbol("unreported")
 const SCAN_PAGE_SIZE = 256
 const LIVE_STATUSES = ["pending", "running", "waiting", "sleeping", "completing"] as const
 const ALL = "all"
@@ -1319,7 +1321,7 @@ class Scheduler<Svc> implements TaskScheduler {
   #run(reservation: Reservation): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
       const invocation = reservation.invocation
-      const state = { task: reservation.task, snapshot: reservation.snapshot, reported: undefined as unknown }
+      const state = { task: reservation.task, snapshot: reservation.snapshot, reported: UNREPORTED as unknown }
       let current = yield* this.#step(invocation, (task) => this.#rules(task, undefined), state)
       while (current !== undefined && !this.#closing) {
         const task = current
@@ -1337,7 +1339,10 @@ class Scheduler<Svc> implements TaskScheduler {
           record: task,
           snapshot: state.snapshot,
         })
-        const previous = { checkpoint, failure: Exit.isFailure(exit) ? causeError(exit.cause) : undefined }
+        // A phase can fail with any value, `undefined` included, so the exit says whether it failed.
+        const previous = Exit.isFailure(exit)
+          ? { checkpoint, failed: true, failure: causeError(exit.cause) }
+          : { checkpoint, failed: false, failure: undefined }
         current = yield* this.#step(invocation, (next) => this.#rules(next, previous), state)
       }
     })
@@ -1349,7 +1354,7 @@ class Scheduler<Svc> implements TaskScheduler {
       const invocation = reservation.invocation
       const current = this.#live.get(invocation.taskId)?.record
       if (current === undefined || this.#closing) return
-      const state = { task: reservation.task, snapshot: reservation.snapshot, reported: undefined as unknown }
+      const state = { task: reservation.task, snapshot: reservation.snapshot, reported: UNREPORTED as unknown }
       const runtime = this.#runtime(invocation, state)
       const exit = yield* this.#handle(
         invocation,
@@ -1411,7 +1416,7 @@ class Scheduler<Svc> implements TaskScheduler {
   /** The precedence rules of a run invocation's step (spec 5.1). Rules 1 and 2 are applied by `#step`. */
   #rules(
     current: TaskRecord,
-    previous: { readonly checkpoint: Checkpoint; readonly failure: unknown } | undefined,
+    previous: { readonly checkpoint: Checkpoint; readonly failed: boolean; readonly failure: unknown } | undefined,
   ): StepPlan {
     // 3. An abort mark ends the run; the abort invocation starts once the owned work drained.
     if (current.abortRequested) return { kind: "end" }
@@ -1422,7 +1427,7 @@ class Scheduler<Svc> implements TaskScheduler {
     }
     if (previous === undefined) return { kind: "continue" }
     // 4. An uncaught failure.
-    if (previous.failure !== undefined) return { kind: "fault", error: previous.failure }
+    if (previous.failed) return { kind: "fault", error: previous.failure }
     // 6. No durable progress.
     if (jsonEqual(current.state.checkpoint as JsonValue, previous.checkpoint as unknown as JsonValue)) {
       return {
@@ -1444,7 +1449,7 @@ class Scheduler<Svc> implements TaskScheduler {
     state: { task: AnyTask<unknown>; snapshot: TaskSnapshot<unknown>; reported: unknown },
   ): Effect.Effect<TaskRecord | undefined> {
     return Effect.gen({ self: this }, function* () {
-      let fault: unknown
+      let fault: { readonly error: unknown } | undefined
       const continued = yield* this.#schedulerCommit((tx) =>
         Effect.gen({ self: this }, function* () {
           const current = this.#live.get(invocation.taskId)?.record
@@ -1459,7 +1464,7 @@ class Scheduler<Svc> implements TaskScheduler {
           this.#end(invocation)
           if (step.kind === "cascade") this.#cascadePending = true
           if (step.kind === "fault") {
-            fault = step.error
+            fault = { error: step.error }
             yield* this.#terminate(tx, current, { status: "faulted", error: { message: errorMessage(step.error) } })
           }
           return undefined
@@ -1468,7 +1473,7 @@ class Scheduler<Svc> implements TaskScheduler {
       if (continued === undefined) this.#end(invocation)
       // Reported once the fault is durable.
       if (fault !== undefined) {
-        this.#report(fault, { kind: "task_faulted", task: reportTask(invocation), reason: "threw" })
+        this.#report(fault.error, { kind: "task_faulted", task: reportTask(invocation), reason: "threw" })
       }
       return continued
     })

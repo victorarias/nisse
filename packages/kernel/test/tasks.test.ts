@@ -209,22 +209,50 @@ describe("tasks", () => {
           },
           abort: () => Effect.void,
         })
-        const { session, scheduler, reports } = yield* open(storage, { registry: registry(throws, stalls, crashes) })
+        // Progress, then a rejection with no reason: the phase still failed.
+        const rejects = defineTask<null, { phase: "go" } | { phase: "next" }, null>({
+          name: "test.rejects",
+          version: 1,
+          initial: () => ({ phase: "go" }),
+          phases: {
+            go: (_task, runtime) =>
+              Effect.andThen(
+                runtime.commit(() =>
+                  Effect.succeed({ status: "running" as const, checkpoint: { phase: "next" as const } }),
+                ),
+                fromPromise(() => Promise.reject(undefined)),
+              ),
+            next: (_task, runtime) =>
+              runtime.commit(() =>
+                Effect.succeed({
+                  status: "terminal" as const,
+                  outcome: { status: "completed" as const, result: null },
+                }),
+              ),
+          },
+          abort: () => Effect.void,
+        })
+        const { session, scheduler, reports } = yield* open(storage, {
+          registry: registry(throws, stalls, crashes, rejects),
+        })
         const conversationId = yield* conversation(session)
         const thrown = yield* scheduler.waitForTask(yield* start(session, conversationId, throws, null))
         const stalled = yield* scheduler.waitForTask(yield* start(session, conversationId, stalls, null))
         const crashed = yield* scheduler.waitForTask(yield* start(session, conversationId, crashes, null))
         expect(crashed.state.outcome).toEqual({ status: "faulted", error: { message: "input.items is undefined" } })
+        const rejected = yield* scheduler.waitForTask(yield* start(session, conversationId, rejects, null))
+        expect(rejected.state.outcome).toEqual({ status: "faulted", error: { message: "undefined" } })
         expect(thrown.state.outcome).toEqual({ status: "faulted", error: { message: "tool broke" } })
         expect(stalled.state.outcome).toEqual({
           status: "faulted",
           error: { message: "Task test.stalls phase go returned without durable progress" },
         })
-        const reported = [yield* Queue.take(reports), yield* Queue.take(reports), yield* Queue.take(reports)]
+        const reported = yield* Effect.forEach(Array.from({ length: 4 }), () => Queue.take(reports))
         expect(reported.map((report) => [report.kind, "task" in report ? report.task.id : undefined])).toEqual([
           ["task_faulted", thrown.id],
           ["task_faulted", stalled.id],
           ["task_faulted", crashed.id],
+          ["task_faulted", rejected.id],
         ])
       }),
     ))
