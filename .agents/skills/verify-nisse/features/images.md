@@ -4,10 +4,10 @@ People and tools attach images; large ones are prepared off the server's line, a
 
 ## Sub-features
 
-- `image-input` [kernel, pending tools-package] Images in user input (R245-305): A person attaches a screenshot
-- `image-tool-result` [kernel, pending tools-package] Images in tool results (R279, §7.3): Tools show pictures to the model
-- `image-worker` [kernel, pending tools-package] Image preparation in a worker, node variant (R245-305, `images/node`): Large photos get resized without blocking the server
-- `image-placeholder` [kernel, pending tools-package] Placeholder for a model without image input (R245-305): Switching to such a model still works
+- `image-input` [kernel] Images in user input (R245-305): A person attaches a screenshot
+- `image-tool-result` [kernel] Images in tool results (R279, §7.3): Tools show pictures to the model
+- `image-worker` [kernel] Image preparation in a worker, node variant (R245-305, `images/node`): Large photos get resized without blocking the server
+- `image-placeholder` [kernel] Placeholder for a model without image input (R245-305): Switching to such a model still works
 - `image-attach` [pending tui-views] The client path for Image attachments in the TUI and wire (R245-305): People send images from a client
 
 ## How to get to it

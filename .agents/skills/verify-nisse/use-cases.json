@@ -75,6 +75,12 @@
   "amended/harness-tasks-runtime.test.ts :: task runtime > reads committed documents and context through the runtime, and forwards the clock and reports": [
     "task-effect-sandwich"
   ],
+  "amended/harness-tasks-timing.test.ts :: task abort > does not signal a running abort handler when aborted again, and a cancelled caller leaves the mark durable": [
+    "task-abort"
+  ],
+  "amended/harness-tasks-timing.test.ts :: task phases > resumes a waiting task once every task in `on` is terminal, whatever the outcome": [
+    "task-phases"
+  ],
   "amended/harness-tasks.test.ts :: task phases > commits results with entries atomically, keeps memos until terminal, and retires task documents": [
     "task-memo"
   ],
@@ -84,8 +90,57 @@
   "amended/harness-view.test.ts :: conversation view > publishes one frame per touching commit, whose operations rebuild every revision": [
     "view-documents"
   ],
+  "amended/session-checkpoints-migrations.test.ts :: Session document migrations > writes the required base on the first successful transaction, then writes deltas": [
+    "doc-migration"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > continues after the tracker cache unloads": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > delivers replayable structural no-op commits instead of suppressing them": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > folds 101 pending commits of one field into one set": [
+    "view-slow-folding"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > folds a retirement into the pending commits' call, which reports it with the last value, and goes on": [
+    "view-slow-folding"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > follows its address across a retirement and a recreation in one commit, in one call": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > hydrates migration without writing and observes the later exact edit": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > keeps earlier immutable revisions stable": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > keeps the acquisition revision until start, then delivers the commits since in one call": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > never folds the in-flight frame into the next call": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > replaces the root once more than 10,000 ops are pending after folding": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > reports a change and a retirement in one commit as the retirement, with the value it was given before": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > serializes callbacks and folds the commits made while one is in flight into the next": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > settles listener failure on only the affected watch": [
+    "doc-watch"
+  ],
+  "amended/session-watches.test.ts :: Session document watches > takes the version of a recreation written by a newer definition, then its ops": [
+    "doc-watch"
+  ],
   "amended/sqlite-storage.test.ts :: Pico SqliteStorage > rolls SQL rows and sequence allocation back as one transaction": [
     "storage-conformance"
+  ],
+  "amended/tools-images.test.ts :: createNodePhotonImages > prepares in a worker thread, leaving the event loop free": [
+    "tool-image-preparation",
+    "image-worker"
   ],
   "upstream/test/codemode-checkpoints.test.ts :: built-in document checkpoint policies > checkpoints the codemode store after 64 deltas without changing historical reads or forks": [
     "codemode-documents"
@@ -4452,7 +4507,8 @@
     "storage-fork-copy-sources"
   ],
   "upstream/test/tool-args-typebox.test.ts :: tool arguments of a TypeBox schema > are typed by the schema in execute() and prepareArguments()": [
-    "tool-prepare-arguments"
+    "tool-prepare-arguments",
+    "tool-args-typebox"
   ],
   "upstream/test/tool-search.test.ts :: deferred tools and tool_search > appends each loaded tool in load order, not registry order": [
     "tool-deferred-search"
@@ -4490,13 +4546,16 @@
   "upstream/test/tools-images.test.ts :: EXIF orientation > turns orientation 7 upright": ["tool-image-preparation"],
   "upstream/test/tools-images.test.ts :: EXIF orientation > turns orientation 8 upright": ["tool-image-preparation"],
   "upstream/test/tools-images.test.ts :: createNodePhotonImages > gives the same result as the calling thread, and keeps the caller's bytes": [
-    "tool-image-preparation"
+    "tool-image-preparation",
+    "image-worker"
   ],
   "upstream/test/tools-images.test.ts :: createNodePhotonImages > prepares concurrent images, and starts a new worker after the idle one exited": [
-    "tool-image-preparation"
+    "tool-image-preparation",
+    "image-worker"
   ],
   "upstream/test/tools-images.test.ts :: createNodePhotonImages > prepares in a worker thread, leaving the event loop free": [
-    "tool-image-preparation"
+    "tool-image-preparation",
+    "image-worker"
   ],
   "upstream/test/tools-images.test.ts :: imageDimensions > reads the size each format declares in its header": [
     "tool-image-preparation"
@@ -4553,7 +4612,8 @@
     "tool-image-preparation"
   ],
   "upstream/test/tools-images.test.ts :: read of images, without an image processor > says when the model sees a placeholder instead of the image": [
-    "tool-image-preparation"
+    "tool-image-preparation",
+    "image-placeholder"
   ],
   "upstream/test/tools-images.test.ts :: toBase64 > encodes a 3 MiB image within a 128 MB heap": [
     "tool-image-preparation"
@@ -4575,16 +4635,21 @@
     "tool-bash"
   ],
   "upstream/test/tools.test.ts :: durable tools > bash > prepares command, cwd, and an explicit environment with the call's api": [
-    "tool-bash"
+    "tool-bash",
+    "tool-bash-prefix"
   ],
-  "upstream/test/tools.test.ts :: durable tools > bash > reports the spill of a command that times out": ["tool-bash"],
+  "upstream/test/tools.test.ts :: durable tools > bash > reports the spill of a command that times out": [
+    "tool-bash",
+    "tool-truncated-file"
+  ],
   "upstream/test/tools.test.ts :: durable tools > bash > streams combined stdout and stderr, returns no output of its own, and repeats it with the exit code": [
     "tool-bash"
   ],
   "upstream/test/tools.test.ts :: durable tools > bash > streams every byte and spills complete output beyond the default limits": [
-    "tool-bash"
+    "tool-bash",
+    "tool-truncated-file"
   ],
-  "upstream/test/tools.test.ts :: durable tools > bash > supports command prefixes": ["tool-bash"],
+  "upstream/test/tools.test.ts :: durable tools > bash > supports command prefixes": ["tool-bash", "tool-bash-prefix"],
   "upstream/test/tools.test.ts :: durable tools > edit > applies disjoint edits and returns both diff formats": [
     "tool-edit"
   ],
@@ -4643,7 +4708,10 @@
     "tool-read"
   ],
   "upstream/test/tools.test.ts :: durable tools > read > rejects offsets beyond the file": ["tool-read"],
-  "upstream/test/tools.test.ts :: durable tools > read > returns images by content as one image block": ["tool-read"],
+  "upstream/test/tools.test.ts :: durable tools > read > returns images by content as one image block": [
+    "tool-read",
+    "image-tool-result"
+  ],
   "upstream/test/tools.test.ts :: durable tools > read > shows the start of a line longer than the byte limit": [
     "tool-read"
   ],

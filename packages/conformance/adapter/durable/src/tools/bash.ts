@@ -1,4 +1,10 @@
-import { unimplemented } from "../../../../unimplemented.ts";
+import * as T from "@nisse/tools";
+import { harnessPrepare, upstreamTool } from "./bridge.ts";
 
-export const createBashTool = unimplemented("createBashTool", "tools-package");
-export const createPowerShellTool = unimplemented("createPowerShellTool", "tools-package");
+type Any = any;
+
+const options = (given: Any): Any =>
+	given?.prepare === undefined ? given : { ...given, prepare: harnessPrepare(given.prepare) };
+
+export const createBashTool = (given?: Any) => upstreamTool(T.createBashTool(options(given)));
+export const createPowerShellTool = (given?: Any) => upstreamTool(T.createPowerShellTool(options(given)));

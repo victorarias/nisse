@@ -10,7 +10,7 @@ Tools work through an execution environment, per conversation, for commands, fil
 - `env-binary-reader` [kernel] Binary reader and `scanLines` (§7.3): Read huge files in a bounded way
 - `env-directory-reader` [kernel] Directory reader and `listFiles` (§7.3): Bounded listing
 - `env-watch` [kernel] File `watch` (§7.3, `env/node-watch`): An extension reacts to file changes
-- `env-file-serialization` [kernel, pending tools-package] File work serialized by environment id (§7.3): The queue from L31 works across conversations on the same files
+- `env-file-serialization` [kernel] File work serialized by environment id (§7.3): The queue from L31 works across conversations on the same files
 - `env-conformance` [kernel] Environment conformance suite (`testing/env-conformance`, 633 lines): A custom environment can be proven correct
 - `env-variables` [kernel] Environment variables to commands (R430-463): Commands know their conversation
 - `env-text-reader` [kernel] Text line reading decodes multi-byte splits and reports newline termination.

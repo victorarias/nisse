@@ -15,6 +15,7 @@
       "name": "@nisse/conformance",
       "dependencies": {
         "@nisse/env": "workspace:*",
+        "@nisse/tools": "workspace:*",
         "@silvia-odwyer/photon": "0.3.3",
         "diff": "8.0.4",
         "quickjs-wasi": "3.6.2",
@@ -93,6 +94,20 @@
       "name": "@nisse/schema",
       "version": "0.1.0",
       "devDependencies": {
+        "effect": "4.0.6",
+      },
+    },
+    "packages/tools": {
+      "name": "@nisse/tools",
+      "version": "0.1.0",
+      "dependencies": {
+        "@nisse/env": "workspace:*",
+        "@nisse/harness": "workspace:*",
+        "@nisse/kernel": "workspace:*",
+        "@nisse/models": "workspace:*",
+        "@nisse/schema": "workspace:*",
+        "@silvia-odwyer/photon": "0.3.3",
+        "diff": "8.0.4",
         "effect": "4.0.6",
       },
     },
@@ -209,6 +224,8 @@
     "@nisse/protocol": ["@nisse/protocol@workspace:packages/protocol"],
 
     "@nisse/schema": ["@nisse/schema@workspace:packages/schema"],
+
+    "@nisse/tools": ["@nisse/tools@workspace:packages/tools"],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.10.0", "", {}, "sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ=="],
 

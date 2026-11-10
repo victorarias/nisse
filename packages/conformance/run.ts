@@ -13,6 +13,8 @@ export interface RunResult {
 	unloaded: Map<string, string>;
 	// Files whose tests ran but which failed outside any test, such as in an afterAll.
 	suiteErrors: Map<string, string>;
+	// The failure message of each failed test, so a problem can say why.
+	failures: Map<string, string>;
 }
 
 const VITEST = join(root, "../../node_modules/vitest/vitest.mjs");
@@ -61,12 +63,13 @@ function readReport(path: string): RunResult {
 			name: string;
 			status: string;
 			message?: string;
-			assertionResults: { ancestorTitles: string[]; title: string; status: string }[];
+			assertionResults: { ancestorTitles: string[]; title: string; status: string; failureMessages?: string[] }[];
 		}[];
 	};
 	const tests = new Map<string, Status>();
 	const unloaded = new Map<string, string>();
 	const suiteErrors = new Map<string, string>();
+	const failures = new Map<string, string>();
 	for (const file of report.testResults) {
 		const name = relativeFile(file.name, root);
 		if (file.assertionResults.length === 0 && file.status !== "passed") unloaded.set(name, file.message ?? "");
@@ -75,7 +78,8 @@ function readReport(path: string): RunResult {
 			const id = testId(name, [...test.ancestorTitles.filter((t) => t !== ""), test.title]);
 			if (tests.has(id)) throw new Error(`conformance: two tests share the id ${id}`);
 			tests.set(id, test.status === "passed" ? "passed" : test.status === "failed" ? "failed" : "skipped");
+			if (test.status === "failed") failures.set(id, (test.failureMessages ?? []).join("\n"));
 		}
 	}
-	return { tests, unloaded, suiteErrors };
+	return { tests, unloaded, suiteErrors, failures };
 }
