@@ -8,7 +8,13 @@ import { join } from "node:path"
 import { Effect, type Scope } from "effect"
 import { LocalExecutionEnv } from "@nisse/env/local"
 import { defineDoc, openSqliteStorage } from "@nisse/kernel"
-import { type AssistantMessage, fromProviders, type Message, type SystemMessage } from "@nisse/models"
+import {
+  type AssistantMessage,
+  fromProviders,
+  getCurrentSystemMessage,
+  getCurrentTools,
+  type Message,
+} from "@nisse/models"
 import { type FauxResponseStep, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@nisse/models/faux"
 import {
   type Conversation,
@@ -114,36 +120,29 @@ const ask = (conversation: Conversation, input: string) =>
 const textOf = (message: AssistantMessage): string =>
   message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
 
-/** The tools the model holds after `messages`, replaying each system message's additions and removals. */
-const toolsOffered = (messages: readonly Message[]): string[] => {
-  const tools = new Set<string>()
-  for (const message of messages) {
-    if (message.role !== "system") continue
-    for (const tool of message.toolsRemoved ?? []) tools.delete(tool.name)
-    for (const tool of message.toolsAdded ?? []) tools.add(tool.name)
-  }
-  return [...tools].sort()
-}
+/** The names of the tools the model holds after `messages`. */
+const toolsOffered = (messages: Message[]): string[] =>
+  getCurrentTools(messages)
+    .map((tool) => tool.name)
+    .sort()
 
-/** The section values the model holds after `messages`; `null` removes one. */
-const sectionsShown = (messages: readonly Message[]): Record<string, string> => {
-  const shown: Record<string, string> = {}
-  for (const message of messages) {
-    if (message.role !== "system") continue
-    for (const [key, value] of Object.entries((message as SystemMessage).sections ?? {})) {
-      if (value === null) delete shown[key]
-      else shown[key] = value
-    }
-  }
-  return shown
-}
+/** The prompt sections the model holds after `messages`. */
+const sectionsShown = (messages: Message[]): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(getCurrentSystemMessage(messages)?.sections ?? {}).flatMap(([key, value]) =>
+      value === null ? [] : [[key, value]],
+    ),
+  )
+
+const toolResults = (messages: readonly Message[]) =>
+  messages.flatMap((message) => (message.role === "toolResult" ? [message] : []))
 
 describe("modes", () => {
-  test("mode-plan: plan mode offers only reading and submitting a plan, stores the plan, and leaving it gives every tool back", async () => {
+  test("mode-plan: plan mode offers only reading and submitting a plan, refuses a write, stores the plan, and leaving it gives every tool back", async () => {
     const workspace = directory("nisse-plan-")
     writeFileSync(join(workspace, "server.ts"), "app.listen(3000);\n")
 
-    // The current plan of a conversation; a fork keeps the plan it had at the fork entry.
+    // The current plan of a conversation.
     const PlanDoc = defineDoc<{ steps: string[] }>({
       kind: "app.plan",
       version: 1,
@@ -194,6 +193,10 @@ describe("modes", () => {
           env: () => Effect.succeed(new LocalExecutionEnv({ cwd: workspace })),
           responses: [
             fauxAssistantMessage(fauxToolCall("read", { path: "server.ts" }), { stopReason: "toolUse" }),
+            // A model that calls `write` anyway is refused.
+            fauxAssistantMessage(fauxToolCall("write", { path: "server.ts", content: "changed" }), {
+              stopReason: "toolUse",
+            }),
             fauxAssistantMessage(fauxToolCall("submit_plan", { steps }), { stopReason: "toolUse" }),
             fauxAssistantMessage("Implementing step 1."),
           ],
@@ -209,12 +212,14 @@ describe("modes", () => {
         expect(yield* tools).toEqual(["read", "submit_plan"])
         yield* ask(root, "Make the port configurable.")
         expect((yield* harness.session.snapshot(PlanDoc, root.id))?.steps).toEqual(steps)
-        // `submit_plan` ended the run: two requests, both in plan mode, and the file is untouched.
-        expect(requests).toHaveLength(2)
+        // `submit_plan` ended the run: three requests, all in plan mode; the write was refused and the file is untouched.
+        expect(requests).toHaveLength(3)
         for (const request of requests) {
           expect(toolsOffered(request.messages)).toEqual(["read", "submit_plan"])
           expect(sectionsShown(request.messages).plan_mode).toContain("You are in plan mode.")
         }
+        const refused = toolResults((yield* root.context()).messages).find((result) => result.toolName === "write")
+        expect(refused).toMatchObject({ isError: true })
         expect(readFileSync(join(workspace, "server.ts"), "utf8")).toBe("app.listen(3000);\n")
 
         yield* root.configure({ extensions: null, tools: null })
@@ -230,7 +235,7 @@ describe("modes", () => {
     )
   })
 
-  test("mode-reviewer: a reviewer conversation runs its own model, extensions, read-only tools and checkout, and its loop asks again until the review is done", async () => {
+  test("mode-reviewer: a reviewer conversation runs its own model, extensions, read-only tools and checkout beside the main agent, and its loop asks again until the review is done", async () => {
     const worktree = directory("nisse-review-")
     writeFileSync(join(worktree, "user.ts"), "export const name = (user) => user.name;\n")
 
@@ -262,13 +267,21 @@ describe("modes", () => {
           settings: { extensions: [{ name: "files" }] },
           env: ({ cwd }) => Effect.succeed(cwd === undefined ? undefined : new LocalExecutionEnv({ cwd })),
           responses: [
+            fauxAssistantMessage("Main answer."),
             fauxAssistantMessage(fauxToolCall("read", { path: "user.ts" }), { stopReason: "toolUse" }),
             fauxAssistantMessage("1. `name` does not handle a missing user."),
             fauxAssistantMessage(`2. \`user\` has no type. ${DONE}`),
           ],
         })
         const root = yield* harness.root({ agent: { model: { provider: "faux", modelId: "big" } } })
-        expect((yield* root.agent).extensions.map((extension) => extension.name)).toEqual(["files"])
+        // The main agent runs on its own model, without the reviewer's role or loop.
+        yield* ask(root, "Hello.")
+        const main = requests.shift()!
+        expect(main.modelId).toBe("big")
+        expect(toolsOffered(main.messages)).toEqual(["read", "write"])
+        expect(sectionsShown(main.messages).role).toBeUndefined()
+        const rootUsers = (yield* root.context()).messages.filter((message) => message.role === "user")
+        expect(rootUsers).toHaveLength(1)
 
         // Everything the reviewer is, stored on its conversation: model, extensions in order, only `read`, its checkout.
         const reviewer = yield* harness.createConversation({
@@ -295,8 +308,9 @@ describe("modes", () => {
         }
         // `read` ran in the reviewer's checkout, and the loop asked once more after the answer with findings left.
         const { messages } = yield* reviewer.context()
-        const results = messages.flatMap((message) => (message.role === "toolResult" ? [message] : []))
-        expect(results.map((result) => result.content)).toEqual([text("export const name = (user) => user.name;\n")])
+        expect(toolResults(messages).map((result) => result.content)).toEqual([
+          text("export const name = (user) => user.name;\n"),
+        ])
         const users = messages.flatMap((message) => (message.role === "user" ? [message.content] : []))
         expect(users).toEqual(["Review user.ts.", nudge])
         const answers = messages.flatMap((message) =>
@@ -307,7 +321,7 @@ describe("modes", () => {
     )
   })
 
-  test("mode-sandbox: each conversation's tools work in the sandbox its creating commit recorded, and a conversation without one gets no environment", async () => {
+  test("mode-sandbox: each conversation's tools work in the sandbox its document names, looked up on every call, and a conversation without one gets no environment", async () => {
     // Which sandbox a conversation runs in. A fork gets none until the app assigns one.
     const Sandbox = defineDoc<{ path?: string }>({
       kind: "app.sandbox",
@@ -337,6 +351,8 @@ describe("modes", () => {
             fauxAssistantMessage("Saved."),
             note("from bob"),
             fauxAssistantMessage("Saved."),
+            note("after the move"),
+            fauxAssistantMessage("Saved."),
             note("from the fork"),
             fauxAssistantMessage("Could not save."),
           ],
@@ -364,14 +380,24 @@ describe("modes", () => {
         expect(readFileSync(join(alice.path, "note.txt"), "utf8")).toBe("from alice")
         expect(readFileSync(join(bob.path, "note.txt"), "utf8")).toBe("from bob")
 
+        // The app moves alice to a new sandbox: her next call works there.
+        const moved = directory("nisse-sandbox-alice-moved-")
+        yield* alice.conversation.commit((tx) =>
+          Effect.map(tx.doc(Sandbox, alice.conversation.id), (sandbox) => {
+            sandbox.path = moved
+          }),
+        )
+        yield* ask(alice.conversation, "Leave another note.")
+        expect(readFileSync(join(moved, "note.txt"), "utf8")).toBe("after the move")
+
         const latest = (yield* alice.conversation.entries({}, 1)).items[0]!
         const fork = yield* alice.conversation.fork(latest.id, { ownership: { kind: "ownerless" } })
         expect((yield* harness.session.snapshot(Sandbox, fork.id))?.path).toBeUndefined()
         yield* ask(fork, "Leave a note.")
-        const results = (yield* fork.context()).messages.flatMap((message) =>
-          message.role === "toolResult" ? [message] : [],
-        )
-        expect(results.at(-1)).toMatchObject({ isError: true, content: text("No environment.") })
+        expect(toolResults((yield* fork.context()).messages).at(-1)).toMatchObject({
+          isError: true,
+          content: text("No environment."),
+        })
         expect(readFileSync(join(alice.path, "note.txt"), "utf8")).toBe("from alice")
       }),
     )
