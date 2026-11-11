@@ -7,9 +7,9 @@ Whole-app patterns: print, JSON, plan mode, a reviewer, per-conversation sandbox
 - `mode-print` [kernel, pending wire-complete] Print mode (example 17): Run one prompt, print the answer
 - `mode-json` [kernel, pending wire-complete] JSON mode (example 18): Scripts read events
 - `exec-json` [pending wire-complete] The client path for JSON mode (example 18): Scripts read events
-- `mode-plan` [kernel, pending wire-complete] Plan mode (example 26): Model plans with write tools withheld, then a person approves
-- `mode-reviewer` [kernel, pending wire-complete] Reviewer extension (example 27): A second model checks each run
-- `mode-sandbox` [kernel, pending wire-complete] Sandbox per conversation (example 28): Isolate work
+- `mode-plan` [kernel] Plan mode (example 26): Model plans with write tools withheld, then a person approves
+- `mode-reviewer` [kernel] Reviewer extension (example 27): A second model checks each run
+- `mode-sandbox` [kernel] Sandbox per conversation (example 28): Isolate work
 - `mode-model-layer` [kernel, pending wire-complete] Model layer with many providers through pi-ai (R94-104, dependencies): Use any provider or a local model
 - `models-script` [kernel] The `script` provider answers through the Models seam (`packages/models`) from `NISSE_MODEL_SCRIPT`'s steps: text word by word, a tool call, a failure, one step list per agent, and `You said: <last user text>` once the steps run out.
 - `models-faux` [kernel] The faux model answers through the Models seam: scripted responses one per request, a deferred response pending for a set number of fetches and then ready, cancel, a retryable error as the final message, and usage with a simulated prompt cache.
@@ -36,6 +36,12 @@ Feature ledger area Y: README Examples; examples 05-harness, 13-chat, 15-real-mo
 Package, `packages/models/test/seam.test.ts`:
 
 - models-script, models-faux, models-unsupported: a run through each provider behind the seam, and what a missing method or provider answers
+
+Package, `packages/harness/test/modes.test.ts`, each pattern built only from `@nisse/harness`'s public API with the faux model:
+
+- mode-plan: `configure` selects the plan extension and narrows the tools to `read` and `submit_plan`, the plan lands in the extension's document, and clearing both gives every tool back, which the model sees as a system prompt change
+- mode-reviewer: a reviewer conversation stores its own model, extensions, `read` only and checkout, and its `onYield` hook asks again until the answer says it is done
+- mode-sandbox: the environment builder reads each conversation's sandbox document, written in its creating commit, so each conversation's tools work in its own directory, and a fork without one gets no environment
 
 `bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
 
