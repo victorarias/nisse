@@ -1,6 +1,7 @@
-// The `nisse` binary on the kernel (NISSE_KERNEL=1), over its socket: stop, kill, restart.
+// The `nisse` binary on the kernel (NISSE_KERNEL=1): its commands, and its server over its socket: stop, kill, restart.
 import { afterEach, expect, test } from "bun:test"
-import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
+import { applyImmutable, type Op } from "@nisse/delta"
+import { KERNEL_PROTOCOL_VERSION, type View, type ViewItem } from "@nisse/wire"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -358,3 +359,246 @@ test("crash-claude-settled: a Claude Code answer committed before the server was
   expect(claude.spawns()).toHaveLength(1)
   client.close()
 }, 30_000)
+
+/** What a `nisse` command printed and how it exited. */
+const finished = async (process: ReturnType<typeof nisse>) => {
+  const [code, stdout, stderr] = await deadline(
+    Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]),
+    20_000,
+    "nisse exited",
+  )
+  return { code, stdout, stderr }
+}
+
+/** The home's conversations, from a client of its running server. */
+const conversationsOf = async (nisseHome: ReturnType<typeof home>) => {
+  const client = await RawClient.connect(nisseHome.socket)
+  const listed = (await client.call("conversation/list")).result as Array<{ id: string; model: unknown }>
+  client.close()
+  return listed
+}
+
+/** A conversation's transcript, read from the home's running server. */
+const transcriptOf = async (nisseHome: ReturnType<typeof home>, conversation: string) => {
+  const client = await RawClient.connect(nisseHome.socket)
+  const view = watchView(client, conversation)
+  await view.until(() => true)
+  client.close()
+  return transcript(view.view().entries)
+}
+
+test("mode-print, answer-exec, server-on-demand: nisse exec on the kernel starts a server, prints the answer and exits 0", async () => {
+  const nisseHome = home()
+  const result = await finished(nisse(["exec", "hello there"], await kernelEnv(nisseHome)))
+  expect(result).toMatchObject({ code: 0, stdout: "You said: hello there\n" })
+  const [conversation] = await conversationsOf(nisseHome)
+  expect(await transcriptOf(nisseHome, conversation!.id)).toEqual([
+    "user: hello there",
+    "assistant: You said: hello there",
+    "run_end: answered",
+  ])
+})
+
+test("mode-print, answer-exec-fail: nisse exec on the kernel exits 1 and says why when the run fails", async () => {
+  const env = await kernelEnv(home(), [{ text: "half an ", fail: "provider went away" }])
+  const result = await finished(nisse(["exec", "go"], env))
+  expect(result.code).toBe(1)
+  expect(result.stderr).toContain("provider went away")
+})
+
+test("mode-json, exec-json: nisse exec --json prints the view, then each commit's changes, until the run ends", async () => {
+  const nisseHome = home()
+  const result = await finished(nisse(["exec", "--json", "hello there"], await kernelEnv(nisseHome)))
+  expect(result.code).toBe(0)
+  const items = result.stdout
+    .trimEnd()
+    .split("\n")
+    .map((line) => JSON.parse(line) as ViewItem)
+  expect(items[0]!._tag).toBe("view")
+  expect(items.slice(1).every((item) => item._tag === "change")).toBe(true)
+  // A client applying each line in turn holds the conversation's view, ending with the answer.
+  let view: View | undefined
+  for (const item of items) view = item._tag === "view" ? item.view : applyImmutable(view, item.ops as Array<Op>)
+  expect(transcript(view!.entries)).toEqual([
+    "user: hello there",
+    "assistant: You said: hello there",
+    "run_end: answered",
+  ])
+  const [conversation] = await conversationsOf(nisseHome)
+  expect(await transcriptOf(nisseHome, conversation!.id)).toEqual(transcript(view!.entries))
+})
+
+test("approval-exec-deny: nisse exec on the kernel shows its calls and, without --auto, denies the ones that would change things", async () => {
+  const nisseHome = home()
+  const env = await kernelEnv(nisseHome, [
+    { tool: { name: "bash", input: { command: "echo ran" } } },
+    { text: "could not run it" },
+    { tool: { name: "bash", input: { command: "echo ran" } } },
+    { text: "ran it" },
+  ])
+  const denied = await finished(nisse(["exec", "run something"], env))
+  expect(denied).toMatchObject({ code: 0, stdout: "could not run it\n" })
+  expect(denied.stderr).toContain("› bash(echo ran)")
+  expect(denied.stderr).toContain("denied bash(echo ran): exec cannot ask, pass --auto to allow calls")
+  const allowed = await finished(nisse(["exec", "--auto", "run something"], env))
+  expect(allowed).toMatchObject({ code: 0, stdout: "ran it\n" })
+  expect(allowed.stderr).toContain("› bash(echo ran)")
+  expect(allowed.stderr).not.toContain("denied")
+})
+
+test("subagent-exec: nisse exec on the kernel without --auto denies the calls its subagents would ask about too", async () => {
+  const env = await kernelEnv(home(), [
+    { tool: { name: "spawn_agent", input: { task_name: "kid", message: "go" } } },
+    { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
+    { text: "the kid is done" },
+    { agent: "/root/kid", tool: { name: "bash", input: { command: "echo ran" } } },
+    { agent: "/root/kid", text: "could not run it" },
+  ])
+  const result = await finished(nisse(["exec", "delegate"], env))
+  expect(result).toMatchObject({ code: 0, stdout: "the kid is done\n" })
+  expect(result.stderr).toContain("denied bash(echo ran): exec cannot ask")
+})
+
+const DECLINE =
+  "Run the bash command `touch declined.txt` with the Bash tool. If it is not allowed, reply with exactly: declined"
+const MAKE = "Run the bash command `touch made.txt` with the Bash tool, then reply with exactly: made"
+
+test("claude-exec-deny: nisse exec on the kernel refuses Claude's calls that would ask", async () => {
+  using claude = new FakeClaude("bash_declined")
+  const nisseHome = home()
+  const env = { ...(await kernelEnv(nisseHome)), ...claude.options.env }
+  const result = await finished(nisse(["exec", "--provider", "claude", DECLINE], env))
+  expect(result).toMatchObject({ code: 0, stdout: "declined\n" })
+  expect(result.stderr).toContain("› Bash(touch declined.txt)")
+  expect(result.stderr).toContain("denied Bash(touch declined.txt): exec cannot ask, pass --auto to allow calls")
+  expect(JSON.stringify(claude.log())).toContain('"behavior":"deny"')
+})
+
+test("claude-exec-deny, claude-auto: nisse exec --auto on the kernel lets Claude's calls run without asking", async () => {
+  using claude = new FakeClaude("bash_allowed")
+  const env = { ...(await kernelEnv(home())), ...claude.options.env }
+  const result = await finished(nisse(["exec", "--provider", "claude", "--auto", MAKE], env))
+  expect(result).toMatchObject({ code: 0, stdout: "made\n" })
+  expect(result.stderr).toContain("› Bash(touch made.txt)")
+  expect(result.stderr).not.toContain("denied")
+  expect(JSON.stringify(claude.log())).toContain('"behavior":"allow"')
+})
+
+test("chosen-id: nisse exec --conversation on the kernel starts a conversation with an id it does not name yet, and continues it", async () => {
+  const nisseHome = home()
+  const env = await kernelEnv(nisseHome)
+  expect(await finished(nisse(["exec", "--conversation", "picked-1", "first words"], env))).toMatchObject({
+    code: 0,
+    stdout: "You said: first words\n",
+  })
+  expect(await finished(nisse(["exec", "-c", "picked-1", "again"], env))).toMatchObject({
+    code: 0,
+    stdout: "You said: again\n",
+  })
+  expect((await conversationsOf(nisseHome)).map((conversation) => conversation.id)).toEqual(["picked-1"])
+  expect(await transcriptOf(nisseHome, "picked-1")).toEqual([
+    "user: first words",
+    "assistant: You said: first words",
+    "run_end: answered",
+    "user: again",
+    "assistant: You said: again",
+    "run_end: answered",
+  ])
+})
+
+test("provider-choose, model-flags: nisse exec on the kernel starts on the provider, model and effort it names", async () => {
+  const nisseHome = home()
+  const env = await kernelEnv(nisseHome)
+  const args = ["exec", "--provider", "script", "--model", "script", "--effort", "low", "hi"]
+  expect(await finished(nisse(args, env))).toMatchObject({ code: 0, stdout: "You said: hi\n" })
+  expect((await conversationsOf(nisseHome))[0]!.model).toEqual({ provider: "script", model: "script", effort: "low" })
+})
+
+test("provider-unknown, model-flags: nisse exec on the kernel refuses a provider or an effort nisse does not have", async () => {
+  const env = await kernelEnv(home())
+  expect(await finished(nisse(["exec", "--provider", "nope", "hi"], env))).toMatchObject({
+    code: 1,
+    stdout: "",
+    stderr: "nisse has no provider named nope\n",
+  })
+  const effort = await finished(nisse(["exec", "--effort", "lots", "hi"], env))
+  expect(effort).toMatchObject({ code: 1, stdout: "" })
+  expect(effort.stderr).toStartWith("nisse knows no effort named lots; it knows minimal, ")
+})
+
+test("provider-config-invalid: nisse exec on the kernel says why the server it started refused the home's config.toml", async () => {
+  const nisseHome = home()
+  await Bun.write(`${nisseHome.dir}/config.toml`, '[providers.gem]\ndriver = "gemini"\n')
+  const result = await finished(nisse(["exec", "hi"], await kernelEnv(nisseHome)))
+  expect(result).toMatchObject({ code: 1, stdout: "" })
+  expect(result.stderr).toContain(`${nisseHome.dir}/config.toml`)
+  expect(result.stderr).toContain("driver")
+})
+
+test("provider-binary: nisse exec on the kernel runs a Claude provider's binary from config.toml, with its env and args", async () => {
+  using claude = new FakeClaude("text")
+  const nisseHome = home()
+  const { executable, env: fake } = claude.options
+  const table = Object.entries(fake!)
+    .map(([key, value]) => `${key} = ${JSON.stringify(value)}`)
+    .join(", ")
+  await Bun.write(
+    `${nisseHome.dir}/config.toml`,
+    `[providers.claude-alt]\ndriver = "claude"\nbinary = ${JSON.stringify(executable)}\nenv = { ${table} }\nargs = ["--add-dir", "/tmp"]\n`,
+  )
+  const env = { ...(await kernelEnv(nisseHome)), NISSE_CLAUDE: join(nisseHome.dir, "no-claude") }
+  const result = await finished(nisse(["exec", "--provider", "claude-alt", "Reply with exactly: fixture text ok"], env))
+  expect(result).toMatchObject({ code: 0, stdout: "fixture text ok\n" })
+  // The run's spawn adds the provider's args; the probe, which asks Claude nothing, does not.
+  const spawn = claude.log().find((entry) => entry.argv && entry.probe === undefined)
+  expect(spawn.argv.join(" ")).toContain("--add-dir /tmp")
+})
+
+test("server-restart: nisse serve --restart on the kernel replaces the running server once its run settles", async () => {
+  const nisseHome = home()
+  const env = await kernelEnv(nisseHome, [{ text: "one two three four five", delayMs: 100 }])
+  const first = await servingKernel(env)
+  const client = await RawClient.connect(nisseHome.socket)
+  const conversation = await start(client, nisseHome.dir)
+  const view = watchView(client, conversation)
+  await view.until(() => true)
+  await submit(client, conversation, "count")
+  await view.until((watch) => (watch.view().docs["pi.live"] as { run?: unknown } | undefined)?.run !== undefined)
+  const second = await servingKernel(env, undefined, ["serve", "--restart"])
+  // The old server let its run answer before it stopped.
+  expect(await deadline(first.exited, 5000, "old server exit")).toBe(0)
+  client.close()
+  expect(await transcriptOf(nisseHome, conversation)).toEqual([
+    "user: count",
+    "assistant: one two three four five",
+    "run_end: answered",
+  ])
+  expect(second.exitCode).toBeNull()
+}, 30_000)
+
+test("extensions-load: nisse extensions on the kernel lists each extension by its full path", async () => {
+  const nisseHome = home()
+  mkdirSync(nisseHome.extensions, { recursive: true })
+  writeFileSync(
+    join(nisseHome.extensions, "clock.ts"),
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define(() => Effect.void)
+`,
+  )
+  const env = await kernelEnv(nisseHome)
+  const line = `clock  loaded  ${nisseHome.extensions}/clock.ts\n`
+  expect(await finished(nisse(["extensions"], env))).toMatchObject({ code: 0, stdout: line })
+  expect(await finished(nisse(["extensions", "reload"], env))).toMatchObject({ code: 0, stdout: line })
+})
+
+test("signout, signin-cannot: nisse logout and login on the kernel sign out of a provider and refuse one nisse does not have", async () => {
+  const env = await kernelEnv(home())
+  expect(await finished(nisse(["logout", "openai"], env))).toMatchObject({
+    code: 0,
+    stderr: "signed out of openai: signed out\n",
+  })
+  const login = await finished(nisse(["login", "nope"], env))
+  expect(login.code).toBe(1)
+  expect(login.stderr).toStartWith("no provider named nope; there are ")
+})

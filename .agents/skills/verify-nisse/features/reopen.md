@@ -10,8 +10,9 @@ resubscribes from the last commit it saw and misses nothing.
 - `reopen-tui` [pending tui-views] reopens the conversation with its transcript.
 - `reopen-continue` continues a reopened conversation with a new prompt.
 - `resume-since` resubscribes with `sinceSeq` and gets only later commits.
-- `chosen-id` [pending cli-kernel] opens the TUI on an id that names no conversation yet, starting
-  one with that id, and sends a prompt given on the command line.
+- `chosen-id` [pending tui-views] opens the TUI on an id that names no conversation yet, starting
+  one with that id, and sends a prompt given on the command line; `nisse exec --conversation <id>` does the
+  same. On the kernel `exec` does; the TUI waits for tui-views.
 
 ## How to get to it
 
@@ -54,6 +55,11 @@ Preconditions:
   `drive.ts r tui start --conversation picked-1`, `drive.ts r tui wait READY`,
   `drive.ts r tui screen chosen`: one `You said: first words`, nothing sent
   twice.
+- **Chosen id, exec on the kernel.** In a fresh run made with
+  `drive.ts r up --kernel`, run `drive.ts r nisse exec -c picked-1 'first words'`
+  and `drive.ts r nisse exec -c picked-1 again`: `You said: first words`, then
+  `You said: again`, each exit 0. `drive.ts r rpc conversation/list` shows one
+  conversation, `"id": "picked-1"`, whose `ended.said` is `You said: again`.
 
 ## Contexts
 
@@ -68,6 +74,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - start-with-id: a conversation opened on a client's id survives a restart, and a second start with it is answered
+- chosen-id: nisse exec --conversation on the kernel starts a conversation with an id it does not name yet, and continues it
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

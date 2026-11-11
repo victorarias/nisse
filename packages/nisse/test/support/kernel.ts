@@ -92,9 +92,9 @@ export const kernelEnv = async (home: Home, script: ReadonlyArray<ScriptStep> = 
   return nisseEnv(home, { NISSE_KERNEL: "1", NISSE_MODEL_SCRIPT: path })
 }
 
-/** `nisse serve` on the kernel, run in `cwd`, once it listens. */
-export const servingKernel = async (env: Record<string, string | undefined>, cwd?: string) => {
-  const server = nisse(["serve"], env, cwd)
+/** `nisse serve` on the kernel, or the command `args` name, run in `cwd`, once it listens. */
+export const servingKernel = async (env: Record<string, string | undefined>, cwd?: string, args = ["serve"]) => {
+  const server = nisse(args, env, cwd)
   const log = server.stderr.getReader()
   let printed = ""
   while (!printed.includes("serving")) {

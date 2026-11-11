@@ -13,7 +13,7 @@ next run. Switching providers keeps the conversation.
 - `model-list` lists each provider's models, best first, with their efforts:
   Claude Code's models and `its own choice`, ChatGPT's from ChatGPT, else the
   list it sent last, else the one nisse ships.
-- `model-flags` [pending cli-kernel] starts a conversation with `--model` and `--effort` from the
+- `model-flags` starts a conversation with `--model` and `--effort` from the
   TUI or `exec`, or `model` and `effort` on `conversation/start`. A model
   named without a provider goes to the default model's provider.
 - `model-default` takes the project's `default_model`, then the home's, then
@@ -152,6 +152,11 @@ Preconditions:
   `nisse.model` entry `{"author": "bo", "selection": ...}`, then an answer
   whose message names `script-code-mode`, and `drive.ts r rpc conversation/list`
   shows that model. A provider nisse does not have answers `UnknownProvider`.
+  `drive.ts r nisse exec --provider script --model script --effort low hi`
+  prints `You said: hi`, and `conversation/list` shows that conversation's
+  `"model": {"provider": "script", "model": "script", "effort": "low"}`;
+  `drive.ts r nisse exec --effort lots hi` exits 1 with
+  `nisse knows no effort named lots; it knows minimal, low, medium, high, xhigh, max`.
 
 ## Contexts
 
@@ -159,6 +164,11 @@ Preconditions:
 - **Second client.** A switch is an entry everyone sees, and applies from the next run.
 
 ## Tests
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- provider-choose, model-flags: nisse exec on the kernel starts on the provider, model and effort it names
+- provider-unknown, model-flags: nisse exec on the kernel refuses a provider or an effort nisse does not have
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

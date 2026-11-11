@@ -11,7 +11,7 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
 
 ## Sub-features
 
-- `extensions-load` [pending cli-kernel] loads `extensions/<name>.ts` and `extensions/<name>/index.ts`
+- `extensions-load` loads `extensions/<name>.ts` and `extensions/<name>/index.ts`
   in name order, with `[extensions.<name>]` from `config.toml` as
   `ctx.options`; `enabled = false` there lists it as `disabled`. A relative
   `NISSE_HOME` is taken from the folder nisse runs in, so `nisse extensions`
@@ -409,8 +409,8 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 - **Server restart.** Status lines clear, so none outlives the code that set it.
 - **Second client.** Status lines and toasts are committed, so every client sees them, then and later.
 - **On the kernel.** In a run made with `drive.ts r up --kernel` the server loads the same extensions with the same
-  `@nisse/extension` API, and serves `extensions/list` and `extensions/reload`; `nisse extensions` and the TUI wait
-  for cli-kernel and tui-views. The kernel's tools are named `read`, `write`, `edit`, `apply_patch`, `bash`, `grep`
+  `@nisse/extension` API, and serves `extensions/list` and `extensions/reload`, so `nisse extensions` and
+  `nisse extensions reload` list them as on today's server; the TUI waits for tui-views. The kernel's tools are named `read`, `write`, `edit`, `apply_patch`, `bash`, `grep`
   and `glob`, so a hook or transform names them so. A status line is the view's `nisse.status_lines` document
   (`{"lines": {"<name>": "<text>"}}`), and a toast a `nisse.toast` entry `{ extension, text }`. A refused or failed
   `execute.before` reaches the model as `Tool call blocked: <name> refused this call: <why>`, and a removed tool as
@@ -434,6 +434,10 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - reload: while extensions reload, the loaded ones keep guarding calls until their replacements are ready
 - status-line: a hook still running when its extension is unloaded can't bring back a status line
 - reload: a config.toml that stops reading fails every extension in a reload, and says why
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- extensions-load: nisse extensions on the kernel lists each extension by its full path
 
 Kernel provider, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
 

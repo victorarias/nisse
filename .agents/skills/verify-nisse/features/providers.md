@@ -10,7 +10,7 @@ failed with a message saying why, in every client.
 
 ## Sub-features
 
-- `provider-choose` [pending cli-kernel] starts a conversation with `--provider <name>` from the
+- `provider-choose` starts a conversation with `--provider <name>` from the
   TUI or `exec`, or `provider` on `conversation/start`.
 - `provider-default` starts with the default model's provider when none is
   named: the project's, the home's, the one chosen last, then Claude, or the
@@ -20,11 +20,11 @@ failed with a message saying why, in every client.
 - `provider-config` adds the providers `config.toml` names under
   `[providers.<id>]`, with `driver = "claude"` or `"openai"`, beside the
   built-in ones; each lists, signs in and starts conversations on its own.
-- `provider-binary` [pending cli-kernel] runs a Claude provider's Claude Code from `binary`,
+- `provider-binary` runs a Claude provider's Claude Code from `binary`,
   with `env` added to its environment and `args` added to each run's command
   line; `NISSE_CLAUDE` names the `claude` every Claude provider without a
   `binary` runs. One that does not start is `unavailable`, saying why.
-- `provider-config-invalid` [pending cli-kernel] refuses to serve a home whose `config.toml` does
+- `provider-config-invalid` refuses to serve a home whose `config.toml` does
   not read, naming the file and the field.
 - `provider-claude` and `provider-openai` are the real journeys, in
   [Claude](./claude.md) and [OpenAI](./openai.md); signing in is in
@@ -168,7 +168,14 @@ Preconditions:
   and serve again: `claude-gone` is `unavailable` with
   `Claude Code native binary not found at /tmp/nisse-verify/r/no-claude. ...; install Claude Code or set its binary`.
   The **Invalid config** file makes `NISSE_KERNEL=1 nisse serve` exit 1 with
-  the same stderr.
+  the same stderr, and `drive.ts r nisse exec hi` exit 1 with it from the
+  server it tried to start. `exec` takes its flags on the kernel too: in a
+  fresh `--kernel` run, `drive.ts r nisse exec --provider nope hi` exits 1
+  with `nisse has no provider named nope`, and in one made with
+  `--kernel --fake-claude text` the **Binary, env and args** step's
+  `drive.ts r nisse exec --provider claude-alt 'Reply with exactly: fixture text ok'`
+  prints `fixture text ok`, and `evidence/claude-alt/log.ndjson` holds the
+  spawn with `"--add-dir","/tmp"`.
 
 ## Contexts
 
@@ -179,6 +186,10 @@ Preconditions:
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - provider-default: a conversation that names no provider and has no default model starts on Claude, or on the scripted provider when NISSE_MODEL_SCRIPT is set
+- provider-choose, model-flags: nisse exec on the kernel starts on the provider, model and effort it names
+- provider-unknown, model-flags: nisse exec on the kernel refuses a provider or an effort nisse does not have
+- provider-config-invalid: nisse exec on the kernel says why the server it started refused the home's config.toml
+- provider-binary: nisse exec on the kernel runs a Claude provider's binary from config.toml, with its env and args
 
 Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
 
