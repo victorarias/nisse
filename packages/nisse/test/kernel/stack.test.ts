@@ -5,7 +5,17 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { deadline, RawClient } from "../support/raw.ts"
-import { kernelEnv, runEnds, servingKernel, settled, start, submit, transcript, watchView } from "../support/kernel.ts"
+import {
+  kernelEnv,
+  runEnds,
+  servingKernel,
+  settled,
+  start,
+  submit,
+  transcript,
+  type ViewWatch,
+  watchView,
+} from "../support/kernel.ts"
 import { homeAt } from "../../src/home.ts"
 import { tempHome } from "../support/server.ts"
 import { nisse, stopServer } from "../support/terminal.ts"
@@ -262,35 +272,38 @@ test("codemode-replay: a script whose server is killed during a nested call resu
 
 test("codemode-stop: a script stuck in a long built-in stops when its run is interrupted, and the server then exits at once", async () => {
   const nisseHome = home()
-  const fifo = join(nisseHome.dir, "started.fifo")
-  expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0)
   // A naive search QuickJS runs without checking for an interrupt: about 40 s on an M-series Mac (receipt: half the
   // string took 19 s after its abort). A worker in it survives `terminate()` (F19).
   const code = [
-    `await tools.bash({ command: "echo ran > ${fifo}" })`,
+    `await tools.bash({ command: "true" })`,
     `const haystack = "a".repeat(1 << 23)`,
     `text(haystack.indexOf("a".repeat(1 << 12) + "b"))`,
   ].join("\n")
   const server = await servingKernel(await kernelEnv(nisseHome, [{ tool: { name: "codemode", input: { code } } }]))
   const client = await RawClient.connect(nisseHome.socket)
   const conversation = await codeModeConversation(client, nisseHome.dir)
+  const view = watchView(client, conversation)
+  await view.until(() => true)
   await submit(client, conversation, "go")
-  expect(await deadline(readFile(fifo, "utf8"), 10_000, "the script's call ran")).toBe("ran\n")
-  // The server burns CPU only once the script searches: a second of it means the worker is inside the search.
+  const live = (current: ViewWatch) =>
+    current.view().docs["pi.live"] as { nestedTools?: Array<{ status: string }> } | undefined
+  await view.until((current) => live(current)?.nestedTools?.some((slot) => slot.status === "done") === true, 10_000)
+  // Nothing is committed once the worker enters the search, and interrupting it before then lets the worker end
+  // cleanly, which proves nothing (measured: 5 of 5 runs passed without serve's exit). The server's CPU is the one
+  // sign that the worker is inside: an idle server spends at most 0.02 s in a second (the idle-server test above).
   const before = cpuSeconds(server.pid)
   await deadline(
     (async () => {
-      while (cpuSeconds(server.pid) - before < 1) await Bun.sleep(100)
+      while (cpuSeconds(server.pid) - before < 0.3) await Bun.sleep(50)
     })(),
-    10_000,
+    20_000,
     "the script searching",
   )
   // Interrupting the run stops the script without waiting for its worker, which goes on searching.
-  const view = watchView(client, conversation)
   await client.call("conversation/interrupt", { conversation })
   await view.until(settled(1), 5000)
   // With the run ended the server stops, and its process ends though the worker still searches.
   expect(await client.call("server/stop", null)).toMatchObject({ result: null })
   expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
   client.close()
-}, 30_000)
+}, 45_000)
