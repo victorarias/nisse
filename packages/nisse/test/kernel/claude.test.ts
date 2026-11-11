@@ -434,3 +434,56 @@ test("claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a t
   })
   expect(auth.items.at(-1)?.message).toBe("person@example.com · Claude Max")
 }, 40_000)
+
+test("claude-session-gone: a resume at a position Claude Code compacted away starts a fresh session told the conversation", async () => {
+  using claude = new FakeClaude("compaction_resume")
+  await using session = await conversationWith(claude, { approvals: "auto" })
+  await session.submit("Remember the word PLUM. Reply with exactly: noted")
+  await session.view.until(settled(1))
+  await session.submit("/compact")
+  await session.view.until(settled(2))
+  // Claude Code compacted its own context: the transcript keeps its summary as a compaction.
+  const compaction = session.view.seen().find((entry) => entry.kind === "pi.compaction")!
+  expect(compaction.head).toBe(compaction.id)
+  expect((compaction.model![0] as { content: string }).content).toContain("PLUM")
+
+  await session.submit("Which word did I ask you to remember? Reply with that word only.")
+  await session.view.until(settled(3))
+  const [first, compacting, resumed, fresh] = claude.spawns()
+  // The position is still the answer before the compaction, which the resumed session no longer holds (F12).
+  expect(compacting!["--resume-session-at"]).toBe("4de5c42b-c831-4d4d-b66d-efaa28971d5a")
+  expect(resumed).toMatchObject({
+    "--resume": first!["--session-id"],
+    "--resume-session-at": "4de5c42b-c831-4d4d-b66d-efaa28971d5a",
+  })
+  expect(fresh!["--resume"]).toBeUndefined()
+  expect(fresh!["--session-id"]).not.toBe(first!["--session-id"])
+  const told = claude.userTexts(3)[0]!
+  expect(told[0]).toContain("PLUM")
+  expect(told.at(-1)).toBe("Which word did I ask you to remember? Reply with that word only.")
+  expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: PLUM", "run_end: answered"])
+  expect(runEnds(session.view.seen()).map((end) => end.outcome)).toEqual(["answered", "answered", "answered"])
+})
+
+test("claude-clear: /clear starts a new context in the transcript, and the next run starts a Claude Code session without it", async () => {
+  using claude = new FakeClaude("clear")
+  await using session = await conversationWith(claude, { approvals: "auto" })
+  const prompts = [
+    "Remember the word PLUM. Reply with exactly: noted",
+    "/clear",
+    "Reply with exactly: cleared",
+    "Did I ask you to remember a word earlier? Reply with yes or no only.",
+  ]
+  for (const [index, prompt] of prompts.entries()) {
+    await session.submit(prompt)
+    await session.view.until(settled(index + 1))
+  }
+  const reset = session.view.seen().find((entry) => entry.kind === "pi.reset")!
+  expect(reset.head).toBe(reset.id)
+  const [first, clearing, fresh, resumed] = claude.spawns()
+  expect(clearing!["--resume"]).toBe(first!["--session-id"])
+  expect(fresh!["--resume"]).toBeUndefined()
+  expect(claude.userTexts(2)).toEqual([["Reply with exactly: cleared"]])
+  expect(resumed!["--resume"]).toBe(fresh!["--session-id"])
+  expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: No.", "run_end: answered"])
+})
