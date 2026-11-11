@@ -13,13 +13,13 @@ and nisse commits each into a conversation of its own the same way.
 
 ## Sub-features
 
-- `subagent-spawn` [pending wire-complete] starts a subagent from a `spawn_agent` call: the TUI shows
+- `subagent-spawn` starts a subagent from a `spawn_agent` call: the TUI shows
   `▸ spawn_agent(<name>)`, then a `⧉ <name>` card, and `conversation/list`
   gains a conversation whose `lineage` names its `parent`, `root`, `call`,
   `task` and `title`.
 - `subagent-fork` gives a subagent its parent's history up to the spawn
   (`lineage.forkedAt`), or none with `"fork_turns": "none"`.
-- `subagent-model` [pending wire-complete] runs a subagent on its parent's model, or on the `model`
+- `subagent-model` runs a subagent on its parent's model, or on the `model`
   its `spawn_agent` names when the parent's provider lists it; an unlisted
   model fails the call.
 - `subagent-card` shows the card's state: `working`, `waiting on you` with the
@@ -28,10 +28,10 @@ and nisse commits each into a conversation of its own the same way.
 - `subagent-approve` answers a subagent's asked call with `^Y` or `^N` in the
   parent's TUI, or `approval/resolve` on the subagent's conversation. A call
   asked deeper in the tree shows on the card of the subagent above it.
-- `subagent-message` [pending wire-complete] delivers a parent's `send_message` to a running subagent
+- `subagent-message` delivers a parent's `send_message` to a running subagent
   at its next step, as a `user` entry with `"mail": {"kind": "message", ...}`
   inside the same run; it starts no run.
-- `subagent-agents` [pending wire-complete] shows the tree with `list_agents` (each agent's name and
+- `subagent-agents` shows the tree with `list_agents` (each agent's name and
   `running`, `interrupted`, `completed` or `errored`), and stops one
   subagent from its parent with `interrupt_agent`, answering its previous
   status.
@@ -484,9 +484,26 @@ Preconditions:
 
 ## Contexts
 
+- **On the kernel.** In a `drive.ts r up --kernel --script <file>` run with the
+  spawn steps above, `drive.ts r rpc conversation/list` lists each subagent
+  after its parent, with `lineage` naming `parent`, `root`, `call` (the
+  `spawn_agent` call's id), `title` and `task`, and with the model its
+  `spawn_agent` named. Ids are the kernel's numbers, or the id a client chose
+  at `conversation/start`. A subagent is not forked by seq, so `lineage` has
+  no `forkedAt`; a forked subagent's view shows `conversation.parent`.
 - **Provider.** Claude keeps Claude Code's own subagents, which take input only through their parent. OpenAI uses Codex's agent tools.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- subagent-spawn, subagent-model: conversation/list shows each subagent with its lineage, on its parent's model or the one its spawn_agent names, and an unlisted model fails the call
+- child-tools, subagent-message: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit
+- child-tools, subagent-agents: interrupting a subagent stops its turn and reports what it was doing
+
+Kernel wire, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- subagent-spawn: a Claude subagent is listed under its parent with the call that started it, and takes no input of its own
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

@@ -4,6 +4,7 @@ import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { FakeClaude } from "../support/claude.ts"
 import { deadline, RawClient } from "../support/raw.ts"
 import {
   kernelEnv,
@@ -307,3 +308,48 @@ test("codemode-stop: a script stuck in a long built-in stops when its run is int
   expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
   client.close()
 }, 45_000)
+
+test("provider-default: a conversation that names no provider and has no default model starts on Claude, or on the scripted provider when NISSE_MODEL_SCRIPT is set", async () => {
+  for (const [script, provider] of [
+    [true, "script"],
+    [false, "claude"],
+  ] as const) {
+    const nisseHome = home()
+    const env = await kernelEnv(nisseHome)
+    const server = await servingKernel(script ? env : { ...env, NISSE_MODEL_SCRIPT: undefined })
+    const client = await RawClient.connect(nisseHome.socket)
+    const started = await client.call("conversation/start", { cwd: nisseHome.dir })
+    expect(started.result.model.provider).toBe(provider)
+    await client.call("server/stop", null)
+    expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
+    client.close()
+  }
+})
+
+test("crash-claude-settled: a Claude Code answer committed before the server was killed is not run again", async () => {
+  using claude = new FakeClaude("crash_points")
+  const nisseHome = home()
+  const env = { ...(await kernelEnv(nisseHome)), ...claude.options.env }
+  const prompt =
+    "First write one short sentence saying that you will read the notes. Then use the Read tool to read notes.txt. Then reply with where the gnome lives, in three words."
+  const first = await servingKernel(env)
+  let client = await RawClient.connect(nisseHome.socket)
+  const conversation = (
+    await client.call("conversation/start", { cwd: nisseHome.dir, provider: "claude", approvals: "auto" })
+  ).result.conversation as string
+  const before = watchView(client, conversation)
+  await submit(client, conversation, prompt)
+  await before.until(settled(1), 20_000)
+  first.kill("SIGKILL")
+  await first.exited
+  client.close()
+
+  await servingKernel(env)
+  client = await RawClient.connect(nisseHome.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(transcript(after.view().entries)).toEqual(transcript(before.view().entries))
+  expect(transcript(after.view().entries).slice(-2)).toEqual(["assistant: Under the floor.", "run_end: answered"])
+  expect(claude.spawns()).toHaveLength(1)
+  client.close()
+}, 30_000)

@@ -68,7 +68,7 @@ const conversationWith = async (claude: FakeClaude, ask: Record<string, string> 
   }
 }
 
-test("claude-answer: Claude's answer through Claude Code is committed as nisse's message", async () => {
+test("claude-answer, provider-claude: Claude's answer through Claude Code is committed as nisse's message", async () => {
   using claude = new FakeClaude("text")
   await using session = await conversationWith(claude)
   await session.submit("Reply with exactly: fixture text ok")
@@ -505,4 +505,39 @@ test("claude-clear: /clear starts a new context in the transcript, and the next 
   expect(claude.userTexts(2)).toEqual([["Reply with exactly: cleared"]])
   expect(resumed!["--resume"]).toBe(fresh!["--session-id"])
   expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: No.", "run_end: answered"])
+})
+
+test("claude-auto: in a conversation started without asking, a call Claude Code would ask about runs, allowed for it", async () => {
+  using claude = new FakeClaude("bash_allowed")
+  await using session = await conversationWith(claude, { approvals: "auto" })
+  await session.submit("Run the bash command `touch made.txt` with the Bash tool, then reply with exactly: made")
+  await session.view.until(settled(1))
+  expect(claude.permissionAnswers()).toEqual([expect.objectContaining({ behavior: "allow" })])
+  expect(session.view.seen().some((entry) => entry.kind === "nisse.approval")).toBe(false)
+  expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: made", "run_end: answered"])
+})
+
+test("subagent-spawn: a Claude subagent is listed under its parent with the call that started it, and takes no input of its own", async () => {
+  using claude = new FakeClaude("subagent")
+  await using session = await conversationWith(claude)
+  await session.submit("go")
+  await session.view.until(settled(1))
+  const child = await subagentOf(session)
+  await child.view.until(childEnded)
+  const listed = (await session.client.call("conversation/list")).result as Array<{ id: string; lineage?: unknown }>
+  expect(listed.find((conversation) => conversation.id === child.id)!.lineage).toEqual({
+    parent: session.conversation,
+    root: session.conversation,
+    call: AGENT_CALL,
+    title: "Find gnome location in notes",
+    agentType: "general-purpose",
+  })
+  const refused = await submit(session.client, child.id, "hello?")
+  expect(refused.error?.data[0]?.error?._tag).toBe("TakesNoInput")
+  const switched = await session.client.call("conversation/select_model", {
+    conversation: child.id,
+    author: "ada",
+    selection: { provider: "claude", model: "haiku" },
+  })
+  expect(switched.error?.data[0]?.error?._tag).toBe("TakesNoInput")
 })

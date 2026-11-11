@@ -509,7 +509,7 @@ const commands: Record<string, () => Promise<void> | void> = {
 
   nisse: async () => {
     requireUp()
-    if (args[0] !== "schema") notOnKernel(`nisse ${args[0] ?? ""}`.trim(), "wire-complete")
+    if (args[0] !== "schema") notOnKernel(`nisse ${args[0] ?? ""}`.trim(), "cli-kernel")
     const line = `nisse ${args.join(" ")}`
     record(line)
     const child = Bun.spawn([MAIN, ...args], { env: env(), stdout: "pipe", stderr: "pipe", cwd: REPO })

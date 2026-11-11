@@ -8,9 +8,9 @@ resubscribes from the last commit it saw and misses nothing.
 
 - `reopen-hint` prints `resume with: nisse --conversation <id>` on `^C`.
 - `reopen-tui` [pending tui-views] reopens the conversation with its transcript.
-- `reopen-continue` [pending wire-complete] continues a reopened conversation with a new prompt.
+- `reopen-continue` continues a reopened conversation with a new prompt.
 - `resume-since` resubscribes with `sinceSeq` and gets only later commits.
-- `chosen-id` [pending wire-complete] opens the TUI on an id that names no conversation yet, starting
+- `chosen-id` [pending cli-kernel] opens the TUI on an id that names no conversation yet, starting
   one with that id, and sends a prompt given on the command line.
 
 ## How to get to it
@@ -60,6 +60,10 @@ Preconditions:
 - **Server restart.** A reopened conversation shows the same committed transcript.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- reopen-continue: a conversation reopened from a new server and connection goes on with a new prompt
 
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 

@@ -9,6 +9,7 @@ import { homeWithExtensions } from "../support/extensions.ts"
 import { accessToken, ACCOUNT, FakeOpenAi, matches, signIn } from "../support/openai.ts"
 import { deadline, RawClient } from "../support/raw.ts"
 import { runningKernelServer, settled, submit, transcript, type ViewWatch, watchView } from "../support/kernel.ts"
+import { tempHome } from "../support/server.ts"
 
 // The kernel's tools are named in lower case; the recordings call nisse's shipping tools.
 const KERNEL_TOOLS = { Bash: "bash" }
@@ -211,7 +212,7 @@ test("openai-failed, run-error-classes: a response that failed on ChatGPT's side
   expect(fake.responses()).toHaveLength(2)
 })
 
-test("openai-signed-out: a conversation with ChatGPT before signing in says how to fix it", async () => {
+test("openai-signed-out, provider-signed-out: a conversation with ChatGPT before signing in says how to fix it", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, { signedIn: false })
   await session.submit("hello")
@@ -524,4 +525,78 @@ test("code-mode-models: a model that takes nisse's tools directly is offered the
   const { tools } = JSON.parse(fake.responses()[0]!.body) as { tools: Array<{ name: string }> }
   expect(tools.map((tool) => tool.name)).toContain("bash")
   expect(tools.map((tool) => tool.name)).not.toContain("codemode")
+})
+
+const userEntries = (watch: ViewWatch) => watch.seen().filter((entry) => entry.kind === "nisse.user")
+
+test("skills-list, skills-attach, skills-snapshot: a skill named in a message comes with it as SKILL.md read then, for the model and every client", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  fake.play("text_answer")
+  const home = tempHome()
+  const cwd = project(home.dir)
+  await using session = await conversationWith(fake, { home, cwd: () => cwd })
+  const listed = await session.client.call("skills/list", { conversation: session.conversation })
+  expect(listed.result.map((skill: { name: string; description: string }) => [skill.name, skill.description])).toEqual([
+    ["plain", ""],
+    ["review", "Nearer review"],
+    ["ship", "Ship it carefully"],
+  ])
+  await session.submit("/review this, then $ship and $nothing.")
+  await session.view.until(settled(1))
+  const nearer = join(home.dir, "repo", "app", ".claude", "skills", "review", "SKILL.md")
+  writeFileSync(nearer, "---\nname: review\ndescription: Nearer review\n---\nLook again.")
+  await session.submit("$review once more")
+  await session.view.until(settled(2))
+  const [first, second] = userEntries(session.view).map((entry) => entry.data as { skills?: Array<any> })
+  expect(first!.skills).toEqual([
+    { name: "review", path: nearer, text: expect.stringContaining("Look nearer.") },
+    { name: "ship", path: join(home.dir, "skills", "ship", "SKILL.md"), text: expect.stringContaining("Ship.") },
+  ])
+  expect(second!.skills).toEqual([{ name: "review", path: nearer, text: expect.stringContaining("Look again.") }])
+  const sent = fake.responses().map((request) => JSON.stringify(JSON.parse(request.body).input))
+  expect(sent[0]).toContain("<name>review</name>")
+  expect(sent[0]).toContain("Look nearer.")
+  expect(sent[0]).toContain("<name>ship</name>")
+  // The second request carries the first message as it was placed, and the second with the file as it is now.
+  expect(sent[1]).toContain("Look nearer.")
+  expect(sent[1]).toContain("Look again.")
+})
+
+test("skills-list: a conversation on a provider that finds its own skills lists none, and an unknown one is refused", async () => {
+  await using server = await runningKernelServer([])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: project(server.home.dir) })).result
+    .conversation as string
+  expect((await client.call("skills/list", { conversation })).result).toEqual([])
+  const unknown = await client.call("skills/list", { conversation: "nowhere" })
+  expect(unknown.error?.data[0]?.error?._tag).toBe("NoSuchConversation")
+  client.close()
+})
+
+test("openai-invalid: a sign-in file that is not one fails the run, naming the file", async () => {
+  await using fake = new FakeOpenAi()
+  await using session = await conversationWith(fake, { signedIn: false })
+  const path = join(session.server.home.dir, "auth", "openai.json")
+  mkdirSync(join(path, ".."), { recursive: true })
+  writeFileSync(path, JSON.stringify({ hello: "there" }))
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  expect(session.said().at(-1)).toBe(`run_end: failed (${path} is not valid)`)
+  expect(fake.responses()).toHaveLength(0)
+})
+
+test("openai-expired: a sign-in whose refresh is turned down fails the run and lists ChatGPT signed out, saying why", async () => {
+  await using fake = new FakeOpenAi()
+  await using session = await conversationWith(fake, { signedIn: false })
+  await signIn(session.server.home, "first", Date.now() - 1000)
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const expired = "the ChatGPT sign-in expired; sign in again (token refresh failed (400: invalid_grant))"
+  expect(session.said().at(-1)).toBe(`run_end: failed (${expired})`)
+  const providers = (await session.client.call("providers/list", { refresh: true })).result as Array<any>
+  expect(providers.find((provider) => provider.id === "openai").health).toMatchObject({
+    status: "signed_out",
+    message: expired,
+  })
 })

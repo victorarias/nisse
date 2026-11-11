@@ -10,7 +10,7 @@ leaves: the server logs no error for it.
 
 - `wire-schema` prints the protocol's JSON Schema and version, and with `--kernel` the kernel wire's.
 - `wire-initialize` answers a client with the server's version and protocol.
-- `wire-malformed` [pending wire-complete] answers a call with missing fields with an error that names
+- `wire-malformed` answers a call with missing fields with an error that names
   the field.
 - `wire-dropped` ends a subscription that falls 4096 commits behind with a
   `FellBehind` error; the connection stays open.
@@ -77,6 +77,10 @@ Preconditions:
   watches again with `window.from` set to the entry after the last it holds.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- wire-malformed: a call missing a field is answered with an error that names it, and the connection goes on
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

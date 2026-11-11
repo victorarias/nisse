@@ -18,7 +18,7 @@ server three times in a row ends instead of looping.
 - `crash-claude` resumes a Claude Code run whose server was killed while a
   subagent worked: the cut-off `Agent` call is recorded as interrupted, the
   subagent ends `interrupted`, and Claude Code is resumed to carry on.
-- `crash-claude-settled` [pending wire-complete] does not run a finished Claude Code answer again when
+- `crash-claude-settled` does not run a finished Claude Code answer again when
   the server dies after it.
 
 ## How to get to it
@@ -128,6 +128,10 @@ have taken effect`.
 - **Provider.** On every provider a running call is recorded as interrupted. Claude Code is also told which calls were cut off.
 
 ## Tests
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- crash-claude-settled: a Claude Code answer committed before the server was killed is not run again
 
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 

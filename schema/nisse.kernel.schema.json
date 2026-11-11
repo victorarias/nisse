@@ -140,6 +140,132 @@
       },
       "stream": false
     },
+    "conversation/list": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "model": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": "string",
+                  "description": "Absent for the provider's own choice, as Claude Code makes it."
+                },
+                "effort": {
+                  "type": "string",
+                  "description": "Absent for the model's own default."
+                }
+              },
+              "required": [
+                "provider"
+              ],
+              "additionalProperties": true
+            },
+            "approvals": {
+              "type": "string",
+              "enum": [
+                "ask",
+                "auto"
+              ],
+              "description": "`ask`: calls that change things wait for approval/resolve; `auto`: every call runs without asking."
+            },
+            "lineage": {
+              "type": "object",
+              "properties": {
+                "parent": {
+                  "type": "string",
+                  "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+                },
+                "root": {
+                  "type": "string",
+                  "description": "The conversation people started, at the top of the tree."
+                },
+                "call": {
+                  "type": "string",
+                  "description": "The parent's call that started it."
+                },
+                "title": {
+                  "type": "string"
+                },
+                "task": {
+                  "type": "string",
+                  "description": "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does."
+                },
+                "agentType": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "parent",
+                "root",
+                "call",
+                "title"
+              ],
+              "additionalProperties": true,
+              "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
+            },
+            "instructions": {
+              "type": "string",
+              "description": "What the client that started it asked the model to follow, beside its own."
+            },
+            "ended": {
+              "type": "object",
+              "properties": {
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "answered",
+                    "interrupted",
+                    "failed",
+                    "restart_limit"
+                  ]
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Why the run ended without an answer."
+                },
+                "said": {
+                  "type": "string",
+                  "description": "The last message the model wrote in the conversation."
+                }
+              },
+              "required": [
+                "outcome"
+              ],
+              "additionalProperties": true,
+              "description": "How the conversation's last run ended."
+            }
+          },
+          "required": [
+            "id",
+            "cwd",
+            "model",
+            "approvals"
+          ],
+          "additionalProperties": true
+        },
+        "description": "Every conversation, subagents included, oldest first."
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
     "conversation/submit": {
       "params": {
         "type": "object",
@@ -187,7 +313,14 @@
         "additionalProperties": true
       },
       "error": {
-        "$ref": "#/$defs/NoSuchConversationEncoded"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
+          }
+        ]
       },
       "stream": false
     },
@@ -408,6 +541,269 @@
         ]
       },
       "stream": true
+    },
+    "conversation/entries": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "from": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The oldest entry to include."
+          },
+          "to": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The newest entry to include."
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "ascending",
+              "descending"
+            ],
+            "description": "Default descending: newest first."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "The most entries one page holds."
+          },
+          "cursor": {}
+        },
+        "required": [
+          "conversation",
+          "limit"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "conversationId": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call."
+                },
+                "model": {
+                  "type": "array"
+                },
+                "data": {},
+                "head": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "edits": {
+                  "type": "array"
+                },
+                "byTaskId": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "conversationId",
+                "kind"
+              ],
+              "additionalProperties": true,
+              "description": "One immutable transcript record."
+            },
+            "description": "Every entry of the transcript in the range, forks' inherited ones included."
+          },
+          "next": {}
+        },
+        "required": [
+          "entries"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
+    },
+    "conversation/context": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "at": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Cut the context off after this entry; absent for the context now."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "description": "What the model is sent: the messages of its next request."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "description": "The entries the context is made of, oldest first: since the last reset or compaction."
+          }
+        },
+        "required": [
+          "messages",
+          "entries"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchEntryEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "conversation/select_model": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "author": {
+            "type": "string",
+            "description": "Who switched it; the transcript names them."
+          },
+          "selection": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string",
+                "description": "Absent for the provider's own choice, as Claude Code makes it."
+              },
+              "effort": {
+                "type": "string",
+                "description": "Absent for the model's own default."
+              }
+            },
+            "required": [
+              "provider"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "conversation",
+          "author",
+          "selection"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/UnknownProviderEncoded"
+          },
+          {
+            "$ref": "#/$defs/UnknownEffortEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "skills/list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "description",
+            "path"
+          ],
+          "additionalProperties": true
+        },
+        "description": "The skills input to this conversation can name with /name or $name, which then carries them as `skills` in its nisse.user entry's data. Empty when its provider expands skills itself."
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
     },
     "conversation/interrupt": {
       "params": {
@@ -1461,6 +1857,25 @@
       ],
       "additionalProperties": true
     },
+    "TakesNoInputEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "TakesNoInput"
+          ]
+        },
+        "conversation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "conversation"
+      ],
+      "additionalProperties": true
+    },
     "InvalidWindowEncoded": {
       "type": "object",
       "properties": {
@@ -1499,6 +1914,27 @@
       "required": [
         "_tag",
         "limit"
+      ],
+      "additionalProperties": true
+    },
+    "NoSuchEntryEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "NoSuchEntry"
+          ]
+        },
+        "entry": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "_tag",
+        "entry"
       ],
       "additionalProperties": true
     },

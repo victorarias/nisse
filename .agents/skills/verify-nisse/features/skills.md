@@ -30,7 +30,7 @@ scripted conversations list none and carry none.
   order named, as `"skills": [{"name", "path", "text"}]` on the `user` entry:
   `/name` only at the message's start, `$name` anywhere. Trailing `.` or `:`
   is not part of the name, and a name nisse does not know carries nothing.
-- `skills-snapshot` [pending wire-complete] keeps the `SKILL.md` text as it was when the message was
+- `skills-snapshot` keeps the `SKILL.md` text as it was when the message was
   placed; editing the file later changes later messages only.
 - `skills-tui` [pending tui-views] shows `with <name>, <name>` under the message in every TUI and
   after a reopen.
@@ -166,8 +166,11 @@ Preconditions:
   `pi.system` entry when it changes; a script conversation gets none. The
   instructions a conversation started with (`instructions` on the kernel's
   `conversation/start`) follow the skill list, in `<instructions>` tags, and
-  a subagent starts without them. `skills/list` and skills carried by a
-  message wait for `wire-complete`. To drive it: `drive.ts r up --kernel
+  a subagent starts without them. The **List**, **None for script or
+  Claude**, **Carry over the wire** and **Snapshot** steps above drive the same
+  in a `drive.ts r up --kernel` run: the carried skills are in the
+  `nisse.user` entry's `data.skills`, and ChatGPT is sent each after the
+  message's text in `<skill>` tags. To drive what ChatGPT is told: `drive.ts r up --kernel
 --fake-openai text_answer,text_answer`, make the project as above, write a
   home `AGENTS.md`, `drive.ts r serve`, then
   `drive.ts r rpc conversation/start '{"cwd": "/tmp/nisse-verify/r/project/app", "provider": "openai", "approvals": "auto", "instructions": "Answer in Swedish."}'`
@@ -181,6 +184,11 @@ Preconditions:
   the override instead of `AGENTS.md`.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- skills-list, skills-attach, skills-snapshot: a skill named in a message comes with it as SKILL.md read then, for the model and every client
+- skills-list: a conversation on a provider that finds its own skills lists none, and an unknown one is refused
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
