@@ -3,7 +3,7 @@
 One server serves a home, shared by every client. The first client to need it
 starts it, clients starting at the same moment share it, a second server for
 the same home refuses to start, and the server exits 30 s after its last
-subscription closes and its last run settles. `nisse serve --restart` replaces a
+watch closes and its last run settles. `nisse serve --restart` replaces a
 running server once its runs settle.
 
 ## Sub-features
@@ -11,13 +11,14 @@ running server once its runs settle.
 - `server-on-demand` starts a server for the first `exec` or TUI.
 - `server-shared` lets clients that start together share one server.
 - `server-refuse` makes `nisse serve` refuse a home that already has a server.
-- `server-idle-exit` exits the server 30 s after its last subscription closes
+- `server-idle-exit` exits the server 30 s after its last watch closes
   and its last run settles.
 - `server-stop` stops it on `server/stop` once its runs settle.
 - `server-restart` replaces the running server with `nisse serve --restart`
   once its runs settle.
-- `server-old-home` keeps working in a home a Rust version of Nisse used: its
-  `nisse.sqlite` stays as it was, and this Nisse uses `store.sqlite` beside it.
+- `server-old-home` keeps working in a home an earlier Nisse used: its
+  older databases, such as `nisse.sqlite`, stay as they were, and this Nisse uses
+  `kernel.sqlite` beside them.
 
 ## How to get to it
 
@@ -33,7 +34,7 @@ running server once its runs settle.
 
 ### Triggers
 
-- The home has no open `conversation/subscribe`, `status/watch` or `auth/watch` stream and no running run for 30 s. A connection making only single calls does not keep the server alive.
+- The home has no open `conversation/watch`, `status/watch` or `auth/watch` stream and no running run for 30 s. A connection making only single calls does not keep the server alive.
 
 ## Driving it with drive.ts
 
@@ -71,22 +72,7 @@ Preconditions:
   `drive.ts r rpc server/stop`; the `--restart` command ends with exit 0 and
   stderr `nisse 0.1.0 serving /tmp/nisse-verify/r/home`.
 - **Restart waits for runs.** In a run whose script is
-  `[{"text": "starting", "tool": {"name": "Bash", "input": {"command": "sleep 8; echo woke"}}}, {"text": "finished"}]`,
-  run `drive.ts r serve`, `drive.ts r tui start --auto`,
-  `drive.ts r tui wait READY`, `drive.ts r tui type go`,
-  `drive.ts r tui key Enter`, `drive.ts r tui wait 'sleep 8'`, then
-  `drive.ts r nisse serve --restart &` and `doctor` as above: the pid does not
-  change until the call has run, about 8 s. Then `drive.ts r tui wait finished`
-  and `drive.ts r tui wait READY` show the finished run, and
-  `drive.ts r watch <id>` from a new connection shows `tool_result` `woke`,
-  `message` `finished` and one `run_end` with `"outcome": "answered"`.
-  This step fails today: the server is replaced, `watch` shows the whole run
-  committed, but the open TUI stays `WORKING` with no call output for good.
-  `nisse exec --auto go` in place of the TUI never exits either, and
-  `rpc server/stop` in place of `--restart` finishes the TUI as it should.
-
-- **Restart on the kernel.** In a run made with `drive.ts r up --kernel` and
-  the script `[{"text": "one two three four five six seven eight", "delayMs": 300}]`,
+  `[{"text": "one two three four five six seven eight", "delayMs": 300}]`,
   run `drive.ts r serve`, then `drive.ts r nisse exec count &` and, a second
   later, `drive.ts r nisse serve --restart &`. The `exec` prints
   `one two three four five six seven eight` and exits 0, and `doctor` then
@@ -99,32 +85,23 @@ Preconditions:
 
 ## Tests
 
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- server-idle-exit: the server exits once no client is connected and nothing is running
-- server-idle-exit: a submission's run keeps the server up after its client leaves, past the idle grace
-- server-stop: stopping the server answers the caller, then the server exits
-- server-stop: stopping the server while nisse answers lets the answer finish first
-
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- server-stop: nisse serve on the kernel answers server/stop, then exits 0
-- server-old-home: a home the shipping server used starts on the kernel and keeps its database as it was
-- server-restart: nisse serve --restart on the kernel replaces the running server once its run settles
-- mode-print, answer-exec, server-on-demand: nisse exec on the kernel starts a server, prints the answer and exits 0
-
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - server-idle-exit: the server exits once no client is connected and nothing is running
+- server-idle-exit: a submission's run keeps the server up after its client leaves, past the idle grace
+- server-idle-exit, child-tools: a subagent's work keeps the server up after its client leaves, past the idle grace
+- server-stop, child-tools: stopping the server lets a working subagent finish and report first
 - server-stop: stopping the server answers the caller, then the server exits
+- server-stop: stopping the server while nisse answers lets the answer finish first
 
 Stack, `packages/nisse/test/stack.test.ts`:
 
-- answer-exec, server-on-demand: nisse exec starts a server when none runs, prints the answer and exits 0
-- server-old-home: a home the Rust version used still works and keeps its database
+- server-stop: nisse serve answers server/stop, then exits 0
+- server-old-home: a home an earlier nisse used still starts, and its old stores are left as they were
+- mode-print, answer-exec, server-on-demand: nisse exec starts a server, prints the answer and exits 0
+- server-restart: nisse serve --restart replaces the running server once its run settles
 - server-shared: clients starting at the same moment share one server
-- server-on-demand: nisse exec says why the server it started could not run
-- server-refuse: a second server for the same home refuses to start
+- server-refuse: a second server for the same home refuses to start, and says which home
 
 ## Gotchas
 

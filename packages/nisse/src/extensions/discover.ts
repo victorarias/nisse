@@ -1,5 +1,5 @@
-// What both extension hosts share: finding a home's extensions on disk, deciding which load and with what options,
-// and importing one. The shipping host (`index.ts`) and the kernel's (`../kernel/extensions.ts`) run what this finds.
+// Finding a home's extensions on disk, deciding which load and with what options, and importing one. The extension
+// host (`index.ts`) runs what this finds.
 import { existsSync, readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { Cause, Effect } from "effect"

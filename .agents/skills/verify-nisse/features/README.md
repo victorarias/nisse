@@ -107,7 +107,7 @@ a `Driving it with drive.ts` recipe in the same change.
 Conditions a feature can behave differently under. Drive the ones its file
 lists when a change touches them.
 
-- **Second client.** Another client is subscribed to the same conversation.
+- **Second client.** Another client watches the same conversation.
 - **Server restart.** The server stops or crashes and a client brings it back.
 - **Provider.** Claude Code runs its own tools and session; on OpenAI, Nisse
   runs the loop; the scripted provider and the recordings stand in for them.
@@ -147,10 +147,9 @@ lists when a change touches them.
 - [Instructions and skills](./skills.md) (people, agents): `skills/list`, `/name` and `$name`
   carry a skill's `SKILL.md` with a message; OpenAI is told the `AGENTS.md`
   files and skills; Claude Code runs its own skills.
-- [Code mode](./code-mode.md) (people, agents): OpenAI's code-mode models run nisse's tools
-  from scripts in `codex-code-mode-host`; a missing host fails the run, and a
-  script stopped by `Esc`, `wait`, a dead host or a server stop tells the model
-  what its calls finished.
+- [Code mode](./code-mode.md) (people, agents): ChatGPT's code-mode-only models get one
+  `codemode` tool whose scripts call nisse's tools in a sandbox, asking like
+  direct calls, and survive a server restart.
 - [Subagents](./subagents.md) (people, agents): OpenAI and scripted models start subagents,
   each a conversation under its parent, shown as cards whose calls `^Y` and
   `^N` answer; follow-ups, history forks, model overrides, `[agents]` limits
@@ -163,12 +162,12 @@ lists when a change touches them.
   `conversation/select_model` choose a conversation's model; `config.toml`
   and the model chosen last set the default.
 - [Reopen and resume](./reopen.md) (people, agents): quitting prints how to reopen; reopening
-  and resubscribing with `sinceSeq` show the same committed transcript.
+  and watching again show the same committed transcript.
 - [Server lifecycle](./server-lifecycle.md) (people, agents, triggers): one server per home, started on
   demand, refusing a second, exiting 30 s after its last client leaves;
   `serve --restart` replaces it once runs settle.
 - [Wire protocol](./wire-protocol.md) (people, agents): the JSON Schema clients build from,
-  `initialize`, and how a subscription that falls behind is ended.
+  `initialize`, and how a watch that falls behind is ended.
 - [Crash recovery](./crash-recovery.md) (triggers): a run cut off by a killed server
   finishes when the server comes back, scripted or with a Claude Code subagent
   mid-run; the third crash in a row ends it.
@@ -198,11 +197,10 @@ The use cases of the kernel rebuild, one file per feature-ledger area.
 - [Extensions and registry](./registry.md) (kernel): Extensions package tools, hooks, sections, tasks, entries and documents, install and reload at runtime, and are selected per conversation.
 - [Hooks](./hooks.md) (kernel): Hooks let an extension shape requests, react to responses and tools, keep a run going, and start work at the end of a run, safely across restarts.
 - [Tools](./tools.md) (kernel): Tools return separate channels for the model, programs and clients, are bounded and replay-safe, and can call each other under the same hooks.
-- [Durable code mode](./durable-code-mode.md) (kernel): The model composes tool calls in a deterministic script that survives a server restart.
 - [Execution environments](./environments.md) (kernel): Tools work through an execution environment, per conversation, for commands, files and watches.
 - [Images](./images.md) (kernel): People and tools attach images; large ones are prepared off the server's line, and a model without image input still works.
 - [Watches and views](./views.md) (kernel): Clients and extensions follow conversations and documents through windowed views and in-process observers.
-- [Subagents on the kernel](./child-conversations.md) (kernel): Delegated work runs in a child conversation owned by the task or conversation that started it, foreground or background.
+- [Child conversations](./child-conversations.md) (kernel): Delegated work runs in a child conversation owned by the task or conversation that started it, foreground or background.
 - [Task kernel](./tasks.md) (kernel): Durable work is a task with phases and checkpoints, scheduled across restarts, waiting on other tasks, sleeping, and ending with a stored outcome.
 - [Inbox](./inbox.md) (kernel): The queue of inputs is durable state any client can read.
 - [Documents](./documents.md) (kernel): Typed JSON documents are committed with entries, scoped, forked, migrated and watched as small changes.

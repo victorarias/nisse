@@ -1,13 +1,13 @@
-// A home's providers on the kernel wire (NISSE_KERNEL=1): a real server in process, driven as a raw JSON-RPC client
+// A home's providers: a real server in process, driven as a raw JSON-RPC client
 // over its socket, with ChatGPT and Claude Code played by their fakes.
 import { expect, test } from "bun:test"
-import type { AuthState, ProviderModels, ProviderSnapshot } from "@nisse/wire"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
-import { FakeClaude } from "../support/claude.ts"
-import { EMAIL, FakeOpenAi, signIn } from "../support/openai.ts"
-import { errorTag, RawClient } from "../support/raw.ts"
-import { runningKernelServer, watchView } from "../support/kernel.ts"
-import { tempHome } from "../support/server.ts"
+import type { AuthState, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs"
+import { join } from "node:path"
+import { FakeClaude } from "./support/claude.ts"
+import { EMAIL, FakeOpenAi, signIn } from "./support/openai.ts"
+import { errorTag, RawClient } from "./support/raw.ts"
+import { runningServer, watchView, tempHome } from "./support/server.ts"
 
 const startWith = async (client: RawClient, ask: Record<string, string> = {}) => {
   const reply = await client.call("conversation/start", { cwd: "/work", ...ask })
@@ -32,7 +32,7 @@ test("provider-config, signin-status, model-list: two instances of one provider 
   // Its own fake, through the instance's env: each Claude provider probes its own Claude Code.
   using alt = new FakeClaude("models")
   await using fake = new FakeOpenAi()
-  await using server = await runningKernelServer([], {
+  await using server = await runningServer([], {
     openai: fake.options(),
     claude: claude.options,
     config: {
@@ -91,7 +91,7 @@ test("model-default: a new conversation takes the project's default model, else 
   const home = tempHome()
   try {
     {
-      await using server = await runningKernelServer([], {
+      await using server = await runningServer([], {
         home,
         config: { default_model: { provider: "openai", model: "gpt-test" } },
       })
@@ -102,13 +102,13 @@ test("model-default: a new conversation takes the project's default model, else 
       client.close()
     }
     {
-      await using server = await runningKernelServer([], { home })
+      await using server = await runningServer([], { home })
       const client = await RawClient.connect(server.home.socket)
       await startWith(client, { provider: "claude", model: "opus" })
       expect(await modelOf(client)).toEqual({ provider: "claude", model: "opus" })
       client.close()
     }
-    await using server = await runningKernelServer([], { home })
+    await using server = await runningServer([], { home })
     const client = await RawClient.connect(server.home.socket)
     expect(await modelOf(client)).toEqual({ provider: "claude", model: "opus" })
     client.close()
@@ -119,7 +119,7 @@ test("model-default: a new conversation takes the project's default model, else 
 })
 
 test("provider-unknown, model-flags: a conversation starts on the model and effort it names, and nisse refuses a provider or effort it does not have", async () => {
-  await using server = await runningKernelServer()
+  await using server = await runningServer()
   const client = await RawClient.connect(server.home.socket)
 
   const started = await startWith(client, { provider: "script", effort: "low" })
@@ -142,7 +142,7 @@ test("provider-unknown, model-flags: a conversation starts on the model and effo
 test("signin-device-code, signout: one instance signs in and out on its own, and every connection sees it", async () => {
   await using fake = new FakeOpenAi()
   fake.issueTokens("work", 3600)
-  await using server = await runningKernelServer([], {
+  await using server = await runningServer([], {
     openai: fake.options(),
     config: { providers: { "openai-work": { driver: "openai" } } },
   })
@@ -179,7 +179,7 @@ test("signin-device-code, signout: one instance signs in and out on its own, and
 
 test("provider-binary: a Claude provider whose binary is missing is unavailable, saying where it looked", async () => {
   const missing = "/tmp/nisse-no-claude-here"
-  await using server = await runningKernelServer([], {
+  await using server = await runningServer([], {
     config: { providers: { "claude-gone": { driver: "claude", binary: missing } } },
   })
   const client = await RawClient.connect(server.home.socket)
@@ -195,14 +195,14 @@ test("signin-shared: a sign-in the server stopped during is failed for every con
   const home = tempHome()
   let flow: string
   {
-    await using server = await runningKernelServer([], { home, openai: fake.options() })
+    await using server = await runningServer([], { home, openai: fake.options() })
     const client = await RawClient.connect(server.home.socket)
     const auth = client.watch<AuthState>("auth/watch")
     flow = ((await client.call("auth/start", { provider: "openai" })).result as AuthState).flow
     await auth.until((states) => states.some((state) => state.phase === "waiting"))
     client.close()
   }
-  await using server = await runningKernelServer([], { home, openai: fake.options() })
+  await using server = await runningServer([], { home, openai: fake.options() })
   const client = await RawClient.connect(server.home.socket)
   const auth = client.watch<AuthState>("auth/watch")
   await auth.until((states) => states.length > 0)
@@ -227,9 +227,125 @@ const browserCallback = (state: AuthState) => {
   return { answer, state: asked.searchParams.get("state")! }
 }
 
+/** The address the browser ends on once the person allows the sign-in, carrying `code`. */
+const allowed = (state: AuthState, code: string) => {
+  const { answer, state: expected } = browserCallback(state)
+  answer.search = new URLSearchParams({ code, state: expected }).toString()
+  return answer
+}
+
+const openai = async (client: RawClient) => (await listed(client)).find((provider) => provider.id === "openai")!
+
+test("signin-browser, openai-sign-in: signing in through a browser saves the tokens for this user only and names the account", async () => {
+  await using fake = new FakeOpenAi()
+  fake.issueTokens("first", 3600)
+  await using server = await runningServer([], { openai: fake.options() })
+  const client = await RawClient.connect(server.home.socket)
+  const auth = client.watch<AuthState>("auth/watch")
+  const before = await openai(client)
+  expect(before.health.status).toBe("signed_out")
+
+  await client.call("auth/start", { provider: "openai" })
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  const waiting = auth.items.find((state) => state.phase === "waiting")!
+  const asked = new URL((waiting.interaction as { url: string }).url)
+  expect(asked.searchParams.get("code_challenge_method")).toBe("S256")
+  expect(asked.searchParams.get("originator")).toBe("nisse")
+  expect((await fetch(allowed(waiting, "the-code"))).status).toBe(200)
+  await auth.until((states) => states.at(-1)?.phase === "succeeded")
+  expect(auth.items.at(-1)).toMatchObject({ provider: "openai", message: `${EMAIL} · ChatGPT Plus` })
+
+  const exchange = new URLSearchParams(fake.received.find((request) => request.path === "/oauth/token")!.body)
+  expect(exchange.get("code")).toBe("the-code")
+  expect(new Bun.CryptoHasher("sha256").update(exchange.get("code_verifier")!).digest("base64url")).toBe(
+    asked.searchParams.get("code_challenge")!,
+  )
+  expect(statSync(join(server.home.dir, "auth", "openai.json")).mode & 0o777).toBe(0o600)
+  expect((await openai(client)).health).toMatchObject({ status: "ready", account: `${EMAIL} · ChatGPT Plus` })
+  client.close()
+})
+
+test("signin-paste: the address a browser on another machine ends on, pasted back, finishes the sign-in", async () => {
+  await using fake = new FakeOpenAi()
+  fake.issueTokens("first", 3600)
+  await using server = await runningServer([], { openai: fake.options() })
+  const client = await RawClient.connect(server.home.socket)
+  const auth = client.watch<AuthState>("auth/watch")
+  const { flow } = (await client.call("auth/start", { provider: "openai", method: "browser" })).result as AuthState
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  const waiting = auth.items.find((state) => state.phase === "waiting")!
+
+  const answered = await client.call("auth/respond", {
+    provider: "openai",
+    flow,
+    response: { _tag: "callback", url: allowed(waiting, "pasted-code").toString() },
+  })
+  expect(answered.result).toEqual({ accepted: true })
+  await auth.until((states) => states.at(-1)?.phase === "succeeded")
+  const exchange = new URLSearchParams(fake.received.find((request) => request.path === "/oauth/token")!.body)
+  expect(exchange.get("code")).toBe("pasted-code")
+  expect((await openai(client)).health.status).toBe("ready")
+  client.close()
+})
+
+const modelList = (slug: string) => ({
+  models: [
+    {
+      slug,
+      display_name: slug.toUpperCase(),
+      visibility: "list",
+      priority: 1,
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }],
+      context_window: 272000,
+    },
+    { slug: "hidden", visibility: "hide", priority: 0 },
+  ],
+})
+
+const openAiModels = async (client: RawClient) =>
+  ((await client.call("models/list", {})).result as ReadonlyArray<ProviderModels>).find(
+    (list) => list.provider === "openai",
+  )!
+
+test("openai-models: OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't", async () => {
+  await using fake = new FakeOpenAi()
+  fake.modelList = modelList("gpt-test")
+  const home = tempHome()
+  try {
+    {
+      await using server = await runningServer([], { home, openai: fake.options() })
+      await signIn(server.home)
+      const client = await RawClient.connect(server.home.socket)
+      const models = await openAiModels(client)
+      client.close()
+      expect(models).toEqual({
+        provider: "openai",
+        defaultModel: "gpt-5.5",
+        models: [
+          {
+            id: "gpt-test",
+            name: "GPT-TEST",
+            efforts: ["low", "medium", "high"],
+            defaultEffort: "medium",
+            contextWindow: 272000,
+          },
+        ],
+      })
+    }
+    fake.modelList = undefined
+    await using server = await runningServer([], { home, openai: fake.options() })
+    const client = await RawClient.connect(server.home.socket)
+    expect((await openAiModels(client)).models.map((model) => model.id)).toEqual(["gpt-test"])
+    client.close()
+  } finally {
+    rmSync(home.dir, { recursive: true, force: true })
+  }
+})
+
 test("signin-refused: an answer for another sign-in is turned away, and a sign-in the browser refused fails saying why", async () => {
   await using fake = new FakeOpenAi()
-  await using server = await runningKernelServer([], { openai: fake.options() })
+  await using server = await runningServer([], { openai: fake.options() })
   const client = await RawClient.connect(server.home.socket)
   const auth = client.watch<AuthState>("auth/watch")
   await client.call("auth/start", { provider: "openai" })
@@ -249,7 +365,7 @@ test("signin-refused: an answer for another sign-in is turned away, and a sign-i
 
 test("signin-cannot: nisse refuses to sign in to a provider it does not have, one with nothing to sign in to, and a way the provider does not offer", async () => {
   await using fake = new FakeOpenAi()
-  await using server = await runningKernelServer([], { openai: fake.options() })
+  await using server = await runningServer([], { openai: fake.options() })
   const client = await RawClient.connect(server.home.socket)
   const unknown = await client.call("auth/start", { provider: "nowhere" })
   expect(errorTag(unknown)).toBe("UnknownProvider")

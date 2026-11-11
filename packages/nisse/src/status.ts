@@ -1,4 +1,4 @@
-// Tree status on the kernel (`status/watch`): a tree is a conversation people started and the subagents under it. A
+// Tree status (`status/watch`): a tree is a conversation people started and the subagents under it. A
 // conversation works while `pi.live` holds a run and waits while `nisse.approvals` holds a request without an answer;
 // a tree waits when any of its conversations waits, works when any works, and is idle otherwise. The tracker follows
 // every commit on the Session line from the documents the publication carries, so each status is the committed one at
@@ -12,7 +12,7 @@ import {
   type EntryRecord,
   readOnLine,
 } from "@nisse/kernel"
-import { FellBehind, RUN_END_KIND, type TreeItem, type TreeStatus } from "@nisse/wire"
+import { FellBehind, RUN_END_KIND, type TreeItem, type TreeStatus } from "@nisse/protocol"
 import { Cause, Effect, Queue, Stream } from "effect"
 import { endedAt, wireId } from "./conversations.ts"
 

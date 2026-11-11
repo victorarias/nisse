@@ -1,15 +1,11 @@
 import { NisseRpcs, PROTOCOL_VERSION } from "@nisse/protocol"
-import { KERNEL_PROTOCOL_VERSION, KernelRpcs } from "@nisse/wire"
 import { Schema } from "effect"
 import type * as Rpc from "effect/rpc/Rpc"
 import type * as RpcGroup from "effect/rpc/RpcGroup"
 import * as RpcSchema from "effect/rpc/RpcSchema"
 
-/** The JSON Schema of the shipping protocol, or with `kernel` of the wire a server under NISSE_KERNEL=1 speaks. */
-export const protocolSchema = (kernel = false) =>
-  kernel
-    ? groupSchema(KernelRpcs, "Nisse kernel protocol", KERNEL_PROTOCOL_VERSION)
-    : groupSchema(NisseRpcs, "Nisse protocol", PROTOCOL_VERSION)
+/** The JSON Schema of the protocol clients speak to the server. */
+export const protocolSchema = () => groupSchema(NisseRpcs, "Nisse protocol", PROTOCOL_VERSION)
 
 const groupSchema = <R extends Rpc.AnyWithProps>(group: RpcGroup.RpcGroup<R>, title: string, protocol: number) => {
   const definitions: Record<string, unknown> = {}

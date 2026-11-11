@@ -141,7 +141,7 @@ const ZERO_USAGE: Usage = {
 
 const toolName = (name: string) => (name.startsWith(OWN_TOOL) ? name.slice(OWN_TOOL.length) : name)
 
-const bundledExecutable = () => {
+export const bundledExecutable = () => {
   for (const variant of ["", "-musl"]) {
     try {
       return Bun.resolveSync(

@@ -3,9 +3,9 @@
 // unfinished cannot go on; the next server records it failed.
 import type { Harness } from "@nisse/harness"
 import { defineDoc, type JsonObject } from "@nisse/kernel"
-import { authEnded, type AuthState } from "@nisse/wire"
+import { authEnded, type AuthState } from "@nisse/protocol"
 import { Effect, Stream } from "effect"
-import type { SignInLog } from "../setup.ts"
+import type { SignInLog } from "./setup.ts"
 
 // Stored as JSON: an AuthState, as `stored` reads it back.
 export const SignInsDoc = defineDoc<{ states: { [provider: string]: JsonObject } }>({

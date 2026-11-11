@@ -35,7 +35,7 @@ run, instead of waiting for the run to end.
 Preconditions:
 
 - A run whose script is
-  `[{"text": "slow one two three four five six seven eight", "delayMs": 500, "tool": {"name": "Read", "input": {"file_path": "/etc/hostname"}}}, {"text": "steered reply"}]`.
+  `[{"text": "slow one two three four five six seven eight", "delayMs": 500, "tool": {"name": "read", "input": {"path": "/etc/hostname"}}}, {"text": "steered reply"}]`.
 
 - **Steer.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`,
   `drive.ts r tui type first`, `drive.ts r tui key Enter`,
@@ -46,20 +46,21 @@ Preconditions:
   `steering · go left`, and the `STEER · tab` panel.
 - **Placed.** Run `drive.ts r tui wait --timeout 20000 'steered reply'`,
   `drive.ts r tui wait READY`, `drive.ts r tui screen steered`. Under `NISSE`
-  the slow text and `▸ Read(/etc/hostname)`, then `ADA` over `go left`, then
+  the slow text and `▸ read(/etc/hostname)`, then `ADA` over `go left`, then
   `NISSE` over `steered reply`.
 - **Committed.** Run `drive.ts r rpc conversation/list` for the `<id>` and
-  `drive.ts r watch <id> --save steered`. The snapshot's entries run `user`
-  `first`, `message`, `tool_call`, `tool_result`, `user` `go left`,
-  `message` `steered reply`, and one `run_end`: one run, not two.
+  `drive.ts r watch <id> --save steered`. The view's entries run `pi.user`
+  `first`, a `pi.assistant` with the slow text and the call, its
+  `pi.tool-result`, `pi.user` `go left`, `pi.assistant` `steered reply`, and
+  one `nisse.run_end`: one run, not two.
 - **Wire.** In a fresh run with the same script, run `drive.ts r serve`, start
   a conversation with `rpc conversation/start '{"cwd": "/tmp"}'`, and run
   `drive.ts r watch <id> --submit first --until run_end --timeout 20000 --save wire &`.
-  Once a commit's `live` holds a `text` change, run
+  Once its output holds a live word, run
   `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "steer-1", "author": "bo", "text": "go left", "steer": true}'`.
-  The watch shows an `enqueued` commit with `"steer": true` and author `bo`,
-  then the same entries as above (the steer's `user` entry is authored by
-  `bo`), ending in one `run_end`.
+  The watch shows `go left` in `docs.pi.inbox.items` with `"mode": "steer"`,
+  then the same entries as above (the steer's `nisse.user` entry is authored
+  by `bo`), ending in one `nisse.run_end`.
 
 - **Claude.** In a fresh run made with `drive.ts r up --fake-claude steer`,
   run `drive.ts r tui start --provider claude`, `drive.ts r tui wait READY`,
@@ -72,9 +73,10 @@ Preconditions:
   `▸ Bash(touch steered.txt)` asking, `steering · Also end your reply with the word BANANA.`
   and `WAITING`. Press `C-y` and wait for `READY`. The screen shows
   `✓ allowed by ada`, `ADA` over the steer, then `NISSE` over `done` and
-  `done BANANA`. `drive.ts r watch <id> --save steered` has one `run_end`,
-  the steer's `user` entry after the `tool_result`, and `ended` saying
-  `answered` with `said` `done BANANA`. In `evidence/fake-claude/log.ndjson`
+  `done BANANA`. `drive.ts r watch <id> --save steered` has one
+  `nisse.run_end` and the steer's `pi.user` entry after the `pi.tool-result`,
+  and `drive.ts r rpc conversation/list` shows `ended` `answered` with `said`
+  `done BANANA`. In `evidence/fake-claude/log.ndjson`
   the steer is a second `user` frame sent to `"spawn": 0`, the process of the
   first prompt, with `"priority":"next"`; the first prompt's frame has none,
   and there is no `"spawn": 1`.
@@ -90,7 +92,7 @@ Preconditions:
   `drive.ts r tui screen two-steers`: each steer's `ADA` entry follows the
   result of the call that was running when it was sent, then `NISSE` answers
   `done` and `BANANA`, then `CHERRY`, `done` and `BANANA`. `watch <id>` has one
-  `run_end` and both steers' `user` entries before the answer. The log has both
+  `nisse.run_end` and both steers' `pi.user` entries before the answer. The log has both
   steers as `"priority":"next"` frames to `"spawn": 0`. The recording ends
   with a third prompt, `Reply with exactly: still here`, that Claude Code
   answered in the same process; Nisse starts a new Claude Code for every run,
@@ -128,8 +130,8 @@ Preconditions:
   answering `a.txt was off limits; b.txt holds banana.` and
   `b.txt holds banana. BANANA`. The log holds the steer as one `"priority":"next"`
   frame to `"spawn": 0`, and `watch <id>` has one
-  `run_end`. The recording's hook answer says `guard: a.txt is off limits`
-  where the log says `guard refused this call: a.txt is off limits`.
+  `nisse.run_end`. The recording's hook answer says `guard: a.txt is off limits`
+  where the log says `Tool call blocked: guard refused this call: a.txt is off limits`.
   Type the steer inside the ten seconds. A steer typed once `banana` shows
   has no call result left to travel with (see Gotchas): the recording waits
   for it, and the run stalls at `WORKING` with `steering · Also` showing.
@@ -138,27 +140,23 @@ Preconditions:
   `drive.ts r up --fake-openai steer_after_parallel_calls`, run
   `drive.ts r tui start --provider openai`, wait for `READY`, type
   `echo one and two` and `Enter`, and wait for `allow this call?` on
-  `▸ Bash(echo one)`. Press `Tab`, type `and three`, `Enter`, wait for
-  `steering · and three`, and press `C-y`. Wait for `Bash(echo two)` and
-  `allow this call?`: the steer is still `steering · and three`. Press `C-y`
-  and wait for `READY`. The screen shows both calls allowed with `one` and
-  `two`, `ADA` over `and three`, and `NISSE` over `One, two, and three.`.
-  `watch <id>` has `user` `echo one and two`, both calls, `approval`,
-  `approval_answer` and `tool_result` entries, `user` `and three`, the
-  `message` and one `run_end`. Both entries of
-  `evidence/fake-openai.ndjson` are `as recorded`: the second request holds
-  both calls' outputs and then `and three`, and the first holds no steer.
+  `▸ bash(echo one)`. Press `Tab`, type `and three`, `Enter`, wait for
+  `steering · and three`, and press `C-y`. Wait for `bash(echo two)` and
+  `allow this call?`, press `C-y` and wait for `READY`. The screen shows both
+  calls allowed with `one` and `two`, `ADA` over `and three`, and `NISSE`
+  over `One, two, and three.`. `watch <id>` has the `pi.user`
+  `echo one and two`, both calls and their results, the `pi.user`
+  `and three`, the answer and one `nisse.run_end`. In
+  `evidence/fake-openai.ndjson` the first request is `as recorded` and holds
+  no steer; the second holds both calls' outputs and then `and three`, and
+  `differs` only in order: nisse sends both calls, then both outputs, where
+  the recording paired each call with its output.
 
 ## Contexts
 
 - **Provider.** With calls running, a steer reaches the model after all of them, before its next answer.
-- **On the kernel.** In a run made with `drive.ts r up --kernel`, the TUI speaks the kernel wire and every TUI step above drives the same way; a script names the kernel's tools in lower case, such as `bash` and `read`, so a call shows as `▸ bash(<command>)`.
 
 ## Tests
-
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
-
-- steer-toggle, steer-show: tab switches a prompt sent mid-run from queueing to steering, and the steer shows until it lands
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
@@ -166,16 +164,20 @@ Wire, `packages/nisse/test/wire.test.ts`:
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- steer-toggle: tab switches a prompt sent mid-run from queueing to steering the run
+- steer-toggle, steer-show: tab switches a prompt sent mid-run from queueing to steering, and the steer shows until it lands
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
 - steer-openai: a steer sent while calls run reaches the model after all of them, before its next answer
-- skills-attach: a skill named in a steer comes with it for the model the run is using, even after a switch
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
 - steer-claude: a steer sent while Claude works reaches Claude Code in the same run
+- steer-claude: two steers each reach Claude Code after the result of the call that was running
+
+Package, `packages/claude/test/claude.test.ts`:
+
+- steer-claude: a steer sent between the results of parallel calls reaches Claude Code after both
 
 ## Gotchas
 
@@ -189,7 +191,7 @@ Provider, `packages/nisse/test/claude.test.ts`:
   prompt; pressing `Escape` on the stalled `steer_mid_message` run shows it
   start a run of its own. What a real Claude Code does meanwhile is checked
   in With a real account.
-- The Claude and OpenAI steps hold the run at an approval or a hook so that
+- The Claude steps hold the run at an approval or a hook so that
   the steer lands inside the run; the fakes wait for a steer the recording
   has, whatever the timing, so a steer sent late stalls the run.
 - `Tab` does nothing while Nisse is ready; the panel then reads `PROMPT`. A
@@ -205,10 +207,10 @@ SKILL.md's "Real accounts" first, and run the first check before any step.
   ``Run the bash command `touch /tmp/nisse-verify/r/steered.txt` with the Bash tool, then reply with exactly: done``.
   At `allow this call?` press `Tab`, type
   `Also end your reply with the word BANANA.` and `Enter`, then press `C-y`.
-  Wait `--timeout 120000` for `READY`. The final `message` ends with
-  `BANANA`, the steer's `user` entry sits between the `tool_result` and the
-  `message` in `drive.ts r watch <id> --save real-claude-steer`, and the
-  conversation has one `run_end`. `ls /tmp/nisse-verify/r/steered.txt` shows
+  Wait `--timeout 120000` for `READY`. The final answer ends with
+  `BANANA`, the steer's `pi.user` entry sits between the `pi.tool-result` and
+  the answer in `drive.ts r watch <id> --save real-claude-steer`, and the
+  conversation has one `nisse.run_end`. `ls /tmp/nisse-verify/r/steered.txt` shows
   the file. Needs no person once Claude Code is signed in.
 - **Claude, a steer after the last result.** In the same run, after
   `drive.ts r tui stop`, run `drive.ts r tui start --provider claude --auto`,
@@ -217,16 +219,16 @@ SKILL.md's "Real accounts" first, and run the first check before any step.
   and `Enter`. Once `▸ Bash(echo hi)` shows `hi` and the status is still
   `WORKING`, press `Tab`, type `Now reply with exactly: BANANA` and `Enter`,
   and wait `--timeout 120000` for `READY`. Today's behaviour, which this
-  checks: the story ends the first run, the steer's `user` entry follows that
-  run's `run_end`, and a second run answers `BANANA`; `drive.ts r watch <id> --save real-claude-late-steer` shows two `run_end`s. Report what the screen and
+  checks: the story ends the first run, the steer's `pi.user` entry follows that
+  run's `nisse.run_end`, and a second run answers `BANANA`; `drive.ts r watch <id> --save real-claude-late-steer` shows two `nisse.run_end`s. Report what the screen and
   the watch show if they differ: a steer folded into the story, a steer that
   never runs, or a run that does not end.
 - **ChatGPT.** Start with `drive.ts r up --openai-auth <file>`. Run
   `drive.ts r tui start --provider openai`, wait for `READY`, and type
-  ``Run `echo one` and then `echo two` with the Bash tool, one call at a time, then say what they printed.``.
+  ``Run `echo one` and then `echo two` with the bash tool, one call at a time, then say what they printed.``.
   At the first `allow this call?` press `Tab`, type
   `Also end your answer with the word BANANA.` and `Enter`, then press `C-y`
   at each call that follows. Wait `--timeout 120000` for `READY`. The final
-  `message` ends with `BANANA`, and `watch` shows one `run_end` with the
-  steer's `user` entry after the first `tool_result` and before the
-  `message`. Needs no person once the sign-in is kept.
+  answer ends with `BANANA`, and `watch` shows one `nisse.run_end` with the
+  steer's `pi.user` entry after the first `pi.tool-result` and before the
+  answer. Needs no person once the sign-in is kept.

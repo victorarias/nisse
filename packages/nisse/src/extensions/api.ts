@@ -1,24 +1,28 @@
-import type { CallId, Conversation } from "@nisse/protocol"
+import type { ConversationId, Lineage, ModelSelection } from "@nisse/protocol"
 import { Effect, Schema, type Scope } from "effect"
 import { failed, ok, tool, type Tool as NisseTool, type ToolOutcome } from "../tools/tool.ts"
 
 export class Refused extends Schema.TaggedError<Refused>()("Refused", { message: Schema.String }) {}
 
-export interface ConversationHandle extends Pick<Conversation, "id" | "cwd" | "model" | "lineage"> {
+export interface ConversationHandle {
+  readonly id: ConversationId
+  readonly cwd: string
+  readonly model: ModelSelection
+  readonly lineage?: Lineage
   readonly status: (text?: string) => Effect.Effect<void>
   readonly toast: (text: string) => Effect.Effect<void>
 }
 
 export interface ToolCall {
   readonly conversation: ConversationHandle
-  readonly call: CallId
+  readonly call: string
   readonly tool: string
   input: unknown
 }
 
 export interface ToolResult {
   readonly conversation: ConversationHandle
-  readonly call: CallId
+  readonly call: string
   readonly tool: string
   readonly input: unknown
   outcome: { output: string; error: boolean }

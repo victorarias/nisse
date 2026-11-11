@@ -2,35 +2,34 @@
 
 Every client speaks newline-delimited JSON-RPC 2.0 over the home's
 `nisse.sock`. A new client starts from the schema Nisse prints and says hello
-with `initialize`. A subscription whose client stops reading is ended so it can
+with `initialize`. A watch whose client stops reading is ended so it can
 never slow the server, and a client that hangs up, even mid-answer, just
 leaves: the server logs no error for it.
 
 ## Sub-features
 
-- `wire-schema` prints the protocol's JSON Schema and version, and with `--kernel` the kernel wire's.
+- `wire-schema` prints the protocol's JSON Schema and version.
 - `wire-initialize` answers a client with the server's version and protocol.
 - `wire-malformed` answers a call with missing fields with an error that names
   the field.
-- `wire-dropped` ends a subscription that falls 4096 commits behind with a
-  `FellBehind` error; the connection stays open.
+- `wire-dropped` ends a watch that leaves 4096 changes unread with a
+  `FellBehind` error and its `limit`; the connection stays open.
 - `wire-hangup` ends the connection of a client that hangs up while the
   server is still writing to it the way a clean close does: no error in the
   server's log, and other clients carry on.
-- `wire-unknown` says so when a client subscribes to a conversation that does
-  not exist.
+- `wire-unknown` says so when a client watches a conversation that does not
+  exist.
 
 ## How to get to it
 
 ### People
 
-- Run `nisse schema`, or `nisse schema --kernel` for the kernel wire.
+- Run `nisse schema`.
 
 ### Agents
 
 - Call `initialize` on the home's socket.
-- Build a client from `schema/nisse.schema.json`, or for a server under
-  `NISSE_KERNEL=1` from `schema/nisse.kernel.schema.json`.
+- Build a client from `schema/nisse.schema.json`.
 
 ### Triggers
 
@@ -49,12 +48,11 @@ Preconditions:
   `--- stdout` and `--- stderr`, is the same text as
   `schema/nisse.schema.json`.
 - **Initialize.** Run `drive.ts r serve`, then
-  `drive.ts r rpc initialize '{"client": "verify", "version": "1", "protocol": 8}'`:
+  `drive.ts r rpc initialize '{"client": "verify", "version": "1", "protocol": 1}'`:
   a result with the server's `version` and the `protocol` that `nisse schema`
-  printed.
+  printed, `1`.
 - **Malformed.** Run `drive.ts r rpc initialize '{"client": "verify"}'`: exit
-  1, and an `error` with `"_tag": "Cause"` whose message says `Missing key` at
-  `version`.
+  1, and an `error` whose message names `version`.
 - **Hang up.** In a run made with `--script` whose one step is a long `text`
   with `"delayMs": 10` (400 words), run `drive.ts r serve`,
   `drive.ts r tui start`, `drive.ts r tui wait READY`, `drive.ts r tui type go`,
@@ -68,36 +66,21 @@ Preconditions:
 
 ## Contexts
 
-- **On the kernel.** In a run made with `drive.ts r up --kernel`, run
-  `drive.ts r nisse schema --kernel`: JSON titled `Nisse kernel protocol`,
-  the same text as `schema/nisse.kernel.schema.json`. `drive.ts r serve` and
-  `drive.ts r rpc initialize '{"client": "verify", "version": "1", "protocol": 1}'`
-  answer with the server's `version` and `"protocol": 1`. A watch that falls
-  4096 changes behind ends with `FellBehind` and its `limit`; the client
-  watches again with `window.from` set to the entry after the last it holds.
+None.
 
 ## Tests
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- wire-malformed: a call missing a field is answered with an error that names it, and the connection goes on
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- wire-dropped: a client that stops reading is dropped while the others keep up
-- wire-hangup: a client that hangs up while the server still writes to it is not logged as an error
-- wire-unknown: watching a conversation that does not exist says so
-- wire-initialize: a client is answered with the server's version and the kernel protocol
-
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- wire-schema: nisse schema --kernel prints the kernel wire's schema, the one committed beside the code
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - wire-dropped: a client that stops reading is dropped while the others keep up
 - wire-hangup: a client that hangs up while the server still writes to it is not logged as an error
-- wire-unknown: subscribing to a conversation that does not exist says so
+- wire-unknown: watching a conversation that does not exist says so
+- wire-initialize: a client is answered with the server's version and the protocol
+- wire-malformed: a call missing a field is answered with an error that names it, and the connection goes on
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- wire-schema: nisse schema prints the protocol's schema, the one committed beside the code
 
 ## Gotchas
 
@@ -110,8 +93,8 @@ Wire, `packages/nisse/test/wire.test.ts`:
 - `initialize` does not refuse a client that sends another protocol number; a
   client has to compare the answer itself. Nisse's own TUI and `exec` do not
   call `initialize`.
-- A client handles `FellBehind` by subscribing again with `sinceSeq` set to the
-  last commit it received. The socket does not close, so waiting for it to
-  close never notices.
+- A client handles `FellBehind` by watching again with `window.from` set to
+  the entry after the last it holds. The socket does not close, so waiting
+  for it to close never notices.
 - After a protocol change, run `bun run schema` and commit
-  `schema/nisse.schema.json` and `schema/nisse.kernel.schema.json`.
+  `schema/nisse.schema.json`.

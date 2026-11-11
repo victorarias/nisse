@@ -1180,7 +1180,7 @@
     "area": "M",
     "feature": "Nested calls pass hooks and approvals (\u00a77.6)",
     "verdict": "bring",
-    "useCases": ["codemode-nested-policy", "code-mode-approvals"]
+    "useCases": ["codemode-nested-policy"]
   },
   {
     "id": "M6",
@@ -1390,7 +1390,7 @@
     "area": "P",
     "feature": "Resume a watch from a position (\u00a79.3)",
     "verdict": "bring",
-    "useCases": ["view-resume", "resume-since"]
+    "useCases": ["view-resume"]
   },
   {
     "id": "P3",

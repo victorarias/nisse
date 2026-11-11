@@ -16,8 +16,8 @@ printing the answer and exiting 0, or 1 when the run fails.
 - `answer-exec` prints the answer on stdout and exits 0.
 - `answer-exec-fail` prints what was said, reports the failure on stderr and
   exits 1.
-- `answer-wire` submits over the protocol and sees the user entry, live text,
-  the `message` entry and the `run_end` entry as commits.
+- `answer-wire` submits over the protocol and sees the `pi.user` entry, live
+  text, the `pi.assistant` entry and the `nisse.run_end` entry as changes.
 - `answer-shared` shows a run started in the TUI to a second client.
 - `submit-author` names who wrote each prompt: the `author` of
   `conversation/submit` is on the prompt while it waits in the queue and on its
@@ -65,7 +65,7 @@ Preconditions:
   `drive.ts r tui wait 'You said: first line'`, `drive.ts r tui wait READY`,
   `drive.ts r tui screen sent`: `ADA` over the three lines and `NISSE` over
   `You said: first line`, `second line`, `third line`; `drive.ts r watch <id>`
-  holds one `user` entry whose `text` is `first line\nsecond line\nthird line`.
+  holds one `pi.user` entry whose text is `first line\nsecond line\nthird line`.
   Then, in a fresh run, type `aa`, press `drive.ts r tui key C-j`, type
   `bb`: the panel holds two lines and nothing was sent. This fails today:
   `C-j` sends `aa` at once.
@@ -77,41 +77,36 @@ Preconditions:
   and `drive.ts r tui wait --gone row60`: earlier rows show.
 - **Shared.** With the TUI still open, run `drive.ts r rpc conversation/list`
   and take the conversation's `id`, then
-  `drive.ts r watch <id> --save shared`. The snapshot holds the `user` entry,
-  a `message` entry with `You said: hello nisse`, and a `run_end` entry with
-  `"outcome": "answered"`.
+  `drive.ts r watch <id> --save shared`. The first view's `entries` hold
+  `pi.user`, a `pi.assistant` with `You said: hello nisse`, and a
+  `nisse.run_end` with `"outcome": "answered"`.
 - **Exec.** Run `drive.ts r nisse exec 'hello there'`. Exit 0, stdout
   `You said: hello there`, empty stderr.
 - **Exec fails.** In the failing run, run `drive.ts r nisse exec go`. Exit 1,
-  stdout `half an `, stderr `provider went away`.
+  stdout `half an `, stderr `provider went away`. A prompt `exec` queued
+  behind another run that an interrupt withdraws ends `exec` with exit 1 and
+  `the prompt was withdrawn before it ran, as an interrupt withdraws what waits`.
 - **Wire.** Run `drive.ts r serve`, then
   `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` and take its `id`, then
   `drive.ts r watch <id> --submit 'tell me about the queue and the steering' --until run_end --save wire`.
-  The lines show the submit reply, a commit with `enqueued`, a commit with the
-  `user` entry and `"status": "working"`, commits whose `live` changes append
-  text, a commit with the `message` entry, and a commit with the `run_end`
-  entry and `"status": "idle"`.
+  The lines show the view, the submit reply, then one `change` per commit:
+  `pi.user` spliced into `entries`, live words as `"a"` ops on
+  `docs.pi.live.generation.message`, then `pi.assistant` and `nisse.run_end`.
 
 ## Contexts
 
-- **On the kernel.** In a fresh run made with `drive.ts r up --kernel`, `drive.ts r nisse exec 'hello there'`
-  prints `You said: hello there`, exit 0. With the `answer-exec-fail` script, `drive.ts r nisse exec go` prints
-  `half an ` on stdout and `provider went away` on stderr, exit 1. A prompt `exec` queued behind another run that an
-  interrupt withdraws ends `exec` with exit 1 and `the prompt was withdrawn before it ran, as an interrupt withdraws
-what waits`.
 - **Second client.** Every client sees the prompt and the same answer.
 - **Server restart.** A run the crash cut off finishes when the server returns, as [Crash recovery](./crash-recovery.md) says.
-- **On the kernel.** In a run made with `drive.ts r up --kernel`, the TUI speaks the kernel wire and every TUI step above drives the same way; a script names the kernel's tools in lower case, such as `bash` and `read`, so a call shows as `▸ bash(<command>)`.
 
 ## Tests
 
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+Wire, `packages/nisse/test/wire.test.ts`:
 
-- mode-print, answer-exec, server-on-demand: nisse exec on the kernel starts a server, prints the answer and exits 0
-- mode-print, answer-exec-fail: nisse exec on the kernel exits 1 and says why when the run fails
-- answer-exec-fail: nisse exec on the kernel exits 1 when an interrupt withdraws its queued prompt, instead of waiting for good
+- answer-wire, answer-shared: every client of a conversation sees the prompt, the answer and how the run ended
+- answer-failed: a model failure is recorded after what was said and the conversation goes idle
+- submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs
 
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+Screen, `packages/nisse/test/screen.test.ts`:
 
 - answer-tui, answer-author: a person types a prompt, presses enter and reads the answer under their name
 - answer-author: without USER the TUI names a person's message after the system's user name
@@ -119,25 +114,11 @@ Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE
 - tui-hangup, idle-closed: closing the terminal ends nisse instead of leaving it running unseen
 - answer-scroll, tui-load-earlier: a conversation longer than the window scrolls back to its first message, loading earlier entries on the way, and a reconnect leaves no gap
 
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- answer-wire, answer-shared: every client of a conversation sees the prompt, the answer and how the run ended
-- answer-failed: a model failure is recorded after what was said and the conversation goes idle
-- submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs
-
-Wire, `packages/nisse/test/wire.test.ts`:
-
-- answer-wire, answer-shared: every client of a conversation sees the prompt and the same answer
-- answer-failed: a model failure is recorded after what was said and the conversation goes idle
-
-Screen, `packages/nisse/test/screen.test.ts`:
-
-- answer-tui: a person types a prompt, presses enter and reads the answer under their name
-
 Stack, `packages/nisse/test/stack.test.ts`:
 
-- answer-exec-fail: nisse exec exits 1 and reports the failure when the run fails
-- answer-exec: nisse exec finishes when nisse answers with nothing
+- mode-print, answer-exec, server-on-demand: nisse exec starts a server, prints the answer and exits 0
+- mode-print, answer-exec-fail: nisse exec exits 1 and says why when the run fails
+- answer-exec-fail: nisse exec exits 1 when an interrupt withdraws its queued prompt, instead of waiting for good
 
 ## Gotchas
 
@@ -146,11 +127,11 @@ Stack, `packages/nisse/test/stack.test.ts`:
   the message; a terminal that reports shifted keys, such as one speaking the kitty keyboard protocol, tells them apart.
 - `exec` starts a new conversation each time unless given
   `--conversation <id>`.
-- `watch --until run_end` only looks at commits after the snapshot. To see a
-  run that already ended, read the snapshot instead.
+- `watch --until run_end` only looks at changes after the first view. To see a
+  run that already ended, read the first view instead.
 - Live text is committed at most every 100 ms. The echo of a prompt of two or
-  three words finishes sooner and commits its `message` with no `live` text
+  three words finishes sooner and commits its `pi.assistant` with no live text
   before it; a longer prompt, or a script with `delayMs`, shows live text
   arrive.
-- A failed run ends with `"outcome": "failed"` and its `message`; the TUI
+- A failed run ends with a `nisse.run_end` of `"outcome": "failed"` and its `message`; the TUI
   shows it as `✗ <message>`.

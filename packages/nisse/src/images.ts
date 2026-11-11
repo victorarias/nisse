@@ -2,7 +2,7 @@
 // screenshot larger than its limits is resized, a BMP converted, before it is committed.
 import type { ImageContent, Models } from "@nisse/models"
 import { type ImageProcessor, imageLimitsOf } from "@nisse/tools"
-import { UnreadableImage, type Image } from "@nisse/wire"
+import { UnreadableImage, type Image } from "@nisse/protocol"
 import { Effect } from "effect"
 
 /** Each of `images` as the model `agent` runs on can take it, in order; the first it cannot prepare fails the input. */

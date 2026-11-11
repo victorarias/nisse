@@ -39,15 +39,16 @@ Preconditions:
   `queued · second` above the `QUEUE · tab` panel.
 - **Shared.** While it is queued, run `drive.ts r rpc conversation/list` for
   the conversation's `<id>`, then `drive.ts r watch <id> --save queued`. The
-  snapshot's `queued` list holds `second` with `"steer": false`; `status` is
-  `working`. `conversation/list` does not show the queue.
+  view's `docs.pi.inbox.items` holds `second` with `"mode": "followUp"`, and
+  `docs.pi.live.run` is set while the run works. `conversation/list` does not
+  show the queue.
 - **Runs in order.** Run `drive.ts r tui wait --timeout 20000 'fast reply'`,
   `drive.ts r tui wait --gone 'queued · second'`, `drive.ts r tui wait READY`,
   `drive.ts r tui screen drained`. On the screen
   `slow one two three four five six seven eight` answers `first`,
-  `fast reply` answers `second`, and the queue is empty. A second `watch <id> --save after` shows the `run_end` of `first` before the
-  `user` entry of `second`, and the conversation's `ended` says `answered`
-  with `said` `fast reply`.
+  `fast reply` answers `second`, and the queue is empty. A second `watch <id> --save after` shows the `nisse.run_end` of `first` before the
+  `pi.user` entry of `second`, and `conversation/list` shows the
+  conversation's `ended` as `answered` with `said` `fast reply`.
 - **Wire.** In a fresh run with the same script, run `drive.ts r serve`, start
   a conversation with `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`,
   and run
@@ -56,42 +57,34 @@ Preconditions:
   `third` once, each as
   `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "q-1", "author": "bo", "text": "second"}'`
   (`q-2` and `third` for the last). The two `q-1` calls answer with the same
-  `submission`. A `drive.ts r watch <id>` while `first` still streams has a
-  `queued` list of `second` then `third`, both `"steer": false` and authored
-  `bo`. Once the runs settle, a fresh `watch <id>` shows `user` `first`,
-  `message` `slow one two three four five six seven eight`, `run_end`, `user`
-  `second`, `message` `fast reply`, `run_end`, `user` `third`, `message`
-  `You said: third` (the script has run out, so Nisse echoes) and `run_end`:
-  `second` once, and an empty queue.
+  `submission`. A `drive.ts r watch <id>` while `first` still streams has
+  `docs.pi.inbox.items` of `second` then `third`, both `"mode": "followUp"`,
+  each carrying a `nisse.user` entry with `{"author": "bo"}`. Once the runs
+  settle, a fresh `watch <id>` shows `pi.user` `first`, `pi.assistant`
+  `slow one two three four five six seven eight`, `nisse.run_end`, `pi.user`
+  `second`, `pi.assistant` `fast reply`, `nisse.run_end`, `pi.user` `third`,
+  `pi.assistant` `You said: third` (the script has run out, so Nisse echoes)
+  and `nisse.run_end`: `second` once, and an empty inbox.
 
 ## Contexts
 
 - **Second client.** The queue shows to every client.
-- **On the kernel.** In a run made with `drive.ts r up --kernel`, the TUI speaks the kernel wire and every TUI step above drives the same way; a script names the kernel's tools in lower case, such as `bash` and `read`, so a call shows as `▸ bash(<command>)`.
 
 ## Tests
 
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
-
-- queue-show: a prompt sent while nisse works waits in the queue, then runs
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+Wire, `packages/nisse/test/wire.test.ts`:
 
 - queue-idempotent: submitting again with the same request id is answered once
 - queue-run: prompts sent while nisse is working wait and run in order, each to its own end
-
-Provider on the kernel, `packages/nisse/test/kernel/claude.test.ts`:
-
-- queue-run: a prompt sent while Claude works runs once Claude answers, resuming the same session
-
-Wire, `packages/nisse/test/wire.test.ts`:
-
-- queue-run, queue-shared: prompts sent while nisse is working wait in a visible queue and run in order
-- queue-idempotent: submitting again with the same request id is answered once
+- submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
 - queue-show: a prompt sent while nisse works waits in the queue, then runs
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- queue-run: a prompt sent while Claude works runs once Claude answers, resuming the same session
 
 ## Gotchas
 

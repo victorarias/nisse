@@ -34,13 +34,13 @@ bun install                                                  # once per checkout
 
 The model is the only thing a run fakes. A script is a JSON array of steps,
 the same format `NISSE_MODEL_SCRIPT` takes, such as
-`[{"tool": {"name": "Bash", "input": {"command": "ls"}}}, {"text": "hello", "delayMs": 50}, {"text": "half", "fail": "provider went away"}]`.
+`[{"tool": {"name": "bash", "input": {"command": "ls"}}}, {"text": "hello", "delayMs": 50}, {"text": "half", "fail": "provider went away"}]`.
 The server takes
 the steps in order across all its runs: a step says its `text`, then fails the
 run with `fail`, or calls its `tool` and goes on to the next step in the same
 run, or ends the run. Once the steps run out Nisse echoes, and a restarted
 server starts them over. `--script` copies the file into the run, so later
-edits to it do nothing. On `--kernel` a step can also make several calls in
+edits to it do nothing. A step can also make several calls in
 one response with `tools`, a list of `{name, input}`, and `agent` (such as
 `/root/writer`) gives a step to that subagent's requests. `up` with or without a script makes the scripted
 provider the one a conversation falls back to; real providers and models are
@@ -80,26 +80,10 @@ departs from its recording says which requests will differ. The fixtures'
 `scenario` line says what each one holds. Both fakes reach every window the run
 opens, and a run can use both, alongside a `--script`.
 
-The kernel being built beside today's server runs with `NISSE_KERNEL=1`:
-`drive.ts r1 up --kernel` makes every server of the run start that way, on
-`kernel.sqlite` and the kernel wire (`schema/nisse.kernel.schema.json`). It
-serves `initialize`, `conversation/start` (with `instructions`),
-`conversation/submit` (with `steer`), `conversation/watch`,
-`conversation/interrupt`, `approval/resolve`, `extensions/list`,
-`extensions/reload`, `status/watch`, `server/stop`, `providers/list`,
-`models/list` and the `auth/*` calls, and loads the home's extensions as
-[Extensions](features/extensions.md) says. Every provider lists, signs in and
-out, and `conversation/start` picks a model as on today's server. Every
-provider answers: `script`, ChatGPT (`openai`, see [OpenAI](features/openai.md))
-and Claude, as the `claude.run` task (see [Claude](features/claude.md)).
-`rpc`, `watch`, `watch-auth`, `watch-status`, `serve`, `nisse`, `kill-server`, `idle`,
-`doctor` and `down` work in such a run; `watch` follows the conversation's view (see
-[Watches and views](features/views.md)) and `--until run_end` waits for a
-`nisse.run_end` entry. The TUI runs on the kernel too, drawing the
-conversation's view: every `tui` step drives it, and a script names the
-kernel's tools in lower case (`bash`, `read`). Every `nisse` command speaks
-the kernel wire: `exec` (with `--json`, see [Modes](features/modes.md)),
-`login`, `logout`, `extensions` and `serve --restart`.
+`watch` follows a conversation's view (see
+[Watches and views](features/views.md)), and `--until run_end` waits for a
+`nisse.run_end` entry. A script names nisse's tools in lower case (`bash`,
+`read`). The server's database is `kernel.sqlite` in the home.
 
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its
@@ -202,7 +186,7 @@ terminal as `tui-exit.screen.txt`; `watch --save <name>` and
 Proof standards:
 
 - Drive the user's path: keys in the TUI, `nisse` commands, protocol calls.
-  Never write to `store.sqlite` or call into server code to set up state.
+  Never write to `kernel.sqlite` or call into server code to set up state.
 - Capture the action and the state it led to: the screen before and after,
   and what a second client saw over the wire. A screen alone does not show
   what was committed; `watch` shows the commits.

@@ -16,7 +16,7 @@ compaction; `/clear` starts a new context in nisse's transcript too.
 
 ## Sub-features
 
-- `claude-answer` streams Claude's answer and commits it as a `message`.
+- `claude-answer` streams Claude's answer and commits it as a `pi.assistant` entry.
 - `claude-approval` turns a Claude Code permission prompt into
   `allow this call?`; `^Y` lets the call run, `^N` refuses it.
 - `claude-read` shows a call Claude Code allows on its own, such as a `Read`,
@@ -107,8 +107,10 @@ Preconditions:
   `▸ Read(<checkout>/notes.txt)` over the recorded lines
   `1  the gnome lives under the floor`, then `Under the floor.`, and no
   `allow this call?` was ever shown. The log has no `"answered": "can_use_tool"`
-  line. `drive.ts r watch <id> --save read` holds `tool_call`, `tool_result`,
-  `message` and `run_end` `answered`. In a fresh run,
+  line. `drive.ts r watch <id> --save read` holds `pi.user`, a `pi.assistant`
+  calling `Read`, its `pi.tool-result`, the answer `Under the floor.` and a
+  `nisse.run_end` `answered`; `docs` holds `pi.usage` with the run's spend.
+  A second `watch <id> --save reopen` shows the same entries. In a fresh run,
   `drive.ts r nisse exec --provider claude 'Use the Read tool to read notes.txt, then reply with where the gnome lives, in three words.'`
   exits 0 with stderr `› Read(<checkout>/notes.txt)` and no denial, stdout
   `Under the floor.`
@@ -129,7 +131,7 @@ Preconditions:
   exit 0, stdout `PLUM`. The log's `"spawn": 1` argv has
   `--resume=<spawn 0's --session-id>` and `--resume-session-at=...`: the new
   server resumed Claude Code's session. `drive.ts r watch <id> --save resumed`
-  shows both runs' `user`, `message` and `run_end` entries.
+  shows both runs' `pi.user`, `pi.assistant` and `nisse.run_end` entries.
 - **Session gone** (`session_gone`). Run
   `drive.ts r nisse exec --provider claude 'Remember the word PLUM. Reply with exactly: noted'`:
   stdout `noted`. Then
@@ -155,9 +157,9 @@ Preconditions:
   `resumed ok`. The TUI started the new server. The log's `"spawn": 1`
   resumes the session and received
   `Your Bash call <call> was cut off: interrupted; it may or may not have taken effect`.
-  `drive.ts r watch <id> --save cut-off` holds one `tool_call`, its
-  `tool_result` with that output and `"error": true`, a `message` and a
-  `run_end` with `"outcome": "answered"`.
+  `drive.ts r watch <id> --save cut-off` holds one `pi.assistant` calling
+  `Bash`, its `pi.tool-result` with that output and `"isError": true`, the
+  answer and a `nisse.run_end` with `"outcome": "answered"`.
 - **Health** (`models`, the default: a plain `drive.ts r up` plays it too).
   Run `drive.ts r serve`, then `drive.ts r rpc providers/list '{}'`: `claude`
   with `"signIn": ["terminal"]` and
@@ -178,7 +180,7 @@ Preconditions:
   stdout `one, two`. The log's `"spawn": 1` argv holds `--model=sonnet`,
   `--effort=low` and `--resume=<spawn 0's --session-id>`: the same session
   goes on with the new model. `drive.ts r watch <id> --save switched` shows a
-  `model` entry with that selection between the two runs. This departs from
+  `nisse.model` entry with that selection between the two runs. This departs from
   the recording: its second prompt, `Reply with exactly: two`, went to the
   first process after an in-process `set_model`, and nisse now starts a
   process per run, so the step leaves that prompt out. The answer
@@ -198,7 +200,7 @@ Preconditions:
   `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "bo", "selection": {"provider": "claude", "model": "haiku"}}'`
   and
   `drive.ts r watch <id> --submit 'Which word did I ask you to remember? Reply with just the word.' --until run_end --save switched`:
-  a `model` entry, then the `message` `lantern`. The log's `"spawn": 0` has
+  a `nisse.model` entry, then the answer `lantern`. The log's `"spawn": 0` has
   a `--session-id` and received one user message of six texts:
   `This Claude Code session joins a conversation it does not hold. This is the conversation so far; continue it.`,
   `Remember the word lantern.`, `(3 entries left out here)`,
@@ -207,7 +209,7 @@ Preconditions:
   are the three left out. Switch to `{"provider": "script"}`, submit `plum`,
   switch back to `claude` `haiku`, and submit
   `What was the last thing I said before this message? Reply with just that word.`
-  with `--save switched-back`: the `message` `plum`, and `"spawn": 1` has a
+  with `--save switched-back`: the answer `plum`, and `"spawn": 1` has a
   new `--session-id` and a retelling that adds `You answered: lantern`,
   `plum`, `You answered: You said: plum` and the question after the same
   six-text opening. The recording differs in its opening on purpose: it was
@@ -222,58 +224,49 @@ Preconditions:
 
 ## Contexts
 
-- **On the kernel.** Under `NISSE_KERNEL=1` a run is the `claude.run` task,
-  one Claude Code process per run, and its position in Claude Code's session
-  is the `claude.session` document. In a run made with
-  `drive.ts r up --kernel --fake-claude read`, run `drive.ts r serve`,
-  `drive.ts r rpc conversation/start '{"cwd": "<checkout>", "provider": "claude"}'`
-  and
-  `drive.ts r watch <id> --submit 'Use the Read tool to read notes.txt, then reply with where the gnome lives, in three words.' --until run_end --save kernel-read`:
-  `pi.user`, a `pi.assistant` calling `Read`, its `pi.tool-result`, the
-  answer `Under the floor.` and a `nisse.run_end` `answered`; `docs` holds
-  `pi.usage` with the run's spend under `claude/claude-haiku-5-5`. A second
-  `watch <id> --save reopen` from a new connection shows the same entries. The other journeys
-  above drive the same way with their fixtures, `exec` included: in a run made
-  with `drive.ts r up --kernel --fake-claude bash_declined`, **Exec denies**
-  prints the same stdout, stderr and exit, and with `bash_allowed`, **Auto**
-  does. A Claude subagent is
-  listed by `conversation/list` with its `lineage` (no `task`), and
-  `conversation/submit` or `conversation/select_model` on it answers
-  `TakesNoInput`.
+- **Subagents.** A Claude subagent is listed by `conversation/list` with its
+  `lineage` (no `task`), and `conversation/submit` or
+  `conversation/select_model` on it answers `TakesNoInput`.
 - **Inside an agent.** Start the run's server without the session's `CLAUDE`, `ANTHROPIC` and `CCR` variables.
 - **Server restart.** The run resumes Claude Code's session where Nisse's transcript ends.
 
 ## Tests
 
-Provider on the kernel, `packages/nisse/test/kernel/claude.test.ts`: every
-journey the kernel wire reaches, one test per recording, including
-`compaction_resume` (`claude-compact, claude-session-gone`) and `clear`
-(`claude-clear`). `queue-run` chains `bash_allowed` and `text`: a prompt
-sent while Claude waits on an approval runs once Claude answers.
+Stack, `packages/nisse/test/stack.test.ts`:
 
-Package, `packages/claude/test/claude.test.ts`: `claude.run` through a
-Harness whose registry holds extensions, for the journeys the kernel wire
-cannot reach yet: extension tools and hooks, a subagent's included (`claude-extensions`,
-`execute-after` with `read_after_hooked`), steers between parallel results,
-forks, usage, model switches, the handoff from another provider, a reset
-queued while Claude works (`claude-clear`), and images in a prompt
-(`image-input`) or an extension tool's result (`image-tool-result`).
-
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- claude-exec-deny: nisse exec on the kernel refuses Claude's calls that would ask
-- claude-exec-deny, claude-auto: nisse exec --auto on the kernel lets Claude's calls run without asking
+- claude-exec-deny: nisse exec refuses Claude's calls that would ask
+- claude-exec-deny, claude-auto: nisse exec --auto lets Claude's calls run without asking
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- claude-answer: Claude's answer through Claude Code is committed as nisse's message
+- claude-answer, provider-claude: Claude's answer through Claude Code is committed as nisse's message
 - claude-system-prompt: Claude Code keeps its own system prompt, adds the conversation's instructions, and its commands know the conversation
 - claude-approval: a command Claude wants to run waits for a person, and Claude Code hears the answer
 - claude-read: Claude reads files without asking and the read shows as a call and its result
 - claude-resume: each run resumes the Claude Code session where nisse's transcript ends
 - claude-session-gone: when Claude Code lost the session, a fresh one is given the conversation so far
 - claude-sign-in-error: a signed-out Claude Code fails the run with its own words
+- claude-model: the conversation's model and effort reach Claude Code
+- claude-cut-off: a run cut off by a server stop resumes, and Claude Code is told which call was cut off
+- claude-resume: a run that answered before the server stopped is not run again
+- claude-read: a skill Claude Code runs shows as its call and result, and Claude answers from it
+- claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account
+- claude-compact, claude-session-gone: a resume at a position Claude Code compacted away starts a fresh session told the conversation
+- claude-clear: /clear starts a new context in the transcript, and the next run starts a Claude Code session without it
+- claude-auto: in a conversation started without asking, a call Claude Code would ask about runs, allowed for it
 - claude-health: Claude Code says once how it is signed in and which models it offers, without asking Claude anything
+- claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session
+- claude-switch: retelling a long conversation to Claude keeps its first prompt and the one being answered
+
+Package, `packages/claude/test/claude.test.ts`:
+
+- claude-clear: a reset queued while Claude works ends the run, and what was queued with it starts fresh
+- claude-resume: an edit to the context starts a fresh session told the edited conversation
+- claude-read: parallel calls of one response are each committed with the result Claude Code returned
+- claude-resume: a fork of a Claude conversation forks Claude Code's session at the fork's position
+- claude-resume: what each run spent is added to the conversation's usage, once
+- claude-model: after a switch to another Claude model, the next run resumes the same session on it
+- claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session
 
 ## Gotchas
 
@@ -338,7 +331,7 @@ which calls ask: when one that a step expects to ask runs without
   until it succeeds, so the call is running, then `drive.ts r kill-server`, `drive.ts r tui wait 'may or may not'`
   and `drive.ts r tui wait READY`: the call's result
   `interrupted; it may or may not have taken effect`, then `resumed ok`.
-  `drive.ts r watch <id> --save cut-off` holds one Bash `tool_call`, not two.
+  `drive.ts r watch <id> --save cut-off` holds one `Bash` call, not two.
 - **Health and model.** `drive.ts r rpc providers/list '{}'`: `claude` `ready`
   with your account and the Claude Code version installed now.
   `drive.ts r rpc models/list '{}'` lists today's models.
@@ -356,7 +349,7 @@ which calls ask: when one that a step expects to ask runs without
   Code, without the long turn: start a `script` conversation, submit
   `Remember the word lantern.`, switch to `claude` `haiku`, and submit
   `Which word did I ask you to remember? Reply with just the word.`: the
-  `message` is `lantern`.
+  answer is `lantern`.
 - **Sign-in error.** In a second run, `drive.ts r2 up --real-claude`, run
   `ANTHROPIC_API_KEY=sk-ant-not-a-key drive.ts r2 nisse exec --provider claude hi`,
   which starts the server with that key: exit 1 and Claude Code's own message,

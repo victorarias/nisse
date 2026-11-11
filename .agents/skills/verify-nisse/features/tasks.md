@@ -56,7 +56,23 @@ Feature ledger area R: spec §2.2, §5, §7.1, §8.3, §8.4, §8.5, §8.7, §9.4
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Package, `packages/harness/test/harness.test.ts`:
+
+- task-memory-bounded: long chains of ended tasks leave the scheduler and the document cache as they were
+
+Package, `packages/kernel/test/tasks.test.ts`:
+
+- task-terminal: a task runs phase by phase to its outcome, and waitForTask gets the stored receipt
+- task-terminal: a phase that fails, throws, or returns without durable progress ends its task faulted and reported
+- task-wait-for: waitForTask answers a terminal task at once, and a wait still open when the Session closes fails with SessionClosed
+- task-wait-for: a wait interrupted while the scheduler reads for it keeps no waiter behind
+- session-clock, task-lifecycle-times: a TestClock drives a durable sleep, and the receipt stores when the task started and ended
+- task-children-from-tools, task-id-order: a tool fans out child tasks whose ids increase, listed in id order, and the parent collects their outcomes
+- task-extension-defined: a task whose definition is not registered waits blocked, and runs once an extension registers it
+- task-terminal: an abort joins the phase's Promise work before the abort handler starts, and close joins the abort handler's before storage closes
+- task-terminal: a task whose process is killed mid-phase resumes from its checkpoint in a new process, with the restart counted even after a read-only scheduler opened and closed it
+- task-terminal: a close while an aborted owner waits for its child's abort handler leaves both resumable, with no restart counted
+- task-memory-bounded: an ownership chain a thousand tasks deep costs the scheduler one index entry per task, and nothing once it ends
 
 ## Gotchas
 

@@ -37,7 +37,12 @@ Feature ledger area H: spec §2.2, §3.7, §8.2, §8.5; README Per-Conversation 
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Package, `packages/harness/test/harness.test.ts`:
+
+- agent-model, agent-thinking, agent-instructions, agent-cwd, agent-tools-filter, agent-resolved: configure changes what the agent resolves to, and null gives the field back to the host
+- agent-inherit: a conversation a task creates starts with a copy of its owner's agent, and a fork with the agent as of its entry
+- agent-visible: a document watch sees each agent change, and a read as of an earlier entry sees the agent then
+- settings-default-extensions: the host's default selection applies to a conversation without its own, which can edit it
 
 ## Gotchas
 

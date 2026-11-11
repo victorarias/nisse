@@ -19,7 +19,7 @@ import {
   type JsonObject,
   type Tx,
 } from "@nisse/kernel"
-import { RUN_END_KIND, type Outcome, type RunEnd } from "@nisse/wire"
+import { RUN_END_KIND, type Outcome, type RunEnd } from "@nisse/protocol"
 import { Effect } from "effect"
 
 const OUTCOMES: Record<RunFailureReason, Outcome> = {

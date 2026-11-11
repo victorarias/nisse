@@ -6,7 +6,7 @@ and `.claude/skills` from the conversation's directory up to the repository's
 root, then under `NISSE_HOME/skills`; the nearest skill of a name wins.
 `skills/list` answers which skills a conversation can name. A message that
 starts with `/name`, or holds `$name`, carries that skill's `SKILL.md` in its
-committed `user` entry, and every TUI shows `with <name>, ...` under the
+committed `nisse.user` entry, and every TUI shows `with <name>, ...` under the
 message. Claude Code reads its own `CLAUDE.md` files and skills, so Claude and
 scripted conversations list none and carry none.
 
@@ -27,7 +27,7 @@ scripted conversations list none and carry none.
   quoted one; without a `name` the folder names the skill, and without a
   `description` it is `""`.
 - `skills-attach` carries every skill a message names, once each, in the
-  order named, as `"skills": [{"name", "path", "text"}]` on the `user` entry:
+  order named, as `"skills": [{"name", "path", "text"}]` in the `nisse.user` entry's `data`:
   `/name` only at the message's start, `$name` anywhere. Trailing `.` or `:`
   is not part of the name, and a name nisse does not know carries nothing.
 - `skills-snapshot` keeps the `SKILL.md` text as it was when the message was
@@ -66,7 +66,7 @@ scripted conversations list none and carry none.
 Preconditions:
 
 - A fresh run, `drive.ts r up`, whose Claude Code is the fake signed-in one.
-  Listing skills and carrying them needs no ChatGPT sign-in: the `user` entry
+  Listing skills and carrying them needs no ChatGPT sign-in: the `nisse.user` entry
   is committed before the run fails `not signed in to ChatGPT`. What ChatGPT
   is told is driven in a second run with `--fake-openai`, below.
 - A project at `/tmp/nisse-verify/r/project`, made before the drive:
@@ -96,8 +96,8 @@ Preconditions:
   has no `"spawn"` line, or does not exist yet.
 - **Carry over the wire.** Run
   `drive.ts r watch <openai id> --submit '/deploy now, then $review and $notes, $deploy again, $missing' --until run_end --save carried`:
-  the `user` entry holds `"skills"` with `deploy` (`App deploy steps.`),
-  `review` and `notes`, once each, then a `run_end` `failed` with
+  the `nisse.user` entry's `data.skills` holds `deploy` (`App deploy steps.`),
+  `review` and `notes`, once each, then a `nisse.run_end` `failed` with
   `not signed in to ChatGPT`. Submit `please /review this, cost is $5`: the
   entry has no `skills`. Submit `  /deploy.`: it carries `deploy`.
 - **Snapshot.** Change `App deploy steps.` in
@@ -106,7 +106,7 @@ Preconditions:
   first entries still carry `App deploy steps.`, the new one
   `Changed deploy steps.`.
 - **Script carries nothing.** `watch <script id> --submit '/deploy now' --until run_end`:
-  the `user` entry has no `skills`, and the answer is `You said: /deploy now`.
+  the `nisse.user` entry has no `skills`, and the answer is `You said: /deploy now`.
 - **TUI.** The TUI's conversation runs in the checkout, whose
   `.agents/skills` holds `verify-nisse`. Run
   `drive.ts r tui start --provider openai`, `drive.ts r tui wait READY`,
@@ -143,8 +143,11 @@ Preconditions:
   `<project>/AGENTS.override.md` with `ibis` and no `egret` (requests 2 and
   3), then `# Skills` listing `bare`, `deploy` (`project/app`), `notes` and
   `review`, each with its `file:`. Request 4 ran in the checkout: `heron`, the
-  checkout's `AGENTS.md`, then `Answer in Swedish.`, then `# Skills`, and no
-  `egret` or `ibis`.
+  checkout's `AGENTS.md`, then `# Skills`, then `Answer in Swedish.` in
+  `<instructions>` tags, and no `egret` or `ibis`. Each conversation's view
+  holds a `pi.system` entry with `sections.workspace`, which starts
+  `The working directory is <cwd>.`, and for request 4
+  `sections.instructions`.
   Requests 1, 2 and 4 are `as recorded`. Request 3 is `differs`, since the
   recording's user typed `hello`: its user message holds `/deploy hello`,
   then `<skill>\n<name>deploy</name>\n<path>...</path>` with the `SKILL.md`
@@ -153,59 +156,28 @@ Preconditions:
 - **Claude's own skills** (a fresh run, `--fake-claude skill`). Run
   `drive.ts r nisse exec --provider claude 'Use the Skill tool to run the gnome-facts skill, then do what it says.'`:
   stderr `› Skill`, stdout `the gnome lives under the floor`, and `watch`
-  shows a `Skill` `tool_call` with `{"skill": "gnome-facts"}` and a `user`
-  entry with no `skills`: Claude Code found and ran the skill itself. The
+  shows a `pi.assistant` calling `Skill` with `{"skill": "gnome-facts"}` and a
+  `nisse.user` entry with no `skills`: Claude Code found and ran the skill itself. The
   checkout has no `gnome-facts` skill; the fake plays the recording's.
 
 ## Contexts
 
 - **Provider.** Claude Code reads its own `CLAUDE.md` files and skills. OpenAI is told the `AGENTS.md` files and skills.
-- **On the kernel.** A ChatGPT conversation is told its directory, the
-  `AGENTS.md` files and the skills as on today's server, in a `workspace`
-  prompt section the harness renders before each request and commits as a
-  `pi.system` entry when it changes; a script conversation gets none. The
-  instructions a conversation started with (`instructions` on the kernel's
-  `conversation/start`) follow the skill list, in `<instructions>` tags, and
-  a subagent starts without them. The **List**, **None for script or
-  Claude**, **Carry over the wire** and **Snapshot** steps above drive the same
-  in a `drive.ts r up --kernel` run: the carried skills are in the
-  `nisse.user` entry's `data.skills`, and ChatGPT is sent each after the
-  message's text in `<skill>` tags. To drive what ChatGPT is told: `drive.ts r up --kernel
---fake-openai text_answer,text_answer`, make the project as above, write a
-  home `AGENTS.md`, `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp/nisse-verify/r/project/app", "provider": "openai", "approvals": "auto", "instructions": "Answer in Swedish."}'`
-  and `drive.ts r watch <id> --submit hello --until run_end --save kernel`:
-  the `pi.system` entry holds `sections.workspace` with
-  `The working directory is .../project/app.`, each `AGENTS.md` and the
-  `# Skills` list, and `sections.instructions` with `Answer in Swedish.`;
-  `evidence/fake-openai.ndjson`'s request `instructions` hold nisse's own,
-  then both. Write `AGENTS.override.md` in the project and submit again: the
-  next `pi.system` entry changes only `workspace`, and the next request holds
-  the override instead of `AGENTS.md`.
+- **Script.** A script conversation is told no workspace section.
 
 ## Tests
 
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+Screen, `packages/nisse/test/screen.test.ts`:
 
 - skills-tui: a message that names a skill shows which skills came with it, also after a reopen
 
-Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- skills-list, skills-attach, skills-snapshot: a skill named in a message comes with it as SKILL.md read then, for the model and every client
-- skills-list: a conversation on a provider that finds its own skills lists none, and an unknown one is refused
-
 Provider, `packages/nisse/test/openai.test.ts`:
-
-- agents-md: ChatGPT is told the AGENTS.md files from home to the working directory, and the skills it can use
-- start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files
-- skills-attach: a skill named in a message comes with it, for the model and for everyone watching
-- skills-list: every client can list the skills a conversation's model can use
-
-Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - openai-instructions, agents-md, skills-found, skills-nearest, skills-frontmatter: ChatGPT is told its working directory, the AGENTS.md files from home down to it, and the skills it can use
 - skills-found: a conversation outside any repository is told only its own folder's skills and the home's
 - start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files, and a subagent is not
+- skills-list, skills-attach, skills-snapshot: a skill named in a message comes with it as SKILL.md read then, for the model and every client
+- skills-list: a conversation on a provider that finds its own skills lists none, and an unknown one is refused
 
 ## Gotchas
 
@@ -240,7 +212,7 @@ make the project and the `AGENTS.md` files as in the faked steps above, run
 and use
 `drive.ts r watch <id> --submit '<text>' --until run_end --timeout 120000 --save <name>`:
 
-- `What is the code word? Answer in one sentence.`: the `message` names
+- `What is the code word? Answer in one sentence.`: the answer names
   `egret` and ends with `heron`. After writing `AGENTS.override.md` with
   `The code word is ibis.`, the same question in a new conversation names
   `ibis`.
@@ -264,5 +236,5 @@ Run
 `drive.ts r rpc conversation/start '{"cwd": "/tmp/nisse-verify/r/project", "provider": "claude"}'`
 and
 `drive.ts r watch <id> --submit 'Use the Skill tool to run the gnome-facts skill, then do what it says.' --until run_end --timeout 120000 --save claude-skill`:
-a `Skill` `tool_call`, then the `message`
-`the gnome lives under the floor`, and the `user` entry has no `skills`.
+a `pi.assistant` calling `Skill`, then the answer
+`the gnome lives under the floor`, and the `nisse.user` entry has no `skills`.

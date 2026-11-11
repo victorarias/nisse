@@ -108,7 +108,6 @@
         "@nisse/protocol": "workspace:*",
         "@nisse/schema": "workspace:*",
         "@nisse/tools": "workspace:*",
-        "@nisse/wire": "workspace:*",
         "@opentui/core": "0.7.0",
         "@opentui/solid": "0.7.0",
         "effect": "4.0.6",
@@ -145,16 +144,6 @@
         "@silvia-odwyer/photon": "0.3.3",
         "diff": "8.0.4",
         "effect": "4.0.6",
-      },
-    },
-    "packages/wire": {
-      "name": "@nisse/wire",
-      "version": "0.1.0",
-      "devDependencies": {
-        "effect": "4.0.6",
-      },
-      "peerDependencies": {
-        "effect": "^4.0.6",
       },
     },
   },
@@ -276,8 +265,6 @@
     "@nisse/schema": ["@nisse/schema@workspace:packages/schema"],
 
     "@nisse/tools": ["@nisse/tools@workspace:packages/tools"],
-
-    "@nisse/wire": ["@nisse/wire@workspace:packages/wire"],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.10.0", "", {}, "sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ=="],
 

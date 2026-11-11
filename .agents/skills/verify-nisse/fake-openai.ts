@@ -9,7 +9,9 @@ if (!port || !log || !refreshes || fixtures.length === 0) {
 }
 
 const fake = new FakeOpenAi(Number(port))
-const expected = fixtures.flatMap((fixture) => fake.play(fixture))
+// The recordings were made when nisse's tools were capitalized; nisse names them in lower case now.
+const TOOL_NAMES = { Bash: "bash" }
+const expected = fixtures.flatMap((fixture) => fake.play(fixture, TOOL_NAMES))
 for (let refresh = 1; refresh <= Number(refreshes); refresh++) fake.issueTokens(`refresh-${refresh}`, 3600)
 let answered = 0
 fake.onResponse = (body) => {

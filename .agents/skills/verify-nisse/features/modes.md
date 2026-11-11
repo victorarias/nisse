@@ -24,14 +24,13 @@ None yet.
 
 ### Agents
 
-- Print mode: run `nisse exec '<prompt>'` on a server under `NISSE_KERNEL=1`.
-- JSON mode: run `nisse exec --json '<prompt>'` on a server under `NISSE_KERNEL=1`: one JSON line per item of the
-  conversation's `conversation/watch`, the view first, then each commit's changes, until the prompt's run ends. Without
-  `NISSE_KERNEL=1`, `exec` refuses `--json`.
+- Print mode: run `nisse exec '<prompt>'`.
+- JSON mode: run `nisse exec --json '<prompt>'`: one JSON line per item of the conversation's `conversation/watch`,
+  the view first, then each commit's changes, until the prompt's run ends.
 
 ## Driving it with drive.ts
 
-- **Print.** In a fresh run made with `drive.ts r up --kernel`, run `drive.ts r nisse exec 'hello there'`: exit 0,
+- **Print.** In a fresh run made with `drive.ts r up`, run `drive.ts r nisse exec 'hello there'`: exit 0,
   stdout `You said: hello there`.
 - **JSON.** Run `drive.ts r nisse exec --json 'hello json'`: exit 0, and stdout holds one JSON object per line, the
   first `{"_tag": "view", ...}` with no entries, then `{"_tag": "change", "ops": [...]}` lines: one sets
@@ -44,23 +43,75 @@ Feature ledger area Y: README Examples; examples 05-harness, 13-chat, 15-real-mo
 
 ## Tests
 
-Package, `packages/models/test/seam.test.ts`:
+Stack, `packages/nisse/test/stack.test.ts`:
 
-- models-script, models-faux, models-unsupported: a run through each provider behind the seam, and what a missing method or provider answers
-
-Package, `packages/harness/test/modes.test.ts`, each pattern built only from `@nisse/harness`'s public API with the faux model:
-
-- mode-plan: `configure` selects the plan extension and narrows the tools to `read` and `submit_plan`, a `write` the model calls anyway is refused, the plan lands in the extension's document, and clearing both gives every tool back, which the model sees as a system prompt change
-- mode-reviewer: a reviewer conversation stores its own model, extensions, `read` only and checkout beside a main agent that runs without them, and its `onYield` hook asks again until the answer says it is done
-- mode-sandbox: the environment builder reads each conversation's sandbox document on every call, so each conversation's tools work in its own directory, also after the app moves it, and a fork without one gets no environment
-
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- mode-print, answer-exec, server-on-demand: nisse exec on the kernel starts a server, prints the answer and exits 0
-- mode-print, answer-exec-fail: nisse exec on the kernel exits 1 and says why when the run fails
+- mode-print, answer-exec, server-on-demand: nisse exec starts a server, prints the answer and exits 0
+- mode-print, answer-exec-fail: nisse exec exits 1 and says why when the run fails
 - mode-json, exec-json: nisse exec --json prints the view, then each commit's changes, until the run ends
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- compaction-overflow, models-overflow: ChatGPT's context-window error compacts the conversation, and the request goes again
+
+Package, `packages/models/test/overflow.test.ts`:
+
+- models-overflow: limits HTTP-status matching to failed responses
+- models-overflow: detects explicit Ollama prompt-too-long errors
+- models-overflow: detects z.ai prompt-too-long errors
+- models-overflow: detects z.ai CN endpoint prompt-exceeds-max-length errors
+- models-overflow: detects Together AI context length errors
+- models-overflow: detects LiteLLM-wrapped OpenAI maximum context length errors
+- models-overflow: detects LiteLLM pre-call ContextWindowExceededError
+- models-overflow: detects OpenAI-compatible parenthesized maximum context length errors
+- models-overflow: detects OpenRouter Poolside maximum allowed input length errors
+- models-overflow: detects DS4 configured context size errors
+- models-overflow: does not treat generic non-overflow Ollama errors as overflow
+- models-overflow: only treats bodyless 400 errors as overflow for Cerebras
+- models-overflow: does not treat Bedrock throttling 'Too many tokens' as overflow
+- models-overflow: does not treat Bedrock service unavailable as overflow
+- models-overflow: does not treat generic rate limit errors as overflow
+- models-overflow: does not treat HTTP 429 style errors as overflow
+- models-overflow: detects Xiaomi-style overflow (length stop with zero output and filled context)
+- models-overflow: treats a length stop below the desired output limit as recoverable
+- models-overflow: does not recover a length stop that reached the desired output limit
+- models-overflow: treats zero-output length stops as recoverable without context metadata
+- models-overflow: does not treat normal length stops with output as context overflow
+- models-overflow: does not treat zero-output length stops far below context as context overflow
+
+Package, `packages/models/test/retry.test.ts`:
+
+- models-retryable: matches explicit provider retry guidance
+- models-retryable: matches Bun fetch socket drop wording
+- models-retryable: matches upstream request buffer exhaustion wording
+- models-retryable: matches gateway wording for a stream cut short mid-reply
+- models-retryable: matches OpenAI Responses streams that end before terminal events
+- models-retryable: matches Azure peak-load capacity errors
+- models-retryable: keeps provider limit errors non-retryable
+- models-retryable: keeps the ChatGPT subscription usage limit non-retryable
+- models-retryable: keeps the ChatGPT Business workspace usage limit non-retryable
+- models-retryable: classifies assistant error messages
+- models-retryable: caps agent retry delay
+
+Package, `packages/models/test/seam.test.ts`:
+
+- models-script: a step's text streams word by word and ends the answer
+- models-script: a tool step calls the tool and a fail step ends the request in error
+- models-script: with no step left it echoes the last user text, 30 ms per word
+- models-script: each agent takes its own steps, named by the request's metadata
+- models-faux: scripted responses stream thinking, text and tool calls, one per request
+- models-faux: a deferred response stays pending for the set fetches, then answers; a cancelled one fails
+- models-faux: a retryable provider error arrives as the final message, and the next request answers
+- models-faux: a response factory that throws ends the request with its error as the final message
+- models-faux: a factory that waits is told through its signal when the request is interrupted
+- models-faux: usage counts the prompt, and a session's repeated prefix is read from the cache
+- models-unsupported: a method the provider lacks fails naming the method and the provider
+- models-unsupported: a model whose provider is not in the models fails naming the provider
+
+Package, `packages/harness/test/modes.test.ts`:
+
+- mode-plan: plan mode offers only reading and submitting a plan, refuses a write, stores the plan, and leaving it gives every tool back
+- mode-reviewer: a reviewer conversation runs its own model, extensions, read-only tools and checkout beside the main agent, and its loop asks again until the review is done
+- mode-sandbox: each conversation's tools work in the sandbox its document names, looked up on every call, and a conversation without one gets no environment
 
 ## Gotchas
 

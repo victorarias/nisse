@@ -6,7 +6,7 @@ import { homedir } from "node:os"
 import { basename, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { detectSupportedImageMimeType } from "@nisse/tools"
-import type { Image } from "@nisse/wire"
+import type { Image } from "@nisse/protocol"
 
 /** An image file the prompt names. */
 export interface Attachment {

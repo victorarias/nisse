@@ -47,7 +47,7 @@ Preconditions:
 - A run whose script is
   `[{"text": "one two three four five six seven eight nine ten", "delayMs": 300}]`;
   for `crash-call`, a run whose script is
-  `[{"text": "waiting", "tool": {"name": "Bash", "input": {"command": "sleep 5; echo slept"}}}, {"text": "carried on"}]`.
+  `[{"text": "waiting", "tool": {"name": "bash", "input": {"command": "sleep 5; echo slept"}}}, {"text": "carried on"}]`.
 
 - **Kill mid-answer.** Run `drive.ts r serve`, `drive.ts r tui start`,
   `drive.ts r tui wait READY`, `drive.ts r tui type count`,
@@ -57,8 +57,9 @@ Preconditions:
   `drive.ts r tui wait READY`, `drive.ts r tui screen recovered`, and
   `drive.ts r doctor`. The whole answer under `NISSE`, and a new server pid.
 - **Committed once.** Run `drive.ts r rpc conversation/list` and
-  `drive.ts r watch <id> --save recovered`. The snapshot holds one `message`
-  entry with the whole text and one `run_end` with `"outcome": "answered"`.
+  `drive.ts r watch <id> --save recovered`. What was said before the crash
+  stays as a `pi.assistant` entry with `"stopReason": "aborted"`, then the
+  run is answered once after it, and one `nisse.run_end` says `answered`.
 - **Exec.** In a fresh run with the same script, run `drive.ts r serve`, then
   `drive.ts r nisse exec count > /tmp/nisse-verify/r-exec.txt &`. `nisse`
   prints stdout as it arrives: once that file shows `three`, run
@@ -67,20 +68,20 @@ Preconditions:
 - **Call cut off.** In the `crash-call` run, run `drive.ts r serve`,
   `drive.ts r tui start --auto`, `drive.ts r tui wait READY`,
   `drive.ts r tui type nap`, `drive.ts r tui key Enter`,
-  `drive.ts r tui wait 'Bash(sleep 5; echo slept)'`, `drive.ts r kill-server`,
+  `drive.ts r tui wait 'bash(sleep 5; echo slept)'`, `drive.ts r kill-server`,
   `drive.ts r tui wait --timeout 30000 'carried on'`,
   `drive.ts r tui screen call-cut-off`. The first call shows
   `interrupted; it may or may not have taken effect`; the restarted script
   calls it again, which shows `slept`, then `carried on`. `watch <id>` shows
-  the interrupted `tool_result` with `"error": true` and one `run_end` with
-  `"outcome": "answered"`.
+  the interrupted `pi.tool-result` with `"isError": true` and one
+  `nisse.run_end` with `"outcome": "answered"`.
 - **Limit.** In a fresh `count` run, start the run as in the first step, then
   three times: `drive.ts r tui wait three`, `drive.ts r kill-server`,
   `drive.ts r tui wait --gone three`. Then
   `drive.ts r tui wait --timeout 30000 'times in a row'`,
   `drive.ts r tui screen restart-limit`:
   `✗ the server stopped during this run 3 times in a row` and `READY`. The
-  snapshot's last entry is a `run_end` with `"outcome": "restart_limit"`.
+  view's last entry is a `nisse.run_end` with `"outcome": "restart_limit"`.
 
 - **Claude subagent cut off.** In a run started with
   `drive.ts r up --fake-claude subagent_working`, run `drive.ts r serve`,
@@ -94,10 +95,10 @@ Preconditions:
   `drive.ts r tui wait READY` and `drive.ts r tui screen recovered`: the card
   reads `interrupted` and `resumed ok` follows. `rpc conversation/list` shows
   the parent `answered` with `"said": "resumed ok"` and the subagent
-  `interrupted`; `watch <parent>` shows `tool_result`
-  `interrupted; it may or may not have taken effect`, `message` `resumed ok`
-  and one `run_end` with `"outcome": "answered"`, and `watch <subagent>` ends
-  with one `run_end` with `"outcome": "interrupted"`. In
+  `interrupted`; `watch <parent>` shows a `pi.tool-result`
+  `interrupted; it may or may not have taken effect`, the answer `resumed ok`
+  and one `nisse.run_end` with `"outcome": "answered"`, and `watch <subagent>`
+  ends with one `nisse.run_end` with `"outcome": "interrupted"`. In
   `evidence/fake-claude/log.ndjson` spawn 0 has `--session-id`, spawn 1 has
   `--resume-session-at` and received the user message `Your Agent call
 toolu_01DxmcUXKnbFWBQecJLTs1n3 was cut off: interrupted; it may or may not
@@ -115,47 +116,22 @@ have taken effect`.
 
 ## Contexts
 
-- **On the kernel.** In a run made with `drive.ts r up --kernel` and a script
-  whose step speaks slowly, submit with a background
-  `drive.ts r watch <id> --submit again --until run_end`, wait for a live
-  word, `drive.ts r kill-server`, `drive.ts r serve`, and
-  `drive.ts r watch <id> --save after-crash`: what was said before the crash
-  stays as a `pi.assistant` entry with `"stopReason": "aborted"`, the run is
-  answered once after it, and one `nisse.run_end` says `answered`. The
-  restarted server's script starts over, so the answer is the script's first
-  step.
-
 - **Provider.** On every provider a running call is recorded as interrupted. Claude Code is also told which calls were cut off.
 
 ## Tests
 
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+Screen, `packages/nisse/test/screen.test.ts`:
 
 - crash-tui: the open TUI finishes the answer after the server is killed mid-answer
 
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- crash-claude-settled: a Claude Code answer committed before the server was killed is not run again
-
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+Stack, `packages/nisse/test/stack.test.ts`:
 
 - crash-committed: a run cut off by a crashed server is answered once after the server comes back
 - crash-limit, conversation-ended: a run that keeps crashing the server stops after three tries instead of looping, and the conversation list says why
-
-Stack, `packages/nisse/test/stack.test.ts`:
-
-- crash-exec: a run cut off by a crashed server finishes after the server comes back
+- crash-claude-settled: a Claude Code answer committed before the server was killed is not run again
+- crash-exec: a run cut off by a crashed server finishes after the server comes back, and nisse exec prints it and exits 0
 - crash-call: a call cut off by a crashed server is recorded as interrupted and the run carries on
 - crash-claude: a Claude subagent cut off by a crashed server ends interrupted, and nothing runs it on its own
-- crash-limit: a run that keeps crashing the server stops after three tries instead of looping
-
-This one needs the code-mode host, and is skipped when it is not installed:
-
-- code-mode-script: a crash while a yielded script's call runs tells the resumed model what the script finished and what it cut off
-
-Provider, `packages/nisse/test/claude.test.ts`:
-
-- claude-cut-off: a run cut off by a server stop resumes, and Claude Code is told which call was cut off
 
 ## Gotchas
 
@@ -191,9 +167,9 @@ call cut off by a kill is Claude's **Cut off** step in [Claude](./claude.md#with
   `drive.ts r tui screen recovered`: the card reads `interrupted` and
   `resumed ok` follows. `drive.ts r rpc conversation/list` shows the parent
   `answered` with `"said": "resumed ok"` and the subagent `interrupted`;
-  `drive.ts r watch <parent>` shows a `tool_result` starting
-  `interrupted; it may or may not have taken effect`, and one `run_end` with
-  `"outcome": "answered"`; `drive.ts r watch <subagent>` ends with one
-  `run_end` with `"outcome": "interrupted"`. A new
+  `drive.ts r watch <parent>` shows a `pi.tool-result` starting
+  `interrupted; it may or may not have taken effect`, and one `nisse.run_end`
+  with `"outcome": "answered"`; `drive.ts r watch <subagent>` ends with one
+  `nisse.run_end` with `"outcome": "interrupted"`. A new
   `drive.ts r tui start --conversation <parent>` shows the same screen. A
   model may word a reply differently: judge the states, not the wording.

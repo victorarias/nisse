@@ -12,10 +12,11 @@ loop and the tools itself.
 Nisse is still being built and nobody depends on it yet. Choose the right
 design over compatibility with what exists.
 
-The kernel is being rebuilt on Effect, following pi-durable's model. The new
-packages are built beside the code the binary runs and replace it in one
-change. Until then `packages/nisse` and `packages/protocol` are what runs, and
-their tests guard it.
+The binary runs on a durable kernel written on Effect, following pi-durable's
+model: `packages/kernel` stores state and runs tasks, `packages/harness` runs
+conversations on it, and `packages/nisse` serves them over `packages/protocol`.
+Some of the kernel's features have no client path yet; the feature map marks
+them `pending`.
 
 ## Domain language
 
@@ -46,6 +47,14 @@ conversation            one transcript and the work done in it; like one chat
 ```text
 commit                  one atomic write to the store; the only way state
                         changes, and what clients are shown
+task                    durable work the kernel runs in phases, each safe to
+                        rerun from its top; a run, a tool call and a subagent
+                        are tasks, so a restart resumes them
+document                state the kernel keeps beside the transcript, such as
+                        a conversation's queue or its waiting approvals
+view                    what a client watches of a conversation: its entries
+                        through a window and its documents, then the changes
+                        each commit makes to them
 client                  a program connected to the server's socket that draws
                         committed state and sends input; the TUI is one
 approval                a tool call waiting for a person to allow or deny it;
@@ -57,8 +66,9 @@ approval                a tool call waiting for a person to allow or deny it;
 - Only committed state is observable. Every change goes through one store
   commit, published after it is stored. Never show a client anything else.
 - The server owns state and execution; clients only render.
-- A connection never slows the server: each has a bounded queue and is dropped
-  when it falls behind.
+- A client never slows the server: each watch has a bounded queue and ends
+  with `FellBehind` when it falls behind; the client watches again and pages
+  what it missed.
 - Draw only on change. No CPU while idle.
 - Before adding a layer, option, cache or guard, name the requirement it serves
   today.

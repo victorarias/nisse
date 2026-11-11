@@ -10,7 +10,6 @@ const ALLOWED: Record<string, string[]> = {
   delta: [],
   schema: [],
   protocol: [],
-  wire: [],
   models: ["delta", "schema"],
   env: [],
   kernel: ["delta"],
@@ -18,7 +17,7 @@ const ALLOWED: Record<string, string[]> = {
   tools: ["delta", "schema", "kernel", "harness", "models", "env"],
   codemode: ["delta", "schema", "kernel", "harness", "models", "env", "tools"],
   claude: ["delta", "schema", "kernel", "harness", "models", "env"],
-  nisse: ["protocol", "wire", "delta", "schema", "kernel", "harness", "models", "env", "tools", "codemode", "claude"],
+  nisse: ["protocol", "delta", "schema", "kernel", "harness", "models", "env", "tools", "codemode", "claude"],
 }
 // May import anything, and nothing may import it.
 const CONFORMANCE = "conformance"

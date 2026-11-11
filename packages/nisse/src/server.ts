@@ -1,49 +1,437 @@
-import { NisseRpcs, PROTOCOL_VERSION } from "@nisse/protocol"
-import { Console, Duration, Effect, Layer, Stream } from "effect"
+// The server a home runs: one Harness over `kernel.sqlite`, served over the home's socket with the protocol
+// (`@nisse/protocol`). Conversations run on the home's providers (`./providers.ts`).
+import { claudeRunTasks } from "@nisse/claude"
+import { CodemodeSandbox } from "@nisse/codemode/sandbox"
+import { LocalExecutionEnv } from "@nisse/env/local"
+import {
+  answerApproval,
+  approveAutomatically,
+  type Conversation,
+  type ConversationView,
+  type ConversationWindow,
+  createRegistry,
+  type EndedRun,
+  openHarness,
+  type Harness,
+} from "@nisse/harness"
+import { type ConversationId, type Cursor, type EntryId, idFromNumber, openSqliteStorage, type Tx } from "@nisse/kernel"
+import { fromProviders, type Models } from "@nisse/models"
+import type { ImageProcessor } from "@nisse/tools"
+import { createNodePhotonImages } from "@nisse/tools/images/node"
+import {
+  FellBehind,
+  InvalidConversationId,
+  InvalidWindow,
+  PROTOCOL_VERSION,
+  NisseRpcs,
+  MODEL_KIND,
+  NoSuchApproval,
+  NoSuchConversation,
+  NoSuchEntry,
+  TakesNoInput,
+  UnknownProvider,
+  type EntryRecord as WireEntry,
+  USER_KIND,
+  type View,
+  type ViewItem,
+  type Window,
+} from "@nisse/protocol"
+import { Cause, Console, Context, type Duration, Effect, Exit, Layer, Queue, Scope, Semaphore, Stream } from "effect"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as RpcServer from "effect/rpc/RpcServer"
-import { Conversations } from "./conversations.ts"
-import { Extensions } from "./extensions/index.ts"
+import type { ModelAsk } from "./config.ts"
+import type { ProviderOptions } from "./providers.ts"
 import type { Home } from "./home.ts"
 import { Lifetime } from "./lifetime.ts"
-import type { Providers } from "./provider.ts"
 import { homeSocketServer } from "./socket.ts"
 import { Setup } from "./setup.ts"
-import { Store } from "./store.ts"
 import { VERSION } from "./version.ts"
+import { chosenNumber, ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
+import { agentModel, Providers, LastModelDoc, selectionOf } from "./providers.ts"
+import { countStops, restartLimitMessage } from "./restarts.ts"
+import { endRun, switchModel, writeRunEnd } from "./run-end.ts"
+import { committedSignIns } from "./sign-ins.ts"
+import { codeModeTools, nisseTools } from "./tools/index.ts"
+import { attachedImages } from "./images.ts"
+import { agentTools, type AgentTypes, interruptTree } from "./agents.ts"
+import { type Extensions, openExtensions, StatusLinesDoc } from "./extensions/index.ts"
+import { followTreeStatus, type TreeStatuses } from "./status.ts"
+import { skillsOf, userInput, workspaceInstructions } from "./workspace.ts"
+import { lineageOf, listConversations, wireId } from "./conversations.ts"
 
-const afterReply = (effect: Effect.Effect<void>) =>
-  Effect.withFiber((handler) =>
-    Effect.sync(() => {
-      handler.addObserver(() => Effect.runFork(effect))
-    }),
-  )
+/**
+ * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: 1,500
+ * prompts submitted 100 at a time to one conversation, a client that reads peaked at 34 queued changes; 300 at a time,
+ * at 64. Past this the client is told it fell behind at its next read, and watches again from the position it holds.
+ */
+export const CONNECTION_QUEUE = 4096
+
+/** The server's watch limit: CONNECTION_QUEUE unless a test needs a client to fall behind sooner. */
+const ConnectionQueue = Context.Reference<number>("nisse/ConnectionQueue", { defaultValue: () => CONNECTION_QUEUE })
+
+/**
+ * The home's Harness, and the runs the server stopped too often in a row (D12): counted as it opens, before anything
+ * runs, and ended `restart_limit` once scheduling resumes.
+ */
+export type KernelHarnessService = {
+  readonly home: Home
+  readonly harness: Harness
+  readonly stoppedTooOften: Map<ConversationId, number>
+  readonly extensions: Extensions
+  readonly status: TreeStatuses
+  /** Prepares the images `read` returns and people attach. */
+  readonly images: ImageProcessor
+  readonly models: Models
+}
+
+export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
+  static readonly layer = (home: Home) =>
+    Layer.effect(
+      KernelHarness,
+      Effect.gen(function* () {
+        const { instances, agents, claude, agentTypes } = yield* Providers
+        const stoppedTooOften = new Map<ConversationId, number>()
+        const registry = createRegistry()
+        // Closed after the harness, which stops the scripts first. Closing asks a stuck worker to stop and does not wait
+        // for it (F19).
+        const sandbox = yield* Effect.acquireRelease(
+          Effect.sync(() => new CodemodeSandbox()),
+          (sandbox) => Effect.promise(() => sandbox.close()),
+        )
+        // One processor prepares the images `read` returns and the images people attach, in a worker that exits when idle.
+        const images = createNodePhotonImages()
+        const models = fromProviders(
+          [...instances.values()].flatMap((instance) => (instance.provider ? [instance.provider] : [])),
+        )
+        const typesOf: AgentTypes = (agent) => agentTypes(agent.model?.provider, agent.cwd ?? home.dir)
+        const base = [nisseTools(images), agentTools(agents, typesOf), codeModeTools(sandbox)]
+        for (const extension of base) registry.install(extension)
+        registry.install(workspaceInstructions(home, instances, typesOf))
+        // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it. The tools the
+        // extensions remove are known once they load, below; Claude Code is told not to use its own of them.
+        let removedTools: () => ReadonlyArray<string> = () => []
+        const claudeRuns = claudeRunTasks({
+          settings: (provider) => claude.get(provider),
+          builtinExtensions: new Set(base.map((extension) => extension.name)),
+          withheldTools: () => removedTools(),
+        })
+        registry.install({ name: "claude", tasks: [claudeRuns.run, claudeRuns.subagent] })
+        // A run ended for the limit was aborted; its run_end says why.
+        const runEnded = (tx: Tx, run: EndedRun) => {
+          // The first run to end after the abort is the one the limit stopped, however it ended.
+          const stops = stoppedTooOften.get(run.conversationId)
+          stoppedTooOften.delete(run.conversationId)
+          if (stops === undefined || run.answered || run.end.status === "done") return writeRunEnd(tx, run)
+          return endRun(tx, run.conversationId, { outcome: "restart_limit", message: restartLimitMessage(stops) })
+        }
+        const harness = yield* Effect.acquireRelease(
+          Effect.flatMap(openSqliteStorage(home.database), (storage) =>
+            openHarness(storage, {
+              registry,
+              models,
+              env: ({ cwd }) => Effect.succeed(new LocalExecutionEnv({ cwd: cwd ?? home.dir })),
+              runEnded,
+              viewDocs: [StatusLinesDoc],
+              runTasks: claudeRuns.runTasks,
+            }),
+          ),
+          (harness) => Effect.ignore(harness.close),
+        )
+        for (const [id, stops] of yield* countStops(harness)) stoppedTooOften.set(id, stops)
+        const status = yield* followTreeStatus(harness)
+        // Loaded before anything runs, so the extensions guard the calls a restart resumes.
+        const extensions = yield* openExtensions(home, registry, base, () => harness)
+        removedTools = extensions.removed
+        return { home, harness, stoppedTooOften, extensions, status, images, models }
+      }).pipe(Effect.orDie),
+    )
+}
+
+const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
+  window === undefined
+    ? undefined
+    : {
+        ...(window.from === undefined ? {} : { from: idFromNumber<EntryId>(window.from) }),
+        ...(window.min === undefined ? {} : { min: window.min }),
+        ...(window.max === undefined ? {} : { max: window.max }),
+      }
 
 const Handlers = NisseRpcs.toLayer(
   Effect.gen(function* () {
-    const store = yield* Store
-    const conversations = yield* Conversations
+    const { home, harness, stoppedTooOften, extensions, status, images, models } = yield* KernelHarness
+    const connectionQueue = yield* ConnectionQueue
+    const providers = yield* Providers
+    const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
     const lifetime = yield* Lifetime
-    const setup = yield* Setup
-    const extensions = yield* Extensions
+    // Keeps the server up while the harness has work, such as a run a submission started or a crash left.
+    const scope = yield* Effect.scope
+    // The hold is taken before `admit` and handed to an idle wait that starts after it, so the work `admit` admits
+    // is never unheld: an idle wait started earlier can return before the work exists.
+    // The harness's idle leaves out work under background tasks, such as a subagent and its reporter, so the hold also
+    // waits for every task left; a blocked task waits for a person, not for the server.
+    const quiet = Effect.gen(function* () {
+      for (;;) {
+        yield* harness.waitForIdle
+        const live = (yield* harness.inspect).tasks.filter((task) => task.state.kind !== "blocked")
+        if (live.length === 0) return
+        yield* Effect.forEach(live, (task) => harness.waitForTask(task.record.id), {
+          concurrency: "unbounded",
+          discard: true,
+        })
+      }
+    })
+    const heldUntilIdle = <A, E>(admit: Effect.Effect<A, E>) =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const held = yield* Scope.make()
+          yield* Scope.provide(lifetime.hold, held)
+          const admitted = yield* Effect.exit(restore(admit))
+          yield* Effect.forkIn(Effect.ensuring(Effect.ignore(quiet), Scope.close(held, Exit.void)), scope)
+          return yield* admitted
+        }),
+      )
+    yield* heldUntilIdle(Effect.orDie(harness.resume))
+    // Ends each run the server stopped during too often; its run_end says restart_limit.
+    for (const id of stoppedTooOften.keys()) {
+      yield* heldUntilIdle(
+        Effect.orDie(Effect.flatMap(harness.conversation(id), (conversation) => conversation?.abort() ?? Effect.void)),
+      )
+    }
+
+    /** The kernel number of a wire id: a chosen id's mapping, or the number it is. */
+    const resolve = (id: string) =>
+      Effect.map(Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), (chosen) => {
+        const mapped = chosenNumber(chosen, id)
+        return mapped === undefined ? kernelNumber(id) : idFromNumber<ConversationId>(mapped)
+      })
+
+    const find = (id: string) =>
+      Effect.flatMap(
+        Effect.flatMap(resolve(id), (kernelId) =>
+          kernelId === undefined ? Effect.succeed(undefined) : Effect.orDie(harness.conversation(kernelId)),
+        ),
+        (conversation) =>
+          conversation === undefined
+            ? Effect.fail(new NoSuchConversation({ conversation: id }))
+            : Effect.succeed(conversation),
+      )
+
+    const agentOf = (conversation: Conversation) => Effect.orDie(conversation.agent)
+
+    /** A conversation that takes input: not one its parent's provider runs inside its parent's run. */
+    const takingInput = (id: string) =>
+      Effect.gen(function* () {
+        const conversation = yield* find(id)
+        const lineage = yield* lineageOf(harness, conversation.id)
+        if (lineage !== undefined && lineage.task === undefined) return yield* new TakesNoInput({ conversation: id })
+        return conversation
+      })
+
+    // Starts with a chosen id one at a time, so two starts with one new id make one conversation.
+    const choosing = yield* Semaphore.make(1)
+
+    const startConversation = (
+      cwd: string,
+      id: string | undefined,
+      approvals: "ask" | "auto" | undefined,
+      instructions: string | undefined,
+      ask: ModelAsk,
+    ) =>
+      Effect.gen(function* () {
+        const last = yield* Effect.orDie(harness.session.snapshot(LastModelDoc))
+        const { selection, instance } = yield* providers.choose(cwd, ask, last?.selection)
+        const model = yield* agentModel(selection, instance)
+        // One commit: a second start with the same id finds the first one's mapping.
+        let started: ConversationId | undefined
+        const conversation = yield* Effect.orDie(
+          harness.createConversation({
+            ownership: { kind: "ownerless" },
+            agent: { ...model, cwd, ...(instructions === undefined ? {} : { instructions }) },
+            init: (tx, created) =>
+              Effect.gen(function* () {
+                started = created
+                if (approvals === "auto") yield* approveAutomatically(tx, created)
+                if (id !== undefined) (yield* tx.doc(ConversationIdsDoc)).ids[id] = Number(created)
+                ;(yield* tx.doc(LastModelDoc)).selection = { ...selection }
+              }),
+          }),
+        )
+        return { conversation: id ?? String(started ?? conversation.id), model: selectionOf(model) }
+      })
+
+    const watch = (id: string, window: Window | undefined) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          yield* lifetime.hold
+          const conversation = yield* find(id)
+          const queue = yield* Queue.bounded<ViewItem, FellBehind | Cause.Done>(connectionQueue)
+          let behind = false
+          const observation = yield* Effect.acquireRelease(
+            harness
+              .observeConversation(
+                conversation.id,
+                {
+                  // On the Session line: only capture. A full queue ends the watch instead of holding the line; what it
+                  // held is dropped so the client hears FellBehind at its next read.
+                  advance: (change) => {
+                    if (behind || Queue.offerUnsafe(queue, { _tag: "change", ops: change.ops })) return
+                    behind = true
+                    Effect.runSync(Queue.clear(queue))
+                    Queue.failCauseUnsafe(queue, Cause.fail(new FellBehind({ limit: connectionQueue })))
+                  },
+                  end: (end) => {
+                    if (end.kind === "ended") Queue.endUnsafe(queue)
+                    else Queue.failCauseUnsafe(queue, Cause.die(end.error))
+                  },
+                },
+                toWindow(window),
+              )
+              .pipe(
+                Effect.orDie,
+                // The harness checks the window's bounds and names the one that is wrong.
+                Effect.catchDefect((defect) =>
+                  defect instanceof RangeError
+                    ? Effect.fail(new InvalidWindow({ message: defect.message }))
+                    : Effect.die(defect),
+                ),
+              ),
+            (attached) => Effect.sync(() => attached.detach()),
+          )
+          const first: ViewItem = { _tag: "view", view: toView(observation.value) }
+          return Stream.concat(Stream.make(first), Stream.fromQueue(queue))
+        }),
+      )
+
     return NisseRpcs.of({
       initialize: () => Effect.succeed({ version: VERSION, protocol: PROTOCOL_VERSION }),
-      "conversation/start": ({ cwd, ...options }) => conversations.start(cwd, options),
-      "conversation/select_model": ({ conversation, author, selection }) =>
-        conversations.selectModel(conversation, author, selection),
-      "conversation/list": () => Effect.sync(() => store.list()),
-      "conversation/subscribe": ({ conversation, sinceSeq }) =>
-        Stream.unwrap(Effect.as(lifetime.hold, store.subscribe(conversation, sinceSeq))),
-      "conversation/submit": ({ conversation, requestId, author, text, steer }) =>
-        Effect.map(conversations.submit(conversation, requestId, author, text, steer ?? false), (submission) => ({
-          submission,
-        })),
-      "conversation/interrupt": ({ conversation }) => conversations.interrupt(conversation),
-      "status/watch": () => Stream.unwrap(Effect.as(lifetime.hold, store.watch)),
-      "approval/resolve": ({ conversation, approval, author, allow }) =>
-        Effect.map(conversations.resolve(conversation, approval, author, allow), (accepted) => ({ accepted })),
-      "skills/list": ({ conversation }) => conversations.skills(conversation),
-      "server/stop": () => Effect.andThen(conversations.settle, afterReply(lifetime.stop)),
+      "conversation/start": ({ cwd, id, approvals, instructions, ...ask }) =>
+        Effect.gen(function* () {
+          if (id === undefined) return yield* startConversation(cwd, undefined, approvals, instructions, ask)
+          // A conversation's number opens it, as its chosen id does, and answers with the id every other call names it
+          // by; a number that names none is refused below.
+          const numbered = kernelNumber(id)
+          if (numbered !== undefined && (yield* Effect.orDie(harness.conversation(numbered))) !== undefined) {
+            return {
+              conversation: yield* wireId(harness, numbered),
+              model: selectionOf(yield* Effect.orDie(harness.resolveAgent(numbered))),
+            }
+          }
+          const refused = refusedChoice(id)
+          if (refused !== undefined) return yield* Effect.fail(new InvalidConversationId({ message: refused }))
+          return yield* choosing.withPermits(1)(
+            Effect.gen(function* () {
+              const existing = chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id)
+              if (existing === undefined) return yield* startConversation(cwd, id, approvals, instructions, ask)
+              const agent = yield* Effect.orDie(harness.resolveAgent(idFromNumber<ConversationId>(existing)))
+              return { conversation: id, model: selectionOf(agent) }
+            }),
+          )
+        }),
+      "conversation/submit": ({ conversation: id, requestId, author, text, images: attaching = [], steer }) =>
+        Effect.gen(function* () {
+          const conversation = yield* takingInput(id)
+          const agent = yield* agentOf(conversation)
+          const { content, attached } = userInput(
+            text,
+            skillsOf(home, providers.instances, agent),
+            yield* attachedImages(attaching, images, models, agent),
+          )
+          const entry = {
+            kind: USER_KIND,
+            data: {
+              author,
+              ...(attached.length === 0 ? {} : { skills: attached }),
+              ...(attaching.length === 0 ? {} : { images: attaching.map((image) => image.name) }),
+            },
+          }
+          const submission = yield* heldUntilIdle(
+            Effect.orDie(
+              conversation.submit({
+                type: "input",
+                content,
+                requestId,
+                entry,
+                ...(steer ? { whenBusy: "steer" as const } : {}),
+              }),
+            ),
+          )
+          return { submission: submission.id }
+        }),
+      "conversation/list": () => listConversations(harness),
+      "conversation/select_model": ({ conversation: id, author, selection }) =>
+        Effect.gen(function* () {
+          const conversation = yield* takingInput(id)
+          const instance = providers.instances.get(selection.provider)
+          if (instance === undefined) return yield* new UnknownProvider({ provider: selection.provider })
+          const model = yield* agentModel(selection, instance)
+          const subagent = (yield* lineageOf(harness, conversation.id)) !== undefined
+          yield* Effect.orDie(
+            conversation.commit((tx) =>
+              Effect.gen(function* () {
+                yield* switchModel(tx, conversation.id, {
+                  model: model.model,
+                  thinkingLevel: model.thinkingLevel ?? null,
+                })
+                yield* tx.appendEntry(conversation.id, { kind: MODEL_KIND, data: { author, selection } })
+                // The model chosen last is one a person chose for a conversation they started.
+                if (!subagent) (yield* tx.doc(LastModelDoc)).selection = { ...selection }
+              }),
+            ),
+          )
+        }),
+      "skills/list": ({ conversation: id }) =>
+        Effect.map(Effect.flatMap(find(id), agentOf), (agent) => [...skillsOf(home, providers.instances, agent)]),
+      "conversation/entries": ({ conversation: id, from, to, order, limit, cursor }) =>
+        Effect.gen(function* () {
+          const conversation = yield* find(id)
+          const page = yield* Effect.orDie(
+            conversation.entries(
+              {
+                ...(from === undefined ? {} : { minEntryId: idFromNumber<EntryId>(from) }),
+                ...(to === undefined ? {} : { maxEntryId: idFromNumber<EntryId>(to) }),
+                ...(order === undefined ? {} : { order }),
+              },
+              limit,
+              cursor as Cursor | undefined,
+            ),
+          )
+          return {
+            entries: page.items as unknown as ReadonlyArray<WireEntry>,
+            ...(page.next === undefined ? {} : { next: page.next }),
+          }
+        }),
+      "conversation/context": ({ conversation: id, at }) =>
+        Effect.gen(function* () {
+          const conversation = yield* find(id)
+          const entry = at === undefined ? undefined : idFromNumber<EntryId>(at)
+          if (entry !== undefined) {
+            const visible = yield* Effect.orDie(
+              harness.session.read((storage) => storage.entry(conversation.id, entry)),
+            )
+            if (visible === undefined) return yield* new NoSuchEntry({ entry: at! })
+          }
+          const context = yield* Effect.orDie(conversation.context(entry === undefined ? {} : { at: entry }))
+          return { messages: context.messages, entries: context.entries.map((record) => Number(record.id)) }
+        }),
+      "conversation/watch": ({ conversation, window }) => watch(conversation, window),
+      "conversation/interrupt": ({ conversation: id }) =>
+        Effect.flatMap(find(id), (conversation) => Effect.orDie(interruptTree(harness, conversation.id))),
+      "approval/resolve": ({ conversation: id, approval, author, allow }) =>
+        Effect.gen(function* () {
+          const conversation = yield* find(id)
+          const answered = yield* Effect.orDie(
+            conversation.commit((tx) =>
+              answerApproval(tx, conversation.id, approval, { allow, author, at: Date.now() }),
+            ),
+          )
+          if (answered === "unknown") return yield* Effect.fail(new NoSuchApproval({ approval }))
+          return { accepted: answered === "accepted" }
+        }),
+      "status/watch": () => Stream.unwrap(Effect.as(lifetime.hold, status.watch(connectionQueue))),
+      "extensions/list": () => extensions.list,
+      "extensions/reload": () => extensions.reload,
+      // Stops once the runs in flight settle; a run is never cut off by a stop.
+      "server/stop": () => Effect.andThen(Effect.ignore(quiet), afterReply(lifetime.stop)),
       "providers/list": ({ refresh }) => setup.providers(refresh ?? false),
       "models/list": ({ refresh }) => setup.models(refresh ?? false),
       "auth/start": ({ provider, method }) => setup.start(provider, method),
@@ -52,30 +440,42 @@ const Handlers = NisseRpcs.toLayer(
       "auth/cancel": ({ provider, flow }) => Effect.map(setup.cancel(provider, flow), (accepted) => ({ accepted })),
       "auth/logout": ({ provider }) => setup.logout(provider),
       "auth/watch": () => Stream.unwrap(Effect.as(lifetime.hold, setup.watch)),
-      "extensions/list": () => extensions.list,
-      "extensions/reload": () => extensions.reload,
     })
   }),
 )
 
-export const serverLayer = (home: Home, options: { readonly idleGrace: Duration.Input }) => {
-  const app = Layer.merge(Conversations.layer, Setup.layer).pipe(
-    Layer.provideMerge(Extensions.layer(home)),
-    Layer.provideMerge(Store.layer(home.database)),
-    Layer.provideMerge(Lifetime.layer(options.idleGrace)),
+/** The view as the wire carries it: kernel ids are plain numbers already. */
+const toView = (view: ConversationView): View => view as unknown as View
+
+const afterReply = (effect: Effect.Effect<void>) =>
+  Effect.withFiber((handler) =>
+    Effect.sync(() => {
+      handler.addObserver(() => Effect.runFork(effect))
+    }),
   )
-  return RpcServer.layer(NisseRpcs).pipe(
+
+export interface ServerOptions {
+  readonly idleGrace: Duration.Input
+  readonly providers: ProviderOptions
+  readonly connectionQueue?: number
+}
+
+export const serverLayer = (home: Home, options: ServerOptions) =>
+  RpcServer.layer(NisseRpcs).pipe(
     Layer.provide(Handlers),
+    Layer.provide(Layer.succeed(ConnectionQueue, options.connectionQueue ?? CONNECTION_QUEUE)),
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
     Layer.provide(homeSocketServer(home.socket)),
-    Layer.provideMerge(app),
+    Layer.provideMerge(KernelHarness.layer(home)),
+    Layer.provideMerge(Providers.layer(options.providers)),
+    Layer.provideMerge(Lifetime.layer(options.idleGrace)),
   )
-}
 
-export const serve = (home: Home, options: { readonly idleGrace: Duration.Input }) =>
+/** Serves the home until its lifetime ends: stopped, or idle past the grace. */
+export const serve = (home: Home, options: ServerOptions) =>
   Effect.gen(function* () {
     const lifetime = yield* Lifetime
     yield* Console.error(`nisse ${VERSION} serving ${home.dir}`)
     yield* lifetime.ended
-  }).pipe(Effect.provide(serverLayer(home, options)), Effect.scoped) satisfies Effect.Effect<void, unknown, Providers>
+  }).pipe(Effect.provide(serverLayer(home, options)), Effect.scoped)

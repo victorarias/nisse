@@ -9,11 +9,7 @@ import {
   type ProviderSnapshot,
 } from "@nisse/protocol"
 import type { ProviderAccount } from "@nisse/models"
-import { Cause, Context, Effect, Fiber, Layer, Queue, Semaphore, Stream } from "effect"
-import { newId } from "./ids.ts"
-import { Providers } from "./provider.ts"
-
-const WATCHER_QUEUE = 256
+import { Context, Effect, Fiber, Queue, Semaphore, Stream } from "effect"
 
 /** Where every connection sees sign-ins: the last state of each provider's, then every change. */
 export interface SignInLog {
@@ -21,33 +17,6 @@ export interface SignInLog {
   readonly record: (state: AuthState) => Effect.Effect<void>
   readonly watch: Stream.Stream<AuthState>
 }
-
-/** A log held in memory: a watcher that falls behind by `WATCHER_QUEUE` states is dropped. */
-export const memorySignIns = Effect.sync((): SignInLog => {
-  const last = new Map<string, AuthState>()
-  const watchers = new Set<Queue.Queue<AuthState>>()
-  return {
-    record: (state) =>
-      Effect.sync(() => {
-        last.set(state.provider, state)
-        for (const watcher of watchers) {
-          if (!Queue.offerUnsafe(watcher, state)) {
-            watchers.delete(watcher)
-            Queue.failCauseUnsafe(watcher, Cause.interrupt())
-          }
-        }
-      }),
-    watch: Stream.unwrap(
-      Effect.gen(function* () {
-        const queue = yield* Queue.bounded<AuthState>(WATCHER_QUEUE)
-        const current = [...last.values()]
-        watchers.add(queue)
-        yield* Effect.addFinalizer(() => Effect.sync(() => watchers.delete(queue)))
-        return Stream.concat(Stream.fromIterable(current), Stream.fromQueue(queue))
-      }),
-    ),
-  }
-})
 
 interface Flow {
   state: AuthState
@@ -208,7 +177,7 @@ export class Setup extends Context.Service<
                 const running = flows.get(provider)
                 if (running && !authEnded(running.state.phase)) return running.state
                 const flow: Flow = {
-                  state: { provider, flow: newId(), phase: "starting" },
+                  state: { provider, flow: crypto.randomUUID(), phase: "starting" },
                   responses: yield* Queue.unbounded<AuthResponse>(),
                 }
                 yield* log.record(flow.state)
@@ -235,7 +204,7 @@ export class Setup extends Context.Service<
             yield* Effect.uninterruptible(
               Effect.andThen(
                 Effect.mapError(driver.signOut, (error) => new CannotSignIn({ provider, message: error.message })),
-                settle({ provider, flow: newId(), phase: "signed_out" }),
+                settle({ provider, flow: crypto.randomUUID(), phase: "signed_out" }),
               ),
             )
             return yield* snapshot(provider, driver, true)
@@ -243,9 +212,4 @@ export class Setup extends Context.Service<
         watch: log.watch,
       })
     })
-
-  static readonly layer = Layer.effect(
-    Setup,
-    Effect.flatMap(Effect.zip(Providers, memorySignIns), ([{ drivers }, log]) => Setup.make(drivers, log)),
-  )
 }
