@@ -127,7 +127,7 @@ test("answer-failed: a model failure is recorded after what was said and the con
 })
 
 test("wire-dropped: a client that stops reading is dropped while the others keep up", async () => {
-  // A client that reads holds at most 34 changes with 100 prompts submitted at once; 200 prompts make about 600.
+  // A client that reads peaked at 34 queued changes with 100 prompts submitted at once; 200 prompts make about 600.
   const connectionQueue = 128
   const prompts = 200
   await using server = await runningKernelServer(
