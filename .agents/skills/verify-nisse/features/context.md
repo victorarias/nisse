@@ -10,9 +10,9 @@ What the model sees is derived from the recorded entries by written rules, so it
 - `context-head` [kernel] Head markers (§2.1): Context starts at a chosen point after reset or compaction, and history stays readable
 - `context-synthesized-results` [kernel] Synthesize missing tool results (§2.1): A crash never leaves the provider an unanswered call
 - `context-at-entry` [kernel] `Conversation.context(at)` (§2.2): Inspect the exact context at any entry
-- `context-rpc` [pending wire-complete] The client path for `Conversation.context(at)` (§2.2): Inspect the exact context at any entry
+- `context-rpc` The client path for `Conversation.context(at)` (§2.2): Inspect the exact context at any entry
 - `entries-paged` [kernel] Entries read with paging (§2.2): Read part of a long transcript
-- `entries-rpc` [pending wire-complete] The client path for Entries read with paging (§2.2): Read part of a long transcript
+- `entries-rpc` The client path for Entries read with paging (§2.2): Read part of a long transcript
 - `context-stale-head` [kernel] Stale head check (§6): An input aimed at a context that has moved is settled, not misapplied
 
 ## How to get to it
@@ -23,14 +23,41 @@ None yet.
 
 ### Agents
 
-- Not reachable yet: `context-rpc` lands with `wire-complete`, which adds its entry point and recipe.
-- Not reachable yet: `entries-rpc` lands with `wire-complete`, which adds its entry point and recipe.
+- On a server under `NISSE_KERNEL=1`, call `conversation/context` with `conversation` and an optional entry `at`:
+  the `messages` the model is sent, and the `entries` they come from.
+- On a server under `NISSE_KERNEL=1`, call `conversation/entries` with `conversation`, `limit`, and optionally
+  `from`, `to`, `order` and the `cursor` a page answered as `next`.
+
+## Driving it with drive.ts
+
+Preconditions:
+
+- `drive.ts r up --kernel --script <file>` with the script
+  `[{"text": "a"}, {"text": "b"}, {"text": "c"}]`, then `drive.ts r serve`.
+
+- **Fill a transcript.** Run `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`, then
+  `drive.ts r watch <id> --submit one --until run_end`, the same with `two` and `three`, and
+  `drive.ts r watch <id> --save full`: nine or more entries.
+- **Page through it** (`entries-rpc`). Run
+  `drive.ts r rpc conversation/entries '{"conversation": "<id>", "limit": 4}'`: the four newest entries, newest
+  first, and a `next`. Pass that `next` as `"cursor"` until a page has no `next`: together the pages hold every entry
+  of `full`. `drive.ts r rpc conversation/entries '{"conversation": "<id>", "from": <the user entry "two">, "order": "ascending", "limit": 3}'`
+  answers `two`, `b` and its `nisse.run_end`. `"limit": 0` is refused naming `limit`.
+- **Read the context** (`context-rpc`). Run
+  `drive.ts r rpc conversation/context '{"conversation": "<id>"}'`: `messages` alternate `user` and `assistant`
+  through `c`, after any `system` message. With `"at": <the pi.assistant entry "a">` they end at `a`, and `entries`
+  ends at that entry. An `at` from another conversation answers `NoSuchEntry`.
 
 ## Sources
 
 Feature ledger area B: spec §2.1, §2.2, §6; examples 08-context, 13-chat, 20-late-join.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`:
+
+- entries-rpc: a client reads a long transcript a page at a time, newest first or in order from an entry
+- context-rpc: a client reads the exact context the model is sent, now or as it was at an entry
 
 `bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
 

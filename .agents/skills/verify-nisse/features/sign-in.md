@@ -19,7 +19,7 @@ time, and every connection sees it end as `succeeded`, `failed` or
 - `signin-paste` takes the address a browser on another machine ended on,
   typed into the TUI's prompt, pasted into `nisse login`, or sent with
   `auth/respond`.
-- `signin-refused` [pending wire-complete] answers a callback for another sign-in with 400, and fails
+- `signin-refused` answers a callback for another sign-in with 400, and fails
   a sign-in the browser refused with `ChatGPT refused the sign-in: <reason>`.
 - `signin-device-code` shows a URL and a code to enter on any device, with
   `--device-code`, over SSH, or `"method": "device_code"`.
@@ -32,7 +32,7 @@ time, and every connection sees it end as `succeeded`, `failed` or
 - `signout` signs out with `nisse logout <provider>` or `auth/logout`, cancels
   a sign-in still running for that provider, and tells every `auth/watch` with
   `"phase": "signed_out"`, so open TUIs show the provider signed out.
-- `signin-cannot` [pending wire-complete] refuses an unknown provider, one with nothing to sign in to,
+- `signin-cannot` refuses an unknown provider, one with nothing to sign in to,
   and a method the provider does not offer.
 - `signin-real` [pending zero-pending] finishes a ChatGPT or Claude sign-in and names the account.
 
@@ -220,6 +220,11 @@ Preconditions:
 - **Restart, on the kernel.** A sign-in still running when the server stops ends `failed` for the next server's connections; today's server forgets it.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- signin-refused: an answer for another sign-in is turned away, and a sign-in the browser refused fails saying why
+- signin-cannot: nisse refuses to sign in to a provider it does not have, one with nothing to sign in to, and a way the provider does not offer
 
 Screen, `packages/nisse/test/screen.test.ts`:
 

@@ -13,7 +13,7 @@ next run. Switching providers keeps the conversation.
 - `model-list` lists each provider's models, best first, with their efforts:
   Claude Code's models and `its own choice`, ChatGPT's from ChatGPT, else the
   list it sent last, else the one nisse ships.
-- `model-flags` [pending wire-complete] starts a conversation with `--model` and `--effort` from the
+- `model-flags` [pending cli-kernel] starts a conversation with `--model` and `--effort` from the
   TUI or `exec`, or `model` and `effort` on `conversation/start`. A model
   named without a provider goes to the default model's provider.
 - `model-default` takes the project's `default_model`, then the home's, then
@@ -146,7 +146,12 @@ Preconditions:
   `{"provider": "claude", "model": "opus"}`, chosen last before the kill.
   `'{"cwd": "/tmp", "effort": "loud"}'` fails `UnknownEffort` with the
   efforts nisse knows, `minimal` to `max`. `drive.ts r rpc models/list '{}'`
-  lists every provider as above.
+  lists every provider as above. Then
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "bo", "selection": {"provider": "script", "model": "script-code-mode", "effort": "low"}}'`
+  and `drive.ts r watch <id> --submit hi --until run_end --save switched`: a
+  `nisse.model` entry `{"author": "bo", "selection": ...}`, then an answer
+  whose message names `script-code-mode`, and `drive.ts r rpc conversation/list`
+  shows that model. A provider nisse does not have answers `UnknownProvider`.
 
 ## Contexts
 
@@ -154,6 +159,11 @@ Preconditions:
 - **Second client.** A switch is an entry everyone sees, and applies from the next run.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- model-switch, model-switch-provider: switching a conversation's model is recorded with who switched it, and the next run answers on it
+- model-switch: a switch made while a run works is recorded at once and answers from the next run, not mid-run
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

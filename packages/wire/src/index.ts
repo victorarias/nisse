@@ -34,6 +34,9 @@ export type Outcome = typeof Outcome.Type
 
 export const RUN_END_KIND = "nisse.run_end"
 
+/** An entry `{ author, selection }`: someone switched the conversation's model; it answers with it from the next run on. */
+export const MODEL_KIND = "nisse.model"
+
 /** A person's input: the entry its user message is placed as, with data `{ author }`. */
 export const USER_KIND = "nisse.user"
 
@@ -101,6 +104,16 @@ export class NoSuchApproval extends Schema.TaggedError<NoSuchApproval>()("NoSuch
 /** The id a client chose cannot name a conversation: `message` says why. */
 export class InvalidConversationId extends Schema.TaggedError<InvalidConversationId>()("InvalidConversationId", {
   message: Schema.String,
+}) {}
+
+/** The conversation's provider runs it inside its parent's run, so it takes input only through its parent. */
+export class TakesNoInput extends Schema.TaggedError<TakesNoInput>()("TakesNoInput", {
+  conversation: Schema.String,
+}) {}
+
+/** The entry is not one the conversation's transcript holds. */
+export class NoSuchEntry extends Schema.TaggedError<NoSuchEntry>()("NoSuchEntry", {
+  entry: Schema.Int,
 }) {}
 
 export class NoSuchConversation extends Schema.TaggedError<NoSuchConversation>()("NoSuchConversation", {
@@ -205,7 +218,7 @@ export const Submit = Rpc.make("conversation/submit", {
     ),
   },
   success: Schema.Struct({ submission: Schema.Int }),
-  error: NoSuchConversation,
+  error: Schema.Union([NoSuchConversation, TakesNoInput]),
 })
 
 export const Watch = Rpc.make("conversation/watch", {
@@ -235,6 +248,113 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
     }),
   }),
   error: Schema.Union([NoSuchConversation, NoSuchApproval]),
+})
+
+export const Lineage = Schema.Struct({
+  parent: ConversationId,
+  root: ConversationId.annotate({ description: "The conversation people started, at the top of the tree." }),
+  call: Schema.String.annotate({ description: "The parent's call that started it." }),
+  title: Schema.String,
+  task: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does.",
+    }),
+  ),
+  agentType: Schema.optionalKey(Schema.String),
+}).annotate({ description: "Where a subagent comes from. It runs on its parent's provider, in its directory." })
+export type Lineage = typeof Lineage.Type
+
+export const ConversationInfo = Schema.Struct({
+  id: ConversationId,
+  cwd: Schema.String,
+  model: ModelSelection,
+  approvals: Approvals,
+  lineage: Schema.optionalKey(Lineage),
+  instructions: Schema.optionalKey(
+    Schema.String.annotate({
+      description: "What the client that started it asked the model to follow, beside its own.",
+    }),
+  ),
+  ended: Schema.optionalKey(
+    Schema.Struct({
+      outcome: Outcome,
+      message: Schema.optionalKey(Schema.String.annotate({ description: "Why the run ended without an answer." })),
+      said: Schema.optionalKey(
+        Schema.String.annotate({ description: "The last message the model wrote in the conversation." }),
+      ),
+    }).annotate({ description: "How the conversation's last run ended." }),
+  ),
+})
+export type ConversationInfo = typeof ConversationInfo.Type
+
+export const ListConversations = Rpc.make("conversation/list", {
+  success: Schema.Array(ConversationInfo).annotate({
+    description: "Every conversation, subagents included, oldest first.",
+  }),
+})
+
+export const SelectModel = Rpc.make("conversation/select_model", {
+  payload: {
+    conversation: ConversationId,
+    author: Schema.String.annotate({ description: "Who switched it; the transcript names them." }),
+    selection: ModelSelection,
+  },
+  error: Schema.Union([NoSuchConversation, UnknownProvider, UnknownEffort, TakesNoInput]),
+})
+
+export const Skill = Schema.Struct({ name: Schema.String, description: Schema.String, path: Schema.String })
+export type Skill = typeof Skill.Type
+
+export const AttachedSkill = Schema.Struct({ name: Schema.String, path: Schema.String, text: Schema.String }).annotate({
+  description: "A skill's SKILL.md as it was when the input named it.",
+})
+export type AttachedSkill = typeof AttachedSkill.Type
+
+export const ListSkills = Rpc.make("skills/list", {
+  payload: { conversation: ConversationId },
+  success: Schema.Array(Skill).annotate({
+    description: `The skills input to this conversation can name with /name or $name, which then carries them as \`skills\` in its ${USER_KIND} entry's data. Empty when its provider expands skills itself.`,
+  }),
+  error: NoSuchConversation,
+})
+
+export const Entries = Rpc.make("conversation/entries", {
+  payload: {
+    conversation: ConversationId,
+    from: Schema.optionalKey(Schema.Int.annotate({ description: "The oldest entry to include." })),
+    to: Schema.optionalKey(Schema.Int.annotate({ description: "The newest entry to include." })),
+    order: Schema.optionalKey(
+      Schema.Literals(["ascending", "descending"]).annotate({ description: "Default descending: newest first." }),
+    ),
+    limit: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).annotate({
+      description: "The most entries one page holds.",
+    }),
+    cursor: Schema.optionalKey(Json.annotate({ description: "The `next` of the page before, to read on from it." })),
+  },
+  success: Schema.Struct({
+    entries: Schema.Array(EntryRecord).annotate({
+      description: "Every entry of the transcript in the range, forks' inherited ones included.",
+    }),
+    next: Schema.optionalKey(Json.annotate({ description: "Present when more entries follow; pass it as `cursor`." })),
+  }),
+  error: NoSuchConversation,
+})
+
+export const ReadContext = Rpc.make("conversation/context", {
+  payload: {
+    conversation: ConversationId,
+    at: Schema.optionalKey(
+      Schema.Int.annotate({ description: "Cut the context off after this entry; absent for the context now." }),
+    ),
+  },
+  success: Schema.Struct({
+    messages: Schema.Array(Json).annotate({ description: "What the model is sent: the messages of its next request." }),
+    entries: Schema.Array(Schema.Int).annotate({
+      description: "The entries the context is made of, oldest first: since the last reset or compaction.",
+    }),
+  }),
+  error: Schema.Union([NoSuchConversation, NoSuchEntry]),
 })
 
 export const ExtensionInfo = Schema.Struct({
@@ -435,8 +555,13 @@ export const WatchAuth = Rpc.make("auth/watch", {
 export const KernelRpcs = RpcGroup.make(
   Initialize,
   StartConversation,
+  ListConversations,
   Submit,
   Watch,
+  Entries,
+  ReadContext,
+  SelectModel,
+  ListSkills,
   Interrupt,
   ResolveApproval,
   ListExtensions,

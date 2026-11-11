@@ -28,6 +28,7 @@ const STEPS = new Set([
   "nisse-surface",
   "claude-run",
   "wire-complete",
+  "cli-kernel",
   "tui-views",
   "switch-delete",
   "surface-conversations",

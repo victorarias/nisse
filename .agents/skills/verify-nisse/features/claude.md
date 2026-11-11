@@ -21,9 +21,9 @@ compaction; `/clear` starts a new context in nisse's transcript too.
   `allow this call?`; `^Y` lets the call run, `^N` refuses it.
 - `claude-read` shows a call Claude Code allows on its own, such as a `Read`,
   with its result and no `allow this call?`.
-- `claude-exec-deny` [pending wire-complete] makes `exec` refuse Claude's calls that would ask, unless
+- `claude-exec-deny` [pending cli-kernel] makes `exec` refuse Claude's calls that would ask, unless
   `--auto`.
-- `claude-auto` [pending wire-complete] lets every call run in a conversation started with `--auto`.
+- `claude-auto` lets every call run in a conversation started with `--auto`.
 - `claude-resume` continues Claude Code's session in each new run, also after
   the server restarted.
 - `claude-session-gone` retells the conversation to a new Claude Code session
@@ -234,8 +234,10 @@ Preconditions:
   `pi.usage` with the run's spend under `claude/claude-haiku-5-5`. A second
   `watch <id> --save reopen` from a new connection shows the same entries. The other journeys
   above drive the same way with their fixtures, except those that need
-  `select_model`, `conversation/list` or `exec`, which reach the kernel with
-  `wire-complete`.
+  `exec`, which reaches the kernel with `cli-kernel`. A Claude subagent is
+  listed by `conversation/list` with its `lineage` (no `task`), and
+  `conversation/submit` or `conversation/select_model` on it answers
+  `TakesNoInput`.
 - **Inside an agent.** Start the run's server without the session's `CLAUDE`, `ANTHROPIC` and `CCR` variables.
 - **Server restart.** The run resumes Claude Code's session where Nisse's transcript ends.
 

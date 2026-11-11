@@ -11,7 +11,7 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
 
 ## Sub-features
 
-- `extensions-load` [pending wire-complete] loads `extensions/<name>.ts` and `extensions/<name>/index.ts`
+- `extensions-load` [pending cli-kernel] loads `extensions/<name>.ts` and `extensions/<name>/index.ts`
   in name order, with `[extensions.<name>]` from `config.toml` as
   `ctx.options`; `enabled = false` there lists it as `disabled`. A relative
   `NISSE_HOME` is taken from the folder nisse runs in, so `nisse extensions`
@@ -410,7 +410,7 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 - **Second client.** Status lines and toasts are committed, so every client sees them, then and later.
 - **On the kernel.** In a run made with `drive.ts r up --kernel` the server loads the same extensions with the same
   `@nisse/extension` API, and serves `extensions/list` and `extensions/reload`; `nisse extensions` and the TUI wait
-  for wire-complete and tui-views. The kernel's tools are named `read`, `write`, `edit`, `apply_patch`, `bash`, `grep`
+  for cli-kernel and tui-views. The kernel's tools are named `read`, `write`, `edit`, `apply_patch`, `bash`, `grep`
   and `glob`, so a hook or transform names them so. A status line is the view's `nisse.status_lines` document
   (`{"lines": {"<name>": "<text>"}}`), and a toast a `nisse.toast` entry `{ extension, text }`. A refused or failed
   `execute.before` reaches the model as `Tool call blocked: <name> refused this call: <why>`, and a removed tool as
@@ -421,8 +421,7 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   `ctx.request.hook` runs on each ChatGPT request as the harness's
   `beforeProviderRequest` hook: what it pushes to `instructions` goes after the
   request's own, and it narrows the tools offered; on `script` it does not run.
-  A hook's `conversation` has no
-  `lineage` there yet: kernel conversations carry lineage on the wire from wire-complete, and hooks get it then.
+  A hook's `conversation` in a subagent carries its `lineage`, as `conversation/list` shows it.
 
 ## Tests
 

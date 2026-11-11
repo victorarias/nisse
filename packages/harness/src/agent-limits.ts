@@ -1,5 +1,7 @@
 // Agent limits (D13): how deep subagents nest and how many work at once in one tree of conversations. Nisse's own
 // subagent tools and Claude Code's hosted subagents both check them, so they live here.
+import { type ConversationId, defineDoc, type Tx } from "@nisse/kernel"
+import { Effect } from "effect"
 
 export type AgentLimits = {
   /** Levels of subagents below the conversation people started: 1 lets it start subagents that cannot start more. */
@@ -27,3 +29,31 @@ export const refusedSpawn = (limits: AgentLimits, parent: string, working: numbe
   depthOf(parent) >= limits.maxDepth
     ? `agents may nest ${limits.maxDepth} deep (maxDepth); ${parent} can't start another`
     : refusedWork(limits, working)
+
+/**
+ * The call a subagent came from: the parent's call, the subagent's title, and, for one nisse's own tools started, its
+ * canonical task path. Its parent is its owner's conversation. Written in the commit that creates it.
+ */
+export type SubagentOrigin = {
+  readonly call: string
+  readonly title: string
+  readonly task?: string
+  readonly agentType?: string
+}
+
+export const SubagentOriginDoc = defineDoc<SubagentOrigin>({
+  kind: "nisse.subagent_origin",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  // A fork of a subagent is a conversation of its own, started by no call.
+  fork: "initial",
+  initial: () => ({ call: "", title: "" }),
+  checkpointWhen: () => true,
+})
+
+/** Records where the subagent `child` came from, in the commit that creates it. */
+export const recordOrigin = (tx: Tx, child: ConversationId, origin: SubagentOrigin) =>
+  Effect.map(tx.doc(SubagentOriginDoc, child), (doc) => {
+    Object.assign(doc, origin)
+  })

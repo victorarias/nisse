@@ -46,7 +46,7 @@ import {
 } from "../extensions/discover.ts"
 import { serveSharedModules } from "../extensions/modules.ts"
 import type { Tool as ExtensionTool } from "../tools/tool.ts"
-import { ConversationIdsDoc } from "./ids.ts"
+import { lineageOf, wireId } from "./conversations.ts"
 import { selectionOf } from "./providers.ts"
 
 /** Each extension's status line in one conversation, by extension name. */
@@ -169,34 +169,31 @@ export const openKernelExtensions = (
     const toast = (conversation: ConversationId, extension: string, text: string) =>
       commit((tx) => Effect.asVoid(tx.appendEntry(conversation, { kind: TOAST_KIND, data: { extension, text } })))
 
-    /** The id clients name the conversation by: the one a client chose, or its number. */
-    const wireId = (conversation: ConversationId) =>
-      Effect.map(Effect.orDie(harness().session.snapshot(ConversationIdsDoc)), (chosen) => {
-        const pair = Object.entries(chosen?.ids ?? {}).find(([, number]) => number === Number(conversation))
-        return pair?.[0] ?? String(conversation)
-      })
-
     const handle = (conversation: ConversationId, about: About, extension: string, loaded: Loaded) =>
-      Effect.map(wireId(conversation), (id) => ({
-        id: id as never,
-        cwd: about.cwd,
-        model: about.model,
-        // A status set by code that a reload replaced since is dropped in the commit, so none outlives its code.
-        status: (text?: string) =>
-          commit((tx) =>
-            Effect.gen(function* () {
-              if (loaded !== current) return
-              const doc = yield* tx.doc(StatusLinesDoc, conversation)
-              const line = text === undefined || text === "" ? undefined : text
-              if (doc.lines[extension] === line) return
-              if (line === undefined) delete doc.lines[extension]
-              else doc.lines[extension] = line
-              const shown = yield* tx.doc(StatusShownDoc)
-              if (!shown.conversations.includes(Number(conversation))) shown.conversations.push(Number(conversation))
-            }),
-          ),
-        toast: (text: string) => toast(conversation, extension, text),
-      }))
+      Effect.map(
+        Effect.all([wireId(harness(), conversation), lineageOf(harness(), conversation)]),
+        ([id, lineage]) => ({
+          id: id as never,
+          cwd: about.cwd,
+          model: about.model,
+          ...(lineage === undefined ? {} : { lineage: lineage as never }),
+          // A status set by code that a reload replaced since is dropped in the commit, so none outlives its code.
+          status: (text?: string) =>
+            commit((tx) =>
+              Effect.gen(function* () {
+                if (loaded !== current) return
+                const doc = yield* tx.doc(StatusLinesDoc, conversation)
+                const line = text === undefined || text === "" ? undefined : text
+                if (doc.lines[extension] === line) return
+                if (line === undefined) delete doc.lines[extension]
+                else doc.lines[extension] = line
+                const shown = yield* tx.doc(StatusShownDoc)
+                if (!shown.conversations.includes(Number(conversation))) shown.conversations.push(Number(conversation))
+              }),
+            ),
+          toast: (text: string) => toast(conversation, extension, text),
+        }),
+      )
 
     const runHook = <E>(conversation: ConversationId, extension: string, name: string, run: Effect.Effect<void, E>) =>
       Effect.exit(Effect.timeout(run, HOOK_LIMIT)).pipe(

@@ -9,13 +9,12 @@ import {
   type ConversationId,
   type ConversationRecord,
   type Cursor,
-  type EntryId,
   type EntryRecord,
   readOnLine,
 } from "@nisse/kernel"
-import { FellBehind, RUN_END_KIND, type RunEnd, type TreeItem, type TreeStatus } from "@nisse/wire"
+import { FellBehind, RUN_END_KIND, type TreeItem, type TreeStatus } from "@nisse/wire"
 import { Cause, Effect, Queue, Stream } from "effect"
-import { ConversationIdsDoc } from "./ids.ts"
+import { endedAt, wireId } from "./conversations.ts"
 
 type Status = TreeStatus["status"]
 
@@ -123,50 +122,12 @@ export const followTreeStatus = (harness: Harness): Effect.Effect<TreeStatuses> 
       ),
     )
 
-    /** The id clients name a conversation by: the one a client chose, or its number. */
-    const wireId = (id: ConversationId) =>
-      Effect.map(Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), (chosen) => {
-        const pair = Object.entries(chosen?.ids ?? {}).find(([, number]) => number === Number(id))
-        return pair?.[0] ?? String(id)
-      })
-
-    /** The last thing the model wrote in `root` before its run ended at `end`. */
-    const saidBefore = (root: ConversationId, end: EntryId) =>
-      Effect.gen(function* () {
-        const conversation = yield* Effect.orDie(harness.conversation(root))
-        if (conversation === undefined) return undefined
-        let cursor: Cursor | undefined
-        do {
-          const page = yield* Effect.orDie(conversation.entries({ maxEntryId: end }, SCAN_PAGE, cursor))
-          for (const entry of page.items) {
-            if (entry.kind !== "pi.assistant") continue
-            const content = (entry.model?.[0] as { content?: Array<{ type: string; text?: string }> } | undefined)
-              ?.content
-            const text = (content ?? []).flatMap((block) => (block.type === "text" ? [block.text ?? ""] : [])).join("")
-            if (text !== "") return text
-          }
-          cursor = page.next
-        } while (cursor !== undefined)
-        return undefined
-      })
-
     const toItem = (raw: Raw): Effect.Effect<TreeStatus> =>
       Effect.gen(function* () {
-        const conversation = yield* wireId(raw.root)
+        const conversation = yield* wireId(harness, raw.root)
         if (raw.end === undefined) return { _tag: "tree", conversation, seq: raw.seq, status: raw.status }
-        const data = raw.end.data as RunEnd
-        const said = yield* saidBefore(raw.root, raw.end.id)
-        return {
-          _tag: "tree",
-          conversation,
-          seq: raw.seq,
-          status: raw.status,
-          ended: {
-            outcome: data.outcome,
-            ...(data.message === undefined ? {} : { message: data.message }),
-            ...(said === undefined ? {} : { said }),
-          },
-        }
+        const ended = yield* endedAt(harness, raw.root, raw.end)
+        return { _tag: "tree", conversation, seq: raw.seq, status: raw.status, ended }
       })
 
     return {

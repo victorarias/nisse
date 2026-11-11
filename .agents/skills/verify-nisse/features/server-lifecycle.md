@@ -14,7 +14,7 @@ running server once its runs settle.
 - `server-idle-exit` exits the server 30 s after its last subscription closes
   and its last run settles.
 - `server-stop` stops it on `server/stop` once its runs settle.
-- `server-restart` [pending wire-complete] replaces the running server with `nisse serve --restart`
+- `server-restart` [pending cli-kernel] replaces the running server with `nisse serve --restart`
   once its runs settle.
 - `server-old-home` keeps working in a home a Rust version of Nisse used: its
   `nisse.sqlite` stays as it was, and this Nisse uses `store.sqlite` beside it.

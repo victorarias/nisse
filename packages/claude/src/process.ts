@@ -30,6 +30,7 @@ import {
   LiveDoc,
   type LiveState,
   prepareBoundary,
+  recordOrigin,
   removeApproval,
   recordUsage,
   type TaskApi,
@@ -849,6 +850,11 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 { ownership: { kind: "conversation" }, conversationId: created.id, abandonOnRestart: true },
               )
               hosted = { conversation: created.id, task }
+              yield* recordOrigin(tx, created.id, {
+                call: frame.tool_use_id,
+                title: frame.description,
+                ...(frame.subagent_type === undefined ? {} : { agentType: frame.subagent_type }),
+              })
               const live = yield* tx.doc(LiveDoc, created.id)
               live.run = { taskId: task, inputs: [], turns: 0 }
               if (auto) yield* approveAutomatically(tx, created.id)

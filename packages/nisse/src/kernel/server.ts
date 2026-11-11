@@ -6,6 +6,7 @@ import { LocalExecutionEnv } from "@nisse/env/local"
 import {
   answerApproval,
   approveAutomatically,
+  type Conversation,
   type ConversationView,
   type ConversationWindow,
   createRegistry,
@@ -13,7 +14,7 @@ import {
   openHarness,
   type Harness,
 } from "@nisse/harness"
-import { type ConversationId, type EntryId, idFromNumber, openSqliteStorage, type Tx } from "@nisse/kernel"
+import { type ConversationId, type Cursor, type EntryId, idFromNumber, openSqliteStorage, type Tx } from "@nisse/kernel"
 import { fromProviders } from "@nisse/models"
 import {
   FellBehind,
@@ -21,9 +22,13 @@ import {
   InvalidWindow,
   KERNEL_PROTOCOL_VERSION,
   KernelRpcs,
+  MODEL_KIND,
   NoSuchApproval,
   NoSuchConversation,
-  RUN_END_KIND,
+  NoSuchEntry,
+  TakesNoInput,
+  UnknownProvider,
+  type EntryRecord as WireEntry,
   USER_KIND,
   type View,
   type ViewItem,
@@ -42,13 +47,14 @@ import { VERSION } from "../version.ts"
 import { chosenNumber, ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
 import { agentModel, KernelProviders, LastModelDoc, selectionOf } from "./providers.ts"
 import { countStops, restartLimitMessage } from "./restarts.ts"
-import { writeRunEnd } from "./run-end.ts"
+import { endRun, switchModel, writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
 import { codeModeTools, NisseTools } from "./tools.ts"
 import { agentTools, interruptTree } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
-import { workspaceInstructions } from "./workspace.ts"
+import { skillsOf, userInput, workspaceInstructions } from "./workspace.ts"
+import { lineageOf, listConversations } from "./conversations.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: 1,500
@@ -65,6 +71,7 @@ const ConnectionQueue = Context.Reference<number>("nisse/ConnectionQueue", { def
  * runs, and ended `restart_limit` once scheduling resumes.
  */
 export type KernelHarnessService = {
+  readonly home: Home
   readonly harness: Harness
   readonly stoppedTooOften: Map<ConversationId, number>
   readonly extensions: KernelExtensions
@@ -100,12 +107,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           const stops = stoppedTooOften.get(run.conversationId)
           stoppedTooOften.delete(run.conversationId)
           if (stops === undefined || run.answered || run.end.status === "done") return writeRunEnd(tx, run)
-          return Effect.asVoid(
-            tx.appendEntry(run.conversationId, {
-              kind: RUN_END_KIND,
-              data: { outcome: "restart_limit", message: restartLimitMessage(stops) },
-            }),
-          )
+          return endRun(tx, run.conversationId, { outcome: "restart_limit", message: restartLimitMessage(stops) })
         }
         const harness = yield* Effect.acquireRelease(
           Effect.flatMap(openSqliteStorage(home.kernel), (storage) =>
@@ -126,7 +128,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const status = yield* followTreeStatus(harness)
         // Loaded before anything runs, so the extensions guard the calls a restart resumes.
         const extensions = yield* openKernelExtensions(home, registry, base, () => harness)
-        return { harness, stoppedTooOften, extensions, status }
+        return { home, harness, stoppedTooOften, extensions, status }
       }).pipe(Effect.orDie),
     )
 }
@@ -142,7 +144,7 @@ const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
 
 const Handlers = KernelRpcs.toLayer(
   Effect.gen(function* () {
-    const { harness, stoppedTooOften, extensions, status } = yield* KernelHarness
+    const { home, harness, stoppedTooOften, extensions, status } = yield* KernelHarness
     const connectionQueue = yield* ConnectionQueue
     const providers = yield* KernelProviders
     const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
@@ -199,6 +201,17 @@ const Handlers = KernelRpcs.toLayer(
             ? Effect.fail(new NoSuchConversation({ conversation: id }))
             : Effect.succeed(conversation),
       )
+
+    const agentOf = (conversation: Conversation) => Effect.orDie(conversation.agent)
+
+    /** A conversation that takes input: not one its parent's provider runs inside its parent's run. */
+    const takingInput = (id: string) =>
+      Effect.gen(function* () {
+        const conversation = yield* find(id)
+        const lineage = yield* lineageOf(harness, conversation.id)
+        if (lineage !== undefined && lineage.task === undefined) return yield* new TakesNoInput({ conversation: id })
+        return conversation
+      })
 
     // Starts with a chosen id one at a time, so two starts with one new id make one conversation.
     const choosing = yield* Semaphore.make(1)
@@ -293,13 +306,17 @@ const Handlers = KernelRpcs.toLayer(
         }),
       "conversation/submit": ({ conversation: id, requestId, author, text, steer }) =>
         Effect.gen(function* () {
-          const conversation = yield* find(id)
-          const entry = { kind: USER_KIND, data: { author } }
+          const conversation = yield* takingInput(id)
+          const { content, attached } = userInput(
+            text,
+            skillsOf(home, providers.instances, yield* agentOf(conversation)),
+          )
+          const entry = { kind: USER_KIND, data: { author, ...(attached.length === 0 ? {} : { skills: attached }) } }
           const submission = yield* heldUntilIdle(
             Effect.orDie(
               conversation.submit({
                 type: "input",
-                content: text,
+                content,
                 requestId,
                 entry,
                 ...(steer ? { whenBusy: "steer" as const } : {}),
@@ -307,6 +324,62 @@ const Handlers = KernelRpcs.toLayer(
             ),
           )
           return { submission: submission.id }
+        }),
+      "conversation/list": () => listConversations(harness),
+      "conversation/select_model": ({ conversation: id, author, selection }) =>
+        Effect.gen(function* () {
+          const conversation = yield* takingInput(id)
+          const instance = providers.instances.get(selection.provider)
+          if (instance === undefined) return yield* new UnknownProvider({ provider: selection.provider })
+          const model = yield* agentModel(selection, instance)
+          const subagent = (yield* lineageOf(harness, conversation.id)) !== undefined
+          yield* Effect.orDie(
+            conversation.commit((tx) =>
+              Effect.gen(function* () {
+                yield* switchModel(tx, conversation.id, {
+                  model: model.model,
+                  thinkingLevel: model.thinkingLevel ?? null,
+                })
+                yield* tx.appendEntry(conversation.id, { kind: MODEL_KIND, data: { author, selection } })
+                // The model chosen last is one a person chose for a conversation they started.
+                if (!subagent) (yield* tx.doc(LastModelDoc)).selection = { ...selection }
+              }),
+            ),
+          )
+        }),
+      "skills/list": ({ conversation: id }) =>
+        Effect.map(Effect.flatMap(find(id), agentOf), (agent) => [...skillsOf(home, providers.instances, agent)]),
+      "conversation/entries": ({ conversation: id, from, to, order, limit, cursor }) =>
+        Effect.gen(function* () {
+          const conversation = yield* find(id)
+          const page = yield* Effect.orDie(
+            conversation.entries(
+              {
+                ...(from === undefined ? {} : { minEntryId: idFromNumber<EntryId>(from) }),
+                ...(to === undefined ? {} : { maxEntryId: idFromNumber<EntryId>(to) }),
+                ...(order === undefined ? {} : { order }),
+              },
+              limit,
+              cursor as Cursor | undefined,
+            ),
+          )
+          return {
+            entries: page.items as unknown as ReadonlyArray<WireEntry>,
+            ...(page.next === undefined ? {} : { next: page.next }),
+          }
+        }),
+      "conversation/context": ({ conversation: id, at }) =>
+        Effect.gen(function* () {
+          const conversation = yield* find(id)
+          const entry = at === undefined ? undefined : idFromNumber<EntryId>(at)
+          if (entry !== undefined) {
+            const visible = yield* Effect.orDie(
+              harness.session.read((storage) => storage.entry(conversation.id, entry)),
+            )
+            if (visible === undefined) return yield* new NoSuchEntry({ entry: at! })
+          }
+          const context = yield* Effect.orDie(conversation.context(entry === undefined ? {} : { at: entry }))
+          return { messages: context.messages, entries: context.entries.map((record) => Number(record.id)) }
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),
       "conversation/interrupt": ({ conversation: id }) =>
