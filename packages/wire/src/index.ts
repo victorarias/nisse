@@ -219,6 +219,33 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
   error: Schema.Union([NoSuchConversation, NoSuchApproval]),
 })
 
+export const ExtensionInfo = Schema.Struct({
+  name: Schema.String,
+  path: Schema.String,
+  state: Schema.Literals(["loaded", "failed", "disabled"]),
+  message: Schema.optionalKey(Schema.String.annotate({ description: "Why it failed to load." })),
+})
+export type ExtensionInfo = typeof ExtensionInfo.Type
+
+export const ListExtensions = Rpc.make("extensions/list", {
+  success: Schema.Array(ExtensionInfo).annotate({
+    description: "Every extension in the home, in the order they load.",
+  }),
+})
+
+export const ReloadExtensions = Rpc.make("extensions/reload", {
+  success: Schema.Array(ExtensionInfo).annotate({
+    description:
+      "Loads every extension again from disk, with its options from config.toml, then swaps them in, clears every status line and unloads the old ones.",
+  }),
+})
+
+/** Each extension's status line in a conversation, by extension name; the view's document of this kind. */
+export const STATUS_LINES_KIND = "nisse.status_lines"
+
+/** An entry `{ extension, text }`: an extension told the people in the conversation something. */
+export const TOAST_KIND = "nisse.toast"
+
 export const StopServer = Rpc.make("server/stop")
 
 export const AuthMethod = Schema.Literals(["browser", "device_code", "terminal"]).annotate({
@@ -352,6 +379,8 @@ export const KernelRpcs = RpcGroup.make(
   Watch,
   Interrupt,
   ResolveApproval,
+  ListExtensions,
+  ReloadExtensions,
   StopServer,
   ListProviders,
   ListModels,

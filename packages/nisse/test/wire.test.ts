@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
 import { LIVE_OUTPUT_TAIL, type Delivery } from "@nisse/protocol"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { bodies, deadline, entriesOf, errorTag, RawClient } from "./support/raw.ts"
 import { runningServer, servingUntilIdle, tempHome } from "./support/server.ts"
+import { homeWithExtensions } from "./support/extensions.ts"
 
 const start = async (client: RawClient, options: Record<string, unknown> = {}) =>
   (await client.call("conversation/start", { cwd: "/work", ...options })).result.id
@@ -831,17 +832,6 @@ test("conversation-ended: a conversation tells a client that was not watching ho
   client.close()
   rmSync(cwd, { recursive: true })
 })
-
-const homeWithExtensions = (files: Record<string, string>, config = "") => {
-  const home = tempHome()
-  mkdirSync(home.extensions, { recursive: true })
-  for (const [name, source] of Object.entries(files)) {
-    mkdirSync(join(home.extensions, name, ".."), { recursive: true })
-    writeFileSync(join(home.extensions, name), source)
-  }
-  if (config !== "") writeFileSync(join(home.dir, "config.toml"), config)
-  return home
-}
 
 const clockAndNoGlob = `
 import { Extension, Tool } from "@nisse/extension"

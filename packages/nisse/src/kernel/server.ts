@@ -43,6 +43,7 @@ import { writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
 import { NisseTools } from "./tools.ts"
 import { agentTools } from "./agents.ts"
+import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
@@ -55,7 +56,11 @@ export const CONNECTION_QUEUE = 4096
  * The home's Harness, and the runs the server stopped too often in a row (D12): counted as it opens, before anything
  * runs, and ended `restart_limit` once scheduling resumes.
  */
-export type KernelHarnessService = { readonly harness: Harness; readonly stoppedTooOften: Map<ConversationId, number> }
+export type KernelHarnessService = {
+  readonly harness: Harness
+  readonly stoppedTooOften: Map<ConversationId, number>
+  readonly extensions: KernelExtensions
+}
 
 export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
   static readonly layer = (home: Home) =>
@@ -65,8 +70,8 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const { instances } = yield* KernelProviders
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
-        registry.install(NisseTools)
-        registry.install(agentTools())
+        const base = [NisseTools, agentTools()]
+        for (const extension of base) registry.install(extension)
         // A run ended for the limit was aborted; its run_end says why.
         const runEnded = (tx: Tx, run: EndedRun) => {
           // The first run to end after the abort is the one the limit stopped, however it ended.
@@ -89,12 +94,15 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
               ),
               env: ({ cwd }) => Effect.succeed(new LocalExecutionEnv({ cwd: cwd ?? home.dir })),
               runEnded,
+              viewDocs: [StatusLinesDoc],
             }),
           ),
           (harness) => Effect.ignore(harness.close),
         )
         for (const [id, stops] of yield* countStops(harness)) stoppedTooOften.set(id, stops)
-        return { harness, stoppedTooOften }
+        // Loaded before anything runs, so the extensions guard the calls a restart resumes.
+        const extensions = yield* openKernelExtensions(home, registry, base, () => harness)
+        return { harness, stoppedTooOften, extensions }
       }).pipe(Effect.orDie),
     )
 }
@@ -110,7 +118,7 @@ const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
 
 const Handlers = KernelRpcs.toLayer(
   Effect.gen(function* () {
-    const { harness, stoppedTooOften } = yield* KernelHarness
+    const { harness, stoppedTooOften, extensions } = yield* KernelHarness
     const providers = yield* KernelProviders
     const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
     const lifetime = yield* Lifetime
@@ -279,6 +287,8 @@ const Handlers = KernelRpcs.toLayer(
           if (answered === "unknown") return yield* Effect.fail(new NoSuchApproval({ approval }))
           return { accepted: answered === "accepted" }
         }),
+      "extensions/list": () => extensions.list,
+      "extensions/reload": () => extensions.reload,
       // Stops once the runs in flight settle, as the shipping server does; a run is never cut off by a stop.
       "server/stop": () => Effect.andThen(Effect.ignore(quiet), afterReply(lifetime.stop)),
       "providers/list": ({ refresh }) => setup.providers(refresh ?? false),

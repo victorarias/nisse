@@ -471,6 +471,90 @@
       },
       "stream": false
     },
+    "extensions/list": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "loaded",
+                "failed",
+                "disabled"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Why it failed to load."
+            }
+          },
+          "required": [
+            "name",
+            "path",
+            "state"
+          ],
+          "additionalProperties": true
+        },
+        "description": "Every extension in the home, in the order they load."
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "extensions/reload": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "loaded",
+                "failed",
+                "disabled"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Why it failed to load."
+            }
+          },
+          "required": [
+            "name",
+            "path",
+            "state"
+          ],
+          "additionalProperties": true
+        },
+        "description": "Loads every extension again from disk, with its options from config.toml, then swaps them in, clears every status line and unloads the old ones."
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
     "server/stop": {
       "params": {
         "type": "null"

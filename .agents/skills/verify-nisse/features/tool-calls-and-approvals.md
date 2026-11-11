@@ -23,6 +23,9 @@ conversation was started with `--auto`, which runs every call without asking.
   `--auto`, from the TUI or `exec`.
 - `approval-interrupt` expires a waiting approval when the run is
   interrupted.
+- `approval-restart` keeps a call waiting for approval across a restart, and
+  asks again, with the new arguments, when its extensions' hooks change them
+  on the rerun: an answer holds only for the arguments it was given.
 - `tool-output-live` shows a command's output as it prints, under its call
   while the status reads `WORKING`, then commits it whole with the result.
 - `tool-root-env` runs every command with `NISSE_ROOT_CONVERSATION` set to the
