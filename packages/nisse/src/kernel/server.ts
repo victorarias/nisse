@@ -109,13 +109,26 @@ const Handlers = KernelRpcs.toLayer(
     const scope = yield* Effect.scope
     // The hold is taken before `admit` and handed to an idle wait that starts after it, so the work `admit` admits
     // is never unheld: an idle wait started earlier can return before the work exists.
+    // The harness's idle leaves out work under background tasks, such as a subagent and its reporter, so the hold also
+    // waits for every task left; a blocked task waits for a person, not for the server.
+    const quiet = Effect.gen(function* () {
+      for (;;) {
+        yield* harness.waitForIdle
+        const live = (yield* harness.inspect).tasks.filter((task) => task.state.kind !== "blocked")
+        if (live.length === 0) return
+        yield* Effect.forEach(live, (task) => harness.waitForTask(task.record.id), {
+          concurrency: "unbounded",
+          discard: true,
+        })
+      }
+    })
     const heldUntilIdle = <A, E>(admit: Effect.Effect<A, E>) =>
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const held = yield* Scope.make()
           yield* Scope.provide(lifetime.hold, held)
           const admitted = yield* Effect.exit(restore(admit))
-          yield* Effect.forkIn(Effect.ensuring(Effect.ignore(harness.waitForIdle), Scope.close(held, Exit.void)), scope)
+          yield* Effect.forkIn(Effect.ensuring(Effect.ignore(quiet), Scope.close(held, Exit.void)), scope)
           return yield* admitted
         }),
       )

@@ -193,6 +193,35 @@ test("server-idle-exit: a submission's run keeps the server up after its client 
   rmSync(home.dir, { recursive: true, force: true })
 })
 
+test("server-idle-exit, child-tools: a subagent's work keeps the server up after its client leaves, past the idle grace", async () => {
+  const home = tempHome()
+  const served = await deadline(
+    servingKernelUntilIdle(home, "50 millis", [
+      call("spawn_agent", { task_name: "writer", message: "count", fork_turns: "none" }),
+      { text: "spawned" },
+      { text: "one two three four", delayMs: 100, agent: "/root/writer" },
+      { text: "heard it" },
+    ]),
+    5000,
+    "server listening",
+  )
+  let client = await RawClient.connect(home.socket)
+  const conversation = await start(client)
+  await submit(client, conversation, "delegate")
+  client.close()
+  await deadline(served.exited, 5000, "server exit")
+
+  // A server that went idle while the subagent worked would have mailed nothing back to the parent.
+  await using again = await runningKernelServer([], { home })
+  client = await RawClient.connect(again.home.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(mails(after)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  expect(transcript(after.view().entries).slice(-2)).toEqual(["assistant: heard it", "run_end: answered"])
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
+})
+
 test("server-stop: stopping the server answers the caller, then the server exits", async () => {
   const home = tempHome()
   const served = await deadline(servingKernelUntilIdle(home, "1 hour"), 5000, "server listening")
