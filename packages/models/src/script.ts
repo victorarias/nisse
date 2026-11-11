@@ -11,6 +11,8 @@ import { uuidv7 } from "./uuid.ts"
 export const ScriptStep = Schema.Struct({
   text: Schema.optionalKey(Schema.String),
   tool: Schema.optionalKey(Schema.Struct({ name: Schema.String, input: Schema.Unknown })),
+  /** Several calls in one response, after `tool`'s. */
+  tools: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String, input: Schema.Unknown }))),
   fail: Schema.optionalKey(Schema.String),
   delayMs: Schema.optionalKey(Schema.Int),
   agent: Schema.optionalKey(Schema.String),
@@ -65,12 +67,18 @@ const answer = (step: ScriptStep, model: Model<string>): AssistantMessage => {
   if (step.fail !== undefined) {
     return { ...failure(base, step.fail), content: text === "" ? [] : [{ type: "text", text }] }
   }
-  if (step.tool === undefined) return { ...base, content: [{ type: "text", text }] }
+  const calls = [...(step.tool === undefined ? [] : [step.tool]), ...(step.tools ?? [])]
+  if (calls.length === 0) return { ...base, content: [{ type: "text", text }] }
   return {
     ...base,
     content: [
       ...(text === "" ? [] : [{ type: "text" as const, text }]),
-      { type: "toolCall", id: `call_${uuidv7()}`, name: step.tool.name, arguments: step.tool.input as JsonObject },
+      ...calls.map((call) => ({
+        type: "toolCall" as const,
+        id: `call_${uuidv7()}`,
+        name: call.name,
+        arguments: call.input as JsonObject,
+      })),
     ],
     stopReason: "toolUse",
   }

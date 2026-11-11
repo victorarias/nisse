@@ -436,6 +436,107 @@ const spawned = (watch: ViewWatch, task: string) => {
   return String(result!.conversation)
 }
 
+test("child-tools: a prompt queued while the model waits on a subagent does not end the wait, and runs after it", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "writer finished" },
+    { text: "now the next prompt" },
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+    { text: "the note is written", agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  // The writer holds on its approval, so the prompt below is queued while the parent's run goes on.
+  await view.until((current) => toolResults(current).length > 0)
+  const child = spawned(view, "/root/writer")
+  const writer = watchView(client, child)
+  const approval = await waitingApproval(writer)
+  await submit(client, conversation, "and then this")
+  await client.call("approval/resolve", { conversation: child, approval, author: "ada", allow: true })
+  await view.until(settled(2), 20_000)
+  expect(JSON.parse(toolResults(view)[1]!.text)).toEqual({ message: "Wait completed.", timed_out: false })
+  expect(transcript(view.seen()).filter((line) => !line.startsWith("assistant: ") || line.includes("next"))).toEqual([
+    "user: delegate it",
+    "run_end: answered",
+    "user: and then this",
+    "assistant: now the next prompt",
+    "run_end: answered",
+  ])
+  client.close()
+}, 30_000)
+
+test("child-tools, approval-auto: a subagent of a conversation that runs calls without asking does not ask either", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "writer finished" },
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+    { text: "the note is written", agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto" })).result
+    .conversation as string
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  await view.until(settled(1), 20_000)
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  const writer = watchView(client, spawned(view, "/root/writer"))
+  await writer.until(() => true)
+  expect(toolResults(writer)).toEqual([{ text: "noted\n", isError: false }])
+  client.close()
+}, 30_000)
+
+/** Six subagents `/root/a1`.. that each hold on an approval, and a seventh the limit refuses, spawned at once. */
+const SEVEN = ["a1", "a2", "a3", "a4", "a5", "a6", "a7"]
+const holding = SEVEN.map((name) => ({
+  tool: { name: "bash", input: { command: "echo held" } },
+  agent: `/root/${name}`,
+}))
+const spawnSeven = {
+  tools: SEVEN.map((name) => ({
+    name: "spawn_agent",
+    input: { task_name: name, message: "hold", fork_turns: "none" },
+  })),
+}
+const MAX_THREADS = "at most 6 subagents work at once (maxThreads); 6 are working, so wait for one to finish"
+
+test("subagent-limits, child-tools: spawns in one response start at most maxThreads subagents", async () => {
+  await using server = await runningKernelServer([spawnSeven, { text: "spawned them" }, ...holding])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "fan out")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view)
+  expect(results.filter((result) => result.isError)).toEqual([{ text: MAX_THREADS, isError: true }])
+  expect(results.filter((result) => !result.isError)).toHaveLength(6)
+  client.close()
+}, 30_000)
+
+test("subagent-limits, child-tools: a follow-up task does not wake an idle subagent while maxThreads subagents work", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "idle", message: "answer", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { ...spawnSeven, tools: spawnSeven.tools.slice(0, 6) },
+    call("followup_task", { target: "idle", message: "again" }),
+    { text: "asked" },
+    { text: "answered", agent: "/root/idle" },
+    ...holding,
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "fan out")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view)
+  expect(results.slice(2, 8).every((result) => !result.isError)).toBe(true)
+  expect(results[8]).toEqual({ text: MAX_THREADS, isError: true })
+  client.close()
+}, 30_000)
+
 test("child-tools: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit", async () => {
   await using server = await runningKernelServer([
     call("spawn_agent", { task_name: "helper", message: "first", fork_turns: "none" }),

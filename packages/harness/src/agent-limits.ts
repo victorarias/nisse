@@ -16,10 +16,14 @@ export const ROOT_TASK = "/root"
 /** Levels below the root of a canonical task path: `/root` is 0, `/root/a` 1. */
 export const depthOf = (task: string): number => task.split("/").length - 2
 
+/** Why an idle subagent may not take a task while `working` subagents of its tree work, or `undefined`. */
+export const refusedWork = (limits: AgentLimits, working: number): string | undefined =>
+  working >= limits.maxThreads
+    ? `at most ${limits.maxThreads} subagents work at once (maxThreads); ${working} are working, so wait for one to finish`
+    : undefined
+
 /** Why a subagent may not start under `parent` with `working` subagents of its tree busy, or `undefined`. */
 export const refusedSpawn = (limits: AgentLimits, parent: string, working: number): string | undefined =>
   depthOf(parent) >= limits.maxDepth
     ? `agents may nest ${limits.maxDepth} deep (maxDepth); ${parent} can't start another`
-    : working >= limits.maxThreads
-      ? `at most ${limits.maxThreads} subagents work at once (maxThreads); ${working} are working, so wait for one to finish`
-      : undefined
+    : refusedWork(limits, working)

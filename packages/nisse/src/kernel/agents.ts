@@ -16,6 +16,7 @@ import {
   InboxDoc,
   LiveDoc,
   refusedSpawn,
+  refusedWork,
   ROOT_TASK,
   type ToolExecutionApi,
   type ToolExecutionResult,
@@ -38,7 +39,14 @@ import { Duration, Effect, Option, Stream } from "effect"
 /** How a subagent's last task ended, as `list_agents` reports it. */
 export type AgentStatus = "pending_init" | "interrupted" | { completed: string } | { errored: string }
 
-type Child = { conversationId: number; task: string; status?: AgentStatus; reported: number[] }
+type Child = {
+  conversationId: number
+  task: string
+  status?: AgentStatus
+  reported: number[]
+  /** Given a task its reporter has not yet seen end: it counts as working before its run starts. */
+  assigned?: true
+}
 
 /** A conversation's subagents by name, and the reporter each tool call started. */
 export const AgentsDoc = defineDoc<{ agents: Record<string, Child>; reporters: Record<string, number> }>({
@@ -138,6 +146,7 @@ const Reporter = defineTask<ReporterInput, ReporterState, null, TaskServices>({
         yield* runtime.commit((tx) =>
           Effect.gen(function* () {
             const agent = (yield* tx.doc(AgentsDoc, runtime.conversationId)).agents[name]!
+            delete agent.assigned
             const next = (report?: string): NextTaskState<ReporterState, null> => ({
               status: "running",
               checkpoint: report === undefined ? { phase: "report" } : { phase: "report", report },
@@ -183,8 +192,14 @@ const Reporter = defineTask<ReporterInput, ReporterState, null, TaskServices>({
         )
       }),
   },
-  abort: (_task, runtime) =>
-    runtime.commit(() => Effect.succeed({ status: "terminal", outcome: { status: "aborted" } })),
+  abort: (reporter, runtime) =>
+    runtime.commit((tx) =>
+      Effect.gen(function* () {
+        const agent = (yield* tx.doc(AgentsDoc, runtime.conversationId)).agents[reporter.input.name]
+        if (agent !== undefined) delete agent.assigned
+        return { status: "terminal", outcome: { status: "aborted" } } as const
+      }),
+    ),
 })
 
 const textOf = (message: AssistantMessage | undefined) =>
@@ -192,7 +207,13 @@ const textOf = (message: AssistantMessage | undefined) =>
 
 // ─── Reading the tree ─────────────────────────────────────────────────────────
 
-type Member = { readonly task: string; readonly conversationId: ConversationId; readonly child?: Child }
+type Member = {
+  readonly task: string
+  readonly conversationId: ConversationId
+  readonly child?: Child
+  /** The conversation whose registry holds `child`. */
+  readonly parent?: ConversationId
+}
 
 const taskOf = (api: ToolExecutionApi, conversationId: ConversationId) =>
   Effect.map(api.snapshot(TaskPathDoc, conversationId), (path) => path?.task ?? ROOT_TASK)
@@ -205,7 +226,8 @@ const membersOf = (api: ToolExecutionApi) =>
     for (let at = 0; at < members.length; at++) {
       const registry = yield* api.snapshot(AgentsDoc, members[at]!.conversationId)
       for (const child of Object.values(registry?.agents ?? {})) {
-        members.push({ task: child.task, conversationId: idFromNumber(child.conversationId), child })
+        const parent = members[at]!.conversationId
+        members.push({ task: child.task, conversationId: idFromNumber(child.conversationId), child, parent })
       }
     }
     return members
@@ -222,6 +244,27 @@ const resolveTarget = (api: ToolExecutionApi, target: string) =>
 
 const busy = (api: ToolExecutionApi, conversationId: ConversationId) =>
   Effect.map(api.snapshot(LiveDoc, conversationId), (live) => live?.run !== undefined)
+
+/**
+ * Counts the tree's working subagents for a commit that gives one a task, so tasks given at once see each other: those
+ * in `registry` (the doc of `parent`, read in the commit) by their marks and runs, the rest as read before it.
+ */
+const workingCounter = (api: ToolExecutionApi, members: ReadonlyArray<Member>, parent: ConversationId) =>
+  Effect.gen(function* () {
+    let elsewhere = 0
+    const running = new Set<number>()
+    for (const member of members) {
+      if (member.child === undefined) continue
+      const working = (yield* busy(api, member.conversationId)) || member.child.assigned === true
+      if (member.parent === parent) {
+        if (working) running.add(member.child.conversationId)
+      } else if (working) elsewhere++
+    }
+    return (registry: { readonly agents: Record<string, Child> }) =>
+      elsewhere +
+      Object.values(registry.agents).filter((child) => child.assigned === true || running.has(child.conversationId))
+        .length
+  })
 
 const statusOf = (api: ToolExecutionApi, member: Member) =>
   Effect.map(busy(api, member.conversationId), (running): AgentStatus | "running" =>
@@ -287,11 +330,7 @@ const spawnAgent = (limits: AgentLimits) =>
         if (!/^[a-z0-9_]+$/.test(name)) return failed("task_name takes lowercase letters, digits and underscores")
         const own = yield* taskOf(api, api.conversationId)
         const members = yield* membersOf(api)
-        let working = 0
-        for (const member of members)
-          if (member.child !== undefined && (yield* busy(api, member.conversationId))) working++
-        const refused = refusedSpawn(limits, own, working)
-        if (refused !== undefined) return failed(refused)
+        const working = yield* workingCounter(api, members, api.conversationId)
         const agent = yield* api.agent
         const parentModel = agent.model
         if (input.model !== undefined && parentModel === undefined) return failed("this agent has no model to vary")
@@ -307,6 +346,8 @@ const spawnAgent = (limits: AgentLimits) =>
             const already = registry.reporters[String(api.taskId)]
             if (already !== undefined) return registry.agents[name]?.conversationId
             if (Object.hasOwn(registry.agents, name)) return undefined
+            const refused = refusedSpawn(limits, own, working(registry))
+            if (refused !== undefined) return refused
             const forkAt = input.fork_turns === "none" ? undefined : yield* tx.latestEntryId(api.conversationId)
             const anchor = yield* tx.createTask(Anchor, null, background)
             const ownership = { kind: "task", taskId: anchor } as const
@@ -330,7 +371,7 @@ const spawnAgent = (limits: AgentLimits) =>
             })
             ;(yield* tx.doc(TaskPathDoc, child.id)).task = task
             if (auto) yield* approveAutomatically(tx, child.id)
-            registry.agents[name] = { conversationId: Number(child.id), task, reported: [] }
+            registry.agents[name] = { conversationId: Number(child.id), task, reported: [], assigned: true }
             const reporter: ReporterInput = {
               name,
               task,
@@ -343,6 +384,7 @@ const spawnAgent = (limits: AgentLimits) =>
           }),
         )
         if (started === undefined) return failed(`${task} already exists; use followup_task or send_message`)
+        if (typeof started === "string") return failed(started)
         // A client that sees the call attaches to the subagent's view through its details.
         return { ...json({ task_name: task, nickname: null }), details: { task, conversation: started } }
       }),
@@ -384,45 +426,54 @@ const sendMessage = defineTool({
     }),
 })
 
-const followupTask = defineTool({
-  name: "followup_task",
-  description:
-    "Send a follow-up task to an existing non-root target agent and trigger a turn if it is idle. If the target is already running, deliver the task promptly at message boundaries while sampling, or after the pending tool call completes.",
-  parameters: messageSchema(
-    "Agent id or canonical task name to send a follow-up task to (from spawn_agent).",
-    "Message text to send to the target agent.",
-  ),
-  execute: (input: { target: string; message: string }, api: ToolExecutionApi) =>
-    Effect.gen(function* () {
-      if (input.message.trim() === "") return failed("Empty message can't be sent to an agent")
-      const { own, member } = yield* resolveTarget(api, input.target)
-      if (member === undefined) return failed(`no agent ${input.target.trim()}`)
-      if (member.child === undefined) return failed("followup_task takes a subagent; send_message reaches the root")
-      // The reporter lives in the subagent's parent, whose registry records how the task ended.
-      const name = member.task.split("/").at(-1)!
-      const parentTask = member.task.slice(0, member.task.lastIndexOf("/"))
-      const parentConversation = (yield* membersOf(api)).find((each) => each.task === parentTask)!.conversationId
-      const reporter: ReporterInput = {
-        name,
-        task: member.task,
-        sender: own,
-        conversationId: Number(member.conversationId),
-        message: input.message,
-      }
-      yield* api.commit((tx) =>
-        Effect.gen(function* () {
-          const registry = yield* tx.doc(AgentsDoc, parentConversation)
-          if (registry.reporters[String(api.taskId)] !== undefined) return
-          const created = yield* tx.createTask(Reporter, reporter, {
-            ...background,
-            conversationId: parentConversation,
-          })
-          registry.reporters[String(api.taskId)] = Number(created)
-        }),
-      )
-      return ok("")
-    }),
-})
+const followupTask = (limits: AgentLimits) =>
+  defineTool({
+    name: "followup_task",
+    description:
+      "Send a follow-up task to an existing non-root target agent and trigger a turn if it is idle. If the target is already running, deliver the task promptly at message boundaries while sampling, or after the pending tool call completes.",
+    parameters: messageSchema(
+      "Agent id or canonical task name to send a follow-up task to (from spawn_agent).",
+      "Message text to send to the target agent.",
+    ),
+    execute: (input: { target: string; message: string }, api: ToolExecutionApi) =>
+      Effect.gen(function* () {
+        if (input.message.trim() === "") return failed("Empty message can't be sent to an agent")
+        const { own, member } = yield* resolveTarget(api, input.target)
+        if (member === undefined) return failed(`no agent ${input.target.trim()}`)
+        if (member.child === undefined) return failed("followup_task takes a subagent; send_message reaches the root")
+        // The reporter lives in the subagent's parent, whose registry records how the task ended.
+        const name = member.task.split("/").at(-1)!
+        const parentTask = member.task.slice(0, member.task.lastIndexOf("/"))
+        const members = yield* membersOf(api)
+        const parentConversation = members.find((each) => each.task === parentTask)!.conversationId
+        // A task for an idle subagent starts a run, so it counts against maxThreads; a working one only queues it.
+        const idle = !(yield* busy(api, member.conversationId)) && member.child.assigned !== true
+        const working = yield* workingCounter(api, members, parentConversation)
+        const reporter: ReporterInput = {
+          name,
+          task: member.task,
+          sender: own,
+          conversationId: Number(member.conversationId),
+          message: input.message,
+        }
+        const refused = yield* api.commit((tx) =>
+          Effect.gen(function* () {
+            const registry = yield* tx.doc(AgentsDoc, parentConversation)
+            if (registry.reporters[String(api.taskId)] !== undefined) return undefined
+            const refused = idle ? refusedWork(limits, working(registry)) : undefined
+            if (refused !== undefined) return refused
+            registry.agents[name]!.assigned = true
+            const created = yield* tx.createTask(Reporter, reporter, {
+              ...background,
+              conversationId: parentConversation,
+            })
+            registry.reporters[String(api.taskId)] = Number(created)
+            return undefined
+          }),
+        )
+        return refused === undefined ? ok("") : failed(refused)
+      }),
+  })
 
 const waitAgent = defineTool({
   name: "wait_agent",
@@ -444,10 +495,12 @@ const waitAgent = defineTool({
           return failed(`timeout_ms must be at most ${MAX_WAIT_MS} (asked for ${requested})`)
         const timeout = requested === undefined ? DEFAULT_WAIT_MS : Math.max(requested, MIN_WAIT_MS)
         const watch = yield* api.watchDoc(InboxDoc, api.conversationId)
-        // Whatever waits in the inbox reaches the model only after this turn, so it is news: mail that came while the
-        // turn ran ends the wait at once.
-        const arrival = (items: ReadonlyArray<{ readonly entry?: unknown }>) =>
-          items.find((item) => isMail(item)) ?? items[0]
+        // A steered item reaches the model after this turn, so it is news: mail or input steered while the turn ran
+        // ends the wait at once. A follow-up waits for the run to end, so it does not.
+        const arrival = (items: ReadonlyArray<{ readonly mode: string; readonly entry?: unknown }>) => {
+          const steered = items.filter((item) => item.mode === "steer")
+          return steered.find((item) => isMail(item)) ?? steered[0]
+        }
         const first = watch === undefined ? undefined : arrival(watch.value.items)
         const woken =
           first ??
@@ -522,5 +575,5 @@ export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS) =>
   defineExtension({
     name: "nisse-agents",
     tasks: [Anchor, Reporter],
-    tools: [spawnAgent(limits), sendMessage, followupTask, waitAgent, listAgents, interruptAgent],
+    tools: [spawnAgent(limits), sendMessage, followupTask(limits), waitAgent, listAgents, interruptAgent],
   })
