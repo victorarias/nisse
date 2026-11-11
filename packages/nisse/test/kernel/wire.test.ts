@@ -389,3 +389,120 @@ test("start-with-id: starting a conversation with an id it already has answers w
   expect(errorTag(await client.call("conversation/start", { id: "42", cwd: "/work" }))).toBe("InvalidConversationId")
   client.close()
 })
+
+const call = (name: string, input: Record<string, unknown>, agent?: string) => ({
+  tool: { name, input },
+  ...(agent === undefined ? {} : { agent }),
+})
+const mails = (watch: ViewWatch) =>
+  watch
+    .seen()
+    .filter((entry) => entry.kind === "nisse.mail")
+    .map((entry) => entry.data as { kind: string; task: string; sender: string })
+
+test("child-tools: the model spawns a subagent, waits for it, and its final answer is mailed back", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "the note is written", agent: "/root/writer" },
+    call("list_agents", {}),
+    { text: "writer finished" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view).map((result) => JSON.parse(result.text))
+  expect(results[0]).toEqual({ task_name: "/root/writer", nickname: null })
+  expect(results[1]).toEqual({ message: "Wait completed.", timed_out: false })
+  expect(results[2]).toEqual({
+    agents: [
+      { agent_name: "/root", agent_status: "running" },
+      { agent_name: "/root/writer", agent_status: { completed: "the note is written" } },
+    ],
+  })
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  // The answer reached the running turn as a message, and the turn went on with it.
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: writer finished", "run_end: answered"])
+  client.close()
+}, 30_000)
+
+/** The conversation of the subagent a spawn_agent call started, from its result's details. */
+const spawned = (watch: ViewWatch, task: string) => {
+  const result = watch
+    .seen()
+    .map((entry) => (entry.model?.[0] as { details?: { task?: string; conversation?: number } } | undefined)?.details)
+    .find((details) => details?.task === task)
+  return String(result!.conversation)
+}
+
+test("child-tools: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "helper", message: "first", fork_turns: "none" }),
+    call("spawn_agent", { task_name: "deeper", message: "go" }, "/root/helper"),
+    { text: "first done", agent: "/root/helper" },
+    call("wait_agent", { timeout_ms: 600_000 }),
+    call("send_message", { target: "helper", message: "fyi" }),
+    call("followup_task", { target: "/root/helper", message: "second" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "second done", agent: "/root/helper" },
+    { text: "all done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  await view.until(settled(1), 20_000)
+  const helper = watchView(client, spawned(view, "/root/helper"))
+  await helper.until(settled(2), 20_000)
+  expect(mails(view)).toEqual([
+    { kind: "final_answer", task: "/root", sender: "/root/helper" },
+    { kind: "final_answer", task: "/root", sender: "/root/helper" },
+  ])
+  expect(mails(helper)).toEqual([
+    { kind: "new_task", task: "/root/helper", sender: "/root" },
+    { kind: "message", task: "/root/helper", sender: "/root" },
+    { kind: "new_task", task: "/root/helper", sender: "/root" },
+  ])
+  // At the depth limit the helper is not offered spawn_agent; its call is refused and it answers anyway.
+  expect(toolResults(helper)).toEqual([{ text: expect.stringContaining("not available"), isError: true }])
+  expect(transcript(helper.seen()).filter((line) => line.startsWith("assistant: ") && line !== "assistant: ")).toEqual([
+    "assistant: first done",
+    "assistant: second done",
+  ])
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: all done", "run_end: answered"])
+  client.close()
+}, 30_000)
+
+test("child-tools: interrupting a subagent stops its turn and reports what it was doing", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "slow", message: "make it", fork_turns: "none" }),
+    call("bash", { command: "echo ready" }),
+    call("bash", { command: "touch made" }, "/root/slow"),
+    call("interrupt_agent", { target: "slow" }),
+    call("list_agents", {}),
+    { text: "stopped it" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "start and stop")
+  // The root waits on its own approval until the subagent waits on one too, so the subagent is working.
+  const rootApproval = await waitingApproval(view)
+  const slow = watchView(client, spawned(view, "/root/slow"))
+  await waitingApproval(slow)
+  await client.call("approval/resolve", { conversation, approval: rootApproval, author: "ada", allow: true })
+  await view.until(settled(1), 20_000)
+  await slow.until(settled(1), 20_000)
+  const results = toolResults(view).map((result) => result.text)
+  expect(JSON.parse(results[2]!)).toEqual({ previous_status: "running" })
+  expect(JSON.parse(results[3]!).agents).toEqual([
+    { agent_name: "/root", agent_status: "running" },
+    { agent_name: "/root/slow", agent_status: "interrupted" },
+  ])
+  expect(runEnds(slow.seen())).toEqual([expect.objectContaining({ outcome: "interrupted" })])
+  expect(approvalsOf(slow)!.requests).toEqual({})
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+  client.close()
+}, 30_000)

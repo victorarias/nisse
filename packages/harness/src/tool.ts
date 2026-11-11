@@ -178,6 +178,8 @@ export interface ToolExecutionApi extends DocumentReader<ReadFailure | Invocatio
   commit<A, E>(change: (tx: Tx) => Effect.Effect<A, E>): Effect.Effect<A, unknown>
   memo<T extends JsonValue>(name: string): Effect.Effect<T | undefined, InvocationEnded>
   memo<T extends JsonValue>(name: string, candidate: T): Effect.Effect<T, unknown>
+  /** Watches a document for as long as the scope and the invocation last (spec 9.2). */
+  watchDoc: TaskApi["watchDoc"]
   getTask<R>(
     id: TaskId<R>,
   ): Effect.Effect<TaskRecord<JsonValue, JsonValue, R> | undefined, InvocationEnded | ReadFailure>
@@ -653,6 +655,7 @@ const execute = (
       },
       now: () => runtime.now(),
       snapshot: (token, ...address) => runtime.snapshot(token, ...address),
+      watchDoc: (token, ...address) => services.watchDoc(token, ...address),
       getTask: (id) => runtime.getTask(id),
       waitForTask: (id) => runtime.waitForTask(id),
       conversation: (id) => services.conversation(id),

@@ -76,7 +76,14 @@ const answer = (step: ScriptStep, model: Model<string>): AssistantMessage => {
   }
 }
 
-export function scriptProvider(steps: readonly ScriptStep[]): Provider {
+/**
+ * `agentOf` names the agent of a request whose `metadata.agent` names none, from its context; without it, or when it
+ * names none, the request is the root's.
+ */
+export function scriptProvider(
+  steps: readonly ScriptStep[],
+  agentOf?: (context: TranscriptContext) => string | undefined,
+): Provider {
   const taken = new Set<number>()
   const nextFor = (agent: string) => {
     const index = steps.findIndex((step, at) => !taken.has(at) && (step.agent ?? ROOT_AGENT) === agent)
@@ -90,7 +97,8 @@ export function scriptProvider(steps: readonly ScriptStep[]): Provider {
     streamSimple: (model, context, options) =>
       Stream.suspend(() => {
         const agent = options.metadata?.agent
-        const step = nextFor(typeof agent === "string" ? agent : ROOT_AGENT) ?? {
+        const named = typeof agent === "string" ? agent : (agentOf?.(context) ?? ROOT_AGENT)
+        const step = nextFor(named) ?? {
           text: `You said: ${lastUserText(context)}`,
           delayMs: 30,
         }

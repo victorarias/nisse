@@ -37,6 +37,7 @@ import { ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
 import { countStops, restartLimitMessage } from "./restarts.ts"
 import { writeRunEnd } from "./run-end.ts"
 import { NisseTools } from "./tools.ts"
+import { agentTools, taskOfRequest } from "./agents.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
@@ -59,6 +60,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
         registry.install(NisseTools)
+        registry.install(agentTools())
         // A run ended for the limit was aborted; its run_end says why.
         const runEnded = (tx: Tx, run: EndedRun) => {
           const stops = stoppedTooOften.get(run.conversationId)
@@ -75,7 +77,8 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           Effect.flatMap(openSqliteStorage(home.kernel), (storage) =>
             openHarness(storage, {
               registry,
-              models: fromProviders([scriptProvider(script)]),
+              // A subagent's requests take the steps of its task path.
+              models: fromProviders([scriptProvider(script, (context) => taskOfRequest(context.messages))]),
               env: ({ cwd }) => Effect.succeed(new LocalExecutionEnv({ cwd: cwd ?? home.dir })),
               runEnded,
             }),
