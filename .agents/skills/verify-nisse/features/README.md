@@ -209,4 +209,4 @@ The use cases of the kernel rebuild, one file per feature-ledger area.
 - [Usage and cost](./usage.md) (kernel): Tokens and cost are counted per conversation, model and tool, and totalled for the home.
 - [Telemetry and reports](./telemetry-reports.md) (kernel): Runs, requests and tools emit spans and metrics, and problems nobody asked about reach someone as reports.
 - [Storage](./storage.md) (kernel): Durable state lives behind a storage contract with a SQLite backend, bounded reads and ids that always increase.
-- [Modes and patterns](./modes.md) (kernel): Whole-app patterns: print, JSON, plan mode, a reviewer, per-conversation sandboxes, and the model layer.
+- [Modes and patterns](./modes.md) (kernel): Whole-app patterns: print, JSON, plan mode, a reviewer and per-conversation sandboxes.

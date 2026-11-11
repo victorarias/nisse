@@ -1,6 +1,6 @@
 # Modes and patterns
 
-Whole-app patterns: print, JSON, plan mode, a reviewer, per-conversation sandboxes, and the model layer.
+Whole-app patterns: print, JSON, plan mode, a reviewer and per-conversation sandboxes.
 
 ## Sub-features
 
@@ -10,7 +10,6 @@ Whole-app patterns: print, JSON, plan mode, a reviewer, per-conversation sandbox
 - `mode-plan` [kernel, pending kernel-modes] Plan mode (example 26): Model plans with write tools withheld, then a person approves
 - `mode-reviewer` [kernel, pending kernel-modes] Reviewer extension (example 27): A second model checks each run
 - `mode-sandbox` [kernel, pending kernel-modes] Sandbox per conversation (example 28): Isolate work
-- `mode-model-layer` [kernel, pending zero-pending] Model layer with many providers through pi-ai (R94-104, dependencies): Use any provider or a local model
 - `models-script` [kernel] The `script` provider answers through the Models seam (`packages/models`) from `NISSE_MODEL_SCRIPT`'s steps: text word by word, a tool call, a failure, one step list per agent, and `You said: <last user text>` once the steps run out.
 - `models-faux` [kernel] The faux model answers through the Models seam: scripted responses one per request, a deferred response pending for a set number of fetches and then ready, cancel, a retryable error as the final message, and usage with a simulated prompt cache.
 - `models-overflow` [kernel] A provider error is read as a context overflow by pi-ai's patterns for each provider, so a run compacts instead of failing.
