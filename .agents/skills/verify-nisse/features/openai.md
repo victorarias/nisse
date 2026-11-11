@@ -165,12 +165,14 @@ Preconditions:
   `drive.ts r serve`, then
   `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "openai", "approvals": "auto"}'`
   and take `conversation` from the result.
-  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "r1", "text": "hello"}'`,
+  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "r1", "author": "ada", "text": "hello"}'`,
   then `drive.ts r watch <id> --timeout 2000 --save answer`: the view holds the
   `pi.user` `hello`, a `pi.assistant` `Hello there` with
   `"api": "openai-codex-responses"` and `"provider": "openai"`, and a
   `nisse.run_end` `answered`. `fake-openai.ndjson` holds one request,
-  `as recorded`, whose `instructions` start with nisse's own. The recordings
+  `as recorded`, whose `instructions` start with the kernel's own; every
+  tool they name in backticks is in the request's `tools`, by the same name.
+  The recordings
   that call tools name the shipping server's `Bash`; the kernel's tools are
   lower case, so on the kernel such a call ends `Tool Bash is not available`
   (the kernel tests rename the recording's tools instead).
@@ -193,7 +195,10 @@ harness running the loop. What differs from today's server:
 - A tool with a grammar (`constrainedSampling`) is offered as a custom tool,
   and its call's raw input fills the tool's one string parameter
   (`openai-grammar-tools`).
-- `instructions` are nisse's own, then the transcript's system prompt: the
+- `instructions` are the kernel's own, which name its tools as it offers
+  them (`read`, `grep`, `glob`, `write`, `edit`, `apply_patch`, `bash`, and
+  the skill list says to `read` a `SKILL.md`), then the transcript's system
+  prompt: the
   `workspace` section (the working directory, the `AGENTS.md` files and the
   skill list, read again before each request), then the instructions the
   conversation started with, wrapped in `<instructions>` tags. The skill list
@@ -234,6 +239,7 @@ Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NIS
 - subagent-fork: a spawned agent's requests carry its own conversation, and its last answer reaches the parent
 - compaction-overflow, models-overflow: ChatGPT's context-window error compacts the conversation, and the request goes again
 - openai-instructions, agents-md, skills-found, skills-nearest, skills-frontmatter: ChatGPT is told its working directory, the AGENTS.md files from home down to it, and the skills it can use
+- openai-instructions: every tool ChatGPT's instructions name is one its request offers, by the same name
 - skills-found: a conversation outside any repository is told only its own folder's skills and the home's
 - start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files, and a subagent is not
 
