@@ -10,9 +10,9 @@ resubscribes from the last commit it saw and misses nothing.
 - `reopen-tui` reopens the conversation with its transcript.
 - `reopen-continue` continues a reopened conversation with a new prompt.
 - `resume-since` resubscribes with `sinceSeq` and gets only later commits.
-- `chosen-id` [pending tui-views] opens the TUI on an id that names no conversation yet, starting
+- `chosen-id` opens the TUI on an id that names no conversation yet, starting
   one with that id, and sends a prompt given on the command line; `nisse exec --conversation <id>` does the
-  same. On the kernel `exec` does; the TUI waits for tui-views.
+  same.
 
 ## How to get to it
 
