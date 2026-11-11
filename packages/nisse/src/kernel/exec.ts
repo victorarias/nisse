@@ -197,6 +197,7 @@ export const execOnKernel = Effect.fnUntraced(function* (
           if (!json && started && ended === undefined && live !== undefined) printer.show(textOf(live))
         }
         yield* deny(conversation, view)
+        if (added.length > 0) yield* discover
       }),
     ),
     Stream.takeUntil(() => ended !== undefined || withdrawn),
