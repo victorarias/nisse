@@ -10,6 +10,7 @@ import { deadline, RawClient } from "./support/raw.ts"
 import {
   scriptEnv,
   runEnds,
+  runningServer,
   serving,
   settled,
   start,
@@ -22,7 +23,7 @@ import {
 import { homeAt } from "../src/home.ts"
 import { png } from "./support/png.ts"
 import { imageDimensions } from "@nisse/tools"
-import { nisse, stopServer } from "./support/terminal.ts"
+import { nisse, nisseEnv, stopServer } from "./support/terminal.ts"
 
 const homes: Array<ReturnType<typeof tempHome>> = []
 const home = () => {
@@ -731,6 +732,42 @@ test("server-refuse: a second server for the same home refuses to start, and say
   expect(await conversationsOf(nisseHome)).toEqual([])
   expect(first.exitCode).toBeNull()
 }, 30_000)
+
+test("answer-exec, wire-dropped: a nisse exec too slow for the run watches again when dropped, prints every call it missed, and exits 0", async () => {
+  const nisseHome = home()
+  const fifo = join(nisseHome.dir, "gate")
+  expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0)
+  writeFileSync(join(nisseHome.dir, "note.txt"), "a note\n")
+  // The first call waits on the gate, so exec is stopped mid-run; 60 reads then commit more than a window holds.
+  const reads = Array.from({ length: 60 }, () => ({ tool: { name: "read", input: { path: "note.txt" } } }))
+  const script = [{ tool: { name: "bash", input: { command: `cat ${fifo}` } } }, ...reads, { text: "read them all" }]
+  await using server = await runningServer(script, { home: nisseHome, connectionQueue: 16 })
+  const exec = nisse(["exec", "--auto", "read the note"], nisseEnv(nisseHome))
+  const errors = exec.stderr.getReader()
+  let stderr = ""
+  while (!stderr.includes("› bash(")) {
+    const { value } = await deadline(errors.read(), 10_000, "the first call printed")
+    stderr += new TextDecoder().decode(value)
+  }
+  exec.kill("SIGSTOP")
+  const client = await RawClient.connect(server.home.socket)
+  const [conversation] = (await client.call("conversation/list")).result as Array<{ id: string }>
+  const watch = watchView(client, conversation!.id)
+  writeFileSync(fifo, "open\n")
+  await watch.until(settled(1))
+  client.close()
+  exec.kill("SIGCONT")
+  while (true) {
+    const { value, done } = await deadline(errors.read(), 20_000, "exec finished")
+    if (done) break
+    stderr += new TextDecoder().decode(value)
+  }
+  expect({ code: await exec.exited, stdout: await new Response(exec.stdout).text() }).toEqual({
+    code: 0,
+    stdout: "read them all\n",
+  })
+  expect(stderr.split("\n").filter((line) => line.startsWith("› read("))).toHaveLength(60)
+}, 60_000)
 
 test("crash-exec: a run cut off by a crashed server finishes after the server comes back, and nisse exec prints it and exits 0", async () => {
   const nisseHome = home()

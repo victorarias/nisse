@@ -81,6 +81,7 @@ Wire, `packages/nisse/test/wire.test.ts`:
 Stack, `packages/nisse/test/stack.test.ts`:
 
 - wire-schema: nisse schema prints the protocol's schema, the one committed beside the code
+- answer-exec, wire-dropped: a nisse exec too slow for the run watches again when dropped, prints every call it missed, and exits 0
 
 ## Gotchas
 

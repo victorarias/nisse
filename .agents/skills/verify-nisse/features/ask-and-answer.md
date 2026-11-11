@@ -13,7 +13,9 @@ printing the answer and exiting 0, or 1 when the run fails.
   answer under `NISSE`.
 - `answer-newline` adds a line to the prompt with `⇧⏎` or `⌥⏎` and sends all
   lines as one message with `⏎`.
-- `answer-exec` prints the answer on stdout and exits 0.
+- `answer-exec` prints the answer on stdout and exits 0. An exec too slow
+  for the run, dropped with `FellBehind`, watches again and reads the entries
+  it missed, so every call still prints.
 - `answer-exec-fail` prints what was said, reports the failure on stderr and
   exits 1.
 - `answer-wire` submits over the protocol and sees the `nisse.user` entry, live
@@ -119,6 +121,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - mode-print, answer-exec, server-on-demand: nisse exec starts a server, prints the answer and exits 0
 - mode-print, answer-exec-fail: nisse exec exits 1 and says why when the run fails
 - answer-exec-fail: nisse exec exits 1 when an interrupt withdraws its queued prompt, instead of waiting for good
+- answer-exec, wire-dropped: a nisse exec too slow for the run watches again when dropped, prints every call it missed, and exits 0
 
 ## Gotchas
 

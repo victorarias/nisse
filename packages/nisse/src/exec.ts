@@ -4,6 +4,7 @@
 import { applyImmutable, type Op } from "@nisse/delta"
 import {
   type EntryRecord,
+  type FellBehind,
   RUN_END_KIND,
   type RunEnd,
   TOAST_KIND,
@@ -45,29 +46,75 @@ const requestsOf = (view: View) =>
   Object.entries((view.docs["nisse.approvals"] as { requests?: Record<string, Request> } | undefined)?.requests ?? {})
 
 const REWATCH_DELAY = "50 millis"
+/** The entries one read of what a dropped watch missed asks for; a read pages on past it. */
+const MISSED_PAGE = 200
 
-/** A watch opened again from the start each time the connection drops, as when the server crashes and restarts. */
-const rewatched = <A, E, R>(open: () => Stream.Stream<A, E | RpcClientError, R>): Stream.Stream<A, E, R> =>
+/**
+ * A watch opened again each time it drops: when the connection goes, as when the server crashes and restarts, or when
+ * the server ends it because this client fell behind.
+ */
+const rewatched = <A, E extends { readonly _tag: string }, R>(
+  open: () => Stream.Stream<A, E | RpcClientError | FellBehind, R>,
+): Stream.Stream<A, Exclude<E, RpcClientError | FellBehind>, R> =>
   open().pipe(
-    Stream.catchTag("RpcClientError", () =>
-      Stream.concat(
-        Stream.fromEffectDrain(Effect.sleep(REWATCH_DELAY)),
-        Stream.suspend(() => rewatched(open)),
-      ),
+    Stream.catchIf(
+      (error): error is RpcClientError | FellBehind => error._tag === "RpcClientError" || error._tag === "FellBehind",
+      () =>
+        Stream.concat(
+          Stream.fromEffectDrain(Effect.sleep(REWATCH_DELAY)),
+          Stream.suspend(() => rewatched(open)),
+        ),
     ),
-  )
+  ) as Stream.Stream<A, Exclude<E, RpcClientError | FellBehind>, R>
 
-/** The view after each item, as a client keeps it, beside the entries that item added. */
-const following = <E>(stream: Stream.Stream<ViewItem, E>) =>
-  Stream.mapAccum(
+/** The entries of `conversation` after `after` up to `to`, oldest first, read page by page. */
+const missedEntries = (client: Client["Service"], conversation: string, after: number, to: number) =>
+  Effect.gen(function* () {
+    const entries: Array<EntryRecord> = []
+    let cursor: unknown
+    do {
+      const page = yield* Effect.orDie(
+        client["conversation/entries"]({
+          conversation,
+          from: after + 1,
+          to,
+          order: "ascending",
+          limit: MISSED_PAGE,
+          ...(cursor === undefined ? {} : { cursor: cursor as never }),
+        }),
+      )
+      entries.push(...(page.entries as ReadonlyArray<EntryRecord>))
+      cursor = page.next
+    } while (cursor !== undefined)
+    return entries
+  })
+
+/**
+ * The view after each item, as a client keeps it, beside the entries that item added. A watch opened again starts
+ * with a fresh window; what was committed between the newest entry held and that window is read with `missed`.
+ */
+const following = <E>(
+  stream: Stream.Stream<ViewItem, E>,
+  missed: (after: number, to: number) => Effect.Effect<ReadonlyArray<EntryRecord>>,
+) =>
+  Stream.mapAccumEffect(
     stream,
-    () => ({ view: undefined as View | undefined, held: new Set<number>() }),
-    (state, item) => {
-      const view = item._tag === "view" ? item.view : applyImmutable(state.view, item.ops as ReadonlyArray<Op>)
-      const added = view.entries.filter((entry) => !state.held.has(entry.id))
-      for (const entry of added) state.held.add(entry.id)
-      return [{ view, held: state.held }, [{ item, view, added }]]
-    },
+    () => ({ view: undefined as View | undefined, held: new Set<number>(), newest: undefined as number | undefined }),
+    (state, item) =>
+      Effect.gen(function* () {
+        const view = item._tag === "view" ? item.view : applyImmutable(state.view, item.ops as ReadonlyArray<Op>)
+        const gap =
+          item._tag === "view" && state.newest !== undefined && view.before !== undefined && view.before > state.newest
+            ? yield* missed(state.newest, view.before)
+            : []
+        const added = [...gap, ...view.entries].filter((entry) => !state.held.has(entry.id))
+        for (const entry of added) state.held.add(entry.id)
+        const newest = added.reduce((most, entry) => Math.max(most, entry.id), state.newest ?? -Infinity)
+        return [
+          { view, held: state.held, newest: Number.isFinite(newest) ? newest : undefined },
+          [{ item, view, added }],
+        ] as const
+      }),
   )
 
 /** Text written so far: a streamed message goes on where it was, and a different one starts on a new line. */
@@ -142,7 +189,10 @@ export const exec = Effect.fnUntraced(function* (
       if (followed.has(info.id) || !under(info.lineage?.parent)) continue
       followed.add(info.id)
       yield* watching(
-        following(rewatched(() => client["conversation/watch"]({ conversation: info.id }))).pipe(
+        following(
+          rewatched(() => client["conversation/watch"]({ conversation: info.id })),
+          (after, to) => missedEntries(client, info.id, after, to),
+        ).pipe(
           Stream.runForEach(({ view, added }) =>
             Effect.andThen(deny(info.id, view), added.length > 0 ? discover : Effect.void),
           ),
@@ -191,7 +241,10 @@ export const exec = Effect.fnUntraced(function* (
   }
 
   const images = imagesIn(prompt, process.cwd())
-  yield* following(rewatched(() => client["conversation/watch"]({ conversation }))).pipe(
+  yield* following(
+    rewatched(() => client["conversation/watch"]({ conversation })),
+    (after, to) => missedEntries(client, conversation, after, to),
+  ).pipe(
     Stream.tap(({ item, view, added }) =>
       Effect.gen(function* () {
         // Submitted once the watch holds the view, so the watch covers the whole run.
