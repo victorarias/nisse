@@ -499,6 +499,7 @@ Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE
 
 - subagent-card: a subagent shows as a card under its parent, and ctrl+y answers the call it asks about
 - subagent-approve: a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it
+- subagent-card, codemode-nested-policy: a subagent a script started shows as a card under the script, and ctrl+y answers the call it asks about
 - subagent-card: a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:

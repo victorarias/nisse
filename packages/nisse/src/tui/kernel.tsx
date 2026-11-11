@@ -279,6 +279,11 @@ interface Tree {
   readonly children: Readonly<Record<string, Followed>>
   /** Each subagent's parent. */
   readonly parents: Readonly<Record<string, string>>
+  /**
+   * The subagents the server lists under the tree, by the call that started each. A call a script made, such as a
+   * code-mode `tools.spawn_agent(...)`, is `<script's call>/<key>`, and leaves no entry that names its subagent.
+   */
+  readonly started: Readonly<Record<string, Subagent>>
 }
 
 const isUnder = (tree: Tree, id: string, ancestor: string) => {
@@ -416,7 +421,11 @@ const ToolCallView = (props: { followed: Followed; index: Index; tree: Tree; cal
     const entry = props.index.answers.get(props.call.id)
     return entry && dataOf<{ allow: boolean; author: string }>(entry)
   }
-  const subagent = () => props.index.subagents.get(props.call.id)
+  const subagent = () => props.index.subagents.get(props.call.id) ?? props.tree.started[props.call.id]
+  const nested = () =>
+    Object.entries(props.tree.started).flatMap(([call, started]) =>
+      call.startsWith(`${props.call.id}/`) ? [started] : [],
+    )
   const input = () => props.call.arguments as { task_name?: string; agent_type?: string } | undefined
   return (
     <Show
@@ -455,6 +464,16 @@ const ToolCallView = (props: { followed: Followed; index: Index; tree: Tree; cal
               </Show>
             )}
           </Show>
+          <For each={nested()}>
+            {(started) => (
+              <SubagentCard
+                tree={props.tree}
+                conversation={started.conversation}
+                title={started.title ?? started.conversation}
+                agentType={started.agentType}
+              />
+            )}
+          </For>
         </box>
       }
     >
@@ -711,6 +730,7 @@ export const kernelTui = Effect.fnUntraced(function* (
 
   const root = yield* follow(client, conversation, scope, done)
   const [children, setChildren] = createSignal<Readonly<Record<string, Followed>>>({})
+  const [spawned, setSpawned] = createSignal<Readonly<Record<string, Subagent>>>({})
   const parents: Record<string, string> = {}
   const tree: Tree = {
     root,
@@ -718,19 +738,49 @@ export const kernelTui = Effect.fnUntraced(function* (
       return children()
     },
     parents,
+    get started() {
+      return spawned()
+    },
+  }
+  const adopt = (child: string, parent: string) => {
+    if (child in untrack(children)) return
+    parents[child] = parent
+    const followed = Effect.runSync(follow(client, child, scope, done))
+    setChildren((all) => ({ ...all, [child]: followed }))
   }
   // Follows each subagent once some conversation the TUI follows shows it started.
   const followSubagents = () =>
     createEffect(() => {
       for (const parent of [root, ...Object.values(children())]) {
-        for (const child of subagentsOf(parent)) {
-          if (child in untrack(children)) continue
-          parents[child] = parent.id
-          const followed = Effect.runSync(follow(client, child, scope, done))
-          setChildren((all) => ({ ...all, [child]: followed }))
-        }
+        for (const child of subagentsOf(parent)) adopt(child, parent.id)
       }
     })
+  // A subagent no entry names, one a script started, is found in the server's list: once at the start, and again each
+  // time the status of a tree changes, as it does when such a subagent waits on a person.
+  const listed = client["conversation/list"]().pipe(
+    Effect.tap((all) =>
+      Effect.sync(() => {
+        // Oldest first, so a subagent's parent is followed before it.
+        for (const each of all) {
+          const lineage = each.lineage
+          if (lineage === undefined || (lineage.parent !== conversation && !(lineage.parent in untrack(children))))
+            continue
+          if (!(lineage.call in untrack(spawned)))
+            setSpawned((all) => ({
+              ...all,
+              [lineage.call]: { conversation: each.id, title: lineage.title, agentType: lineage.agentType },
+            }))
+          adopt(each.id, lineage.parent)
+        }
+      }),
+    ),
+  )
+  const relist: Effect.Effect<void> = client["status/watch"]().pipe(
+    Stream.runForEach(() => listed),
+    Effect.ignore,
+    Effect.andThen(Effect.sleep(REWATCH_DELAY)),
+    Effect.andThen(Effect.suspend(() => relist)),
+  )
 
   if (prompt !== undefined) {
     yield* client["conversation/submit"]({
@@ -801,6 +851,7 @@ export const kernelTui = Effect.fnUntraced(function* (
   yield* showUntilDone(
     () => {
       followSubagents()
+      Effect.runFork(Effect.forkIn(relist, scope))
       createMemo((was: string) => {
         const now = status()
         if (now === "idle") setWorkingSince(undefined)

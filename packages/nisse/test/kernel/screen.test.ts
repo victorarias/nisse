@@ -353,6 +353,30 @@ test("subagent-card: a subagent shows as a card under its parent, and ctrl+y ans
   await quit(session)
 }, 30_000)
 
+test("subagent-card, codemode-nested-policy: a subagent a script started shows as a card under the script, and ctrl+y answers the call it asks about", async () => {
+  const spawn = 'await tools.spawn_agent({ task_name: "scribe", message: "write it down", fork_turns: "none" })'
+  const session = await open(
+    [
+      call("codemode", { code: `${spawn}\nawait tools.wait_agent({ timeout_ms: 600000 })` }),
+      { text: "the scribe is done" },
+      call("codemode", { code: 'await tools.bash({ command: "echo scribbled" })' }, "/root/scribe"),
+      { agent: "/root/scribe", text: "wrote it" },
+    ],
+    ["--model", "script-code-mode"],
+  )
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("delegate\r")
+  const asking = await session.waitFor(
+    (screen) => /⧉ scribe +waiting on you/.test(screen) && screen.includes("allow bash(echo scribbled)?"),
+  )
+  expect(asking.indexOf("⧉ scribe")).toBeGreaterThan(asking.indexOf("▸ codemode"))
+  session.type("\x19")
+  await session.waitFor(
+    (screen) => screen.includes("the scribe is done") && screen.includes("READY") && /⧉ scribe +done/.test(screen),
+  )
+  await quit(session)
+})
+
 test("subagent-approve: a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it", async () => {
   const nisseHome = home()
   await Bun.write(join(nisseHome.dir, "config.toml"), "[agents]\nmax_depth = 2\n")
