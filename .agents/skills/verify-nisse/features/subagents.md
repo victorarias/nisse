@@ -467,6 +467,10 @@ Preconditions:
 
 ## Tests
 
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- subagent-limits: a tree runs at most as many subagents at once as config.toml allows
+
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - subagent-interrupt: interrupting a conversation stops the runs of its subagents too

@@ -103,6 +103,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 
 - answer-wire, answer-shared: every client of a conversation sees the prompt, the answer and how the run ended
 - answer-failed: a model failure is recorded after what was said and the conversation goes idle
+- submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

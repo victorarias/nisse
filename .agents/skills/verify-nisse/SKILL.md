@@ -84,15 +84,17 @@ The kernel being built beside today's server runs with `NISSE_KERNEL=1`:
 `drive.ts r1 up --kernel` makes every server of the run start that way, on
 `kernel.sqlite` and the kernel wire (`schema/nisse.kernel.schema.json`). It
 serves `initialize`, `conversation/start`, `conversation/submit`,
-`conversation/watch`, `conversation/interrupt`, `server/stop`,
-`providers/list`, `models/list` and the `auth/*` calls. Every provider lists,
+`conversation/watch`, `conversation/interrupt`, `approval/resolve`,
+`extensions/list`, `extensions/reload`, `status/watch`, `server/stop`,
+`providers/list`, `models/list` and the `auth/*` calls, and loads the home's
+extensions as [Extensions](features/extensions.md) says. Every provider lists,
 signs in and out, and `conversation/start` picks a model as on today's server,
 but only `script` answers: a run on any other provider ends `failed` with
 `Model <provider>/<model> is not available` until its kind brings its run.
-`rpc`, `watch`, `watch-auth`, `serve`, `kill-server`, `idle`, `doctor` and
+`rpc`, `watch`, `watch-auth`, `watch-status`, `serve`, `kill-server`, `idle`, `doctor` and
 `down` work in such a run; `watch` follows the conversation's view (see
 [Watches and views](features/views.md)) and `--until run_end` waits for a
-`nisse.run_end` entry. The TUI, `nisse exec` and `watch-status` refuse,
+`nisse.run_end` entry. The TUI and `nisse exec` refuse,
 naming the step that brings them.
 
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
