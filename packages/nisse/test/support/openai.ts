@@ -43,6 +43,12 @@ export const matches = (actual: unknown, expected: unknown): boolean => {
   return actual === expected
 }
 
+const renamed = (line: string, tools: Readonly<Record<string, string>>) =>
+  Object.entries(tools).reduce(
+    (text, [from, to]) => text.replaceAll(`"name":${JSON.stringify(from)}`, `"name":${JSON.stringify(to)}`),
+    line,
+  )
+
 export class FakeOpenAi {
   readonly received: Array<Received> = []
   private readonly replies: Array<Reply> = []
@@ -78,13 +84,17 @@ export class FakeOpenAi {
       })
   }
 
-  play(fixture: string) {
+  /**
+   * Serves a recorded exchange and answers what each request should be. `tools` renames the tools it names, for a
+   * server whose tools have other names than the recording's.
+   */
+  play(fixture: string, tools: Readonly<Record<string, string>> = {}) {
     const expected: Array<unknown> = []
     const replies: Array<Array<any>> = []
     const held = new Set<number>()
     for (const line of readFileSync(join(FIXTURES, `${fixture}.ndjson`), "utf8").split("\n")) {
       if (line.trim() === "") continue
-      const parsed = JSON.parse(line)
+      const parsed = JSON.parse(renamed(line, tools))
       if (parsed.type === "expect_outbound") {
         expected.push(parsed.frame)
         replies.push([])

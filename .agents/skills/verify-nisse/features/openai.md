@@ -38,6 +38,9 @@ A provider `config.toml` names with
 - `openai-instructions` [pending wire-complete] tells ChatGPT the `AGENTS.md` files and skills, and
   sends the skills a message names, in
   [Instructions and skills](./skills.md).
+- `openai-grammar-tools` [kernel] offers a tool whose parameters are a grammar
+  as a custom tool; the raw text of a call reaches the tool as its one string
+  argument, and goes back to ChatGPT as raw text.
 - `openai-code-mode` [pending codemode-package] runs code-mode models' scripts, in
   [Code mode](./code-mode.md).
 
