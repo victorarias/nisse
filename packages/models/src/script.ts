@@ -46,6 +46,16 @@ export const SCRIPT_MODEL: Model<"script"> = {
   maxTokens: Number.MAX_SAFE_INTEGER,
 }
 
+/** The script's model that takes only code mode, as ChatGPT's code-mode models do. */
+export const SCRIPT_CODE_MODE_MODEL: Model<"script"> = {
+  ...SCRIPT_MODEL,
+  id: "script-code-mode",
+  name: "Script in code mode",
+  toolMode: "code_mode_only",
+}
+
+const SCRIPT_MODELS = [SCRIPT_MODEL, SCRIPT_CODE_MODE_MODEL]
+
 const words = (text: string) => text.match(/\S+\s*|\s+/g) ?? []
 
 const lastUserText = (context: TranscriptContext) => {
@@ -102,7 +112,7 @@ export function scriptProvider(
   }
   return {
     id: "script",
-    models: [SCRIPT_MODEL],
+    models: SCRIPT_MODELS,
     streamSimple: (model, context, options) =>
       Stream.suspend(() => {
         const agent = options.metadata?.agent
@@ -120,7 +130,7 @@ export function scriptProvider(
   }
 }
 
-/** The `script` provider as a home's instance: always ready, one model, nothing to sign in to. */
+/** The `script` provider as a home's instance: always ready, its two models, nothing to sign in to. */
 export const scriptInstance = (
   steps: readonly ScriptStep[],
   agentOf?: (context: TranscriptContext) => string | undefined,
@@ -129,7 +139,7 @@ export const scriptInstance = (
   kind: "script",
   defaultModel: SCRIPT_MODEL.id,
   health: () => Effect.succeed({ status: "ready" }),
-  models: () => Effect.succeed([{ id: SCRIPT_MODEL.id, name: SCRIPT_MODEL.name, efforts: [] }]),
+  models: () => Effect.succeed(SCRIPT_MODELS.map((model) => ({ id: model.id, name: model.name, efforts: [] }))),
   ...nothingToSignIn,
   provider: scriptProvider(steps, agentOf),
 })

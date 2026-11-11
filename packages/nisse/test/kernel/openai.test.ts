@@ -500,3 +500,28 @@ export default Extension.define((ctx) =>
     expect.arrayContaining(["read", "write", "edit", "bash", "grep", "glob", "spawn_agent", "wait_agent"]),
   )
 })
+
+test("code-mode-models, openai-code-mode, codemode-grammar, codemode-tool: a model ChatGPT marks code-mode-only is offered codemode alone, writes raw JavaScript for it, and gets the script's result", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("codemode_script")
+  await using session = await conversationWith(fake, { model: "gpt-6.1-sol" })
+  await session.submit("compute 2 + 2")
+  await session.view.until(settled(1))
+  expectRequests(fake, expected)
+  // F10's recorded call is `text(2 + 2);`, which the sandbox ran.
+  const input = JSON.parse(fake.responses()[1]!.body).input as Array<{ type: string; output?: unknown }>
+  const output = input.find((item) => item.type === "custom_tool_call_output")?.output
+  expect(output).toMatch(/^Script completed\nWall time \d+\.\d seconds\nOutput:\n\n4$/)
+  expect(session.said()).toEqual(["user: compute 2 + 2", "assistant: ", "assistant: Hello there", "run_end: answered"])
+})
+
+test("code-mode-models: a model that takes nisse's tools directly is offered them, and not codemode", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake)
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const { tools } = JSON.parse(fake.responses()[0]!.body) as { tools: Array<{ name: string }> }
+  expect(tools.map((tool) => tool.name)).toContain("bash")
+  expect(tools.map((tool) => tool.name)).not.toContain("codemode")
+})

@@ -168,16 +168,19 @@
     "codemode-description"
   ],
   "upstream/test/codemode-describe.test.ts :: code mode description and section > lists callable tools as declarations, grouped by namespace, with namespace descriptions": [
-    "codemode-description"
+    "codemode-description",
+    "codemode-namespaces"
   ],
   "upstream/test/codemode-describe.test.ts :: code mode description and section > lists what fits the budget, every namespace before any is complete, and says what is left out": [
-    "codemode-description"
+    "codemode-description",
+    "codemode-namespaces"
   ],
   "upstream/test/codemode-describe.test.ts :: code mode description and section > renders the section from the conversation's callable tools into the system prompt": [
     "codemode-description"
   ],
   "upstream/test/codemode-describe.test.ts :: code mode description and section > uses the longest matching namespace prefix": [
-    "codemode-description"
+    "codemode-description",
+    "codemode-namespaces"
   ],
   "upstream/test/codemode-imports.test.ts :: the Code Mode extension loads without pi-codemode's WASM runtime": [
     "codemode-imports"
@@ -309,7 +312,8 @@
     "codemode-temp-files"
   ],
   "upstream/test/codemode.test.ts :: durable code mode output and tool search > finds tools with searchTools(), describeTool(), and describeNamespace(), and lists them in ALL_TOOLS": [
-    "codemode-discovery"
+    "codemode-discovery",
+    "codemode-namespaces"
   ],
   "upstream/test/codemode.test.ts :: durable code mode output and tool search > keeps a result inside the tool's output limits whatever max_output_tokens says, spilling the rest": [
     "codemode-temp-files"

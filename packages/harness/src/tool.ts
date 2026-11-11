@@ -31,6 +31,7 @@ import {
   type Tx,
   type TypedEntry,
   currentSpan,
+  spanTime,
 } from "@nisse/kernel"
 import {
   validateToolArguments,
@@ -637,10 +638,12 @@ const execute = (
      * Nested call admissions this invocation started, each in its own fiber so a caller that stops waiting leaves the
      * admission to finish; settlement waits for them, so it sees every nested call.
      */
-    const admissions: Fiber.Fiber<TaskId<ToolTaskResult>, unknown>[] = []
+    const admissions: Fiber.Fiber<unknown, unknown>[] = []
     // A caller that can rerun reattaches to its nested calls and child tasks after a restart; any other caller never
     // resumes, so they are abandoned (`abandonOnRestart`).
     const resumes = tool.replay === "safe"
+    /** The call's phase span, which records the nested calls that replay. */
+    const span = currentSpan()
     /** Default keys: the order of this invocation's calls, so a rerun that calls in the same order reattaches. */
     let sequence = 0
     /** This attempt's commit of the `MADE_NESTED_CALLS` memo; a failed one is tried again by the next call. */
@@ -744,7 +747,15 @@ const execute = (
             ),
           )
           admissions.push(admission)
-          const id = yield* Fiber.join(admission)
+          const { id, replayed } = yield* Fiber.join(admission)
+          // A key whose call already ended hands its stored result back without running the tool again.
+          if (replayed) {
+            try {
+              span?.event("pi.durable.replay", spanTime(), { "tool.name": name })
+            } catch (error) {
+              services.report(error, { kind: "host", callback: "telemetry" })
+            }
+          }
           const settled = yield* runtime.waitForTask(id)
           const stored = (yield* runtime.snapshot(NestedCallDoc, runtime.taskId, key))?.result
           // A copy the tool may change; a nested call the scheduler faulted or orphaned stored none.
@@ -1253,7 +1264,7 @@ const startNestedCall = (
   name: string,
   args: JsonObject,
   options: { readonly key: string; readonly progress: boolean | undefined; readonly abandonOnRestart: boolean },
-): Effect.Effect<TaskId<ToolTaskResult>, unknown> =>
+): Effect.Effect<{ readonly id: TaskId<ToolTaskResult>; readonly replayed: boolean }, unknown> =>
   Effect.gen(function* () {
     const key = options.key
     const call: ToolCall = {
@@ -1263,6 +1274,7 @@ const startNestedCall = (
       arguments: copyJson(args, { omitUndefinedProperties: true }) as JsonObject,
     }
     let id: TaskId<ToolTaskResult> | undefined
+    let replayed = false
     yield* runtime.commit((tx) =>
       Effect.gen(function* () {
         // Opened, or created empty for a key not made yet.
@@ -1280,6 +1292,7 @@ const startNestedCall = (
             )
           }
           id = existing
+          replayed = state.result !== undefined
           return undefined
         }
         const input: ToolTaskInput = {
@@ -1311,7 +1324,7 @@ const startNestedCall = (
         return undefined
       }),
     )
-    return id!
+    return { id: id!, replayed }
   })
 
 /**

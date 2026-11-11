@@ -61,6 +61,11 @@ export type ToolRegistration = Tool & {
   readonly asks?: true
   /** Not offered to the model until `modelTools` loads it; other tools can call it any time. */
   readonly deferred?: true
+  /**
+   * Offered to the models that take only code mode (`Model.toolMode`), which are offered no other tool; never offered
+   * to any other model. Such a tool runs scripts that call the rest.
+   */
+  readonly codeMode?: true
   /** Repairs the model's arguments before validation; a throw makes them invalid. */
   readonly prepareArguments?: (args: JsonObject) => JsonObject
   /** Bounds the output the model gets; unset fields take the defaults. */

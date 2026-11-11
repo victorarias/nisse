@@ -17,7 +17,7 @@ Tools return separate channels for the model, programs and clients, are bounded 
 - `tool-output-schema` [kernel] `structuredOutputSchema` validation (R279, §7.3): Programs can trust a declared shape
 - `tool-callers` [kernel] `callers`: who may call a tool (R333-349): A tool can be reachable only from scripts or only from the model
 - `tool-model-tools` [kernel] `modelTools`: offered versus callable (R333-349): Trim the prompt without removing a capability
-- `tool-deferred-search` [kernel, pending codemode-package] Deferred tools and `tool_search` with BM25 (R333-349, `tool-search`): Hundreds of tools without a huge prompt; loaded tools stay offered after compaction
+- `tool-deferred-search` [kernel] Deferred tools and `tool_search` with BM25 (R333-349, `tool-search`): Hundreds of tools without a huge prompt; loaded tools stay offered after compaction
 - `tool-parallel` [kernel] Parallel tool rounds (§8.5): Several read-only calls finish faster
 - `tool-execution-mode` [kernel] `executionMode` per tool (§7.3): A tool forces its call to run alone
 - `tool-output-limits` [kernel] Output limits per tool, default 50 KiB, 2000 lines, head or tail (§7.3): No tool can flood the context, and extension tools get it free
