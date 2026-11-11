@@ -49,9 +49,10 @@ Preconditions:
   about a second later (a starting server waits up to 1 s for a moment's
   contention on the home lock to pass), and stderr says
   `another server already serves /tmp/nisse-verify/r/home`.
-- **Shared.** In a fresh run, start four at once:
-  `for i in 1 2 3 4; do drive.ts r nisse exec "client $i" & done; wait`. Each
-  prints its own `You said: client <i>`, and `doctor` shows one server.
+- **Shared.** In a fresh run, start eight at once:
+  `for i in 1 2 3 4 5 6 7 8; do drive.ts r nisse exec "client $i" & done; wait`.
+  The run's evidence holds eight `NNN-nisse.txt` files, each with its own
+  `You said: client <i>` and `--- exit 0`, and `doctor` shows one server.
 - **Idle exit.** Run `drive.ts r nisse exec hi`; the `steps.log` line
   `saved ...-nisse.txt` is when the last client left. Run `drive.ts r doctor`
   once a second until it shows `none running`, and read the time from
