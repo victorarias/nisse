@@ -194,7 +194,7 @@ test("openai-failed, run-error-classes: a response that failed on ChatGPT's side
   }
   expect(failed.errorMessage).toBe("the response failed (server_error): The model crashed.")
   expect(fake.responses()).toHaveLength(2)
-}, 15_000)
+})
 
 test("openai-signed-out: a conversation with ChatGPT before signing in says how to fix it", async () => {
   await using fake = new FakeOpenAi()
@@ -302,4 +302,4 @@ test("compaction-overflow, models-overflow: ChatGPT's context-window error compa
     role: "user",
     content: [{ type: "input_text", text: "again" }],
   })
-}, 20_000)
+})

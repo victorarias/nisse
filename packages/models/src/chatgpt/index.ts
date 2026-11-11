@@ -1,6 +1,6 @@
 // ChatGPT through a ChatGPT sign-in: the account (sign-in, token refresh, health, the model catalog) and the provider
 // behind the `Models` seam, which sends each request to `/codex/responses` and streams its answer back.
-import { Effect, Queue, Semaphore, Stream, type Scope } from "effect"
+import { Effect, Queue, Semaphore, Stream } from "effect"
 import { rmSync } from "node:fs"
 import { ProviderError, type Health, type ProviderAccount, type ProviderInstance } from "../kind.ts"
 import type { Provider } from "../models.ts"
@@ -272,13 +272,9 @@ export const chatGptProvider = (id: string, chatgpt: ChatGpt, options: ChatGptOp
 })
 
 /** A ChatGPT instance: its account, and the provider its conversations run on. */
-export const chatGptInstance = (
-  id: string,
-  options: ChatGptOptions,
-): Effect.Effect<ProviderInstance & { readonly chatgpt: ChatGpt }, never, Scope.Scope> =>
+export const chatGptInstance = (id: string, options: ChatGptOptions): Effect.Effect<ProviderInstance> =>
   Effect.map(openChatGpt(options), (chatgpt) => ({
     ...chatgpt.account,
     id,
     provider: chatGptProvider(id, chatgpt, options),
-    chatgpt,
   }))

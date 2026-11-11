@@ -161,6 +161,42 @@ Preconditions:
   run the same: ChatGPT turns the token down, Nisse refreshes once, and the
   run fails with the same message.
 
+- **On the kernel.** `drive.ts r up --kernel --fake-openai text_answer`,
+  `drive.ts r serve`, then
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "openai", "approvals": "auto"}'`
+  and take `conversation` from the result.
+  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "r1", "text": "hello"}'`,
+  then `drive.ts r watch <id> --timeout 2000 --save answer`: the view holds the
+  `pi.user` `hello`, a `pi.assistant` `Hello there` with
+  `"api": "openai-codex-responses"` and `"provider": "openai"`, and a
+  `nisse.run_end` `answered`. `fake-openai.ndjson` holds one request,
+  `as recorded`, whose `instructions` start with nisse's own. The recordings
+  that call tools name the shipping server's `Bash`; the kernel's tools are
+  lower case, so on the kernel such a call ends `Tool Bash is not available`
+  (the kernel tests rename the recording's tools instead).
+
+## On the kernel
+
+ChatGPT runs behind the `Models` seam (`@nisse/models/chatgpt`), with the
+harness running the loop. What differs from today's server:
+
+- A prompt sent while a run works waits for the run to end: the kernel wire
+  has no steer yet (`steer-openai` waits for `wire-complete`).
+- A response ChatGPT failed on its side (`server_error`) is tried again after
+  the harness's backoff (2 s, then 4 s, 8 s), not ended at once.
+- A denied call reaches the model as the harness words it:
+  `[error] denied by <author>: the person did not allow this call`.
+- ChatGPT's context-window error compacts the conversation and the request
+  goes again (`compaction-overflow`). The error is recorded from gpt-6-luna:
+  an SSE `error` event with `code: "context_length_exceeded"`, then
+  `response.failed`.
+- A tool with a grammar (`constrainedSampling`) is offered as a custom tool,
+  and its call's raw input fills the tool's one string parameter
+  (`openai-grammar-tools`).
+- `instructions` are nisse's own, then the transcript's system prompt; the
+  working directory, `AGENTS.md` files and skills are not in them yet
+  (`openai-instructions`, pending `wire-complete`).
+
 ## Contexts
 
 - **SSH.** Sign-in uses a device code.
@@ -176,6 +212,26 @@ Provider, `packages/nisse/test/openai.test.ts`:
 - openai-failed: a failed response, a cut stream and a reached usage limit each end the run with the reason
 - interrupt-wire: an answer streams live, and interrupting it closes the request and keeps what was said
 - openai-answer: an answer whose CRLF event separators arrive split across reads is read whole
+
+Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- openai-answer, telemetry-identity: a ChatGPT answer is committed, asked for with the sign-in's headers and nisse as the originator
+- openai-answer: a recorded ChatGPT exchange replays into the same answer
+- openai-tools: nisse offers its tools, runs the call the model asks for and sends back the result
+- openai-tools, telemetry-identity: a call the person denies reaches the model as denied, and the answer names who gave it
+- openai-refresh: a turned-down token is refreshed once, saved, and used from then on
+- openai-failed: a cut stream and a reached usage limit each end the run with the reason
+- openai-failed, run-error-classes: a response that failed on ChatGPT's side is tried again, and the next answer is the run's
+- openai-signed-out: a conversation with ChatGPT before signing in says how to fix it
+- interrupt-wire: a ChatGPT answer streams live, and interrupting it closes the request and keeps what was said
+- openai-answer: an answer whose CRLF event separators arrive split across reads is read whole
+- openai-model: the conversation's model and effort reach ChatGPT
+- subagent-fork: a spawned agent's requests carry its own conversation, and its last answer reaches the parent
+- compaction-overflow, models-overflow: ChatGPT's context-window error compacts the conversation, and the request goes again
+
+Package, `packages/models/test/chatgpt.test.ts`:
+
+- openai-grammar-tools: a grammar tool is offered as a custom tool, its raw input arrives as its one argument and goes back raw
 
 ## Gotchas
 
