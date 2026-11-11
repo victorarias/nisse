@@ -70,10 +70,10 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
-        const { instances } = yield* KernelProviders
+        const { instances, agents } = yield* KernelProviders
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
-        const base = [NisseTools, agentTools()]
+        const base = [NisseTools, agentTools(agents)]
         for (const extension of base) registry.install(extension)
         // A run ended for the limit was aborted; its run_end says why.
         const runEnded = (tx: Tx, run: EndedRun) => {

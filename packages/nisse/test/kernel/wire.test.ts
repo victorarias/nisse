@@ -1204,3 +1204,19 @@ test("submit-author, queue-shared: every client sees who wrote each prompt, whil
   ada.close()
   bo.close()
 })
+
+test("subagent-limits: a tree runs at most as many subagents at once as config.toml allows", async () => {
+  await using server = await runningKernelServer([spawnSeven, { text: "spawned them" }, ...holding], {
+    config: { agents: { max_threads: 2 } },
+  })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "fan out")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view)
+  expect(results.filter((result) => !result.isError)).toHaveLength(2)
+  expect(results.filter((result) => result.isError)).toHaveLength(5)
+  expect(results.find((result) => result.isError)?.text).toContain("at most 2 subagents work at once (maxThreads)")
+  client.close()
+}, 30_000)
