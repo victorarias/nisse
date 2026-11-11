@@ -687,10 +687,17 @@ const failNothingToAnswer = (ctx: Ctx) =>
     }),
   )
 
-/** What a failed run's end needs from the table, read before the commit's first table write. */
-type Failure = { readonly policy: AfterFailedRun; readonly boundary?: Boundary }
+/** What ending a run needs of a run task: its conversation, its id, its clock, and the harness's services. */
+export type RunCtx = {
+  readonly runtime: { readonly conversationId: ConversationId; readonly taskId: TaskId; now(): number }
+  readonly api: TaskApi
+}
 
-const prepareFailure = (tx: Tx, ctx: Ctx) =>
+/** What a failed run's end needs from the table, read before the commit's first table write. */
+export type Failure = { readonly policy: AfterFailedRun; readonly boundary?: Boundary }
+
+/** Reads what `endFailedRun` needs; call it before the commit's first table write. */
+export const prepareFailure = (tx: Tx, ctx: RunCtx) =>
   Effect.gen(function* () {
     const settings = ctx.api.settings()
     const policy = settings.afterFailedRun
@@ -702,9 +709,9 @@ const prepareFailure = (tx: Tx, ctx: Ctx) =>
  * End a failed run, settling its inputs with `settlement`, and do with the inputs queued behind it what
  * `settings.afterFailedRun` says (spec 6): keep them, start the next run with them, or withdraw them.
  */
-const endFailedRun = (
+export const endFailedRun = (
   tx: Tx,
-  ctx: Ctx,
+  ctx: RunCtx,
   live: Draft<LiveState>,
   failure: Failure,
   end: Extract<RunEnd, { status: "unanswered" }>,

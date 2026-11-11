@@ -172,6 +172,9 @@ export const StartConversation = Rpc.make("conversation/start", {
       Schema.String.annotate({ description: "Without a provider, it goes to the default model's provider." }),
     ),
     effort: Schema.optionalKey(Schema.String),
+    instructions: Schema.optionalKey(
+      Schema.String.annotate({ description: "Added to the model's system prompt for every run." }),
+    ),
   },
   success: Schema.Struct({
     conversation: ConversationId,
@@ -191,6 +194,11 @@ export const Submit = Rpc.make("conversation/submit", {
       description: `Who wrote it; the input is placed as a ${USER_KIND} entry naming them, and waits in pi.inbox with them.`,
     }),
     text: Schema.String,
+    steer: Schema.optionalKey(
+      Schema.Boolean.annotate({
+        description: "Reach the run in flight at its next step instead of waiting for it to end; idle, it starts a run.",
+      }),
+    ),
   },
   success: Schema.Struct({ submission: Schema.Int }),
   error: NoSuchConversation,

@@ -585,10 +585,12 @@ const interruptAgent = defineTool({
     }),
 })
 
+export const AGENTS_EXTENSION = "nisse-agents"
+
 /** The subagent tools, under `limits`; their tasks come with them, so a restart resumes pending reporters. */
 export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS) =>
   defineExtension({
-    name: "nisse-agents",
+    name: AGENTS_EXTENSION,
     tasks: [Anchor, Reporter],
     tools: [spawnAgent(limits), sendMessage, followupTask(limits), waitAgent, listAgents, interruptAgent],
   })

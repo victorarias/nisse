@@ -72,6 +72,14 @@ export const openAiKind = (options: (id: string) => OpenAiOptions): ProviderKind
   open: (id) => chatGptInstance(id, options(id)),
 })
 
+/** How each Claude Code instance of a home is started, by instance id. */
+export const claudeInstances = (options: ProviderOptions): ReadonlyMap<string, ClaudeOptions> =>
+  new Map(
+    Object.entries(configured(options.config)).flatMap(([id, instance]) =>
+      instance.driver === "claude" ? [[id, claudeInstance(options.claude, instance)] as const] : [],
+    ),
+  )
+
 /**
  * Every provider instance of a home, by id: `script` when there is a script, then each one configured. `scriptAgent`
  * names the agent a script request is for, from its context.

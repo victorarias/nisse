@@ -177,4 +177,5 @@ export const submit = (
   text: string,
   requestId = crypto.randomUUID(),
   author = "ada",
-) => client.call("conversation/submit", { conversation, requestId, author, text })
+  steer = false,
+) => client.call("conversation/submit", { conversation, requestId, author, text, ...(steer ? { steer } : {}) })

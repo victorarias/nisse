@@ -1,6 +1,7 @@
 // The server a home runs under NISSE_KERNEL=1: one Harness over `kernel.sqlite`, served over the home's socket with
 // the kernel wire (`@nisse/wire`). Conversations run on the home's providers (`./providers.ts`).
 import { BunSocketServer } from "@effect/platform-bun"
+import { claudeRunTasks } from "@nisse/claude"
 import { LocalExecutionEnv } from "@nisse/env/local"
 import {
   answerApproval,
@@ -43,7 +44,7 @@ import { countStops, restartLimitMessage } from "./restarts.ts"
 import { writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
 import { NisseTools } from "./tools.ts"
-import { agentTools } from "./agents.ts"
+import { AGENTS_EXTENSION, agentTools } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
 
@@ -70,11 +71,17 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
-        const { instances, agents } = yield* KernelProviders
+        const { instances, agents, claude } = yield* KernelProviders
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
         const base = [NisseTools, agentTools(agents)]
         for (const extension of base) registry.install(extension)
+        // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it.
+        const claudeRuns = claudeRunTasks({
+          settings: (provider) => claude.get(provider),
+          builtinExtensions: new Set([NisseTools.name, AGENTS_EXTENSION]),
+        })
+        registry.install({ name: "claude", tasks: [claudeRuns.run, claudeRuns.subagent] })
         // A run ended for the limit was aborted; its run_end says why.
         const runEnded = (tx: Tx, run: EndedRun) => {
           // The first run to end after the abort is the one the limit stopped, however it ended.
@@ -98,6 +105,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
               env: ({ cwd }) => Effect.succeed(new LocalExecutionEnv({ cwd: cwd ?? home.dir })),
               runEnded,
               viewDocs: [StatusLinesDoc],
+              runTasks: claudeRuns.runTasks,
             }),
           ),
           (harness) => Effect.ignore(harness.close),
@@ -183,12 +191,16 @@ const Handlers = KernelRpcs.toLayer(
     const choosing = yield* Semaphore.make(1)
 
     const startConversation = (
-      cwd: string,
+      start: {
+        readonly cwd: string
+        readonly approvals: "ask" | "auto" | undefined
+        readonly instructions: string | undefined
+        readonly ask: ModelAsk
+      },
       id: string | undefined,
-      approvals: "ask" | "auto" | undefined,
-      ask: ModelAsk,
     ) =>
       Effect.gen(function* () {
+        const { cwd, approvals, instructions, ask } = start
         const last = yield* Effect.orDie(harness.session.snapshot(LastModelDoc))
         const { selection, instance } = yield* providers.choose(cwd, ask, last?.selection)
         const model = yield* agentModel(selection, instance)
@@ -197,7 +209,7 @@ const Handlers = KernelRpcs.toLayer(
         const conversation = yield* Effect.orDie(
           harness.createConversation({
             ownership: { kind: "ownerless" },
-            agent: { ...model, cwd },
+            agent: { ...model, cwd, ...(instructions === undefined ? {} : { instructions }) },
             init: (tx, created) =>
               Effect.gen(function* () {
                 started = created
@@ -255,26 +267,33 @@ const Handlers = KernelRpcs.toLayer(
 
     return KernelRpcs.of({
       initialize: () => Effect.succeed({ version: VERSION, protocol: KERNEL_PROTOCOL_VERSION }),
-      "conversation/start": ({ cwd, id, approvals, ...ask }) =>
+      "conversation/start": ({ cwd, id, approvals, instructions, ...ask }) =>
         Effect.gen(function* () {
-          if (id === undefined) return yield* startConversation(cwd, undefined, approvals, ask)
+          const start = { cwd, approvals, instructions, ask }
+          if (id === undefined) return yield* startConversation(start, undefined)
           const refused = refusedChoice(id)
           if (refused !== undefined) return yield* Effect.fail(new InvalidConversationId({ message: refused }))
           return yield* choosing.withPermits(1)(
             Effect.gen(function* () {
               const existing = chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id)
-              if (existing === undefined) return yield* startConversation(cwd, id, approvals, ask)
+              if (existing === undefined) return yield* startConversation(start, id)
               const agent = yield* Effect.orDie(harness.resolveAgent(idFromNumber<ConversationId>(existing)))
               return { conversation: id, model: selectionOf(agent) }
             }),
           )
         }),
-      "conversation/submit": ({ conversation: id, requestId, author, text }) =>
+      "conversation/submit": ({ conversation: id, requestId, author, text, steer }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
           const entry = { kind: USER_KIND, data: { author } }
           const submission = yield* heldUntilIdle(
-            Effect.orDie(conversation.submit({ type: "input", content: text, requestId, entry })),
+            Effect.orDie(conversation.submit({
+                type: "input",
+                content: text,
+                requestId,
+                entry,
+                ...(steer ? { whenBusy: "steer" as const } : {}),
+              })),
           )
           return { submission: submission.id }
         }),
