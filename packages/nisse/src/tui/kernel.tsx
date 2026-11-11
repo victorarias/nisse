@@ -38,9 +38,8 @@ import {
   untrack,
 } from "solid-js"
 import { userName } from "../author.ts"
-import type { StartOptions } from "../client.ts"
 import { mailPayload } from "../kernel/agents.ts"
-import { KernelClient } from "../kernel/client.ts"
+import { KernelClient, type StartOptions } from "../client.ts"
 import { describeCall } from "./calls.ts"
 import { type ConversationActions, type Screen, setupOf, Shell, showUntilDone, Tag } from "./chrome.tsx"
 import { modelLabel } from "./setup.tsx"

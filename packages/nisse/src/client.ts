@@ -1,4 +1,5 @@
 import { BunSocket } from "@effect/platform-bun"
+import { KernelRpcs } from "@nisse/wire"
 import { NisseRpcs, type Approvals, type ConversationId, type Delivery, type NoSuchConversation } from "@nisse/protocol"
 import { spawn } from "node:child_process"
 import { fstatSync, mkdirSync, openSync, readFileSync } from "node:fs"
@@ -13,6 +14,12 @@ import { HOME_TAKEN_EXIT, type Home } from "./home.ts"
 export class Client extends Context.Service<Client, RpcClient.FromGroup<typeof NisseRpcs, RpcClientError>>()(
   "nisse/Client",
 ) {}
+
+/** A client of a server under NISSE_KERNEL=1, which speaks the kernel wire (`@nisse/wire`). */
+export class KernelClient extends Context.Service<
+  KernelClient,
+  RpcClient.FromGroup<typeof KernelRpcs, RpcClientError>
+>()("nisse/KernelClient") {}
 
 export interface StartOptions {
   readonly provider?: string
@@ -120,8 +127,8 @@ const openSocket = (home: Home) =>
     ),
   )
 
-/** JSON-RPC over the home's socket, starting its server when none runs, and reconnecting when the socket drops. */
-export const protocolLayer = (home: Home) =>
+/** The home's socket, starting the server when none runs. */
+const protocolLayer = (home: Home) =>
   RpcClient.layerProtocolSocket({
     pingInterval: Duration.infinity,
     retryPolicy: Schedule.spaced("50 millis"),
@@ -133,6 +140,9 @@ export const protocolLayer = (home: Home) =>
 
 export const clientLayer = (home: Home) =>
   Layer.effect(Client, RpcClient.make(NisseRpcs)).pipe(Layer.provide(protocolLayer(home)))
+
+export const kernelClientLayer = (home: Home) =>
+  Layer.effect(KernelClient, RpcClient.make(KernelRpcs)).pipe(Layer.provide(protocolLayer(home)))
 
 export const follow = (
   client: Client["Service"],
