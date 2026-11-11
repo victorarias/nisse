@@ -149,13 +149,17 @@ export class Setup extends Context.Service<
           )
         })
 
+      // A committed `cancelled` always stops its sign-in, even when the caller goes away; the fiber is stopped outside
+      // the lock, so its own last change can finish.
       const cancel = (provider: string, flow: string) =>
-        Effect.gen(function* () {
-          const fiber = flows.get(provider)?.fiber
-          const cancelled = yield* update(provider, flow, { phase: "cancelled" })
-          if (cancelled && fiber) yield* Fiber.interrupt(fiber)
-          return cancelled
-        })
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const fiber = flows.get(provider)?.fiber
+            const cancelled = yield* update(provider, flow, { phase: "cancelled" })
+            if (cancelled && fiber) yield* Fiber.interrupt(fiber)
+            return cancelled
+          }),
+        )
 
       return Setup.of({
         providers: (refresh) =>
@@ -216,10 +220,14 @@ export class Setup extends Context.Service<
             const driver = yield* driverOf(provider)
             const running = flows.get(provider)
             if (running && !authEnded(running.state.phase)) yield* cancel(provider, running.state.flow)
-            yield* Effect.mapError(driver.signOut, (error) => new CannotSignIn({ provider, message: error.message }))
-            const signedOut = yield* snapshot(provider, driver, true)
-            yield* settle({ provider, flow: newId(), phase: "signed_out" })
-            return signedOut
+            // Once signing out begins, every connection hears of it, even when the caller goes away.
+            yield* Effect.uninterruptible(
+              Effect.andThen(
+                Effect.mapError(driver.signOut, (error) => new CannotSignIn({ provider, message: error.message })),
+                settle({ provider, flow: newId(), phase: "signed_out" }),
+              ),
+            )
+            return yield* snapshot(provider, driver, true)
           }),
         watch: log.watch,
       })
