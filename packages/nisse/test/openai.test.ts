@@ -201,11 +201,12 @@ test("openai-refresh: an expired token is refreshed once, saved, and used from t
   expect(saved).toMatchObject({ access_token: accessToken("second"), refresh_token: "second-refresh" })
 })
 
-test("openai-failed: a failed response, a cut stream and a reached usage limit each end the run with the reason", async () => {
+test("openai-failed: a failed response, a cut stream, a reached usage limit and an empty error each end the run with the reason", async () => {
   for (const [fixture, message, kept] of [
     ["response_failed", "the response failed (server_error): The model crashed.", []],
     ["stream_cut", "the response stream ended before the response finished", [{ _tag: "message", text: "Hel" }]],
     ["usage_limit", "You have hit your ChatGPT usage limit (plus plan).", []],
+    ["empty_400", "ChatGPT answered 400 with an empty body", []],
   ] as const) {
     await using fake = new FakeOpenAi()
     fake.play(fixture)
