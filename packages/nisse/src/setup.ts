@@ -101,27 +101,38 @@ export class Setup extends Context.Service<
           }),
         )
 
+      /** Changes the provider's sign-in when `flow` is it and still runs; the flow it changed, if any. */
       const update = (provider: string, flow: string, change: Partial<AuthState>) =>
         recording(
-          Effect.suspend(() => {
+          Effect.suspend((): Effect.Effect<Flow | undefined> => {
             const running = flows.get(provider)
-            if (!running || running.state.flow !== flow || authEnded(running.state.phase)) return Effect.succeed(false)
+            if (!running || running.state.flow !== flow || authEnded(running.state.phase)) {
+              return Effect.succeed(undefined)
+            }
             const { interaction: _, ...rest } = running.state
             const next: AuthState = { ...rest, ...change }
             return Effect.as(
               Effect.tap(log.record(next), () => Effect.sync(() => (running.state = next))),
-              true,
+              running,
             )
           }),
         )
 
-      /** Records `state` as the provider's sign-in and installs it, with no flow of its own to run. */
+      /** Records `state` as the provider's sign-in, with no flow of its own to run, and stops a sign-in it displaces. */
       const settle = (state: AuthState) =>
-        recording(
+        Effect.uninterruptible(
           Effect.gen(function* () {
-            const responses = yield* Queue.unbounded<AuthResponse>()
-            yield* log.record(state)
-            flows.set(state.provider, { state, responses })
+            const displaced = yield* recording(
+              Effect.gen(function* () {
+                const responses = yield* Queue.unbounded<AuthResponse>()
+                const before = flows.get(state.provider)
+                yield* log.record(state)
+                flows.set(state.provider, { state, responses })
+                return before !== undefined && !authEnded(before.state.phase) ? before : undefined
+              }),
+            )
+            // A sign-in that started since the caller looked is over too: nothing can reach it any more.
+            if (displaced?.fiber) yield* Fiber.interrupt(displaced.fiber)
           }),
         )
 
@@ -149,15 +160,15 @@ export class Setup extends Context.Service<
           )
         })
 
-      // A committed `cancelled` always stops its sign-in, even when the caller goes away; the fiber is stopped outside
-      // the lock, so its own last change can finish.
+      // A committed `cancelled` always stops the sign-in it ended, even when the caller goes away. `start` forks a
+      // flow's fiber under the lock, so the flow `update` changed has it; it is stopped outside the lock, so its own
+      // last change can finish.
       const cancel = (provider: string, flow: string) =>
         Effect.uninterruptible(
           Effect.gen(function* () {
-            const fiber = flows.get(provider)?.fiber
             const cancelled = yield* update(provider, flow, { phase: "cancelled" })
-            if (cancelled && fiber) yield* Fiber.interrupt(fiber)
-            return cancelled
+            if (cancelled?.fiber) yield* Fiber.interrupt(cancelled.fiber)
+            return cancelled !== undefined
           }),
         )
 
