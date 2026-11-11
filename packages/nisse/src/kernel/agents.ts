@@ -78,9 +78,17 @@ export type MailKind = "new_task" | "message" | "final_answer"
 /** The entry a message between agents is placed as; the model reads it as a user message. */
 export const MAIL_ENTRY_KIND = "nisse.mail"
 
+const PAYLOAD = "\nPayload:\n"
+
 export const mailText = (kind: MailKind, task: string, sender: string, text: string) => {
   const type = { new_task: "NEW_TASK", message: "MESSAGE", final_answer: "FINAL_ANSWER" }[kind]
-  return `Message Type: ${type}\nTask name: ${task}\nSender: ${sender}\nPayload:\n${text}`
+  return `Message Type: ${type}\nTask name: ${task}\nSender: ${sender}${PAYLOAD}${text}`
+}
+
+/** What people read of a message between agents: its payload, without the headers the model reads. */
+export const mailPayload = (text: string) => {
+  const at = text.indexOf(PAYLOAD)
+  return at === -1 ? text : text.slice(at + PAYLOAD.length)
 }
 
 const mailEntry = (kind: MailKind, task: string, sender: string) => ({

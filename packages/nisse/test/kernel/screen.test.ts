@@ -333,7 +333,10 @@ test("subagent-card: a subagent shows as a card under its parent, and ctrl+y ans
   const screen = await session.waitFor(
     (screen) => screen.includes("the scribe is done") && screen.includes("READY") && /⧉ scribe +done/.test(screen),
   )
-  expect(screen).toContain("wrote it")
+  // The subagent's answer, mailed to its parent, reads as what it said under its name.
+  const lines = screen.split("\n")
+  expect(lines[lines.findIndex((line) => line.includes("/root/scribe")) + 1]).toContain("wrote it")
+  expect(screen).not.toContain("Payload:")
   await quit(session)
 }, 30_000)
 

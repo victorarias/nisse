@@ -39,6 +39,7 @@ import {
 } from "solid-js"
 import { userName } from "../author.ts"
 import type { StartOptions } from "../client.ts"
+import { mailPayload } from "../kernel/agents.ts"
 import { KernelClient } from "../kernel/client.ts"
 import { describeCall } from "./calls.ts"
 import { type ConversationActions, type Screen, setupOf, Shell, showUntilDone, Tag } from "./chrome.tsx"
@@ -464,7 +465,7 @@ const EntryView = (props: {
         <UserView
           label={dataOf<{ sender: string }>(entry).sender}
           tone={color.violet}
-          text={textOf(messageOf(entry)?.content)}
+          text={mailPayload(textOf(messageOf(entry)?.content))}
           skills={[]}
         />
       )
