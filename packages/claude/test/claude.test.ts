@@ -280,6 +280,24 @@ test("claude-extensions: an extension's tool runs for Claude's subagents, in the
   expect(said(parent).at(-1)).toBe("assistant: noon in CET")
 })
 
+test("image-input: an image in a prompt reaches Claude Code beside its text", async () => {
+  const claude = fake("text")
+  const image = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" }
+  await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [])
+      const conversation = yield* start(harness, cwd)
+      yield* conversation.submit({ type: "input", content: [{ type: "text", text: "what is this" }, image] })
+      yield* conversation.waitForIdle
+    }),
+  )
+  const sent = claude.log().find((entry) => entry.received?.type === "user")!.received.message.content
+  expect(sent).toEqual([
+    { type: "text", text: "what is this" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+  ])
+})
+
 test("claude-read: parallel calls of one response are each committed with the result Claude Code returned", async () => {
   const claude = fake("parallel_reads_hooked")
   const all = await run(

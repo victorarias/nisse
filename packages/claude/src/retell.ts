@@ -2,7 +2,7 @@
 // its position. Claude Code holds its own session, so whatever nisse committed that the session does not hold is told
 // to it as text in the run's first message.
 import type { EntryRecord } from "@nisse/kernel"
-import type { Message } from "@nisse/models"
+import type { ImageContent, Message } from "@nisse/models"
 
 /** Opens a fresh session that a conversation with history joins, before that history. */
 export const JOINING =
@@ -15,6 +15,16 @@ export const RETOLD_CHARACTERS = 64_000
 export const INTERRUPTED = "interrupted; it may or may not have taken effect"
 
 type Part = { readonly type: string; readonly text?: string }
+
+/** One part of a message Claude Code is sent: a text, or an image a prompt carried. */
+export type Said = string | ImageContent
+
+/** A prompt as Claude Code is sent it: its text, then its images. */
+export const promptOf = (content: unknown): Said[] => {
+  const text = textOf(content)
+  const images = Array.isArray(content) ? (content as ImageContent[]).filter((part) => part.type === "image") : []
+  return [...(text === "" ? [] : [text]), ...images]
+}
 
 /** The text of a message's content: a string, or its text parts joined. */
 export const textOf = (content: unknown): string =>
@@ -31,14 +41,12 @@ const messagesOf = (entry: EntryRecord): readonly Message[] => (entry.model ?? [
  * wrote and nisse kept although the session lost it, and the results nisse recorded for calls the session holds no
  * result of, are told as cut off.
  */
-export function unseen(entries: readonly EntryRecord[]): string[] {
+export function unseen(entries: readonly EntryRecord[]): Said[] {
   return entries.flatMap((entry) =>
-    messagesOf(entry).flatMap((message): string[] => {
+    messagesOf(entry).flatMap((message): Said[] => {
       switch (message.role) {
-        case "user": {
-          const text = textOf(message.content)
-          return text === "" ? [] : [text]
-        }
+        case "user":
+          return promptOf(message.content)
         case "assistant": {
           const text = textOf(message.content)
           return text === "" ? [] : [`You were cut off after writing: ${text}`]
@@ -52,7 +60,7 @@ export function unseen(entries: readonly EntryRecord[]): string[] {
   )
 }
 
-type Told = { readonly text: string; readonly asked: boolean }
+type Told = { readonly text: string; readonly images?: readonly ImageContent[]; readonly asked: boolean }
 
 /** Each message as the retelling says it; a call is told with its result, so results add nothing of their own. */
 function told(messages: readonly Message[]): Told[] {
@@ -62,8 +70,11 @@ function told(messages: readonly Message[]): Told[] {
   }
   return messages.flatMap((message): Told[] => {
     if (message.role === "user") {
-      const text = textOf(message.content)
-      return text === "" ? [] : [{ text, asked: true }]
+      const [first, ...rest] = promptOf(message.content)
+      if (first === undefined) return []
+      const text = typeof first === "string" ? first : ""
+      const images = [...(typeof first === "string" ? [] : [first]), ...rest] as ImageContent[]
+      return [{ text, ...(images.length === 0 ? {} : { images }), asked: true }]
     }
     if (message.role !== "assistant") return []
     return message.content.flatMap((part): Told[] => {
@@ -81,14 +92,14 @@ function told(messages: readonly Message[]): Told[] {
  * The conversation so far, for a fresh session: its first prompt, then as many of the latest messages as fit in about
  * `RETOLD_CHARACTERS`, with how many were left out between them, then the prompts being answered.
  */
-export function history(messages: readonly Message[]): string[] {
+export function history(messages: readonly Message[]): Said[] {
   const items = told(messages)
   const current = items.findLastIndex((item) => !item.asked) + 1
-  const asked = items.slice(current).map((item) => item.text)
+  const asked = items.slice(current)
   const first = items.findIndex((item) => item.asked)
-  if (first < 0 || first >= current) return items.map((item) => item.text)
-  const opening = items[first]!.text
-  let room = RETOLD_CHARACTERS - opening.length - asked.reduce((total, text) => total + text.length, 0)
+  if (first < 0 || first >= current) return items.flatMap(saidOf)
+  const opening = items[first]!
+  let room = RETOLD_CHARACTERS - opening.text.length - asked.reduce((total, item) => total + item.text.length, 0)
   let start = current
   while (start > first + 1) {
     const text = items[start - 1]!.text
@@ -96,7 +107,14 @@ export function history(messages: readonly Message[]): string[] {
     room -= text.length
     start--
   }
-  const kept = items.slice(start, current).map((item) => item.text)
+  const kept = items.slice(start, current)
   const skipped = start - (first + 1)
-  return [opening, ...(skipped > 0 ? [`(${skipped} entries left out here)`] : []), ...kept, ...asked]
+  return [
+    ...saidOf(opening),
+    ...(skipped > 0 ? [`(${skipped} entries left out here)`] : []),
+    ...kept.flatMap(saidOf),
+    ...asked.flatMap(saidOf),
+  ]
 }
+
+const saidOf = (item: Told): Said[] => [...(item.text === "" ? [] : [item.text]), ...(item.images ?? [])]

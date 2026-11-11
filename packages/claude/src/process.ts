@@ -56,7 +56,7 @@ import { Cause, Deferred, Effect, Option, Semaphore, Stream } from "effect"
 import { z } from "zod"
 import { Inbox } from "./inbox.ts"
 import type { SubagentLinks } from "./links.ts"
-import { textOf } from "./retell.ts"
+import { promptOf, type Said, textOf } from "./retell.ts"
 import { ClaudeSessionDoc } from "./session.ts"
 
 /** How a Claude Code instance is started: its executable, environment and extra arguments. */
@@ -153,9 +153,19 @@ const extraArgs = (args: ReadonlyArray<string>) => {
   return extra
 }
 
-const userMessage = (texts: ReadonlyArray<string>, priority?: "next"): SDKUserMessage => ({
+const userMessage = (parts: ReadonlyArray<Said>, priority?: "next"): SDKUserMessage => ({
   type: "user",
-  message: { role: "user", content: texts.map((text) => ({ type: "text" as const, text })) },
+  message: {
+    role: "user",
+    content: parts.map((part) =>
+      typeof part === "string"
+        ? { type: "text" as const, text: part }
+        : {
+            type: "image" as const,
+            source: { type: "base64" as const, media_type: part.mimeType as "image/png", data: part.data },
+          },
+    ),
+  },
   parent_tool_use_id: null,
   uuid: crypto.randomUUID(),
   session_id: "",
@@ -183,7 +193,7 @@ type Sighting = { readonly call: ToolCall; readonly owner: Owner; readonly respo
 const failure = (message: string): Ended => ({ _tag: "failed", message })
 
 /** Runs one Claude Code process from `start` with `opening` as its first message, until the run ends. */
-export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArray<string>) =>
+export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArray<Said>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const { runtime, api, agent, settings } = ctx
@@ -699,8 +709,8 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
         },
       })
 
-      const send = (texts: ReadonlyArray<string>, priority?: "next") => {
-        const message = userMessage(texts, priority)
+      const send = (parts: ReadonlyArray<Said>, priority?: "next") => {
+        const message = userMessage(parts, priority)
         awaitingReplay.add(message.uuid!)
         inbox.push(message)
       }
@@ -710,9 +720,9 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
       const steer = commit((tx) =>
         Effect.gen(function* () {
           const boundary = yield* prepareBoundary(tx, conversationId, api.settings())
-          const texts = new Map(
+          const prompts = new Map(
             boundary.inbox.items.flatMap((item) =>
-              item.mode === "steer" ? [[item.id, textOf(item.content as unknown)] as const] : [],
+              item.mode === "steer" ? [[item.id, promptOf(item.content as unknown)] as const] : [],
             ),
           )
           const { users } = yield* applyBoundary(tx, boundary, "postTools", runtime.now())
@@ -720,7 +730,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           const live = yield* tx.doc(LiveDoc, conversationId)
           if (live.run?.taskId === runtime.taskId) live.run.inputs.push(...users)
           send(
-            users.flatMap((id) => [texts.get(id) ?? ""]).filter((text) => text !== ""),
+            users.flatMap((id) => prompts.get(id) ?? []),
             "next",
           )
           return undefined
