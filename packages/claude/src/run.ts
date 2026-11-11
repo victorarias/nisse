@@ -276,7 +276,9 @@ const makeSubagentTask = (shared: Shared) =>
       wait: (_task, runtime) =>
         Effect.gen(function* () {
           const api = yield* TaskServices
-          const ended = yield* Deferred.await(shared.links.link(runtime.taskId).ended)
+          const link = shared.links.link(runtime.taskId)
+          yield* Deferred.succeed(link.hookApi, api.hookApi)
+          const ended = yield* Deferred.await(link.ended)
           const answer = yield* latest(runtime)
           yield* runtime.commit((tx) =>
             Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, SubagentNext, never> {

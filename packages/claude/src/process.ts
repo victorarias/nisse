@@ -441,12 +441,17 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           }),
         )
 
+      /** The hook API of the conversation a call is in: a subagent's comes from its own task. */
+      const hookApiOf = (owner: Owner) =>
+        owner.main ? Effect.succeed(api.hookApi) : Deferred.await(ctx.links.link(owner.task).hookApi)
+
       /** The `beforeTool` chain of the conversation's extensions: the first block wins, otherwise arguments chain. */
-      const beforeTool = (call: ToolHookCall) =>
+      const beforeTool = (call: ToolHookCall, owner: Owner) =>
         Effect.gen(function* () {
+          const hookApi = yield* hookApiOf(owner)
           let args = call.arguments as JsonObject
           for (const { extension, handlers } of toolHooks) {
-            const decided = yield* Effect.exit(handlers.beforeTool!({ ...call, arguments: args }, api.hookApi))
+            const decided = yield* Effect.exit(handlers.beforeTool!({ ...call, arguments: args }, hookApi))
             if (decided._tag === "Failure") {
               if (runtime.signal.aborted || Cause.hasInterruptsOnly(decided.cause)) {
                 return yield* Effect.failCause(decided.cause)
@@ -478,7 +483,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
         return run(
           Effect.gen(function* () {
             const seen = yield* sighted(asked, input.agent_id)
-            const checked = yield* beforeTool({ ...seen.call, arguments: asked.arguments })
+            const checked = yield* beforeTool({ ...seen.call, arguments: asked.arguments }, seen.owner)
             if ("block" in checked) {
               const { call, owner } = yield* record(seen, asked.arguments)
               answered.add(asked.id)
@@ -510,11 +515,12 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
        * The `afterTool` chain over what one of Claude Code's own tools returned, each hook given the result before it. A
        * failing hook is reported and leaves the result as it was.
        */
-      const afterTool = (call: ToolHookCall, result: ToolExecutionResult) =>
+      const afterTool = (call: ToolHookCall, result: ToolExecutionResult, owner: Owner) =>
         Effect.gen(function* () {
+          const hookApi = yield* hookApiOf(owner)
           let current = result
           for (const { extension, handlers } of afterHooks) {
-            const changed = yield* Effect.exit(handlers.afterTool!(call, current, api.hookApi))
+            const changed = yield* Effect.exit(handlers.afterTool!(call, current, hookApi))
             if (changed._tag === "Failure") {
               if (runtime.signal.aborted || Cause.hasInterruptsOnly(changed.cause)) {
                 return yield* Effect.failCause(changed.cause)
@@ -546,7 +552,8 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           name: input.tool_name,
           arguments: input.tool_input as ToolCall["arguments"],
         }
-        const after = await run(afterTool(call, { output: [{ type: "text", text }] }), signal)
+        const owner = recorded.get(call.id)?.owner ?? main
+        const after = await run(afterTool(call, { output: [{ type: "text", text }] }, owner), signal)
         const changed = textOf(after.output ?? [])
         if (changed === text) return {}
         if (!read) {

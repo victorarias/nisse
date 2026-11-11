@@ -221,18 +221,34 @@ test("claude-extensions: an extension's rewrite of a call is what Claude Code ru
 
 test("claude-extensions: an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation", async () => {
   const claude = fake("subagent_hooked")
-  const { parent, child, cwd } = await run(
+  const hookedIn: Array<[string, number]> = []
+  const witness = defineExtension({
+    name: "witness",
+    hooks: [
+      hook(ToolTask, {
+        beforeTool: (call: { name: string }, api: { conversationId: unknown }) =>
+          Effect.sync(() => void hookedIn.push([call.name, Number(api.conversationId)])),
+      }),
+    ],
+  })
+  const { parent, child, cwd, parentId, childId } = await run(
     Effect.gen(function* () {
-      const { harness, cwd } = yield* open(claude, [guard])
+      const { harness, cwd } = yield* open(claude, [guard, witness])
       const conversation = yield* start(harness, cwd)
       yield* ask(conversation, "what time is it")
       const all = yield* entries(conversation)
       const placed = all.find((entry) => entry.kind === "nisse.subagent")!.data as { conversation: number }
       const subagent = (yield* harness.conversation(placed.conversation as never))!
       yield* subagent.waitForIdle
-      return { parent: all, child: yield* entries(subagent), cwd }
+      const parentId = Number(conversation.id)
+      return { parent: all, child: yield* entries(subagent), cwd, parentId, childId: placed.conversation }
     }),
   )
+  // The hooks act on the conversation the call is in.
+  expect(hookedIn).toEqual([
+    ["Agent", parentId],
+    ["Read", childId],
+  ])
   expect(said(child).find((line) => line.startsWith("call"))).toBe(
     `call Read ${JSON.stringify({ file_path: `${cwd}/notes.txt`, limit: 1 })}`,
   )
