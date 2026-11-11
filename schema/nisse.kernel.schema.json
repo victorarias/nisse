@@ -285,6 +285,33 @@
           "text": {
             "type": "string"
           },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "What the transcript calls it, such as its file name."
+                },
+                "data": {
+                  "type": "string",
+                  "description": "The file's bytes, base64."
+                },
+                "mimeType": {
+                  "type": "string",
+                  "description": "image/png, image/jpeg, image/gif, image/webp or image/bmp."
+                }
+              },
+              "required": [
+                "name",
+                "data",
+                "mimeType"
+              ],
+              "additionalProperties": true
+            },
+            "description": "Placed after the text, each prepared to fit the model's image limits (resized or converted); the entry's data names them."
+          },
           "steer": {
             "type": "boolean",
             "description": "Reach the run in flight at its next step instead of waiting for it to end; idle, it starts a run."
@@ -319,6 +346,9 @@
           },
           {
             "$ref": "#/$defs/TakesNoInputEncoded"
+          },
+          {
+            "$ref": "#/$defs/UnreadableImageEncoded"
           }
         ]
       },
@@ -1873,6 +1903,29 @@
       "required": [
         "_tag",
         "conversation"
+      ],
+      "additionalProperties": true
+    },
+    "UnreadableImageEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "UnreadableImage"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "name",
+        "message"
       ],
       "additionalProperties": true
     },

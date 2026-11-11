@@ -24,6 +24,7 @@ export {
   DEFAULT_IMAGE_LIMITS,
   type ImageLimits,
   type ImageProcessor,
+  imageLimitsOf,
   INLINE_IMAGE_TYPES,
   type PreparedImage,
   toBase64,

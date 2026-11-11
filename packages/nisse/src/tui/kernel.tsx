@@ -40,6 +40,7 @@ import {
 import { userName } from "../author.ts"
 import { mailPayload } from "../kernel/agents.ts"
 import { KernelClient, type StartOptions } from "../client.ts"
+import { attachmentsIn, imagesIn } from "../attach.ts"
 import { describeCall } from "./calls.ts"
 import { type ConversationActions, type Screen, setupOf, Shell, showUntilDone, Tag } from "./chrome.tsx"
 import { modelLabel } from "./setup.tsx"
@@ -504,15 +505,16 @@ const RunEndView = (props: { outcome: Outcome; message: string | undefined }) =>
   </Switch>
 )
 
-const UserView = (props: { label: string; tone: string; text: string; skills: ReadonlyArray<string> }) => (
+/** What a person sent, with the skills and images it carried. */
+const UserView = (props: { label: string; tone: string; text: string; attached: ReadonlyArray<string> }) => (
   <box flexDirection="column" marginTop={1}>
     <Tag label={props.label} color={props.tone} />
     <text fg={color.ink} marginLeft={2}>
       {props.text}
     </text>
-    <Show when={props.skills.length > 0}>
+    <Show when={props.attached.length > 0}>
       <text fg={color.dim} marginLeft={2}>
-        {`with ${props.skills.join(", ")}`}
+        {`with ${props.attached.join(", ")}`}
       </text>
     </Show>
   </box>
@@ -529,13 +531,17 @@ const EntryView = (props: {
   switch (entry.kind) {
     case USER_KIND:
     case "pi.user": {
-      const data = dataOf<{ author?: string; skills?: ReadonlyArray<{ name: string }> }>(entry)
+      const data = dataOf<{
+        author?: string
+        skills?: ReadonlyArray<{ name: string }>
+        images?: ReadonlyArray<string>
+      }>(entry)
       return (
         <UserView
           label={(data.author ?? "you").toUpperCase()}
           tone={color.magenta}
           text={typedOf(messageOf(entry)?.content)}
-          skills={(data.skills ?? []).map((skill) => skill.name)}
+          attached={[...(data.skills ?? []).map((skill) => skill.name), ...(data.images ?? [])]}
         />
       )
     }
@@ -545,7 +551,7 @@ const EntryView = (props: {
           label={dataOf<{ sender: string }>(entry).sender}
           tone={color.violet}
           text={mailPayload(textOf(messageOf(entry)?.content))}
-          skills={[]}
+          attached={[]}
         />
       )
     case "pi.assistant": {
@@ -783,17 +789,20 @@ export const kernelTui = Effect.fnUntraced(function* (
   )
 
   if (prompt !== undefined) {
+    const images = imagesIn(prompt, info?.cwd ?? process.cwd())
     yield* client["conversation/submit"]({
       conversation,
       requestId: crypto.randomUUID(),
       author: userName(),
       text: prompt,
+      ...(images.length === 0 ? {} : { images }),
     })
   }
 
   let renderer: CliRenderer | undefined
   const setup = yield* setupOf(client, scope, () => renderer)
   const [workingSince, setWorkingSince] = createSignal<number | undefined>(undefined)
+  const [refused, setRefused] = createSignal<string | undefined>(undefined)
   const status = () => statusOf(root.docs())
   const screen: Screen = {
     id: conversation,
@@ -822,17 +831,31 @@ export const kernelTui = Effect.fnUntraced(function* (
     get subagentAsks() {
       return Object.values(tree.children).some((child) => pendingCalls(child.docs()).length > 0)
     },
+    get refused() {
+      return refused()
+    },
   }
   const actions: ConversationActions = {
     // While the server is away the prompt is sent again under the same request id, which the server answers once.
     submit: (text, steer) => {
-      const payload = { conversation, requestId: crypto.randomUUID(), author: userName(), text, steer }
+      setRefused(undefined)
+      const images = imagesIn(text, screen.cwd ?? process.cwd())
+      const payload = {
+        conversation,
+        requestId: crypto.randomUUID(),
+        author: userName(),
+        text,
+        ...(images.length === 0 ? {} : { images }),
+        steer,
+      }
       Effect.runFork(
         client["conversation/submit"](payload).pipe(
           Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
+          Effect.catchTag("UnreadableImage", (error) => Effect.sync(() => setRefused(error.message))),
         ),
       )
     },
+    attachments: (text) => attachmentsIn(text, screen.cwd ?? process.cwd()).map((attachment) => attachment.name),
     answer: (allow) => {
       const asking = [root, ...Object.values(tree.children)].find((each) => pendingCalls(each.docs()).length > 0)
       const pending = asking && pendingCalls(asking.docs())[0]

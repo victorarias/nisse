@@ -2,6 +2,7 @@
 // (earendil-works/pi, packages/durable, commit 7d073328e), under the MIT license in this package's LICENSE (Copyright 2025
 // Mario Zechner); `prepare` returns an Effect.
 
+import type { ModelInputLimits } from "@nisse/models"
 import type { Effect } from "effect"
 
 /** Limits an image the model sees must keep; the defaults below are the coding agent's. */
@@ -15,6 +16,16 @@ export type ImageLimits = {
 }
 
 export const DEFAULT_IMAGE_LIMITS: ImageLimits = { maxWidth: 2000, maxHeight: 2000, maxBytes: 4.5 * 1024 * 1024 }
+
+/** A model's image limits: `DEFAULT_IMAGE_LIMITS` overridden by its `inputLimits.images.resize`. */
+export function imageLimitsOf(model: { readonly inputLimits?: ModelInputLimits } | undefined): ImageLimits {
+  const resize = model?.inputLimits?.images?.resize
+  return {
+    maxWidth: resize?.maxWidth ?? DEFAULT_IMAGE_LIMITS.maxWidth,
+    maxHeight: resize?.maxHeight ?? DEFAULT_IMAGE_LIMITS.maxHeight,
+    maxBytes: resize?.maxBytes ?? DEFAULT_IMAGE_LIMITS.maxBytes,
+  }
+}
 
 /** An image the model can take: a supported format, within the limits, as base64. */
 export type PreparedImage = {

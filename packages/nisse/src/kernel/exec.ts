@@ -12,6 +12,7 @@ import {
   type ViewItem,
 } from "@nisse/wire"
 import { Deferred, Effect, type Scope, Stream } from "effect"
+import { imagesIn } from "../attach.ts"
 import { userName } from "../author.ts"
 import { KernelClient, type StartOptions } from "../client.ts"
 import { describeCall } from "../tui/calls.ts"
@@ -175,6 +176,7 @@ export const execOnKernel = Effect.fnUntraced(function* (
     }
   }
 
+  const images = imagesIn(prompt, process.cwd())
   yield* following(client["conversation/watch"]({ conversation })).pipe(
     Stream.tap(({ item, view, added }) =>
       Effect.gen(function* () {
@@ -184,6 +186,7 @@ export const execOnKernel = Effect.fnUntraced(function* (
           requestId: crypto.randomUUID(),
           author: userName(),
           text: prompt,
+          ...(images.length === 0 ? {} : { images }),
         })).submission
         if (json) write(`${JSON.stringify(item)}\n`)
         placed ||= liveOf(view)?.run?.inputs.includes(submission) === true

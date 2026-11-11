@@ -9,7 +9,9 @@ import { homeWithExtensions } from "../support/extensions.ts"
 import { accessToken, ACCOUNT, FakeOpenAi, matches, signIn } from "../support/openai.ts"
 import { deadline, RawClient } from "../support/raw.ts"
 import { runningKernelServer, settled, submit, transcript, type ViewWatch, watchView } from "../support/kernel.ts"
+import { png } from "../support/png.ts"
 import { tempHome } from "../support/server.ts"
+import { imageDimensions } from "@nisse/tools"
 
 // The kernel's tools are named in lower case; the recordings call nisse's shipping tools.
 const KERNEL_TOOLS = { Bash: "bash" }
@@ -562,6 +564,58 @@ test("skills-list, skills-attach, skills-snapshot: a skill named in a message co
   // The second request carries the first message as it was placed, and the second with the file as it is now.
   expect(sent[1]).toContain("Look nearer.")
   expect(sent[1]).toContain("Look again.")
+})
+
+test("image-attach: images sent with a prompt reach the model after its text, one past its limits resized, and every client sees their names", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake)
+  const image = (name: string, bytes: Uint8Array) => ({
+    name,
+    data: Buffer.from(bytes).toString("base64"),
+    mimeType: "image/png",
+  })
+  const sent = await session.client.call("conversation/submit", {
+    conversation: session.conversation,
+    requestId: crypto.randomUUID(),
+    author: "ada",
+    text: "what differs?",
+    images: [image("small.png", png(4, 4)), image("wide.png", png(3000, 40))],
+  })
+  expect(sent.error).toBeUndefined()
+  await session.view.until(settled(1))
+  expect(userEntries(session.view).map((entry) => (entry.data as { images?: Array<string> }).images)).toEqual([
+    ["small.png", "wide.png"],
+  ])
+  const input = JSON.parse(fake.responses()[0]!.body).input as Array<{ role?: string; content?: Array<any> }>
+  const content = input.find((item) => item.role === "user")!.content!
+  expect(content.map((part) => part.type)).toEqual(["input_text", "input_image", "input_image"])
+  expect(content[0].text).toBe("what differs?")
+  const [small, wide] = content.slice(1).map((part) => {
+    const [, mimeType, data] = /^data:(.+);base64,(.+)$/.exec(part.image_url)!
+    return imageDimensions(Buffer.from(data!, "base64"), mimeType!)
+  })
+  expect(small).toEqual({ width: 4, height: 4 })
+  expect(wide!.width).toBeLessThanOrEqual(2000)
+})
+
+test("image-attach: an image the server cannot decode is refused by name, and nothing is submitted", async () => {
+  await using fake = new FakeOpenAi()
+  await using session = await conversationWith(fake)
+  const refused = await session.client.call("conversation/submit", {
+    conversation: session.conversation,
+    requestId: crypto.randomUUID(),
+    author: "ada",
+    text: "look",
+    images: [{ name: "broken.png", data: Buffer.from("not a picture").toString("base64"), mimeType: "image/png" }],
+  })
+  expect(refused.error?.data[0]?.error).toMatchObject({
+    _tag: "UnreadableImage",
+    name: "broken.png",
+    message: expect.stringContaining("broken.png (image/png) cannot be decoded"),
+  })
+  expect(userEntries(session.view)).toEqual([])
+  expect(fake.responses()).toHaveLength(0)
 })
 
 test("skills-list: a conversation on a provider that finds its own skills lists none, and an unknown one is refused", async () => {

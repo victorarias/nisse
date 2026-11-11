@@ -22,9 +22,9 @@ import { requireEnv, resolveReadToolPath } from "./environment.ts"
 import { detectSupportedImageMimeTypeOf, imageDimensions } from "./image.ts"
 import {
   base64Length,
-  DEFAULT_IMAGE_LIMITS,
   type ImageLimits,
   type ImageProcessor,
+  imageLimitsOf,
   INLINE_IMAGE_TYPES,
   toBase64,
 } from "./image-processor.ts"
@@ -205,15 +205,7 @@ const imageModel = (api: ToolExecutionApi): Effect.Effect<ImageModel, unknown> =
   Effect.map(api.agent, (agent) => {
     const ref = agent.model
     const model = ref === undefined ? undefined : api.models().getModel(ref.provider, ref.modelId)
-    const resize = model?.inputLimits?.images?.resize
-    return {
-      vision: model?.input.includes("image") ?? true,
-      limits: {
-        maxWidth: resize?.maxWidth ?? DEFAULT_IMAGE_LIMITS.maxWidth,
-        maxHeight: resize?.maxHeight ?? DEFAULT_IMAGE_LIMITS.maxHeight,
-        maxBytes: resize?.maxBytes ?? DEFAULT_IMAGE_LIMITS.maxBytes,
-      },
-    }
+    return { vision: model?.input.includes("image") ?? true, limits: imageLimitsOf(model) }
   })
 
 function imageError(message: string): ToolExecutionResult {

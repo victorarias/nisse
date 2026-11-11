@@ -19,7 +19,9 @@ import {
   watchView,
 } from "../support/kernel.ts"
 import { homeAt } from "../../src/home.ts"
+import { png } from "../support/png.ts"
 import { tempHome } from "../support/server.ts"
+import { imageDimensions } from "@nisse/tools"
 import { nisse, stopServer } from "../support/terminal.ts"
 
 const homes: Array<ReturnType<typeof tempHome>> = []
@@ -446,6 +448,30 @@ test("mode-json, exec-json: nisse exec --json prints the view, then each commit'
   ])
   const [conversation] = await conversationsOf(nisseHome)
   expect(await transcriptOf(nisseHome, conversation!.id)).toEqual(transcript(view!.entries))
+}, 30_000)
+
+test("image-attach: nisse exec on the kernel sends an image file its prompt names, resized to fit, and refuses one it cannot decode", async () => {
+  const nisseHome = home()
+  const env = await kernelEnv(nisseHome)
+  writeFileSync(join(nisseHome.dir, "wide.png"), png(3000, 20))
+  writeFileSync(join(nisseHome.dir, "cut.png"), png(4, 4).subarray(0, 40))
+  const sent = await finished(nisse(["exec", "--json", `describe ${join(nisseHome.dir, "wide.png")}`], env))
+  expect(sent.code).toBe(0)
+  let view: View | undefined
+  for (const line of sent.stdout.trimEnd().split("\n")) {
+    const item = JSON.parse(line) as ViewItem
+    view = item._tag === "view" ? item.view : applyImmutable(view, item.ops as Array<Op>)
+  }
+  const user = view!.entries.find((entry) => entry.kind === "nisse.user")!
+  expect((user.data as { images?: Array<string> }).images).toEqual(["wide.png"])
+  const content = (user.model as Array<{ content: Array<{ type: string; data?: string; mimeType?: string }> }>)[0]!
+    .content
+  const image = content.find((block) => block.type === "image")!
+  expect(imageDimensions(Buffer.from(image.data!, "base64"), image.mimeType!)!.width).toBeLessThanOrEqual(2000)
+
+  const refused = await finished(nisse(["exec", `describe ${join(nisseHome.dir, "cut.png")}`], env))
+  expect(refused).toMatchObject({ code: 1, stdout: "" })
+  expect(refused.stderr).toContain("cut.png (image/png) cannot be decoded")
 }, 30_000)
 
 test("approval-exec-deny: nisse exec on the kernel shows its calls and, without --auto, denies the ones that would change things", async () => {

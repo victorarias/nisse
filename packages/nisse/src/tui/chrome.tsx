@@ -14,7 +14,7 @@ import type {
 } from "@nisse/protocol"
 import { Deferred, Effect, Fiber, type Scope, Stream } from "effect"
 import type { Accessor, JSX } from "solid-js"
-import { createContext, createEffect, createSignal, For, onCleanup, Show, useContext } from "solid-js"
+import { createContext, createEffect, createMemo, createSignal, For, onCleanup, Show, useContext } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { runTerminal } from "../login.ts"
 import { VERSION } from "../version.ts"
@@ -64,11 +64,15 @@ export interface Screen {
   readonly empty: boolean
   /** A subagent under it waits on a person. */
   readonly subagentAsks: boolean
+  /** Why the last input was refused, until the next one. */
+  readonly refused?: string | undefined
 }
 
 /** What a person can do to the conversation itself, on the wire the TUI speaks. */
 export interface ConversationActions {
   readonly submit: (text: string, steer: boolean) => void
+  /** The names of the images `text` attaches, for a wire that carries images. */
+  readonly attachments?: (text: string) => ReadonlyArray<string>
   /** Answers the first call that waits on a person, in the conversation or a subagent under it. */
   readonly answer: (allow: boolean) => void
   readonly interrupt: () => void
@@ -173,8 +177,11 @@ const Prompt = (props: {
   openPicker: () => void
   pasteCallback: (url: string) => void
   steer: boolean
+  attachments: ((text: string) => ReadonlyArray<string>) | undefined
 }) => {
   let input: TextareaRenderable | undefined
+  const [text, setText] = createSignal("")
+  const attached = createMemo(() => (text() === "" ? [] : (props.attachments?.(text()) ?? [])))
   const submit = () => {
     if (!input || props.screen.hosted) return
     const text = input.plainText
@@ -199,26 +206,32 @@ const Prompt = (props: {
               : " QUEUE · tab "
       }
       titleColor={color.magenta}
-      flexDirection="row"
+      flexDirection="column"
       paddingLeft={1}
       minHeight={3}
     >
-      <text fg={color.magenta}>❯ </text>
-      <textarea
-        ref={(element: TextareaRenderable) => (input = element)}
-        flexGrow={1}
-        minHeight={1}
-        maxHeight={8}
-        focused={props.setup.picker === undefined}
-        textColor={color.ink}
-        focusedTextColor={color.ink}
-        placeholder={
-          props.screen.hosted ? "Claude Code runs this subagent; talk to it through its parent" : "type a message"
-        }
-        placeholderColor={color.faint}
-        keyBindings={promptKeys}
-        onSubmit={submit}
-      />
+      <box flexDirection="row">
+        <text fg={color.magenta}>❯ </text>
+        <textarea
+          ref={(element: TextareaRenderable) => (input = element)}
+          flexGrow={1}
+          minHeight={1}
+          maxHeight={8}
+          focused={props.setup.picker === undefined}
+          textColor={color.ink}
+          focusedTextColor={color.ink}
+          placeholder={
+            props.screen.hosted ? "Claude Code runs this subagent; talk to it through its parent" : "type a message"
+          }
+          placeholderColor={color.faint}
+          keyBindings={promptKeys}
+          onSubmit={submit}
+          onContentChange={() => setText(input?.plainText ?? "")}
+        />
+      </box>
+      <Show when={attached().length > 0}>
+        <text fg={color.dim}>{`attaching ${attached().join(", ")}`}</text>
+      </Show>
     </box>
   )
 }
@@ -268,6 +281,13 @@ export const Shell = (props: {
           {(picker) => <ModelPicker picker={picker()} />}
         </Show>
         <Show when={setup.view.signIn}>{(state) => <SignInPanel state={state()} />}</Show>
+        <Show when={props.screen.refused}>
+          {(refused) => (
+            <text fg={color.yellow} marginLeft={1}>
+              {`✗ ${refused()}`}
+            </text>
+          )}
+        </Show>
         <For each={setup.view.brokenExtensions}>
           {(extension) => (
             <text fg={color.yellow} marginLeft={1}>
@@ -282,6 +302,7 @@ export const Shell = (props: {
           openPicker={() => setup.openPicker(props.screen.model)}
           pasteCallback={setup.pasteCallback}
           steer={steer()}
+          attachments={props.actions.attachments}
         />
         <StatusBar screen={props.screen} />
       </box>

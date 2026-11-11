@@ -215,6 +215,7 @@ const execCommand = Command.make(
         UnknownEffort: (error) =>
           refuse(`nisse knows no effort named ${error.effort}; it knows ${error.efforts.join(", ")}`),
         InvalidConversationId: (error) => refuse(error.message),
+        UnreadableImage: (error) => refuse(error.message),
       }),
     )
     if (ok === false) process.exitCode = 1
@@ -319,7 +320,14 @@ const nisse = Command.make(
         Option.getOrUndefined(conversation),
         startWith(flags),
         Option.getOrUndefined(prompt),
-      ).pipe(withKernelClient(home), Effect.scoped, Effect.catchTag("UnknownProvider", unknownProvider))
+      ).pipe(
+        withKernelClient(home),
+        Effect.scoped,
+        Effect.catchTags({
+          UnknownProvider: unknownProvider,
+          UnreadableImage: (error) => refuse(error.message),
+        }),
+      )
     }
     const { tui } = yield* Effect.promise(async () => {
       await import("@opentui/solid/preload")

@@ -15,7 +15,9 @@ import {
   type Harness,
 } from "@nisse/harness"
 import { type ConversationId, type Cursor, type EntryId, idFromNumber, openSqliteStorage, type Tx } from "@nisse/kernel"
-import { fromProviders } from "@nisse/models"
+import { fromProviders, type Models } from "@nisse/models"
+import type { ImageProcessor } from "@nisse/tools"
+import { createNodePhotonImages } from "@nisse/tools/images/node"
 import {
   FellBehind,
   InvalidConversationId,
@@ -49,7 +51,8 @@ import { agentModel, KernelProviders, LastModelDoc, selectionOf } from "./provid
 import { countStops, restartLimitMessage } from "./restarts.ts"
 import { endRun, switchModel, writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
-import { codeModeTools, NisseTools } from "./tools.ts"
+import { codeModeTools, nisseTools } from "./tools.ts"
+import { attachedImages } from "./images.ts"
 import { agentTools, interruptTree } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
@@ -76,6 +79,9 @@ export type KernelHarnessService = {
   readonly stoppedTooOften: Map<ConversationId, number>
   readonly extensions: KernelExtensions
   readonly status: TreeStatuses
+  /** Prepares the images `read` returns and people attach. */
+  readonly images: ImageProcessor
+  readonly models: Models
 }
 
 export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
@@ -92,7 +98,12 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           Effect.sync(() => new CodemodeSandbox()),
           (sandbox) => Effect.promise(() => sandbox.close()),
         )
-        const base = [NisseTools, agentTools(agents), codeModeTools(sandbox)]
+        // One processor prepares the images `read` returns and the images people attach, in a worker that exits when idle.
+        const images = createNodePhotonImages()
+        const models = fromProviders(
+          [...instances.values()].flatMap((instance) => (instance.provider ? [instance.provider] : [])),
+        )
+        const base = [nisseTools(images), agentTools(agents), codeModeTools(sandbox)]
         for (const extension of base) registry.install(extension)
         registry.install(workspaceInstructions(home, instances))
         // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it.
@@ -113,9 +124,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           Effect.flatMap(openSqliteStorage(home.kernel), (storage) =>
             openHarness(storage, {
               registry,
-              models: fromProviders(
-                [...instances.values()].flatMap((instance) => (instance.provider ? [instance.provider] : [])),
-              ),
+              models,
               env: ({ cwd }) => Effect.succeed(new LocalExecutionEnv({ cwd: cwd ?? home.dir })),
               runEnded,
               viewDocs: [StatusLinesDoc],
@@ -128,7 +137,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const status = yield* followTreeStatus(harness)
         // Loaded before anything runs, so the extensions guard the calls a restart resumes.
         const extensions = yield* openKernelExtensions(home, registry, base, () => harness)
-        return { home, harness, stoppedTooOften, extensions, status }
+        return { home, harness, stoppedTooOften, extensions, status, images, models }
       }).pipe(Effect.orDie),
     )
 }
@@ -144,7 +153,7 @@ const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
 
 const Handlers = KernelRpcs.toLayer(
   Effect.gen(function* () {
-    const { home, harness, stoppedTooOften, extensions, status } = yield* KernelHarness
+    const { home, harness, stoppedTooOften, extensions, status, images, models } = yield* KernelHarness
     const connectionQueue = yield* ConnectionQueue
     const providers = yield* KernelProviders
     const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
@@ -313,14 +322,23 @@ const Handlers = KernelRpcs.toLayer(
             }),
           )
         }),
-      "conversation/submit": ({ conversation: id, requestId, author, text, steer }) =>
+      "conversation/submit": ({ conversation: id, requestId, author, text, images: attaching = [], steer }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
+          const agent = yield* agentOf(conversation)
           const { content, attached } = userInput(
             text,
-            skillsOf(home, providers.instances, yield* agentOf(conversation)),
+            skillsOf(home, providers.instances, agent),
+            yield* attachedImages(attaching, images, models, agent),
           )
-          const entry = { kind: USER_KIND, data: { author, ...(attached.length === 0 ? {} : { skills: attached }) } }
+          const entry = {
+            kind: USER_KIND,
+            data: {
+              author,
+              ...(attached.length === 0 ? {} : { skills: attached }),
+              ...(attaching.length === 0 ? {} : { images: attaching.map((image) => image.name) }),
+            },
+          }
           const submission = yield* heldUntilIdle(
             Effect.orDie(
               conversation.submit({

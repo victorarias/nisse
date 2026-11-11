@@ -132,7 +132,8 @@ to settle and stops it, and the next client starts one on the new code.
 
 ## Drive
 
-- **TUI.** `tui type <text>` types literally; `tui key <keys>` presses tmux
+- **TUI.** `tui type <text>` types literally; `tui paste <text>` pastes it as
+  a terminal does, as when a file is dropped on it; `tui key <keys>` presses tmux
   keys: `Enter` sends, `M-Enter` adds a line (`S-Enter` reaches the TUI as a
   plain Enter through tmux, and `C-j` sends today, a known bug), `Escape` stops the run, `Tab`
   switches between queueing and steering while Nisse works, `C-y` allows the
