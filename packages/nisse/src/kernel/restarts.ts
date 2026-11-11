@@ -1,7 +1,7 @@
 // The run restart counter (D12): a run during which the server stopped three times in a row ends with `restart_limit`
 // instead of running again. That bounds a model that keeps issuing a call that kills the server, which the kernel's
 // own count does not, since each restart there counts as progress.
-import { type Harness, LiveDoc, RUN_TASK_KINDS } from "@nisse/harness"
+import { type Harness, isRunTask, LiveDoc } from "@nisse/harness"
 import { type ConversationId, defineDoc } from "@nisse/kernel"
 import { Effect } from "effect"
 
@@ -30,7 +30,7 @@ export const countStops = (harness: Harness) =>
   Effect.gen(function* () {
     const { tasks } = yield* harness.inspect
     const conversations = new Set(
-      tasks.filter((task) => RUN_TASK_KINDS.has(task.record.kind)).map((task) => task.record.conversationId),
+      tasks.filter((task) => isRunTask(harness.runTasks, task.record.kind)).map((task) => task.record.conversationId),
     )
     const limited = new Map<ConversationId, number>()
     for (const id of conversations) {

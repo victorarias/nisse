@@ -506,7 +506,14 @@ const placeSummary = (
     let result: CompactionResult
     if (current.owner === undefined) {
       const draft = { type: "write", requestId: `compaction:${runtime.taskId}`, entry } as const
-      const admission = yield* admitSubmission(tx, runtime.conversationId, draft, runtime.now(), api.settings())
+      const admission = yield* admitSubmission(
+        tx,
+        runtime.conversationId,
+        draft,
+        runtime.now(),
+        api.settings(),
+        api.runTasks,
+      )
       result = { submissionId: admission.id }
     } else {
       result = { entryId: (yield* tx.appendEntry(runtime.conversationId, entry)).id }

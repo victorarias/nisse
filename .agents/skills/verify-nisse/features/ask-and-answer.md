@@ -48,7 +48,7 @@ Preconditions:
   `[{"text": "half an ", "fail": "provider went away"}]`.
 - Claude is the `models` recording, so the splash lists
   `● claude person@example.com · Claude Max` and `○ openai signed out`; no run
-  here starts the `claude` on your PATH.
+  here starts a real Claude Code.
 
 - **TUI.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`,
   `drive.ts r tui type 'hello nisse'`, `drive.ts r tui screen typed`,

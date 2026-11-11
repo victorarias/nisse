@@ -1,6 +1,7 @@
 // The server a home runs under NISSE_KERNEL=1: one Harness over `kernel.sqlite`, served over the home's socket with
 // the kernel wire (`@nisse/wire`). Conversations run on the home's providers (`./providers.ts`).
 import { BunSocketServer } from "@effect/platform-bun"
+import { claudeRunTasks } from "@nisse/claude"
 import { CodemodeSandbox } from "@nisse/codemode/sandbox"
 import { LocalExecutionEnv } from "@nisse/env/local"
 import {
@@ -72,7 +73,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
-        const { instances, agents } = yield* KernelProviders
+        const { instances, agents, claude } = yield* KernelProviders
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
         // Closed after the harness, which stops the scripts first. Closing asks a stuck worker to stop and does not wait
@@ -84,6 +85,12 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const base = [NisseTools, agentTools(agents), codeModeTools(sandbox)]
         for (const extension of base) registry.install(extension)
         registry.install(workspaceInstructions(home, instances))
+        // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it.
+        const claudeRuns = claudeRunTasks({
+          settings: (provider) => claude.get(provider),
+          builtinExtensions: new Set(base.map((extension) => extension.name)),
+        })
+        registry.install({ name: "claude", tasks: [claudeRuns.run, claudeRuns.subagent] })
         // A run ended for the limit was aborted; its run_end says why.
         const runEnded = (tx: Tx, run: EndedRun) => {
           // The first run to end after the abort is the one the limit stopped, however it ended.
@@ -107,6 +114,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
               env: ({ cwd }) => Effect.succeed(new LocalExecutionEnv({ cwd: cwd ?? home.dir })),
               runEnded,
               viewDocs: [StatusLinesDoc],
+              runTasks: claudeRuns.runTasks,
             }),
           ),
           (harness) => Effect.ignore(harness.close),
@@ -279,12 +287,20 @@ const Handlers = KernelRpcs.toLayer(
             }),
           )
         }),
-      "conversation/submit": ({ conversation: id, requestId, author, text }) =>
+      "conversation/submit": ({ conversation: id, requestId, author, text, steer }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
           const entry = { kind: USER_KIND, data: { author } }
           const submission = yield* heldUntilIdle(
-            Effect.orDie(conversation.submit({ type: "input", content: text, requestId, entry })),
+            Effect.orDie(
+              conversation.submit({
+                type: "input",
+                content: text,
+                requestId,
+                entry,
+                ...(steer ? { whenBusy: "steer" as const } : {}),
+              }),
+            ),
           )
           return { submission: submission.id }
         }),

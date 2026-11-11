@@ -21,7 +21,7 @@ const usage = `usage: drive.ts <run> <command> [args]
                                    signed in unless --openai-signed-out, granting N token refreshes.
                                    claude is a fake replaying fixtures/claude/<fixture>.ndjson, by
                                    default models (signed in, no turns); --real-claude runs the
-                                   claude on PATH with your own login. --openai-auth copies a real
+                                   SDK's bundled Claude Code with your own login. --openai-auth copies a real
                                    ChatGPT sign-in in, and down writes it back if a refresh rotated it.
                                    --kernel runs every server of the run with NISSE_KERNEL=1: rpc,
                                    watch, watch-auth, serve, kill-server, idle, doctor and down work;
@@ -358,7 +358,7 @@ const describeFakes = () => {
     )
   if (existsSync(claudeFixture))
     console.log(`claude   fake claude; what nisse sent it in ${join(evidence, "fake-claude", "log.ndjson")}`)
-  else if (existsSync(home)) console.log("claude   the claude on PATH, with your own login")
+  else if (existsSync(home)) console.log("claude   the SDK's bundled Claude Code, with your own login")
   if (existsSync(openaiAuthSource))
     console.log(`openai   real sign-in from ${readFileSync(openaiAuthSource, "utf8")}, written back by down`)
 }
@@ -455,7 +455,7 @@ const commands: Record<string, () => Promise<void> | void> = {
       writeFileSync(claudeFixture, readFileSync(fixture("claude", claude)))
       rmSync(join(evidence, "fake-claude"), { recursive: true, force: true })
       record(`fake claude replays ${claude}`)
-    } else record("claude is the claude on PATH")
+    } else record("claude is the SDK's bundled Claude Code")
     if (auth) {
       if (resolve(auth).startsWith(resolve(homedir(), ".nisse") + "/"))
         fail("copy a sign-in kept for verification, not the production ~/.nisse's: a refresh here would rotate it")
