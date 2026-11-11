@@ -56,7 +56,7 @@ const conversationWith = async (claude: FakeClaude, ask: Record<string, string> 
     client,
     conversation,
     view,
-    submit: (text: string, steer = false) => submit(client, conversation, text, crypto.randomUUID(), steer),
+    submit: (text: string, steer = false) => submit(client, conversation, text, crypto.randomUUID(), "ada", steer),
     answer: async (allow: boolean, watch?: ViewWatch, on = conversation) => {
       const approval = await waitingApproval(watch ?? view)
       await client.call("approval/resolve", { conversation: on, approval, author: "ada", allow })
@@ -128,7 +128,7 @@ test("claude-read: Claude reads files without asking and the read shows as a cal
   expect(claude.permissionAnswers()).toEqual([])
   const entries = session.view.seen()
   expect(entries.map((entry) => entry.kind)).toEqual([
-    "pi.user",
+    "nisse.user",
     "pi.assistant",
     "pi.tool-result",
     "pi.assistant",
@@ -233,7 +233,7 @@ test("steer-claude: two steers each reach Claude Code after the result of the ca
     .filter((entry) => entry.received?.type === "user" && entry.received.priority === "next" && entry.spawn === 0)
   expect(steers).toHaveLength(2)
   const kinds = session.view.seen().map((entry) => entry.kind)
-  expect(kinds.filter((kind) => kind === "pi.user")).toHaveLength(3)
+  expect(kinds.filter((kind) => kind === "nisse.user")).toHaveLength(3)
   expect(runEnds(session.view.seen())).toEqual([expect.objectContaining({ outcome: "answered" })])
 })
 
@@ -325,7 +325,7 @@ test("subagent-claude: a Claude subagent works in a conversation of its own unde
   await child.view.until(childEnded)
 
   expect(session.view.seen().map((entry) => entry.kind)).toEqual([
-    "pi.user",
+    "nisse.user",
     "pi.assistant",
     "nisse.subagent",
     "pi.tool-result",
