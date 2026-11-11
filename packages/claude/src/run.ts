@@ -9,10 +9,12 @@ import {
   convertPartial,
   cutOffCount,
   cutOffTooOften,
+  endAnswered,
   endFailedRun,
   endRun,
   LiveDoc,
   type ModelRef,
+  prepareBoundary,
   prepareFailure,
   type RunCtx,
   type RunTasks,
@@ -154,14 +156,16 @@ const finish = (ctx: RunCtx & { readonly runtime: Runtime }, ended: Ended) =>
   ctx.runtime.commit((tx) =>
     Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
       const { runtime, api } = ctx
-      const answered = ended._tag === "answered" && !ended.turnLimit && ended.answer !== undefined
-      const failure = answered ? undefined : yield* prepareFailure(tx, ctx)
+      const answer = ended._tag === "answered" && !ended.turnLimit ? ended.answer : undefined
+      const boundary =
+        answer === undefined ? undefined : yield* prepareBoundary(tx, runtime.conversationId, api.settings())
+      const failure = answer === undefined ? yield* prepareFailure(tx, ctx) : undefined
       const live = yield* tx.doc(LiveDoc, runtime.conversationId)
       yield* convertPartial(tx, live, runtime.conversationId)
       yield* expireApprovals(tx, runtime.conversationId, runtime.taskId)
-      if (ended._tag === "answered" && ended.answer !== undefined && failure === undefined) {
-        yield* endRun(tx, live, runtime.taskId, { status: "done", answer: ended.answer }, api.runOwner)
-        return { status: "terminal", outcome: { status: "completed", result: { entryId: ended.answer } } }
+      if (answer !== undefined) {
+        yield* endAnswered(tx, ctx, live, boundary!, answer)
+        return { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
       }
       const [reason, detail] =
         ended._tag === "failed"

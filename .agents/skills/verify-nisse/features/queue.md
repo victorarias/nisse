@@ -75,6 +75,10 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - queue-idempotent: submitting again with the same request id is answered once
 - queue-run: prompts sent while nisse is working wait and run in order, each to its own end
 
+Provider on the kernel, `packages/nisse/test/kernel/claude.test.ts`:
+
+- queue-run: a prompt sent while Claude works runs once Claude answers, resuming the same session
+
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - queue-run, queue-shared: prompts sent while nisse is working wait in a visible queue and run in order

@@ -1045,16 +1045,24 @@ const prepareRunEndTasks = (
 const endAnsweredRun = (ctx: Ctx, answer: EntryId) =>
   ctx.runtime.commit((tx) =>
     Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
-      const { runtime, api } = ctx
-      const conversationId = runtime.conversationId
-      const boundary = yield* prepareBoundary(tx, conversationId, api.settings())
-      const live = yield* tx.doc(LiveDoc, conversationId)
-      yield* endRun(tx, live, runtime.taskId, { status: "done", answer }, ctx.api.runOwner)
-      const { users, first } = yield* applyBoundary(tx, boundary, "final", runtime.now())
-      if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first }, api.runTasks)
+      const conversationId = ctx.runtime.conversationId
+      const boundary = yield* prepareBoundary(tx, conversationId, ctx.api.settings())
+      yield* endAnswered(tx, ctx, yield* tx.doc(LiveDoc, conversationId), boundary, answer)
       return { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
     }),
   )
+
+/**
+ * End a run that answered, then place what the final boundary selects and start the next run for selected user items.
+ * Read `boundary` with `prepareBoundary` before the commit's first table write.
+ */
+export const endAnswered = (tx: Tx, ctx: RunCtx, live: Draft<LiveState>, boundary: Boundary, answer: EntryId) =>
+  Effect.gen(function* () {
+    const { conversationId } = ctx.runtime
+    yield* endRun(tx, live, ctx.runtime.taskId, { status: "done", answer }, ctx.api.runOwner)
+    const { users, first } = yield* applyBoundary(tx, boundary, "final", ctx.runtime.now())
+    if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first }, ctx.api.runTasks)
+  })
 
 /**
  * End a run that answered once its `finish` or `drain` phase was cut off `settings.restartLimit` times (spec 5.4): the

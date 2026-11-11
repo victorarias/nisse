@@ -176,6 +176,23 @@ test("claude-session-gone: when Claude Code lost the session, a fresh one is giv
   expect(runEnds(session.view.seen()).map((end) => end.outcome)).toEqual(["answered", "answered"])
 })
 
+test("queue-run: a prompt sent while Claude works runs once Claude answers, resuming the same session", async () => {
+  using claude = new FakeClaude("bash_allowed", "text")
+  await using session = await conversationWith(claude)
+  await session.submit("Run the bash command `touch made.txt` with the Bash tool, then reply with exactly: made")
+  await waitingApproval(session.view)
+  await session.submit("Reply with exactly: fixture text ok")
+  await session.answer(true)
+  await session.view.until(settled(2))
+  expect(claude.spawns()[1]!["--resume"]).toBe(claude.spawns()[0]!["--session-id"])
+  expect(claude.userTexts(1)).toEqual([["Reply with exactly: fixture text ok"]])
+  expect(transcript(session.view.seen()).slice(-3)).toEqual([
+    "user: Reply with exactly: fixture text ok",
+    "assistant: fixture text ok",
+    "run_end: answered",
+  ])
+})
+
 test("claude-sign-in-error: a signed-out Claude Code fails the run with its own words", async () => {
   using claude = new FakeClaude("auth_failed")
   await using session = await conversationWith(claude)
