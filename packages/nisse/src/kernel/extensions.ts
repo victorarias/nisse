@@ -208,6 +208,13 @@ export const openKernelExtensions = (
         }),
       )
 
+    /**
+     * The input `execute.before` gave each call that it changed, by conversation and call, until its `execute.after`
+     * runs: the harness hands `afterTool` the model's own arguments, and an extension's after hook must see what ran.
+     */
+    const rewritten = new Map<string, unknown>()
+    const callKey = (conversation: ConversationId, call: ToolHookCall) => `${conversation}:${call.id}`
+
     const beforeTool = (call: ToolHookCall, api: { readonly conversationId: ConversationId }) =>
       Effect.gen(function* () {
         const loaded = current
@@ -233,7 +240,9 @@ export const openKernelExtensions = (
           }
           input = event.input
         }
-        return JSON.stringify(input) === JSON.stringify(call.arguments) ? undefined : { arguments: input as JsonObject }
+        if (JSON.stringify(input) === JSON.stringify(call.arguments)) return undefined
+        rewritten.set(callKey(api.conversationId, call), input)
+        return { arguments: input as JsonObject }
       })
 
     const afterTool = (
@@ -242,6 +251,9 @@ export const openKernelExtensions = (
       api: { readonly conversationId: ConversationId },
     ) =>
       Effect.gen(function* () {
+        const key = callKey(api.conversationId, call)
+        const input = rewritten.has(key) ? rewritten.get(key) : call.arguments
+        rewritten.delete(key)
         const loaded = current
         if (loaded.hooks["execute.after"].length === 0) return undefined
         if (result.diagnostics?.some((diagnostic) => NOT_RUN.has(diagnostic.code ?? ""))) return undefined
@@ -253,7 +265,7 @@ export const openKernelExtensions = (
             conversation: yield* handle(api.conversationId, conversation, registered.extension, loaded),
             call: call.id as never,
             tool: call.name,
-            input: call.arguments,
+            input,
             outcome: { ...shown },
           }
           const exit = yield* runHook(

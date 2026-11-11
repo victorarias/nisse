@@ -843,7 +843,7 @@ export default Extension.define((ctx) =>
       Effect.gen(function* () {
         call.outcome.output = call.outcome.output.toUpperCase()
         yield* call.conversation.status("ran " + call.tool + " in " + call.conversation.id)
-        yield* call.conversation.toast(call.tool + " finished")
+        yield* call.conversation.toast(call.tool + " ran " + String((call.input as { command: string }).command))
       }),
     )
   }),
@@ -869,7 +869,7 @@ test("execute-before, execute-after, toast, status-line: an extension can refuse
     `call bash {"command":"rm -rf precious"}`,
     notRun("Tool call blocked: guard refused this call: that deletes too much"),
     `call bash {"command":"echo hello"}`,
-    "toast guard: bash finished",
+    "toast guard: bash ran echo hej",
     "result: HEJ\n",
   ])
   expect(statusLines(view)).toEqual({ guard: "ran bash in guarded" })
