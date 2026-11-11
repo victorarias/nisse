@@ -6,7 +6,7 @@ import type { ExtensionInfo, UnknownProvider } from "@nisse/protocol"
 import { Client, clientLayer, ServerFailed, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, type Home } from "./home.ts"
-import { openAiOptions, providersLayer } from "./drivers/index.ts"
+import { openAiOptions, type ProviderOptions, providersLayer } from "./drivers/index.ts"
 import { readScript } from "./drivers/script.ts"
 import { readHomeConfig } from "./config.ts"
 import { login, logout } from "./login.ts"
@@ -111,19 +111,7 @@ const serveCommand = Command.make(
     if (restart) yield* stopRunningServer(home)
     const claim = claimHome(home)
     const claimed = restart ? claim.pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 300 })) : claim
-    const scriptPath = process.env.NISSE_MODEL_SCRIPT
-    const providers = Layer.unwrap(
-      Effect.gen(function* () {
-        const config = yield* readHomeConfig(home.dir)
-        return providersLayer({
-          ...(scriptPath === undefined ? {} : { script: yield* readScript(scriptPath || undefined) }),
-          openai: openAiOptions(home),
-          claude: process.env.NISSE_CLAUDE ? { executable: process.env.NISSE_CLAUDE } : {},
-          preferred: scriptPath === undefined ? "claude" : "script",
-          config,
-        })
-      }),
-    )
+    const providers = Layer.unwrap(Effect.map(providerOptions(home), providersLayer))
     yield* Effect.scoped(
       Effect.andThen(claimed, serve(home, { idleGrace: IDLE_GRACE }).pipe(Effect.provide(providers))),
     ).pipe(
@@ -133,16 +121,36 @@ const serveCommand = Command.make(
   }),
 ).pipe(Command.withDescription("Run this home's server in the foreground"))
 
+/**
+ * The home's providers as its `config.toml` and the environment name them: `NISSE_MODEL_SCRIPT` adds `script` and
+ * prefers it, and `NISSE_CLAUDE` names the `claude` every Claude provider without a `binary` runs.
+ */
+const providerOptions = (home: Home) =>
+  Effect.gen(function* () {
+    const config = yield* readHomeConfig(home.dir)
+    const scriptPath = process.env.NISSE_MODEL_SCRIPT
+    return {
+      ...(scriptPath === undefined ? {} : { script: yield* readScript(scriptPath || undefined) }),
+      openai: openAiOptions(home),
+      claude: process.env.NISSE_CLAUDE ? { executable: process.env.NISSE_CLAUDE } : {},
+      preferred: scriptPath === undefined ? "claude" : "script",
+      config,
+    } satisfies ProviderOptions
+  })
+
 // A stuck code-mode worker survives terminate() and keeps the process alive (F19), so the end of the server's lifetime
 // ends the process.
 const serveKernelHome = (home: Home) =>
   Effect.gen(function* () {
-    const script = yield* readScript(process.env.NISSE_MODEL_SCRIPT || undefined)
     const served = yield* Effect.scoped(
-      Effect.andThen(claimHome(home), serveKernel(home, { idleGrace: IDLE_GRACE, script })),
+      Effect.andThen(
+        claimHome(home),
+        Effect.flatMap(providerOptions(home), (providers) => serveKernel(home, { idleGrace: IDLE_GRACE, providers })),
+      ),
     ).pipe(
       Effect.as(true),
       Effect.catchTag("HomeTaken", () => Effect.as(refuse(`another server already serves ${home.dir}`), false)),
+      Effect.catchTag("ConfigError", (error) => Effect.as(refuse(`${error.path}: ${error.message}`), false)),
     )
     if (served) process.exit(0)
   })

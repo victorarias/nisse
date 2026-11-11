@@ -1,5 +1,7 @@
 export * from "./types.ts"
 export * from "./models.ts"
+export * from "./kind.ts"
+export { THINKING_LEVELS } from "./model-schema.ts"
 export * from "./identity.ts"
 export * from "./script.ts"
 export * from "./diagnostics.ts"

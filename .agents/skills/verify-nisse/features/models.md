@@ -134,6 +134,19 @@ Preconditions:
   `The code word is pelican.` and `You said: The code word is pelican.`,
   before `hello`.
 
+- **On the kernel.** In a fresh run made with `drive.ts r up --kernel`, write
+  the **Defaults from config** files and run the same three
+  `conversation/start` calls: each answers a `conversation` and the same
+  `model`, and `drive.ts r watch <id>` shows it in the view's `pi.agent` as
+  `"model": {"provider": ..., "modelId": ...}` with the effort as
+  `thinkingLevel`. Start one with `"provider": "claude", "model": "opus"`, run
+  `drive.ts r kill-server` and `drive.ts r serve`, then remove both files'
+  `default_model` and start with `'{"cwd": "/tmp"}'`: it answers
+  `{"provider": "claude", "model": "opus"}`, chosen last before the kill.
+  `'{"cwd": "/tmp", "effort": "loud"}'` fails `UnknownEffort` with the
+  efforts nisse knows, `minimal` to `max`. `drive.ts r rpc models/list '{}'`
+  lists every provider as above.
+
 ## Contexts
 
 - **Provider.** A switch to OpenAI sends the whole transcript. A switch to Claude tells a new Claude Code session the first prompt and as much of the newest history as fits in about 64,000 characters.
@@ -145,6 +158,12 @@ Wire, `packages/nisse/test/wire.test.ts`:
 
 - model-default: a new conversation takes the project's default model, else the home's, else the one chosen last
 - model-switch, model-switch-provider: switching models is an entry everyone sees, and a provider nisse does not have is refused
+
+Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- model-default: a new conversation takes the project's default model, else the home's, else the one chosen last, across a restart
+- provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
+- provider-unknown, model-flags: a conversation starts on the model and effort it names, and nisse refuses a provider or effort it does not have
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
@@ -165,7 +184,8 @@ Provider, `packages/nisse/test/claude.test.ts`:
 
 - Nisse does not check a model or effort against the list when a
   conversation starts or switches; `--model haiku` with no provider goes to
-  the default model's provider, whatever it is.
+  the default model's provider, whatever it is. On the kernel an effort must
+  still be one nisse knows, `minimal` to `max`.
 - The model chosen last is per home, so one journey's choice is the next
   one's default; start from a fresh run or name `--provider`.
 - The picker's chosen row shows `‹ <effort> ›` only for a model with efforts.

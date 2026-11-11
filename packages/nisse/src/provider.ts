@@ -1,23 +1,12 @@
-import type {
-  AuthInteraction,
-  AuthMethod,
-  AuthResponse,
-  CallId,
-  Conversation,
-  Entry,
-  ModelInfo,
-  ModelSelection,
-  Outcome,
-  ProviderHealth,
-  Skill,
-} from "@nisse/protocol"
-import { Context, Effect, Schema, type Scope } from "effect"
+import type { ProviderAccount, ProviderError } from "@nisse/models"
+import type { CallId, Conversation, Entry, ModelSelection, Outcome, Skill } from "@nisse/protocol"
+import { Context, type Effect, type Scope } from "effect"
 import type { AgentLimits } from "./agents.ts"
 import type { RequestShape } from "./extensions/index.ts"
 import type { Tool, ToolOutcome } from "./tools/index.ts"
 import type { AgentType } from "./workspace.ts"
 
-export class ProviderError extends Schema.TaggedError<ProviderError>()("ProviderError", { message: Schema.String }) {}
+export { nothingToSignIn, ProviderError, type Health, type SignInFlow } from "@nisse/models"
 
 export interface Call {
   readonly call: CallId
@@ -65,22 +54,9 @@ export interface Turn {
   readonly host: (child: HostedChild) => Effect.Effect<Hosted, never, Scope.Scope>
 }
 
-export interface SignInFlow {
-  readonly show: (interaction: AuthInteraction) => Effect.Effect<void>
-  readonly response: Effect.Effect<AuthResponse>
-}
-
-export type Health = Omit<ProviderHealth, "checkedAt">
-
-export interface Driver {
-  readonly kind: string
-  readonly defaultModel?: string
+/** A provider as the shipping server runs it: its account, and the loop it runs a turn with. */
+export interface Driver extends ProviderAccount {
   readonly run: (turn: Turn) => Effect.Effect<void, ProviderError>
-  readonly health: (refresh: boolean) => Effect.Effect<Health>
-  readonly models: (refresh: boolean) => Effect.Effect<ReadonlyArray<ModelInfo>>
-  readonly signInMethods: ReadonlyArray<AuthMethod>
-  readonly signIn: (method: AuthMethod, flow: SignInFlow) => Effect.Effect<void, ProviderError>
-  readonly signOut: Effect.Effect<void, ProviderError>
   readonly skills: (cwd: string) => ReadonlyArray<Skill>
   readonly agentTypes: (cwd: string) => ReadonlyArray<AgentType>
   readonly tools: (conversation: Conversation) => ReadonlyArray<Tool>
@@ -90,12 +66,6 @@ export const nothingOfItsOwn = { skills: () => [], agentTypes: () => [], tools: 
   Driver,
   "skills" | "agentTypes" | "tools"
 >
-
-export const nothingToSignIn = {
-  signInMethods: [],
-  signIn: () => Effect.fail(new ProviderError({ message: "there is nothing to sign in to" })),
-  signOut: Effect.fail(new ProviderError({ message: "there is nothing to sign out of" })),
-} satisfies Pick<Driver, "signInMethods" | "signIn" | "signOut">
 
 export class Providers extends Context.Service<
   Providers,

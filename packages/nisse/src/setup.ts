@@ -8,9 +8,10 @@ import {
   type ProviderModels,
   type ProviderSnapshot,
 } from "@nisse/protocol"
+import type { ProviderAccount } from "@nisse/models"
 import { Cause, Context, Effect, Fiber, Layer, Queue, Stream } from "effect"
 import { newId } from "./ids.ts"
-import { Providers, type Driver } from "./provider.ts"
+import { Providers } from "./provider.ts"
 
 const WATCHER_QUEUE = 256
 
@@ -35,10 +36,9 @@ export class Setup extends Context.Service<
     readonly watch: Stream.Stream<AuthState>
   }
 >()("nisse/Setup") {
-  static readonly layer = Layer.effect(
-    Setup,
+  /** Sign-ins, health and model lists over a home's providers, by id; sign-ins end with the scope. */
+  static readonly make = (drivers: ReadonlyMap<string, ProviderAccount>) =>
     Effect.gen(function* () {
-      const { drivers } = yield* Providers
       const scope = yield* Effect.scope
       const flows = new Map<string, Flow>()
       const watchers = new Set<Queue.Queue<AuthState>>()
@@ -58,7 +58,7 @@ export class Setup extends Context.Service<
           return driver ? Effect.succeed(driver) : Effect.fail(new UnknownProvider({ provider }))
         })
 
-      const snapshot = (id: string, driver: Driver, refresh: boolean) =>
+      const snapshot = (id: string, driver: ProviderAccount, refresh: boolean) =>
         Effect.map(
           driver.health(refresh),
           (health): ProviderSnapshot => ({
@@ -79,7 +79,7 @@ export class Setup extends Context.Service<
           return true
         })
 
-      const signIn = (provider: string, driver: Driver, method: AuthMethod, flow: Flow) =>
+      const signIn = (provider: string, driver: ProviderAccount, method: AuthMethod, flow: Flow) =>
         Effect.gen(function* () {
           const id = flow.state.flow
           const outcome = yield* Effect.result(
@@ -181,6 +181,10 @@ export class Setup extends Context.Service<
           }),
         ),
       })
-    }),
+    })
+
+  static readonly layer = Layer.effect(
+    Setup,
+    Effect.flatMap(Providers, ({ drivers }) => Setup.make(drivers)),
   )
 }

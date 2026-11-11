@@ -59,5 +59,40 @@ export const projectDefaultModel = (cwd: string): ModelSelection | undefined => 
   }
 }
 
+/** What a new conversation asks for; each part it leaves out comes from the defaults. */
+export interface ModelAsk {
+  readonly provider?: string
+  readonly model?: string
+  readonly effort?: string
+}
+
+export interface ModelDefaults {
+  /** The home's `default_model`. */
+  readonly home?: ModelSelection
+  /** The model chosen last in this home, by a start or a switch. */
+  readonly last?: ModelSelection
+  /** The provider when no default names one this home has. */
+  readonly preferred: string
+  readonly has: (provider: string) => boolean
+}
+
+/**
+ * The model a new conversation starts with: the provider it names, else the first of the project's `default_model`,
+ * the home's and the one chosen last whose provider this home has, else `preferred`. A model named without a
+ * provider goes to that default's provider, and drops the default's effort unless one is named.
+ */
+export const chooseModel = (cwd: string, ask: ModelAsk, defaults: ModelDefaults): ModelSelection => {
+  const given = {
+    ...(ask.model === undefined ? {} : { model: ask.model }),
+    ...(ask.effort === undefined ? {} : { effort: ask.effort }),
+  }
+  if (ask.provider !== undefined) return { provider: ask.provider, ...given }
+  const fallback = [projectDefaultModel(cwd), defaults.home, defaults.last].find(
+    (candidate) => candidate !== undefined && defaults.has(candidate.provider),
+  ) ?? { provider: defaults.preferred }
+  if (ask.model === undefined) return { ...fallback, ...given }
+  return { provider: fallback.provider, ...given }
+}
+
 export const expandHome = (path: string) =>
   path === "~" || path.startsWith("~/") ? join(homedir(), path.slice(1)) : path

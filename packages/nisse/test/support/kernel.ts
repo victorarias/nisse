@@ -6,16 +6,35 @@ import { type EntryRecord, RUN_END_KIND, type RunEnd, type View, type ViewItem, 
 import { rmSync } from "node:fs"
 import { type Duration, Effect, Exit, Layer, Scope } from "effect"
 import type { Home } from "../../src/home.ts"
+import { openAiOptions, type ProviderOptions } from "../../src/drivers/index.ts"
 import { kernelServerLayer } from "../../src/kernel/server.ts"
 import { Lifetime } from "../../src/lifetime.ts"
 import { deadline, RawClient, type Reply } from "./raw.ts"
-import { tempHome } from "./server.ts"
+import { type ServerOptions, tempHome } from "./server.ts"
 import { nisse, nisseEnv } from "./terminal.ts"
 
-export const runningKernelServer = async (script: ReadonlyArray<ScriptStep> = [], options: { home?: Home } = {}) => {
+/** The providers a test's server has: `script` playing `script` and preferred, then those `options` configure. */
+const testProviders = (
+  home: Home,
+  script: ReadonlyArray<ScriptStep>,
+  options: ServerOptions = {},
+): ProviderOptions => ({
+  script,
+  openai: (options.openai ?? openAiOptions)(home),
+  claude: options.claude ?? {},
+  preferred: "script",
+  config: options.config ?? {},
+})
+
+export const runningKernelServer = async (script: ReadonlyArray<ScriptStep> = [], options: ServerOptions = {}) => {
   const home = options.home ?? tempHome()
   const scope = Effect.runSync(Scope.make())
-  await Effect.runPromise(Layer.buildWithScope(kernelServerLayer(home, { idleGrace: "1 hour", script }), scope))
+  await Effect.runPromise(
+    Layer.buildWithScope(
+      kernelServerLayer(home, { idleGrace: "1 hour", providers: testProviders(home, script, options) }),
+      scope,
+    ),
+  )
   const stop = () => Effect.runPromise(Scope.close(scope, Exit.void))
   return {
     home,
@@ -39,7 +58,10 @@ export const servingKernelUntilIdle = async (
       const lifetime = yield* Lifetime
       listening.resolve()
       yield* lifetime.ended
-    }).pipe(Effect.provide(kernelServerLayer(home, { idleGrace, script })), Effect.scoped),
+    }).pipe(
+      Effect.provide(kernelServerLayer(home, { idleGrace, providers: testProviders(home, script) })),
+      Effect.scoped,
+    ),
   )
   await Promise.race([listening.promise, exited])
   return { exited }

@@ -99,7 +99,10 @@ export const probe = (options: ProbeOptions): Effect.Effect<Probed> =>
         env,
       },
     })
-    const initialized = yield* Effect.tryPromise(() => started.initializationResult()).pipe(
+    const initialized = yield* Effect.tryPromise({
+      try: () => started.initializationResult(),
+      catch: (error) => error,
+    }).pipe(
       Effect.timeoutOrElse({
         duration: PATIENCE,
         orElse: () => Effect.fail(new Error("claude did not answer within 25 seconds")),

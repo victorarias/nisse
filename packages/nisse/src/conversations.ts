@@ -20,7 +20,7 @@ import {
 } from "@nisse/protocol"
 import { Cause, Context, Deferred, Effect, Fiber, FiberSet, Layer, Option, Ref, type Scope } from "effect"
 import { agentTools, errored, taskOf, type AgentContext, type Child, type Woken } from "./agents.ts"
-import { projectDefaultModel } from "./config.ts"
+import { chooseModel } from "./config.ts"
 import { Extensions } from "./extensions/index.ts"
 import { newId } from "./ids.ts"
 import { attachedSkills } from "./workspace.ts"
@@ -699,16 +699,13 @@ export class Conversations extends Context.Service<
       })
 
       const chosenModel = (cwd: string, options: StartOptions): ModelSelection => {
-        const given = {
-          ...(options.model === undefined ? {} : { model: options.model }),
-          ...(options.effort === undefined ? {} : { effort: options.effort }),
-        }
-        if (options.provider !== undefined) return { provider: options.provider, ...given }
-        const fallback = [projectDefaultModel(cwd), providers.defaultModel, store.lastModel()].find(
-          (candidate) => candidate !== undefined && providers.drivers.has(candidate.provider),
-        ) ?? { provider: providers.preferred }
-        if (options.model === undefined) return { ...fallback, ...given }
-        return { provider: fallback.provider, ...given }
+        const last = store.lastModel()
+        return chooseModel(cwd, options, {
+          ...(providers.defaultModel ? { home: providers.defaultModel } : {}),
+          ...(last ? { last } : {}),
+          preferred: providers.preferred,
+          has: (provider) => providers.drivers.has(provider),
+        })
       }
 
       const strand = (id: ConversationId) =>
