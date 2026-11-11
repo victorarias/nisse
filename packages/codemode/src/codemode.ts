@@ -988,11 +988,13 @@ class CodemodeCall {
 
   /**
    * Journal finished calls and acknowledged counts in one commit, then deliver the calls and launch the calls the
-   * counts cover; one commit in flight at a time, so what arrives meanwhile goes into the next.
+   * counts cover; one commit in flight at a time, so what arrives meanwhile goes into the next. Counts alone are
+   * committed only once the VM has processed every delivered result: while it catches up they wait for the next
+   * results, or for its last count, else each count would take a commit of its own.
    */
   private pump(): void {
     if (this.committing || this.stopped) return
-    if (this.queue.length === 0 && this.acks.size === 0) return
+    if (this.queue.length === 0 && !this.acks.has(this.journalLength)) return
     this.committing = true
     const batch = this.queue.splice(0)
     const acks = [...this.acks]
