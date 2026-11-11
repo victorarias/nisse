@@ -195,6 +195,19 @@ test("approval-ask, approval-allow-tui: nisse asks before a command runs, ctrl+y
   await quit(session)
 })
 
+test("approval-ask, codemode-nested-policy: a script's call that waits for a person shows its command under the script before ctrl+y allows it", async () => {
+  const code = 'await tools.bash({ command: "echo nested-hello" })'
+  const session = await open([call("codemode", { code }), { text: "all done" }], ["--model", "script-code-mode"])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("run it\r")
+  const asking = await session.waitFor((screen) => screen.includes("WAITING") && screen.includes("allow this call?"))
+  expect(asking.indexOf("▸ bash(echo nested-hello)")).toBeGreaterThan(asking.indexOf("▸ codemode"))
+  expect(asking.indexOf("allow this call?")).toBeGreaterThan(asking.indexOf("▸ bash(echo nested-hello)"))
+  session.type("\x19")
+  await session.waitFor((screen) => screen.includes("all done") && screen.includes("READY"))
+  await quit(session)
+})
+
 test("approval-deny-tui: ctrl+n denies a call, the denial shows as its result and the run goes on", async () => {
   const session = await open([call("bash", { command: "echo never-ran" }), { text: "carrying on" }])
   await session.waitFor((screen) => screen.includes("READY"))
@@ -379,6 +392,7 @@ test("subagent-card: a Claude subagent shows as a card in place of its call's re
     20_000,
   )
   expect(screen).not.toContain("Subagent hand-back")
+  expect(screen.match(/⧉/g)).toHaveLength(1)
   await quit(parent)
 
   const client = await RawClient.connect(nisseHome.socket)

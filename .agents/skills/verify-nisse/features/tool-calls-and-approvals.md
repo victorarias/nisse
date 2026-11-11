@@ -151,6 +151,7 @@ Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE
 
 - approval-ask, approval-allow-tui: nisse asks before a command runs, ctrl+y allows it and its output shows under the call
 - approval-deny-tui: ctrl+n denies a call, the denial shows as its result and the run goes on
+- approval-ask, codemode-nested-policy: a script's call that waits for a person shows its command under the script before ctrl+y allows it
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

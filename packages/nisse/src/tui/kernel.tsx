@@ -65,10 +65,13 @@ type Message = {
 type ToolCallBlock = { readonly id: string; readonly name: string; readonly arguments?: unknown }
 
 type LiveTool = { readonly callId: string; readonly status: string; readonly output?: string }
+/** A call a running tool made, such as a code-mode script's `tools.bash(...)`: its id is `<parentCallId>/<key>`. */
+type NestedTool = LiveTool & { readonly parentCallId: string; readonly name: string; readonly arguments?: unknown }
 type Live = {
   readonly run?: unknown
   readonly generation?: { readonly message?: Message }
   readonly tools?: ReadonlyArray<LiveTool>
+  readonly nestedTools?: ReadonlyArray<NestedTool>
 }
 type Approval = { readonly callId: string; readonly answer?: unknown }
 type Approvals = { readonly requests?: Readonly<Record<string, Approval>> }
@@ -124,14 +127,21 @@ interface Followed {
 interface Index {
   readonly results: ReadonlyMap<string, EntryRecord>
   readonly answers: ReadonlyMap<string, EntryRecord>
-  /** The conversation each call that started a subagent started. */
-  readonly subagents: ReadonlyMap<string, string>
+  /** The subagent each call that started one started, by the call's id. */
+  readonly subagents: ReadonlyMap<string, Subagent>
+}
+
+/** A subagent's conversation, and the title and type a hosted one (Claude's) was given, which its call does not carry. */
+type Subagent = {
+  readonly conversation: string
+  readonly title?: string | undefined
+  readonly agentType?: string | undefined
 }
 
 const indexOf = (items: ReadonlyArray<TranscriptItem>): Index => {
   const results = new Map<string, EntryRecord>()
   const answers = new Map<string, EntryRecord>()
-  const subagents = new Map<string, string>()
+  const subagents = new Map<string, Subagent>()
   for (const item of items) {
     if (item.kind !== "entry") continue
     const entry = item.entry
@@ -140,11 +150,15 @@ const indexOf = (items: ReadonlyArray<TranscriptItem>): Index => {
       if (message?.toolCallId === undefined) continue
       results.set(message.toolCallId, entry)
       if (message.details?.conversation !== undefined)
-        subagents.set(message.toolCallId, String(message.details.conversation))
+        subagents.set(message.toolCallId, { conversation: String(message.details.conversation) })
     } else if (entry.kind === APPROVAL_KIND) answers.set(dataOf<{ callId: string }>(entry).callId, entry)
     else if (entry.kind === SUBAGENT_KIND) {
-      const data = dataOf<{ call: string; conversation: number }>(entry)
-      subagents.set(data.call, String(data.conversation))
+      const data = dataOf<{ call: string; conversation: number; title: string; agentType?: string }>(entry)
+      subagents.set(data.call, {
+        conversation: String(data.conversation),
+        title: data.title,
+        agentType: data.agentType,
+      })
     }
   }
   return { results, answers, subagents }
@@ -243,17 +257,11 @@ const head = (text: string, lines: number) => {
   return all.length <= lines ? all.join("\n") : `${all.slice(0, lines).join("\n")}\n… ${all.length - lines} more lines`
 }
 
-/** The kinds the transcript draws a row for; the rest (the context's system entries, results, answers) it skips. */
-const DRAWN = new Set([
-  "pi.user",
-  USER_KIND,
-  MAIL_KIND,
-  "pi.assistant",
-  RUN_END_KIND,
-  MODEL_KIND,
-  TOAST_KIND,
-  SUBAGENT_KIND,
-])
+/**
+ * The kinds the transcript draws a row for; the rest it skips: the context's system entries, and results, answers and
+ * hosted subagents, which the call they belong to draws.
+ */
+const DRAWN = new Set(["pi.user", USER_KIND, MAIL_KIND, "pi.assistant", RUN_END_KIND, MODEL_KIND, TOAST_KIND])
 
 const drawn = (item: TranscriptItem) => item.kind !== "entry" || DRAWN.has(item.entry.kind)
 
@@ -353,6 +361,48 @@ const SubagentCard = (props: { tree: Tree; conversation: string; title: string; 
   )
 }
 
+/** The calls a running tool made, under it, each with the approval it waits for: what ctrl+y would allow. */
+const NestedCalls = (props: { followed: Followed; index: Index; parent: string }) => {
+  const calls = () =>
+    props.followed.docs()["pi.live"]?.nestedTools?.filter((call) => call.parentCallId === props.parent) ?? []
+  return (
+    <For each={calls()}>
+      {(call) => {
+        const asking = () => pendingCalls(props.followed.docs()).some(([, request]) => request.callId === call.callId)
+        const answer = () => {
+          const entry = props.index.answers.get(call.callId)
+          return entry && dataOf<{ allow: boolean; author: string }>(entry)
+        }
+        return (
+          <box flexDirection="column" marginLeft={2}>
+            <text fg={color.violet}>{`▸ ${describeCall(call.name, call.arguments)}`}</text>
+            <Show when={asking()}>
+              <box flexDirection="row" marginLeft={2} gap={1}>
+                <text fg={color.yellow}>allow this call?</text>
+                <KeyCap cap="^Y" what="allow" />
+                <KeyCap cap="^N" what="deny" />
+              </box>
+            </Show>
+            <Show when={answer()}>
+              {(given) => (
+                <text fg={color.dim} marginLeft={2}>
+                  {`${given().allow ? "✓ allowed" : "✗ denied"} by ${given().author.toLowerCase()}`}
+                </text>
+              )}
+            </Show>
+            <Show when={(call.output ?? "") !== ""}>
+              <text fg={color.dim} marginLeft={2}>
+                {tail(call.output ?? "", OUTPUT_LINES)}
+              </text>
+            </Show>
+            <NestedCalls followed={props.followed} index={props.index} parent={call.callId} />
+          </box>
+        )
+      }}
+    </For>
+  )
+}
+
 const ToolCallView = (props: { followed: Followed; index: Index; tree: Tree; call: ToolCallBlock }) => {
   const result = () => {
     const entry = props.index.results.get(props.call.id)
@@ -388,6 +438,9 @@ const ToolCallView = (props: { followed: Followed; index: Index; tree: Tree; cal
               </text>
             )}
           </Show>
+          <Show when={result() === undefined}>
+            <NestedCalls followed={props.followed} index={props.index} parent={props.call.id} />
+          </Show>
           <Show when={result() === undefined && output() !== ""}>
             <text fg={color.dim} marginLeft={2}>
               {tail(output(), OUTPUT_LINES)}
@@ -405,12 +458,12 @@ const ToolCallView = (props: { followed: Followed; index: Index; tree: Tree; cal
         </box>
       }
     >
-      {(conversation) => (
+      {(started) => (
         <SubagentCard
           tree={props.tree}
-          conversation={conversation()}
-          title={input()?.task_name ?? props.call.name}
-          agentType={input()?.agent_type}
+          conversation={started().conversation}
+          title={started().title ?? input()?.task_name ?? props.call.name}
+          agentType={started().agentType ?? input()?.agent_type}
         />
       )}
     </Show>
@@ -515,17 +568,6 @@ const EntryView = (props: {
         <text fg={color.dim} marginLeft={2}>
           {`◆ ${data.extension}: ${data.text}`}
         </text>
-      )
-    }
-    case SUBAGENT_KIND: {
-      const data = dataOf<{ conversation: number; title: string; agentType?: string }>(entry)
-      return (
-        <SubagentCard
-          tree={props.tree}
-          conversation={String(data.conversation)}
-          title={data.title}
-          agentType={data.agentType}
-        />
       )
     }
     default:
@@ -647,7 +689,8 @@ const Transcript = (props: { followed: Followed; tree: Tree }) => {
 }
 
 /** The subagents `followed`'s entries started. */
-const subagentsOf = (followed: Followed) => [...indexOf(followed.items()).subagents.values()]
+const subagentsOf = (followed: Followed) =>
+  [...indexOf(followed.items()).subagents.values()].map((subagent) => subagent.conversation)
 
 export const kernelTui = Effect.fnUntraced(function* (
   id: string | undefined,
