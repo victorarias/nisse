@@ -20,7 +20,7 @@ import {
   type ViewItem,
   type Window,
 } from "@nisse/wire"
-import { Cause, Console, Context, type Duration, Effect, Layer, Queue, Stream } from "effect"
+import { Cause, Console, Context, type Duration, Effect, Exit, Layer, Queue, Scope, Stream } from "effect"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as RpcServer from "effect/rpc/RpcServer"
 import type { Home } from "../home.ts"
@@ -70,12 +70,19 @@ const Handlers = KernelRpcs.toLayer(
     const lifetime = yield* Lifetime
     // Keeps the server up while the harness has work, such as a run a submission started or a crash left.
     const scope = yield* Effect.scope
-    const holdUntilIdle = Effect.forkIn(
-      Effect.scoped(Effect.andThen(lifetime.hold, Effect.ignore(harness.waitForIdle))),
-      scope,
-    )
-    yield* Effect.orDie(harness.resume)
-    yield* holdUntilIdle
+    // The hold is taken before `admit` and handed to an idle wait that starts after it, so the work `admit` admits
+    // is never unheld: an idle wait started earlier can return before the work exists.
+    const heldUntilIdle = <A, E>(admit: Effect.Effect<A, E>) =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const held = yield* Scope.make()
+          yield* Scope.provide(lifetime.hold, held)
+          const admitted = yield* Effect.exit(restore(admit))
+          yield* Effect.forkIn(Effect.ensuring(Effect.ignore(harness.waitForIdle), Scope.close(held, Exit.void)), scope)
+          return yield* admitted
+        }),
+      )
+    yield* heldUntilIdle(Effect.orDie(harness.resume))
 
     const find = (id: string) =>
       Effect.flatMap(
@@ -147,9 +154,9 @@ const Handlers = KernelRpcs.toLayer(
       "conversation/submit": ({ conversation: id, requestId, text }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
-          // Held before the submission commits, so no interruption between the two leaves its run without a hold.
-          yield* holdUntilIdle
-          const submission = yield* Effect.orDie(conversation.submit({ type: "input", content: text, requestId }))
+          const submission = yield* heldUntilIdle(
+            Effect.orDie(conversation.submit({ type: "input", content: text, requestId })),
+          )
           return { submission: submission.id }
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),

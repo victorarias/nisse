@@ -165,6 +165,34 @@ test("server-idle-exit: the server exits once no client is connected and nothing
   await deadline(served.exited, 5000, "server exit")
 })
 
+test("server-idle-exit: a submission's run keeps the server up after its client leaves, past the idle grace", async () => {
+  const home = tempHome()
+  const served = await deadline(
+    servingKernelUntilIdle(home, "50 millis", [{ text: "one two three four", delayMs: 100 }]),
+    5000,
+    "server listening",
+  )
+  let client = await RawClient.connect(home.socket)
+  const conversation = await start(client)
+  // No watch: only the submission's run keeps the server up once the client goes.
+  await submit(client, conversation, "count")
+  client.close()
+  await deadline(served.exited, 5000, "server exit")
+
+  // A server that went idle mid-run would have left no answer and no run_end.
+  await using again = await runningKernelServer([], { home })
+  client = await RawClient.connect(again.home.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(transcript(after.view().entries)).toEqual([
+    "user: count",
+    "assistant: one two three four",
+    "run_end: answered",
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
+})
+
 test("server-stop: stopping the server answers the caller, then the server exits", async () => {
   const home = tempHome()
   const served = await deadline(servingKernelUntilIdle(home, "1 hour"), 5000, "server listening")
