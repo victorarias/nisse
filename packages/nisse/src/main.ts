@@ -5,7 +5,7 @@ import { Argument, Command, Flag } from "effect/cli"
 import type { ExtensionInfo, UnknownProvider } from "@nisse/protocol"
 import { Client, clientLayer, ServerFailed, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
-import { claimHome, defaultHome, type Home } from "./home.ts"
+import { claimHome, defaultHome, HOME_TAKEN_EXIT, type Home } from "./home.ts"
 import { openAiOptions, type ProviderOptions, providersLayer } from "./drivers/index.ts"
 import { readScript } from "./drivers/script.ts"
 import { readHomeConfig } from "./config.ts"
@@ -81,13 +81,15 @@ const withClient =
       ),
     )
 
-const refuse = (reason: string) =>
+const refuse = (reason: string, exitCode = 1) =>
   Effect.andThen(
     Console.error(reason),
     Effect.sync(() => {
-      process.exitCode = 1
+      process.exitCode = exitCode
     }),
   )
+
+const homeTaken = (home: Home) => refuse(`another server already serves ${home.dir}`, HOME_TAKEN_EXIT)
 
 const unknownProvider = (error: UnknownProvider) => refuse(`nisse has no provider named ${error.provider}`)
 
@@ -110,12 +112,16 @@ const serveCommand = Command.make(
     if (process.env.NISSE_KERNEL === "1") return yield* serveKernelHome(home)
     if (restart) yield* stopRunningServer(home)
     const claim = claimHome(home)
-    const claimed = restart ? claim.pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 300 })) : claim
+    const claimed = restart
+      ? claim.pipe(
+          Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "30 seconds" })) }),
+        )
+      : claim
     const providers = Layer.unwrap(Effect.map(providerOptions(home), providersLayer))
     yield* Effect.scoped(
       Effect.andThen(claimed, serve(home, { idleGrace: IDLE_GRACE }).pipe(Effect.provide(providers))),
     ).pipe(
-      Effect.catchTag("HomeTaken", () => refuse(`another server already serves ${home.dir}`)),
+      Effect.catchTag("HomeTaken", () => homeTaken(home)),
       Effect.catchTag("ConfigError", (error) => refuse(`${error.path}: ${error.message}`)),
     )
   }),
@@ -149,7 +155,7 @@ const serveKernelHome = (home: Home) =>
       ),
     ).pipe(
       Effect.as(true),
-      Effect.catchTag("HomeTaken", () => Effect.as(refuse(`another server already serves ${home.dir}`), false)),
+      Effect.catchTag("HomeTaken", () => Effect.as(homeTaken(home), false)),
       Effect.catchTag("ConfigError", (error) => Effect.as(refuse(`${error.path}: ${error.message}`), false)),
     )
     if (served) process.exit(0)

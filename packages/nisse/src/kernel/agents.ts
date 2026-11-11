@@ -4,6 +4,7 @@
 // answer back. Both are durable tasks, so a restart resumes them (spec 7.3, example 22).
 import {
   type AgentLimits,
+  type Harness,
   ApprovalsDoc,
   approveAutomatically,
   AssistantEntry,
@@ -580,6 +581,38 @@ const interruptAgent = defineTool({
       return json({ previous_status: previous })
     }),
 })
+
+/**
+ * Stops a conversation's runs and every subagent's under it, as `conversation/interrupt` promises. Each conversation of
+ * the tree is aborted on its own, all at once, so the reporters that relay answers carry on as they do when one
+ * subagent is stopped, and background work such as compaction is left alone. A subagent its parent started before the
+ * parent stopped is found by the next pass.
+ */
+export const interruptTree = (harness: Harness, root: ConversationId) =>
+  Effect.gen(function* () {
+    const stopped = new Set<ConversationId>()
+    for (;;) {
+      const fresh = (yield* treeOf(harness, root)).filter((id) => !stopped.has(id))
+      if (fresh.length === 0) return
+      for (const id of fresh) stopped.add(id)
+      yield* Effect.forEach(
+        fresh,
+        (id) => Effect.flatMap(harness.conversation(id), (conversation) => conversation?.abort() ?? Effect.void),
+        { concurrency: "unbounded", discard: true },
+      )
+    }
+  })
+
+/** The conversation and its subagents', each parent before its subagents. */
+const treeOf = (harness: Harness, root: ConversationId) =>
+  Effect.gen(function* () {
+    const tree = [root]
+    for (let at = 0; at < tree.length; at++) {
+      const registry = yield* harness.session.snapshot(AgentsDoc, tree[at]!)
+      for (const child of Object.values(registry?.agents ?? {})) tree.push(idFromNumber(child.conversationId))
+    }
+    return tree
+  })
 
 /** The subagent tools, under `limits`; their tasks come with them, so a restart resumes pending reporters. */
 export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS) =>

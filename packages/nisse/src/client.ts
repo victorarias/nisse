@@ -8,7 +8,7 @@ import * as RpcClient from "effect/rpc/RpcClient"
 import type { RpcClientError } from "effect/rpc/RpcClientError"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as Socket from "effect/socket/Socket"
-import { homeHeld, type Home } from "./home.ts"
+import { HOME_TAKEN_EXIT, type Home } from "./home.ts"
 
 export class Client extends Context.Service<Client, RpcClient.FromGroup<typeof NisseRpcs, RpcClientError>>()(
   "nisse/Client",
@@ -81,8 +81,9 @@ const startServer = (home: Home) =>
       env: { ...process.env, ...WITHOUT_BUN_GC_TIMER },
     })
     server.unref()
-    return Effect.callback<string>((resume) => {
-      const exited = () => resume(Effect.sync(() => readFileSync(home.log).subarray(written).toString().trim()))
+    return Effect.callback<{ readonly code: number | null; readonly output: string }>((resume) => {
+      const exited = (code: number | null) =>
+        resume(Effect.sync(() => ({ code, output: readFileSync(home.log).subarray(written).toString().trim() })))
       server.once("exit", exited)
       return Effect.sync(() => server.off("exit", exited))
     })
@@ -97,8 +98,8 @@ const openOrStart = (home: Home) =>
       Effect.flatMap(startServer(home), (exited) =>
         Effect.raceFirst(
           openSoon(home),
-          Effect.flatMap(exited, (output) =>
-            homeHeld(home) ? Effect.never : Effect.fail(new ServerFailed({ output })),
+          Effect.flatMap(exited, ({ code, output }) =>
+            code === HOME_TAKEN_EXIT ? Effect.never : Effect.fail(new ServerFailed({ output })),
           ),
         ),
       ),
