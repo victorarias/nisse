@@ -78,7 +78,8 @@ export class Setup extends Context.Service<
     Effect.gen(function* () {
       const scope = yield* Effect.scope
       const flows = new Map<string, Flow>()
-      // A state is recorded under the lock that changed it, so the log holds states in the order they happened.
+      // Every change to `flows` happens under this lock and only after the log recorded it: what any connection reads
+      // from memory is recorded, and the log holds states in the order they happened.
       const recording = yield* Semaphore.make(1)
 
       const driverOf = (provider: string) =>
@@ -104,17 +105,21 @@ export class Setup extends Context.Service<
             const running = flows.get(provider)
             if (!running || running.state.flow !== flow || authEnded(running.state.phase)) return Effect.succeed(false)
             const { interaction: _, ...rest } = running.state
-            running.state = { ...rest, ...change }
-            return Effect.as(log.record(running.state), true)
+            const next: AuthState = { ...rest, ...change }
+            return Effect.as(
+              Effect.tap(log.record(next), () => Effect.sync(() => (running.state = next))),
+              true,
+            )
           }),
         )
 
-      /** Makes `flow` the provider's sign-in and records its state. */
-      const begin = (flow: Flow) =>
+      /** Records `state` as the provider's sign-in and installs it, with no flow of its own to run. */
+      const settle = (state: AuthState) =>
         recording.withPermits(1)(
-          Effect.suspend(() => {
-            flows.set(flow.state.provider, flow)
-            return log.record(flow.state)
+          Effect.gen(function* () {
+            const responses = yield* Queue.unbounded<AuthResponse>()
+            yield* log.record(state)
+            flows.set(state.provider, { state, responses })
           }),
         )
 
@@ -180,15 +185,22 @@ export class Setup extends Context.Service<
                     : `${provider} can't sign in by ${chosen}`,
               })
             }
-            const running = flows.get(provider)
-            if (running && !authEnded(running.state.phase)) return running.state
-            const flow: Flow = {
-              state: { provider, flow: newId(), phase: "starting" },
-              responses: yield* Queue.unbounded<AuthResponse>(),
-            }
-            yield* begin(flow)
-            flow.fiber = yield* Effect.forkIn(signIn(provider, driver, chosen, flow), scope)
-            return flow.state
+            // A second start while one runs gets that one: the check and the install share the lock.
+            return yield* recording.withPermits(1)(
+              Effect.gen(function* () {
+                const running = flows.get(provider)
+                if (running && !authEnded(running.state.phase)) return running.state
+                const flow: Flow = {
+                  state: { provider, flow: newId(), phase: "starting" },
+                  responses: yield* Queue.unbounded<AuthResponse>(),
+                }
+                yield* log.record(flow.state)
+                flows.set(provider, flow)
+                // Forked under the lock, so a cancel always finds its fiber; its first update waits for the lock.
+                flow.fiber = yield* Effect.forkIn(signIn(provider, driver, chosen, flow), scope)
+                return flow.state
+              }),
+            )
           }),
         respond: (provider, flow, response) =>
           Effect.sync(() => {
@@ -204,8 +216,7 @@ export class Setup extends Context.Service<
             if (running && !authEnded(running.state.phase)) yield* cancel(provider, running.state.flow)
             yield* Effect.mapError(driver.signOut, (error) => new CannotSignIn({ provider, message: error.message }))
             const signedOut = yield* snapshot(provider, driver, true)
-            const state: AuthState = { provider, flow: newId(), phase: "signed_out" }
-            yield* begin({ state, responses: yield* Queue.unbounded<AuthResponse>() })
+            yield* settle({ provider, flow: newId(), phase: "signed_out" })
             return signedOut
           }),
         watch: log.watch,
