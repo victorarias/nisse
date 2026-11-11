@@ -219,13 +219,14 @@ test("watch-rpc: a watch through a window opens on the newest entries, and from 
     await submit(client, conversation, text)
     await all.until(settled(i + 1))
   }
+  // The first request also records the tools it offers, as a pi.system entry.
   const entries = all.view().entries
-  expect(entries).toHaveLength(9)
+  expect(entries).toHaveLength(10)
 
   const newest = watchView(client, conversation, { min: 3, max: 6 })
   await newest.until(() => true)
   expect(transcript(newest.view().entries)).toEqual(["user: three", "assistant: c", "run_end: answered"])
-  expect(newest.view().before).toBe(entries[5]!.id)
+  expect(newest.view().before).toBe(entries[6]!.id)
 
   const resumed = watchView(client, conversation, { from: entries[3]!.id })
   await resumed.until(() => true)
@@ -276,4 +277,115 @@ test("server-stop: stopping the server while nisse answers lets the answer finis
   ])
   client.close()
   rmSync(home.dir, { recursive: true, force: true })
+})
+
+type Approvals = { auto?: true; requests: Record<string, { tool: string; answer?: unknown }> }
+const approvalsOf = (watch: ViewWatch) => watch.view().docs["nisse.approvals"] as Approvals | undefined
+const waitingApproval = async (watch: ViewWatch) => {
+  await watch.until((current) => Object.keys(approvalsOf(current)?.requests ?? {}).length > 0)
+  return Object.keys(approvalsOf(watch)!.requests)[0]!
+}
+const toolResults = (watch: ViewWatch) =>
+  watch
+    .seen()
+    .filter((entry) => entry.kind === "pi.tool-result")
+    .map((entry) => {
+      const message = entry.model![0] as { content: Array<{ text?: string }>; isError: boolean }
+      return { text: message.content.map((block) => block.text ?? "").join(""), isError: message.isError }
+    })
+const ECHO = [{ text: "checking", tool: { name: "bash", input: { command: "echo approved" } } }, { text: "all done" }]
+
+test("approval-wire: two clients answer one approval at once and the first answer counts", async () => {
+  await using server = await runningKernelServer(ECHO)
+  const ada = await RawClient.connect(server.home.socket)
+  const bo = await RawClient.connect(server.home.socket)
+  const conversation = await start(ada, server.home.dir)
+  const view = watchView(ada, conversation)
+  await submit(ada, conversation, "check it")
+  const approval = await waitingApproval(view)
+  expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "bash" })
+  const answers = await Promise.all([
+    ada.call("approval/resolve", { conversation, approval, author: "ada", allow: true }),
+    bo.call("approval/resolve", { conversation, approval, author: "bo", allow: false }),
+  ])
+  const accepted = answers.map((reply) => (reply.result as { accepted: boolean }).accepted)
+  expect(accepted.filter(Boolean)).toHaveLength(1)
+  const winner = accepted[0] ? { author: "ada", allow: true } : { author: "bo", allow: false }
+  await view.until(settled(1))
+  const answered = view.seen().filter((entry) => entry.kind === "nisse.approval")
+  expect(answered.map((entry) => entry.data)).toEqual([expect.objectContaining({ approval, ...winner })])
+  expect(toolResults(view)).toEqual([
+    winner.allow
+      ? { text: "approved\n", isError: false }
+      : { text: expect.stringContaining("denied by bo: the person did not allow this call"), isError: true },
+  ])
+  // The request leaves with its call, and a late answer is not accepted.
+  expect(approvalsOf(view)!.requests).toEqual({})
+  const late = await ada.call("approval/resolve", { conversation, approval, author: "cy", allow: true })
+  expect(late.result).toEqual({ accepted: false })
+  expect(transcript(view.view().entries).slice(-2)).toEqual(["assistant: all done", "run_end: answered"])
+  ada.close()
+  bo.close()
+})
+
+test("approval-wire: a denied call is reported to the model as denied and does not run", async () => {
+  await using server = await runningKernelServer([
+    { tool: { name: "bash", input: { command: "touch made" } } },
+    { text: "all done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "make it")
+  const approval = await waitingApproval(view)
+  const reply = await client.call("approval/resolve", { conversation, approval, author: "bo", allow: false })
+  expect(reply.result).toEqual({ accepted: true })
+  await view.until(settled(1))
+  expect(toolResults(view)).toEqual([
+    { text: expect.stringContaining("denied by bo: the person did not allow this call"), isError: true },
+  ])
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+  expect(
+    errorTag(await client.call("approval/resolve", { conversation, approval: "999", author: "bo", allow: true })),
+  ).toBe("NoSuchApproval")
+  client.close()
+})
+
+test("tool-read-only, approval-auto: reading calls and conversations started with auto approvals run without asking", async () => {
+  await using server = await runningKernelServer([
+    { tool: { name: "read", input: { path: "notes.txt" } } },
+    { text: "read it" },
+    ...ECHO,
+  ])
+  await Bun.write(`${server.home.dir}/notes.txt`, "the gnome lives under the floor\n")
+  const client = await RawClient.connect(server.home.socket)
+  const reading = await start(client, server.home.dir)
+  const readView = watchView(client, reading)
+  await submit(client, reading, "read it")
+  await readView.until(settled(1))
+  expect(toolResults(readView)).toEqual([{ text: expect.stringContaining("the gnome lives"), isError: false }])
+  const auto = (await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto" })).result
+    .conversation as string
+  const autoView = watchView(client, auto)
+  await submit(client, auto, "check it")
+  await autoView.until(settled(1))
+  expect(toolResults(autoView)).toEqual([{ text: "approved\n", isError: false }])
+  expect(autoView.seen().some((entry) => entry.kind === "nisse.approval")).toBe(false)
+  client.close()
+})
+
+test("start-with-id: starting a conversation with an id it already has answers with that conversation", async () => {
+  await using server = await runningKernelServer([{ text: "hello" }])
+  const client = await RawClient.connect(server.home.socket)
+  const id = crypto.randomUUID()
+  const first = await client.call("conversation/start", { id, cwd: "/work" })
+  const again = await client.call("conversation/start", { id, cwd: "/elsewhere" })
+  expect(first.result).toEqual({ conversation: id })
+  expect(again.result).toEqual({ conversation: id })
+  const view = watchView(client, id)
+  await submit(client, id, "hi")
+  await view.until(settled(1))
+  expect((view.view().docs["pi.agent"] as { cwd?: string }).cwd).toBe("/work")
+  expect(errorTag(await client.call("conversation/start", { id: "42", cwd: "/work" }))).toBe("InvalidConversationId")
+  client.close()
 })

@@ -1,4 +1,5 @@
 export * from "./agent.ts"
+export * from "./approvals.ts"
 export * from "./builtin.ts"
 export * from "./compaction.ts"
 export { orderToolResults, readContext } from "./context.ts"

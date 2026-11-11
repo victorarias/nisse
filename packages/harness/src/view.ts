@@ -25,6 +25,7 @@ import {
 } from "@nisse/kernel"
 import { Effect } from "effect"
 import { AgentDoc } from "./agent.ts"
+import { ApprovalsDoc } from "./approvals.ts"
 import { ProviderDoc } from "./documents.ts"
 import { advanceFollower, closedError, closeEnd, endFollower, type Follower, guarded } from "./followers.ts"
 import { InboxDoc } from "./inbox.ts"
@@ -41,7 +42,7 @@ export type ConversationView = {
   readonly entries: readonly EntryRecord[]
   /** ID of the entry just before the window; absent when the window starts the transcript. */
   readonly before?: EntryId
-  /** `pi.agent`, `pi.live`, `pi.inbox`, `pi.provider` and `pi.usage`, keyed by kind; absent documents are absent. */
+  /** `pi.agent`, `pi.live`, `pi.inbox`, `pi.provider`, `pi.usage` and `nisse.approvals`, keyed by kind; absent documents are absent. */
   readonly docs: Readonly<Record<string, JsonObject>>
 }
 
@@ -61,7 +62,7 @@ export type ConversationWindow = {
 const DEFAULT_WINDOW_MIN = 50
 const SCAN_PAGE_SIZE = 256
 
-const MOUNTED: readonly AnyDocToken[] = [AgentDoc, LiveDoc, InboxDoc, ProviderDoc, UsageDoc]
+const MOUNTED: readonly AnyDocToken[] = [AgentDoc, LiveDoc, InboxDoc, ProviderDoc, UsageDoc, ApprovalsDoc]
 const MOUNTED_KINDS: ReadonlySet<string> = new Set(MOUNTED.map((token) => token.definition.kind))
 
 /** One observer of a mount and its window: the bounds and the revision it was last given. */
