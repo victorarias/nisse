@@ -61,6 +61,10 @@ Preconditions:
 
 ## Tests
 
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- start-with-id: a conversation opened on a client's id survives a restart, and a second start with it is answered
+
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - resume-since: a client resuming from a seq receives exactly the commits it missed

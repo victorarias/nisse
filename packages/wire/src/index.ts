@@ -8,7 +8,7 @@ import * as RpcGroup from "effect/rpc/RpcGroup"
 export const KERNEL_PROTOCOL_VERSION = 1
 
 export const ConversationId = Schema.String.annotate({
-  description: "A conversation's id, as conversation/start gave it.",
+  description: "A conversation's id: the one its client chose at conversation/start, or else the number it gave.",
 })
 export type ConversationId = typeof ConversationId.Type
 
@@ -19,7 +19,7 @@ export const EntryRecord = Schema.Struct({
   conversationId: Schema.Int,
   kind: Schema.String.annotate({
     description:
-      "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`.",
+      "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call.",
   }),
   model: Schema.optionalKey(Schema.Array(Json)),
   data: Schema.optionalKey(Json),
@@ -64,7 +64,8 @@ export const View = Schema.Struct({
     }),
   ),
   docs: Schema.Record(Schema.String, Json).annotate({
-    description: "pi.agent, pi.live, pi.inbox, pi.provider and pi.usage, by kind; pi.live holds the run in flight.",
+    description:
+      "pi.agent, pi.live, pi.inbox, pi.provider, pi.usage and nisse.approvals, by kind; pi.live holds the run in flight, nisse.approvals the calls waiting for a person.",
   }),
 })
 export type View = typeof View.Type
@@ -90,6 +91,15 @@ export const ViewChange = Schema.TaggedStruct("change", {
 export const ViewItem = Schema.Union([ViewStart, ViewChange])
 export type ViewItem = typeof ViewItem.Type
 
+export class NoSuchApproval extends Schema.TaggedError<NoSuchApproval>()("NoSuchApproval", {
+  approval: Schema.String,
+}) {}
+
+/** The id a client chose cannot name a conversation: `message` says why. */
+export class InvalidConversationId extends Schema.TaggedError<InvalidConversationId>()("InvalidConversationId", {
+  message: Schema.String,
+}) {}
+
 export class NoSuchConversation extends Schema.TaggedError<NoSuchConversation>()("NoSuchConversation", {
   conversation: Schema.String,
 }) {}
@@ -111,9 +121,23 @@ export const Initialize = Rpc.make("initialize", {
   success: Schema.Struct({ version: Schema.String, protocol: Schema.Int }),
 })
 
+export const Approvals = Schema.Literals(["ask", "auto"]).annotate({
+  description: "`ask`: calls that change things wait for approval/resolve; `auto`: every call runs without asking.",
+})
+
 export const StartConversation = Rpc.make("conversation/start", {
-  payload: { cwd: Schema.String.annotate({ description: "The directory the conversation works in." }) },
+  payload: {
+    cwd: Schema.String.annotate({ description: "The directory the conversation works in." }),
+    id: Schema.optionalKey(
+      Schema.String.annotate({
+        description:
+          "The id to name it by, chosen by the client; not all digits. Starting again with an id that names a conversation answers with that one and changes nothing.",
+      }),
+    ),
+    approvals: Schema.optionalKey(Approvals.annotate({ description: "Default ask." })),
+  },
   success: Schema.Struct({ conversation: ConversationId }),
+  error: InvalidConversationId,
 })
 
 export const Submit = Rpc.make("conversation/submit", {
@@ -138,6 +162,31 @@ export const Interrupt = Rpc.make("conversation/interrupt", {
   error: NoSuchConversation,
 })
 
+export const ResolveApproval = Rpc.make("approval/resolve", {
+  payload: {
+    conversation: ConversationId,
+    approval: Schema.String.annotate({
+      description: "A key of the view's nisse.approvals `requests`: the call's tool task.",
+    }),
+    author: Schema.String.annotate({ description: "Who answers; the transcript names them." }),
+    allow: Schema.Boolean,
+  },
+  success: Schema.Struct({
+    accepted: Schema.Boolean.annotate({
+      description: "False when another answer came first, or the call is no longer waiting: the first answer counts.",
+    }),
+  }),
+  error: Schema.Union([NoSuchConversation, NoSuchApproval]),
+})
+
 export const StopServer = Rpc.make("server/stop")
 
-export const KernelRpcs = RpcGroup.make(Initialize, StartConversation, Submit, Watch, Interrupt, StopServer)
+export const KernelRpcs = RpcGroup.make(
+  Initialize,
+  StartConversation,
+  Submit,
+  Watch,
+  Interrupt,
+  ResolveApproval,
+  StopServer,
+)

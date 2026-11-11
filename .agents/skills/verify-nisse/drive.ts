@@ -639,7 +639,7 @@ const commands: Record<string, () => Promise<void> | void> = {
   },
 
   "watch-status": () => {
-    notOnKernel("watch-status", "nisse-surface")
+    notOnKernel("watch-status", "nisse-surface-part-2-extension-host")
     return follow("watch-status", "status/watch", ({ item, until, conversation }) => {
       const trees: Array<any> = item._tag === "trees" ? item.trees : [item]
       const mine = trees.filter((tree) => !conversation || tree.conversation === conversation)

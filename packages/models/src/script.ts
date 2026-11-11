@@ -11,6 +11,8 @@ import { uuidv7 } from "./uuid.ts"
 export const ScriptStep = Schema.Struct({
   text: Schema.optionalKey(Schema.String),
   tool: Schema.optionalKey(Schema.Struct({ name: Schema.String, input: Schema.Unknown })),
+  /** Several calls in one response, after `tool`'s. */
+  tools: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String, input: Schema.Unknown }))),
   fail: Schema.optionalKey(Schema.String),
   delayMs: Schema.optionalKey(Schema.Int),
   agent: Schema.optionalKey(Schema.String),
@@ -65,18 +67,31 @@ const answer = (step: ScriptStep, model: Model<string>): AssistantMessage => {
   if (step.fail !== undefined) {
     return { ...failure(base, step.fail), content: text === "" ? [] : [{ type: "text", text }] }
   }
-  if (step.tool === undefined) return { ...base, content: [{ type: "text", text }] }
+  const calls = [...(step.tool === undefined ? [] : [step.tool]), ...(step.tools ?? [])]
+  if (calls.length === 0) return { ...base, content: [{ type: "text", text }] }
   return {
     ...base,
     content: [
       ...(text === "" ? [] : [{ type: "text" as const, text }]),
-      { type: "toolCall", id: `call_${uuidv7()}`, name: step.tool.name, arguments: step.tool.input as JsonObject },
+      ...calls.map((call) => ({
+        type: "toolCall" as const,
+        id: `call_${uuidv7()}`,
+        name: call.name,
+        arguments: call.input as JsonObject,
+      })),
     ],
     stopReason: "toolUse",
   }
 }
 
-export function scriptProvider(steps: readonly ScriptStep[]): Provider {
+/**
+ * `agentOf` names the agent of a request whose `metadata.agent` names none, from its context; without it, or when it
+ * names none, the request is the root's.
+ */
+export function scriptProvider(
+  steps: readonly ScriptStep[],
+  agentOf?: (context: TranscriptContext) => string | undefined,
+): Provider {
   const taken = new Set<number>()
   const nextFor = (agent: string) => {
     const index = steps.findIndex((step, at) => !taken.has(at) && (step.agent ?? ROOT_AGENT) === agent)
@@ -90,7 +105,8 @@ export function scriptProvider(steps: readonly ScriptStep[]): Provider {
     streamSimple: (model, context, options) =>
       Stream.suspend(() => {
         const agent = options.metadata?.agent
-        const step = nextFor(typeof agent === "string" ? agent : ROOT_AGENT) ?? {
+        const named = typeof agent === "string" ? agent : (agentOf?.(context) ?? ROOT_AGENT)
+        const step = nextFor(named) ?? {
           text: `You said: ${lastUserText(context)}`,
           delayMs: 30,
         }

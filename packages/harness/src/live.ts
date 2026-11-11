@@ -20,6 +20,7 @@ import {
 } from "@nisse/kernel"
 import type { AssistantMessage, JsonRepresentation, Usage } from "@nisse/models"
 import { Effect } from "effect"
+import { removeApproval } from "./approvals.ts"
 import { AssistantEntry, stored } from "./entries.ts"
 import type { CompactionReason, ToolDiagnostic } from "./types.ts"
 import { recordUsage } from "./usage.ts"
@@ -434,6 +435,7 @@ export const settleSchedulerOutcome = (
 ): Effect.Effect<void, StorageError | DocError> =>
   Effect.gen(function* () {
     if (record.kind === TOOL_TASK_KIND) {
+      yield* removeApproval(tx, record.conversationId, record.id)
       const live = yield* tx.doc(LiveDoc, record.conversationId)
       const slot = toolSlot(live, record.id)
       if (slot !== undefined) finishSlot(slot)

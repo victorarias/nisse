@@ -41,8 +41,9 @@ import {
   type ToolCall,
   type ToolResultMessage,
 } from "@nisse/models"
-import { Cause, Effect, Exit, Fiber } from "effect"
+import { Cause, Effect, Exit, Fiber, Option, Stream } from "effect"
 import { toolExtension } from "./agent.ts"
+import { type ApprovalAnswer, ApprovalsDoc, removeApproval } from "./approvals.ts"
 import { AssistantEntry, ToolResultEntry } from "./entries.ts"
 import { assignJson } from "./json.ts"
 import {
@@ -177,6 +178,8 @@ export interface ToolExecutionApi extends DocumentReader<ReadFailure | Invocatio
   commit<A, E>(change: (tx: Tx) => Effect.Effect<A, E>): Effect.Effect<A, unknown>
   memo<T extends JsonValue>(name: string): Effect.Effect<T | undefined, InvocationEnded>
   memo<T extends JsonValue>(name: string, candidate: T): Effect.Effect<T, unknown>
+  /** Watches a document for as long as the scope and the invocation last (spec 9.2). */
+  watchDoc: TaskApi["watchDoc"]
   getTask<R>(
     id: TaskId<R>,
   ): Effect.Effect<TaskRecord<JsonValue, JsonValue, R> | undefined, InvocationEnded | ReadFailure>
@@ -300,6 +303,13 @@ export const ToolTask: Task<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, T
         if ("error" in validated) return yield* reject(ctx, task.input, call, tool, invalid(validated.error))
         // Strict JSON: repair may set optional properties to undefined, which the slot and checkpoint cannot hold.
         const final = copyJson(validated.args, { omitUndefinedProperties: true }) as JsonObject
+        if (tool.asks === true) {
+          const answer = yield* awaitApproval(ctx, call, final)
+          if (answer !== undefined && !answer.allow) {
+            const denied = harnessError("denied", `denied by ${answer.author}: the person did not allow this call`)
+            return yield* reject(ctx, task.input, call, tool, denied)
+          }
+        }
         // The slot shows the call running; the intent is durable before the tool runs.
         yield* runtime.commit((tx) =>
           Effect.map(tx.doc(LiveDoc, runtime.conversationId), (live) => {
@@ -372,6 +382,49 @@ export const ToolTask: Task<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, T
       yield* settleFromSlot(ctx, task.input, call, hooks, { status: "aborted" }, code!, message!)
     }),
 })
+
+/**
+ * Asks for a person's answer to the call and waits for it; `undefined` when the conversation approves automatically.
+ * The request is keyed by this task, so a rerun after a restart finds it, answered or still waiting, unless the rerun
+ * computed other arguments.
+ */
+const awaitApproval = (
+  ctx: Ctx,
+  call: ToolHookCall,
+  args: JsonObject,
+): Effect.Effect<ApprovalAnswer | undefined, unknown> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { runtime, api } = ctx
+      const conversationId = runtime.conversationId
+      const id = String(runtime.taskId)
+      const committed = yield* runtime.snapshot(ApprovalsDoc, conversationId)
+      if (committed?.auto === true) return undefined
+      // An answer holds for the arguments it was given: a rerun that computes others asks again.
+      const asked = (request: { readonly arguments: JsonObject } | undefined) =>
+        request !== undefined && JSON.stringify(request.arguments) === JSON.stringify(args)
+      if (!asked(committed?.requests[id])) {
+        yield* runtime.commit((tx) =>
+          Effect.map(tx.doc(ApprovalsDoc, conversationId), (doc) => {
+            if (!asked(doc.requests[id]))
+              doc.requests[id] = { callId: call.id, tool: call.name, arguments: args, at: runtime.now() }
+            return undefined
+          }),
+        )
+      }
+      const watch = yield* api.watchDoc(ApprovalsDoc, conversationId)
+      if (watch === undefined) return yield* Effect.die(new Error(`Approval ${id} has no document to wait on`))
+      const answered = watch.value.requests[id]?.answer
+      if (answered !== undefined) return answered
+      const next = yield* watch.changes.pipe(
+        Stream.map((change) => change.value.requests[id]?.answer),
+        Stream.filter((answer) => answer !== undefined),
+        Stream.runHead,
+      )
+      if (Option.isNone(next)) return yield* Effect.interrupt
+      return next.value as ApprovalAnswer
+    }),
+  )
 
 /**
  * End a call cut off `settings.restartLimit` times in a row (spec 5.4) with an error result, built from the slot like
@@ -607,6 +660,7 @@ const execute = (
       },
       now: () => runtime.now(),
       snapshot: (token, ...address) => runtime.snapshot(token, ...address),
+      watchDoc: (token, ...address) => services.watchDoc(token, ...address),
       getTask: (id) => runtime.getTask(id),
       waitForTask: (id) => runtime.waitForTask(id),
       conversation: (id) => services.conversation(id),
@@ -962,6 +1016,8 @@ const settle = (
       .filter((record) => record.kind === ToolTask.definition.name && (record.input as ToolTaskInput).kind === "nested")
       .map((record) => record.id)
     const madeNested = (yield* runtime.memo(MADE_NESTED_CALLS)) === true
+    // Only a call that asked has a request to remove; reading first keeps every other call from creating the document.
+    const asked = (yield* runtime.snapshot(ApprovalsDoc, runtime.conversationId))?.requests[String(runtime.taskId)]
     // Mark them all before waiting for any: one may run until a sibling is cancelled.
     yield* Effect.all(
       nestedIds.map((id) => runtime.abortOwned(id)),
@@ -1005,6 +1061,7 @@ const settle = (
         // A call that made no nested calls, in any attempt, has no slots below it; skipping the scan keeps many leaves
         // linear.
         if (madeNested) removeNestedSlots(live, runtime.taskId)
+        if (asked !== undefined) yield* removeApproval(tx, conversationId, runtime.taskId)
         if (end.status === "aborted") {
           return { status: "terminal", outcome: { status: "aborted", result: settled } } as Next
         }
