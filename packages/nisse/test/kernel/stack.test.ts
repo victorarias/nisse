@@ -548,7 +548,7 @@ test("chosen-id: nisse exec --conversation on the kernel starts a conversation w
   ])
 }, 30_000)
 
-test("reopen-continue: nisse exec --conversation on the kernel continues a conversation by the number it was given", async () => {
+test("reopen-continue: nisse exec --conversation on the kernel continues a conversation by its number, and a chosen one keeps its id", async () => {
   const nisseHome = home()
   const env = await kernelEnv(nisseHome)
   expect(await finished(nisse(["exec", "first"], env))).toMatchObject({ code: 0, stdout: "You said: first\n" })
@@ -566,6 +566,20 @@ test("reopen-continue: nisse exec --conversation on the kernel continues a conve
     "assistant: You said: again",
     "run_end: answered",
   ])
+  // A conversation started with a chosen id answers to its number too, by the chosen id every call names it by.
+  const client = await RawClient.connect(nisseHome.socket)
+  await client.call("conversation/start", { id: "picked-2", cwd: nisseHome.dir })
+  const watch = watchView(client, "picked-2")
+  await watch.until(() => true)
+  const number = String(watch.view().conversation.id)
+  expect((await client.call("conversation/start", { id: number, cwd: nisseHome.dir })).result.conversation).toBe(
+    "picked-2",
+  )
+  client.close()
+  expect(await finished(nisse(["exec", "-c", number, "by number"], env))).toMatchObject({
+    code: 0,
+    stdout: "You said: by number\n",
+  })
 }, 30_000)
 
 test("provider-choose, model-flags: nisse exec on the kernel starts on the provider, model and effort it names", async () => {
