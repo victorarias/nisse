@@ -125,7 +125,7 @@ test("wire-schema: nisse schema --kernel prints the kernel wire's schema, the on
   expect(stdout).toBe(readFileSync(join(import.meta.dir, "../../../../schema/nisse.kernel.schema.json"), "utf8"))
 })
 
-test("crash-limit: a run that keeps crashing the server stops after three tries instead of looping", async () => {
+test("crash-limit, conversation-ended: a run that keeps crashing the server stops after three tries instead of looping, and the conversation list says why", async () => {
   const nisseHome = home()
   // The command says it started through one fifo, so the test kills the server only once the call runs, and waits
   // on another, which the test opens at its end so the orphaned commands exit with it.
@@ -157,6 +157,11 @@ test("crash-limit: a run that keeps crashing the server stops after three tries 
     { outcome: "restart_limit", message: "the server stopped during this run 3 times in a row" },
   ])
   expect(transcript(view.seen()).filter((line) => line.startsWith("assistant"))).toHaveLength(3)
+  const listed = (await client.call("conversation/list")).result as Array<{ id: string; ended?: unknown }>
+  expect(listed.find((item) => item.id === conversation)?.ended).toEqual({
+    outcome: "restart_limit",
+    message: "the server stopped during this run 3 times in a row",
+  })
   client.close()
 }, 60_000)
 

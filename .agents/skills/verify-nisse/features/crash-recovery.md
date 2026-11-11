@@ -136,7 +136,7 @@ Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NIS
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - crash-committed: a run cut off by a crashed server is answered once after the server comes back
-- crash-limit: a run that keeps crashing the server stops after three tries instead of looping
+- crash-limit, conversation-ended: a run that keeps crashing the server stops after three tries instead of looping, and the conversation list says why
 
 Stack, `packages/nisse/test/stack.test.ts`:
 

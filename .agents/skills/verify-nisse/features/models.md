@@ -163,6 +163,7 @@ Preconditions:
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - model-switch, model-switch-provider: switching a conversation's model is recorded with who switched it, and the next run answers on it
+- model-switch: a switch made while a run works is recorded at once and answers from the next run, not mid-run
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
