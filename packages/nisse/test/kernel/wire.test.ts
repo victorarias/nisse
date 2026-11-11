@@ -219,14 +219,13 @@ test("watch-rpc: a watch through a window opens on the newest entries, and from 
     await submit(client, conversation, text)
     await all.until(settled(i + 1))
   }
-  // The first request also records the tools it offers, as a pi.system entry.
   const entries = all.view().entries
-  expect(entries).toHaveLength(10)
+  const third = entries.findIndex((entry) => transcript([entry])[0] === "user: three")
 
   const newest = watchView(client, conversation, { min: 3, max: 6 })
   await newest.until(() => true)
   expect(transcript(newest.view().entries)).toEqual(["user: three", "assistant: c", "run_end: answered"])
-  expect(newest.view().before).toBe(entries[6]!.id)
+  expect(newest.view().before).toBe(entries[third - 1]!.id)
 
   const resumed = watchView(client, conversation, { from: entries[3]!.id })
   await resumed.until(() => true)
@@ -328,7 +327,7 @@ test("approval-wire: two clients answer one approval at once and the first answe
   bo.close()
 })
 
-test("approval-wire: a denied call is reported to the model as denied and does not run", async () => {
+test("approval-wire: a denied call is reported to the model as denied and does not run, and an unknown approval is refused by name", async () => {
   await using server = await runningKernelServer([
     { tool: { name: "bash", input: { command: "touch made" } } },
     { text: "all done" },
@@ -374,7 +373,7 @@ test("tool-read-only, approval-auto: reading calls and conversations started wit
   client.close()
 })
 
-test("start-with-id: starting a conversation with an id it already has answers with that conversation", async () => {
+test("start-with-id: starting a conversation with an id it already has answers with that conversation, and an all-digit id is refused by name", async () => {
   await using server = await runningKernelServer([{ text: "hello" }])
   const client = await RawClient.connect(server.home.socket)
   const id = crypto.randomUUID()

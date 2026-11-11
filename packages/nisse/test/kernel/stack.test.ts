@@ -1,7 +1,7 @@
 // The `nisse` binary on the kernel (NISSE_KERNEL=1), over its socket: stop, kill, restart.
 import { afterEach, expect, test } from "bun:test"
 import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { deadline, RawClient } from "../support/raw.ts"
@@ -115,11 +115,14 @@ test("wire-schema: nisse schema --kernel prints the kernel wire's schema, the on
 
 test("crash-limit: a run that keeps crashing the server stops after three tries instead of looping", async () => {
   const nisseHome = home()
-  // The command says it started through a fifo, so the test kills the server only once the call runs.
+  // The command says it started through one fifo, so the test kills the server only once the call runs, and waits
+  // on another, which the test opens at its end so the orphaned commands exit with it.
   const fifo = join(nisseHome.dir, "started.fifo")
-  expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0)
+  const release = join(nisseHome.dir, "release.fifo")
+  expect(Bun.spawnSync(["mkfifo", fifo, release]).exitCode).toBe(0)
+  await using _released = { [Symbol.asyncDispose]: async () => closeSync(openSync(release, "r+")) }
   const env = await kernelEnv(nisseHome, [
-    { tool: { name: "bash", input: { command: `echo ran > ${fifo}; sleep 60` } } },
+    { tool: { name: "bash", input: { command: `echo ran > ${fifo}; cat ${release}` } } },
   ])
   let conversation: string | undefined
   for (let attempt = 1; attempt <= 3; attempt++) {
