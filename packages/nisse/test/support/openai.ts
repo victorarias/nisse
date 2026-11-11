@@ -160,7 +160,10 @@ export class FakeOpenAi {
     }
     const reply = this.replies.shift()
     if (!reply) return Response.json({ error: { message: "no reply scripted" } }, { status: 500 })
-    if ("http" in reply) return Response.json(reply.http.body, { status: reply.http.status })
+    if ("http" in reply)
+      return reply.http.body === ""
+        ? new Response(null, { status: reply.http.status })
+        : Response.json(reply.http.body, { status: reply.http.status })
     const encoder = new TextEncoder()
     if (reply.crlfSplit) {
       const pieces = reply.events.flatMap((event) => [`data: ${JSON.stringify(event)}\r\n\r`, "\n"])

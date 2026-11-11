@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import { installedCodeModeHost } from "./support/code-mode-host.ts"
 import { FakeOpenAi, matches, signIn } from "./support/openai.ts"
-import { bodies, deadline, RawClient } from "./support/raw.ts"
+import { bodies, deadline, RawClient, statusOf } from "./support/raw.ts"
 import { homeAt, tempHome } from "./support/server.ts"
 import { nisse, nisseEnv, stopServer } from "./support/terminal.ts"
 
@@ -218,7 +218,7 @@ test("crash-call: a call cut off by a crashed server is recorded as interrupted 
   await Bun.write(script, JSON.stringify([{ text: "picked up again" }]))
   const second = await serving(env, nisseHome)
   const resumed = second.client.subscribe({ conversation, sinceSeq: view.deliveries.at(-1)!.seq })
-  await resumed.until((deliveries) => deliveries.at(-1)?.status === "idle", 10_000)
+  await resumed.until((deliveries) => statusOf(deliveries) === "idle", 10_000)
   expect(resumed.deliveries.flatMap((delivery) => delivery.entries).map((entry) => entry.body)).toMatchObject([
     { _tag: "tool_result", output: "interrupted; it may or may not have taken effect", error: true },
     { _tag: "message", text: "picked up again" },
@@ -248,9 +248,9 @@ test("crash-claude: a Claude subagent cut off by a crashed server ends interrupt
 
   const second = await serving(env, nisseHome)
   const resumed = second.client.subscribe({ conversation: child, sinceSeq: childView.deliveries.at(-1)!.seq })
-  await resumed.until((deliveries) => deliveries.at(-1)?.status === "idle", 10_000)
+  await resumed.until((deliveries) => statusOf(deliveries) === "idle", 10_000)
   const parent = second.client.subscribe({ conversation })
-  await parent.until((deliveries) => deliveries.at(-1)?.status === "idle", 10_000)
+  await parent.until((deliveries) => statusOf(deliveries) === "idle", 10_000)
   expect(resumed.deliveries.flatMap((delivery) => delivery.entries).map((entry) => entry.body)).toEqual([
     { _tag: "run_end", outcome: "interrupted" },
   ])
@@ -279,7 +279,7 @@ test("crash-limit: a run that keeps crashing the server stops after three tries 
   }
   const { client } = await serving(env, nisseHome)
   const view = client.subscribe({ conversation })
-  await view.until((deliveries) => deliveries.at(-1)?.status === "idle", 10_000)
+  await view.until((deliveries) => statusOf(deliveries) === "idle", 10_000)
   expect(view.deliveries.flatMap((delivery) => delivery.entries).at(-1)?.body).toEqual({
     _tag: "run_end",
     outcome: "restart_limit",
@@ -325,7 +325,7 @@ test.skipIf(codeModeHost === undefined)(
 
     const second = await serving(env, nisseHome)
     const resumed = second.client.subscribe({ conversation })
-    await resumed.until((deliveries) => deliveries.at(-1)?.status === "idle", 20_000)
+    await resumed.until((deliveries) => statusOf(deliveries) === "idle", 20_000)
     second.client.close()
     const sent = fake.responses().map((request) => JSON.parse(request.body))
     expect(sent).toHaveLength(expected.length)

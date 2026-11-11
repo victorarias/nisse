@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { LIVE_OUTPUT_TAIL, type Delivery } from "@nisse/protocol"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { bodies, deadline, entriesOf, errorTag, hangUpMidAnswer, RawClient } from "./support/raw.ts"
+import { bodies, deadline, entriesOf, errorTag, hangUpMidAnswer, RawClient, statusOf } from "./support/raw.ts"
 import { runningServer, servingUntilIdle, tempHome } from "./support/server.ts"
 import { homeWithExtensions } from "./support/extensions.ts"
 
@@ -20,7 +20,7 @@ const submit = (
 const ended = (count: number) => (deliveries: ReadonlyArray<Delivery>) =>
   bodies(deliveries).filter((body) => body._tag === "run_end").length >= count
 
-const settled = (deliveries: ReadonlyArray<Delivery>) => ended(1)(deliveries) && deliveries.at(-1)?.status === "idle"
+const settled = (deliveries: ReadonlyArray<Delivery>) => ended(1)(deliveries) && statusOf(deliveries) === "idle"
 
 const speaking = (deliveries: ReadonlyArray<Delivery>) =>
   deliveries.some((delivery) => delivery._tag === "commit" && delivery.live?.some((change) => change._tag === "text"))
@@ -135,7 +135,7 @@ test("answer-failed: a model failure is recorded after what was said and the con
     { _tag: "message", text: "partial" },
     { _tag: "run_end", outcome: "failed", message: "provider went away" },
   ])
-  await view.until((deliveries) => deliveries.at(-1)?.status === "idle")
+  await view.until((deliveries) => statusOf(deliveries) === "idle")
   client.close()
 })
 
@@ -211,7 +211,7 @@ test("approval-wire: a call that changes files waits for a person's answer and r
   const conversation = await start(ada, { cwd })
   const view = ada.subscribe({ conversation })
   await submit(ada, conversation, "write a note")
-  await view.until((deliveries) => deliveries.at(-1)?.status === "waiting")
+  await view.until((deliveries) => statusOf(deliveries) === "waiting")
   const approval = bodies(view.deliveries).find((body) => body._tag === "approval")!
   expect(approval).toMatchObject({ tool: "Write", input: { file_path: `${cwd}/note.txt` } })
   expect(() => readFileSync(`${cwd}/note.txt`)).toThrow()
@@ -246,7 +246,7 @@ test("approval-wire: a denied call is reported to the model as denied and nothin
   const conversation = await start(client, { cwd })
   const view = client.subscribe({ conversation })
   await submit(client, conversation, "write a note")
-  await view.until((deliveries) => deliveries.at(-1)?.status === "waiting")
+  await view.until((deliveries) => statusOf(deliveries) === "waiting")
   const approval = bodies(view.deliveries).find((body) => body._tag === "approval") as { approval: string }
   await client.call("approval/resolve", { conversation, approval: approval.approval, author: "ada", allow: false })
   await view.until(settled)
@@ -317,7 +317,7 @@ test("approval-interrupt: interrupting while nisse waits for an answer withdraws
   const conversation = await start(client, { cwd })
   const view = client.subscribe({ conversation })
   await submit(client, conversation, "write a note")
-  await view.until((deliveries) => deliveries.at(-1)?.status === "waiting")
+  await view.until((deliveries) => statusOf(deliveries) === "waiting")
   const approval = bodies(view.deliveries).find((body) => body._tag === "approval") as { approval: string }
   await client.call("conversation/interrupt", { conversation })
   await view.until(settled)
@@ -838,10 +838,10 @@ test("conversation-ended: a conversation tells a client that was not watching ho
   await view.until(settled)
   expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
   await submit(client, conversation, "write a note")
-  await view.until((deliveries) => deliveries.at(-1)?.status === "waiting")
+  await view.until((deliveries) => statusOf(deliveries) === "waiting")
   expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
   await client.call("conversation/interrupt", { conversation })
-  await view.until((deliveries) => ended(2)(deliveries) && deliveries.at(-1)?.status === "idle")
+  await view.until((deliveries) => ended(2)(deliveries) && statusOf(deliveries) === "idle")
   expect(await endedOf()).toEqual({ outcome: "interrupted", said: "Writing the note." })
   client.close()
   rmSync(cwd, { recursive: true })

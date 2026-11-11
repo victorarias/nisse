@@ -27,7 +27,8 @@ A provider `config.toml` names with
   when the refresh is turned down, and lists the provider `signed_out` with
   that message.
 - `openai-failed` fails the run with ChatGPT's reason: a usage limit, a
-  failed response, or a stream cut off.
+  failed response, a stream cut off, or an HTTP error with its body
+  (`ChatGPT answered 400 with an empty body` when it sent none).
 - `openai-models` lists ChatGPT's models from ChatGPT once signed in, saved
   to `<home>/cache/openai-models.json`, else the saved list, else the one
   nisse ships.

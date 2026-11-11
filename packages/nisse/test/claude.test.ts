@@ -7,7 +7,7 @@ import { bodies, errorTag, RawClient, statusOf } from "./support/raw.ts"
 import { runningServer, tempHome, type ServerOptions } from "./support/server.ts"
 
 const settled = (count: number) => (deliveries: ReadonlyArray<Delivery>) =>
-  bodies(deliveries).filter((body) => body._tag === "run_end").length >= count && deliveries.at(-1)?.status === "idle"
+  bodies(deliveries).filter((body) => body._tag === "run_end").length >= count && statusOf(deliveries) === "idle"
 
 const said = (deliveries: ReadonlyArray<Delivery>): Array<unknown> =>
   bodies(deliveries).filter(
@@ -201,7 +201,7 @@ test("claude-cut-off: a run cut off by a server stop resumes, and Claude Code is
   await using server = await runningServer([], { home: first.server.home, claude: claude.options })
   const client = await RawClient.connect(server.home.socket)
   const view = client.subscribe({ conversation: first.conversation })
-  await view.until((deliveries) => deliveries.length > 0 && deliveries.at(-1)?.status === "idle", 10_000)
+  await view.until((deliveries) => deliveries.length > 0 && statusOf(deliveries) === "idle", 10_000)
   const call = bodies(view.deliveries).find((body) => body._tag === "tool_call") as { call: string }
   expect(claude.spawns()[1]).toMatchObject({ "--resume-session-at": "b2a87c3c-db3b-4459-9666-b8c4c38bc556" })
   expect(claude.userTexts(1)).toEqual([
@@ -227,7 +227,7 @@ const subagentOf = async (session: Awaited<ReturnType<typeof conversationWith>>)
 }
 
 const ended = (deliveries: ReadonlyArray<Delivery>) =>
-  bodies(deliveries).some((body) => body._tag === "run_end") && deliveries.at(-1)?.status === "idle"
+  bodies(deliveries).some((body) => body._tag === "run_end") && statusOf(deliveries) === "idle"
 
 test("subagent-claude: a Claude subagent works in a conversation of its own under the one that started it", async () => {
   using claude = new FakeClaude("subagent")

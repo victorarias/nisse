@@ -50,6 +50,7 @@ export const httpFailure = (status: number, body: any) => {
   const error = body?.error
   if (isUsageLimit(error) || status === 429) return usageLimit(error)
   if (status === 401) return SIGN_IN_REFUSED
+  if (body === "") return `ChatGPT answered ${status} with an empty body`
   const message =
     typeof error?.message === "string"
       ? error.message

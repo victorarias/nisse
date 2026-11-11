@@ -1,0 +1,3 @@
+{"type":"transcript_start","provider":"openai","scenario":"ChatGPT turns the request down with a 400 and no body","metadata":{}}
+{"type":"expect_outbound","frame":{"model":"gpt-5.5","instructions":"<any>","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}],"tools":"<any>","tool_choice":"auto","parallel_tool_calls":true,"store":false,"stream":true,"prompt_cache_key":"<any>"}}
+{"type":"emit_inbound","frame":{"http":{"status":400,"body":""}}}
