@@ -1367,7 +1367,7 @@ type Listed = {
   approvals: string
   lineage?: Record<string, string>
   instructions?: string
-  ended?: { outcome: string; said?: string }
+  ended?: { outcome: string; message?: string; said?: string }
 }
 const list = async (client: RawClient) => {
   const reply = await client.call("conversation/list")
@@ -1556,6 +1556,44 @@ test("approval-ask: a call that changes things waits for a person, and every cli
   await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
   await view.until(settled(1))
   client.close()
+})
+
+test("conversation-ended: conversation/list tells a client that was not watching how a conversation's last run ended, also after a restart", async () => {
+  const home = tempHome()
+  try {
+    let conversation: string
+    {
+      await using server = await runningKernelServer(
+        [{ text: "all done" }, { text: "Writing the note.", tool: { name: "bash", input: { command: "echo hi" } } }],
+        { home },
+      )
+      const client = await RawClient.connect(server.home.socket)
+      conversation = await start(client, home.dir)
+      const endedOf = async () => (await list(client)).find((listed) => listed.id === conversation)?.ended
+      expect(await endedOf()).toBeUndefined()
+      const view = watchView(client, conversation)
+      await submit(client, conversation, "go")
+      await view.until(settled(1))
+      expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
+      await submit(client, conversation, "write a note")
+      await waitingApproval(view)
+      expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
+      await client.call("conversation/interrupt", { conversation })
+      await view.until(settled(2))
+      expect(await endedOf()).toEqual({ outcome: "interrupted", message: "aborted", said: "Writing the note." })
+      client.close()
+    }
+    await using server = await runningKernelServer([], { home })
+    const client = await RawClient.connect(server.home.socket)
+    expect((await list(client)).find((listed) => listed.id === conversation)?.ended).toEqual({
+      outcome: "interrupted",
+      message: "aborted",
+      said: "Writing the note.",
+    })
+    client.close()
+  } finally {
+    rmSync(home.dir, { recursive: true, force: true })
+  }
 })
 
 test("reopen-continue: a conversation reopened from a new server and connection goes on with a new prompt", async () => {

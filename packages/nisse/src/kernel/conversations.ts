@@ -3,10 +3,11 @@
 // lineage of the conversation they run in.
 import { ApprovalsDoc, type Harness, SubagentOriginDoc } from "@nisse/harness"
 import { type ConversationId, type ConversationRecord, type Cursor, type EntryId } from "@nisse/kernel"
-import { type ConversationInfo, type Lineage, RUN_END_KIND, type RunEnd, type TreeStatus } from "@nisse/wire"
+import { type ConversationInfo, type Lineage, type RunEnd, type TreeStatus } from "@nisse/wire"
 import { Effect } from "effect"
 import { ConversationIdsDoc } from "./ids.ts"
 import { selectionOf } from "./providers.ts"
+import { LastRunEndDoc } from "./run-end.ts"
 
 const SCAN_PAGE = 256
 
@@ -85,18 +86,9 @@ export const endedAt = (harness: Harness, id: ConversationId, end: { id: EntryId
 
 /** How the conversation's last run ended, or `undefined` before its first run ends. */
 const lastEnded = (harness: Harness, id: ConversationId) =>
-  Effect.gen(function* () {
-    const conversation = yield* Effect.orDie(harness.conversation(id))
-    if (conversation === undefined) return undefined
-    let cursor: Cursor | undefined
-    do {
-      const page = yield* Effect.orDie(conversation.entries({}, SCAN_PAGE, cursor))
-      const end = page.items.find((entry) => entry.kind === RUN_END_KIND)
-      if (end !== undefined) return yield* endedAt(harness, id, end)
-      cursor = page.next
-    } while (cursor !== undefined)
-    return undefined
-  })
+  Effect.flatMap(Effect.orDie(harness.session.snapshot(LastRunEndDoc, id)), (last) =>
+    last?.end === undefined ? Effect.succeed(undefined) : endedAt(harness, id, last.end),
+  )
 
 const info = (harness: Harness, conversation: ConversationRecord): Effect.Effect<ConversationInfo> =>
   Effect.gen(function* () {
