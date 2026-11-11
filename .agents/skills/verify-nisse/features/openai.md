@@ -35,7 +35,7 @@ A provider `config.toml` names with
   one from the next run.
 - `openai-sign-in` signs in through a browser or a device code, in
   [Sign-in](./sign-in.md).
-- `openai-instructions` [pending wire-complete] tells ChatGPT the `AGENTS.md` files and skills, and
+- `openai-instructions` tells ChatGPT the `AGENTS.md` files and skills, and
   sends the skills a message names, in
   [Instructions and skills](./skills.md).
 - `openai-grammar-tools` [kernel] offers a tool whose parameters are a grammar
@@ -193,9 +193,14 @@ harness running the loop. What differs from today's server:
 - A tool with a grammar (`constrainedSampling`) is offered as a custom tool,
   and its call's raw input fills the tool's one string parameter
   (`openai-grammar-tools`).
-- `instructions` are nisse's own, then the transcript's system prompt; the
-  working directory, `AGENTS.md` files and skills are not in them yet
-  (`openai-instructions`, pending `wire-complete`).
+- `instructions` are nisse's own, then the transcript's system prompt: the
+  `workspace` section (the working directory, the `AGENTS.md` files and the
+  skill list, read again before each request), then the instructions the
+  conversation started with, wrapped in `<instructions>` tags. The skill list
+  comes before those instructions, where today's server puts it after them.
+  Both are committed as a `pi.system` entry, so every client sees what ChatGPT
+  was told, and a changed `AGENTS.md` shows as a new one. A skill a message
+  names is not attached yet (`skills-attach` waits for `wire-complete`).
 
 ## Contexts
 
@@ -228,6 +233,9 @@ Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NIS
 - openai-model: the conversation's model and effort reach ChatGPT
 - subagent-fork: a spawned agent's requests carry its own conversation, and its last answer reaches the parent
 - compaction-overflow, models-overflow: ChatGPT's context-window error compacts the conversation, and the request goes again
+- openai-instructions, agents-md, skills-found, skills-nearest, skills-frontmatter: ChatGPT is told its working directory, the AGENTS.md files from home down to it, and the skills it can use
+- skills-found: a conversation outside any repository is told only its own folder's skills and the home's
+- start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files, and a subagent is not
 
 Package, `packages/models/test/chatgpt.test.ts`:
 

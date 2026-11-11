@@ -82,7 +82,7 @@
           },
           "instructions": {
             "type": "string",
-            "description": "Added to the model's system prompt for every run."
+            "description": "Instructions the model follows in this conversation, beside its own. Its subagents don't get them."
           }
         },
         "required": [

@@ -173,7 +173,10 @@ export const StartConversation = Rpc.make("conversation/start", {
     ),
     effort: Schema.optionalKey(Schema.String),
     instructions: Schema.optionalKey(
-      Schema.String.annotate({ description: "Added to the model's system prompt for every run." }),
+      Schema.String.annotate({
+        description:
+          "Instructions the model follows in this conversation, beside its own. Its subagents don't get them.",
+      }),
     ),
   },
   success: Schema.Struct({

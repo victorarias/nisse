@@ -28,7 +28,7 @@ import {
 } from "./code-mode/index.ts"
 import { mailText } from "../../agents.ts"
 import type { Tool, ToolOutcome } from "../../tools/tool.ts"
-import { agentsMd, agentTypes, skillsFor } from "../../workspace.ts"
+import { agentsMdInstructions, agentTypes, skillsFor, skillsInstructions } from "../../workspace.ts"
 
 export { AUTH_BASE, BASE_URL, CALLBACK_PORT, MODEL }
 
@@ -40,23 +40,12 @@ export interface OpenAiOptions extends ChatGptOptions {
 
 const failure = (message: string) => new ProviderError({ message })
 
-const SKILLS = `# Skills
-
-A skill is a folder of instructions for one kind of task, in a \`SKILL.md\` file. When a task matches a skill's description, \`Read\` its \`SKILL.md\` before you start, and follow it. When a message names a skill with \`/name\` or \`$name\`, the skill's \`SKILL.md\` comes with the message; follow it. Relative paths in a skill are relative to its folder.
-
-`
-
 const instructionsFor = (options: OpenAiOptions, conversation: Conversation) => {
   const cwd = conversation.cwd
   let text = `${options.instructions}\nThe working directory is ${cwd}.\n`
-  for (const file of agentsMd(cwd, options.home)) {
-    text += `\n# AGENTS.md instructions from ${file.path}\n\n${file.text.trimEnd()}\n`
-  }
+  text += agentsMdInstructions(cwd, options.home)
   if (conversation.instructions !== undefined) text += `\n${conversation.instructions.trimEnd()}\n`
-  const skills = skillsFor(cwd, options.home)
-  if (skills.length > 0) {
-    text += `\n${SKILLS}${skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.path})\n`).join("")}`
-  }
+  text += skillsInstructions(cwd, options.home)
   const wanted = conversation.lineage?.agentType
   const agentType = wanted ? agentTypes(cwd, options.claudeConfig).find((type) => type.name === wanted) : undefined
   if (agentType) text += `\n# You are a ${agentType.name} agent\n\n${agentType.instructions}\n`

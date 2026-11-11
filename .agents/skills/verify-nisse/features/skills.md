@@ -15,14 +15,14 @@ scripted conversations list none and carry none.
 - `skills-list` answers a conversation's skills, sorted by name, each with its
   `name`, `description` and `path`; `[]` for `claude` and `script`;
   `NoSuchConversation` for an unknown id.
-- `skills-found` [pending wire-complete] looks in `.agents/skills` and `.claude/skills` of each folder
+- `skills-found` looks in `.agents/skills` and `.claude/skills` of each folder
   from the conversation's directory up to the folder holding `.git`, then in
   `NISSE_HOME/skills`. A directory outside any repository looks only in itself
   and the home.
-- `skills-nearest` [pending wire-complete] keeps the nearest skill of a name: a deeper folder before a
+- `skills-nearest` keeps the nearest skill of a name: a deeper folder before a
   shallower one, `.agents` before `.claude` in one folder, the project before
   the home.
-- `skills-frontmatter` [pending wire-complete] takes `name` and `description` from the `SKILL.md`
+- `skills-frontmatter` takes `name` and `description` from the `SKILL.md`
   frontmatter, folding a `>` or `|` description into one line and unquoting a
   quoted one; without a `name` the folder names the skill, and without a
   `description` it is `""`.
@@ -160,6 +160,25 @@ Preconditions:
 ## Contexts
 
 - **Provider.** Claude Code reads its own `CLAUDE.md` files and skills. OpenAI is told the `AGENTS.md` files and skills.
+- **On the kernel.** A ChatGPT conversation is told its directory, the
+  `AGENTS.md` files and the skills as on today's server, in a `workspace`
+  prompt section the harness renders before each request and commits as a
+  `pi.system` entry when it changes; a script conversation gets none. The
+  instructions a conversation started with (`instructions` on the kernel's
+  `conversation/start`) follow the skill list, in `<instructions>` tags, and
+  a subagent starts without them. `skills/list` and skills carried by a
+  message wait for `wire-complete`. To drive it: `drive.ts r up --kernel
+--fake-openai text_answer,text_answer`, make the project as above, write a
+  home `AGENTS.md`, `drive.ts r serve`, then
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp/nisse-verify/r/project/app", "provider": "openai", "approvals": "auto", "instructions": "Answer in Swedish."}'`
+  and `drive.ts r watch <id> --submit hello --until run_end --save kernel`:
+  the `pi.system` entry holds `sections.workspace` with
+  `The working directory is .../project/app.`, each `AGENTS.md` and the
+  `# Skills` list, and `sections.instructions` with `Answer in Swedish.`;
+  `evidence/fake-openai.ndjson`'s request `instructions` hold nisse's own,
+  then both. Write `AGENTS.override.md` in the project and submit again: the
+  next `pi.system` entry changes only `workspace`, and the next request holds
+  the override instead of `AGENTS.md`.
 
 ## Tests
 
@@ -169,6 +188,12 @@ Provider, `packages/nisse/test/openai.test.ts`:
 - start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files
 - skills-attach: a skill named in a message comes with it, for the model and for everyone watching
 - skills-list: every client can list the skills a conversation's model can use
+
+Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- openai-instructions, agents-md, skills-found, skills-nearest, skills-frontmatter: ChatGPT is told its working directory, the AGENTS.md files from home down to it, and the skills it can use
+- skills-found: a conversation outside any repository is told only its own folder's skills and the home's
+- start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files, and a subagent is not
 
 ## Gotchas
 

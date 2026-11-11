@@ -418,8 +418,10 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   extension's load with `its tool transform failed: <why>` and the extension's hooks never run. The transcript keeps
   the model's own arguments; `execute.before`'s change shows in what runs, its result, the approval request and
   `execute.after`'s `input`.
-  `ctx.request.hook` registers and does nothing on the kernel yet
-  (`kernel-chatgpt-cwd-agents-md-skills`). A hook's `conversation` has no
+  `ctx.request.hook` runs on each ChatGPT request as the harness's
+  `beforeProviderRequest` hook: what it pushes to `instructions` goes after the
+  request's own, and it narrows the tools offered; on `script` it does not run.
+  A hook's `conversation` has no
   `lineage` there yet: kernel conversations carry lineage on the wire from wire-complete, and hooks get it then.
 
 ## Tests
@@ -433,6 +435,11 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - reload: while extensions reload, the loaded ones keep guarding calls until their replacements are ready
 - status-line: a hook still running when its extension is unloaded can't bring back a status line
 - reload: a config.toml that stops reading fails every extension in a reload, and says why
+
+Kernel provider, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- request-hook: an extension's request hook adds instructions and narrows the tools of each request to the model
+- hook-failure: a request hook that fails is skipped with a toast, and the model gets the request as it was
 
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`:
 
