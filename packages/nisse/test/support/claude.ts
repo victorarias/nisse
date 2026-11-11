@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { ClaudeOptions } from "../../src/drivers/claude/index.ts"
 import { deadline } from "./raw.ts"
@@ -27,12 +27,22 @@ export class FakeClaude {
     socket: { data: () => this.#wake(), close: () => this.#wake() },
   })
 
-  constructor(readonly fixture: string) {}
+  readonly #fixture: string
+
+  /** Plays the fixtures' Claude Code processes one per spawn, in order: several chain one journey after another. */
+  constructor(...fixtures: [string, ...string[]]) {
+    const paths = fixtures.map((fixture) => join(FIXTURES, `${fixture}.ndjson`))
+    if (paths.length === 1) this.#fixture = paths[0]!
+    else {
+      this.#fixture = join(this.dir, "fixture.ndjson")
+      writeFileSync(this.#fixture, paths.map((path) => readFileSync(path, "utf8")).join("\n"))
+    }
+  }
 
   get options(): ClaudeOptions {
     return {
       executable: EXECUTABLE,
-      env: { FAKE_CLAUDE_FIXTURE: join(FIXTURES, `${this.fixture}.ndjson`), FAKE_CLAUDE_DIR: this.dir },
+      env: { FAKE_CLAUDE_FIXTURE: this.#fixture, FAKE_CLAUDE_DIR: this.dir },
     }
   }
 

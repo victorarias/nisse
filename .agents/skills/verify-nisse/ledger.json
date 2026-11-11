@@ -2063,12 +2063,5 @@
     "feature": "Sandbox per conversation (example 28)",
     "verdict": "bring",
     "useCases": ["mode-sandbox"]
-  },
-  {
-    "id": "Y6",
-    "area": "Y",
-    "feature": "Model layer with many providers through pi-ai (R94-104, dependencies)",
-    "verdict": "adapt",
-    "useCases": ["mode-model-layer"]
   }
 ]

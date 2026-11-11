@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { LIVE_OUTPUT_TAIL, type Delivery } from "@nisse/protocol"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { bodies, deadline, entriesOf, errorTag, RawClient, statusOf } from "./support/raw.ts"
+import { bodies, deadline, entriesOf, errorTag, hangUpMidAnswer, RawClient, statusOf } from "./support/raw.ts"
 import { runningServer, servingUntilIdle, tempHome } from "./support/server.ts"
 import { homeWithExtensions } from "./support/extensions.ts"
 
@@ -157,6 +157,20 @@ test("wire-dropped: a client that stops reading is dropped while the others keep
   reader.close()
   stalled.close()
 }, 30_000)
+
+test("wire-hangup: a client that hangs up while the server still writes to it is not logged as an error", async () => {
+  await using server = await runningServer([{ text: "long ".repeat(5000) }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = client.subscribe({ conversation })
+  await submit(client, conversation, "go")
+  await view.until(settled)
+  await hangUpMidAnswer(server.home.socket, "conversation/subscribe", { conversation })
+  expect(await client.call("conversation/list")).toMatchObject({ result: [{ id: conversation }] })
+  client.close()
+  await server.stop()
+  expect(server.logged.filter((entry) => entry.level === "Error")).toEqual([])
+})
 
 test("wire-unknown: subscribing to a conversation that does not exist says so", async () => {
   await using server = await runningServer()

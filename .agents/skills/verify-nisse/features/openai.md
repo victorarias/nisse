@@ -20,9 +20,9 @@ A provider `config.toml` names with
   it to `auth/openai.json`.
 - `openai-signed-out` fails the run with
   `not signed in to ChatGPT: could not read <path>`.
-- `openai-invalid` [pending wire-complete] fails the run with `<path> is not valid` for a file that
+- `openai-invalid` fails the run with `<path> is not valid` for a file that
   is not a sign-in.
-- `openai-expired` [pending wire-complete] fails the run with
+- `openai-expired` fails the run with
   `the ChatGPT sign-in expired; sign in again (token refresh failed (...))`
   when the refresh is turned down, and lists the provider `signed_out` with
   that message.
@@ -183,8 +183,8 @@ Preconditions:
 ChatGPT runs behind the `Models` seam (`@nisse/models/chatgpt`), with the
 harness running the loop. What differs from today's server:
 
-- A prompt sent while a run works waits for the run to end: the kernel wire
-  has no steer yet (`steer-openai` waits for `wire-complete`).
+- A prompt sent while a run works waits for the run to end, unless it is
+  sent with `steer`, which reaches the run at its next step.
 - A response ChatGPT failed on its side (`server_error`) is tried again after
   the harness's backoff (2 s, then 4 s, 8 s), not ended at once.
 - A denied call reaches the model as the harness words it:
@@ -206,13 +206,20 @@ harness running the loop. What differs from today's server:
   comes before those instructions, where today's server puts it after them.
   Both are committed as a `pi.system` entry, so every client sees what ChatGPT
   was told, and a changed `AGENTS.md` shows as a new one. A skill a message
-  names is not attached yet (`skills-attach` waits for `wire-complete`).
+  names is attached as on today's server: its `SKILL.md`, read when the message
+  is placed, follows the message's text in `<skill>` tags, and the
+  `nisse.user` entry's data holds `skills`.
 
 ## Contexts
 
 - **SSH.** Sign-in uses a device code.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- openai-invalid: a sign-in file that is not one fails the run, naming the file
+- openai-expired: a sign-in whose refresh is turned down fails the run and lists ChatGPT signed out, saying why
 
 Provider, `packages/nisse/test/openai.test.ts`:
 

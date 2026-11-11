@@ -67,13 +67,22 @@ Preconditions:
 ## Contexts
 
 - **Second client.** The queue shows to every client.
+- **On the kernel.** In a run made with `drive.ts r up --kernel`, the TUI speaks the kernel wire and every TUI step above drives the same way; a script names the kernel's tools in lower case, such as `bash` and `read`, so a call shows as `▸ bash(<command>)`.
 
 ## Tests
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- queue-show: a prompt sent while nisse works waits in the queue, then runs
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - queue-idempotent: submitting again with the same request id is answered once
 - queue-run: prompts sent while nisse is working wait and run in order, each to its own end
+
+Provider on the kernel, `packages/nisse/test/kernel/claude.test.ts`:
+
+- queue-run: a prompt sent while Claude works runs once Claude answers, resuming the same session
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

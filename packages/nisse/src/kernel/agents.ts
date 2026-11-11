@@ -16,6 +16,7 @@ import {
   depthOf,
   InboxDoc,
   LiveDoc,
+  recordOrigin,
   refusedSpawn,
   refusedWork,
   ROOT_TASK,
@@ -77,9 +78,17 @@ export type MailKind = "new_task" | "message" | "final_answer"
 /** The entry a message between agents is placed as; the model reads it as a user message. */
 export const MAIL_ENTRY_KIND = "nisse.mail"
 
+const PAYLOAD = "\nPayload:\n"
+
 export const mailText = (kind: MailKind, task: string, sender: string, text: string) => {
   const type = { new_task: "NEW_TASK", message: "MESSAGE", final_answer: "FINAL_ANSWER" }[kind]
-  return `Message Type: ${type}\nTask name: ${task}\nSender: ${sender}\nPayload:\n${text}`
+  return `Message Type: ${type}\nTask name: ${task}\nSender: ${sender}${PAYLOAD}${text}`
+}
+
+/** What people read of a message between agents: its payload, without the headers the model reads. */
+export const mailPayload = (text: string) => {
+  const at = text.indexOf(PAYLOAD)
+  return at === -1 ? text : text.slice(at + PAYLOAD.length)
 }
 
 const mailEntry = (kind: MailKind, task: string, sender: string) => ({
@@ -382,6 +391,7 @@ const spawnAgent = (limits: AgentLimits) =>
               ...(depthOf(task) >= limits.maxDepth ? { modelTools: { remove: [{ name: "spawn_agent" }] } } : {}),
             })
             ;(yield* tx.doc(TaskPathDoc, child.id)).task = task
+            yield* recordOrigin(tx, child.id, { call: api.callId, title: name, task })
             if (auto) yield* approveAutomatically(tx, child.id)
             registry.agents[name] = { conversationId: Number(child.id), task, reported: [], assigned: true }
             const reporter: ReporterInput = {
@@ -582,6 +592,8 @@ const interruptAgent = defineTool({
     }),
 })
 
+const AGENTS_EXTENSION = "nisse-agents"
+
 /**
  * Stops a conversation's runs and every subagent's under it, as `conversation/interrupt` promises. Each conversation of
  * the tree is aborted on its own, all at once, so the reporters that relay answers carry on as they do when one
@@ -617,7 +629,7 @@ const treeOf = (harness: Harness, root: ConversationId) =>
 /** The subagent tools, under `limits`; their tasks come with them, so a restart resumes pending reporters. */
 export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS) =>
   defineExtension({
-    name: "nisse-agents",
+    name: AGENTS_EXTENSION,
     tasks: [Anchor, Reporter],
     tools: [spawnAgent(limits), sendMessage, followupTask(limits), waitAgent, listAgents, interruptAgent],
   })

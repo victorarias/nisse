@@ -218,3 +218,48 @@ test("signin-shared: a sign-in the server stopped during is failed for every con
   client.close()
   rmSync(home.dir, { recursive: true, force: true })
 })
+
+const browserCallback = (state: AuthState) => {
+  if (state.interaction?._tag !== "browser") throw new Error(`not a browser sign-in: ${JSON.stringify(state)}`)
+  const asked = new URL(state.interaction.url)
+  const answer = new URL(asked.searchParams.get("redirect_uri")!)
+  answer.hostname = "127.0.0.1"
+  return { answer, state: asked.searchParams.get("state")! }
+}
+
+test("signin-refused: an answer for another sign-in is turned away, and a sign-in the browser refused fails saying why", async () => {
+  await using fake = new FakeOpenAi()
+  await using server = await runningKernelServer([], { openai: fake.options() })
+  const client = await RawClient.connect(server.home.socket)
+  const auth = client.watch<AuthState>("auth/watch")
+  await client.call("auth/start", { provider: "openai" })
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  const { answer, state } = browserCallback(auth.items.find((item) => item.phase === "waiting")!)
+  const stranger = new URL(answer)
+  stranger.search = new URLSearchParams({ code: "forged", state: "not-the-state" }).toString()
+  expect((await fetch(stranger)).status).toBe(400)
+  const refused = new URL(answer)
+  refused.search = new URLSearchParams({ state, error: "access_denied", error_description: "no thanks" }).toString()
+  expect((await fetch(refused)).status).toBe(400)
+  await auth.until((states) => states.at(-1)?.phase === "failed")
+  expect(auth.items.at(-1)).toMatchObject({ provider: "openai", message: "ChatGPT refused the sign-in: no thanks" })
+  expect(fake.received.filter((request) => request.path === "/oauth/token")).toHaveLength(0)
+  client.close()
+})
+
+test("signin-cannot: nisse refuses to sign in to a provider it does not have, one with nothing to sign in to, and a way the provider does not offer", async () => {
+  await using fake = new FakeOpenAi()
+  await using server = await runningKernelServer([], { openai: fake.options() })
+  const client = await RawClient.connect(server.home.socket)
+  const unknown = await client.call("auth/start", { provider: "nowhere" })
+  expect(errorTag(unknown)).toBe("UnknownProvider")
+  const script = await client.call("auth/start", { provider: "script" })
+  expect(errorTag(script)).toBe("CannotSignIn")
+  const terminal = await client.call("auth/start", { provider: "openai", method: "terminal" })
+  expect(errorTag(terminal)).toBe("CannotSignIn")
+  expect(terminal.error?.data[0]?.error).toMatchObject({
+    provider: "openai",
+    message: expect.stringContaining("terminal"),
+  })
+  client.close()
+})

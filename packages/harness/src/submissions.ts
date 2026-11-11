@@ -34,7 +34,7 @@ import {
   type QueueModes,
   removeInboxItem,
 } from "./inbox.ts"
-import { LiveDoc, type Stored } from "./live.ts"
+import { LiveDoc, type RunTasks, type Stored } from "./live.ts"
 import type { InputEntry, SettledSubmissionRecord, SubmissionDraft } from "./types.ts"
 
 /** A submission reached a busy conversation and was not admitted. */
@@ -104,6 +104,7 @@ export class Submissions {
   readonly #now: () => number
   /** Read at each admission, on the Session line. */
   readonly #queueModes: () => QueueModes
+  readonly #runTasks: RunTasks
   /** Enables task scheduling; submitting or waiting asks for progress. */
   readonly #resume: Effect.Effect<void, unknown>
   readonly #propagation: TracePropagation | undefined
@@ -120,7 +121,9 @@ export class Submissions {
     queueModes: () => QueueModes,
     resume: Effect.Effect<void, unknown>,
     telemetry: SubmitTelemetry,
+    runTasks: RunTasks,
   ) {
+    this.#runTasks = runTasks
     this.#session = session
     this.#propagation = telemetry.propagation
     this.#tracer = telemetry.tracer
@@ -146,7 +149,7 @@ export class Submissions {
       // The commit runs in the submit span, so its entry and submission events land there.
       const { id } = yield* this.#traced(conversationId, draft, (trace) =>
         this.#session.commit((tx) =>
-          admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), trace),
+          admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), this.#runTasks, trace),
         ),
       )
       return this.handle(id)
@@ -167,7 +170,7 @@ export class Submissions {
       // Enforced on every path: admission reads tables only on some (request IDs, an idle boundary).
       if (tx.hasTableWrite) return yield* Effect.die(new ReadAfterWrite("submit(tx, draft)"))
       const admission = yield* this.#traced(conversationId, draft, (trace) =>
-        admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), trace),
+        admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), this.#runTasks, trace),
       )
       return admission.id
     })
@@ -352,6 +355,7 @@ export const admitSubmission = (
   draft: SubmissionDraft,
   now: number,
   queueModes: QueueModes,
+  runTasks: RunTasks,
   trace?: SubmitTrace,
 ): Effect.Effect<Admission, AdmissionError | ReadError> =>
   Effect.gen(function* () {
@@ -409,7 +413,13 @@ export const admitSubmission = (
       // Items an earlier failed run left queued are placed first and join the run. Its history starts with the failed
       // run's, so `afterRun` hooks see what that run did.
       const { users, first } = yield* applyBoundary(tx, boundary, "final", now)
-      yield* startRun(tx, conversationId, live, { inputs: [...users, id], first: live.runFailure?.first ?? first })
+      yield* startRun(
+        tx,
+        conversationId,
+        live,
+        { inputs: [...users, id], first: live.runFailure?.first ?? first },
+        runTasks,
+      )
       return { id, status: "placed" } as Admission
     }
     // A boundary reads the table, so it is prepared before the first table write; a busy one needs none.
@@ -428,7 +438,7 @@ export const admitSubmission = (
       }
       if (boundary === undefined) return { id, status: "queued" } as Admission
       const { users, first } = yield* applyBoundary(tx, boundary, "final", now)
-      if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
+      if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first }, runTasks)
       return {
         id,
         status: draft.type === "write" ? "done" : users.at(-1) === id ? "placed" : "queued",
@@ -445,6 +455,6 @@ export const admitSubmission = (
     }
     const entry = yield* appendInput(tx, conversationId, draft.content, draft.entry, now)
     const { id } = yield* tx.createSubmission({ ...fields, type: "input", status: "placed", entry: entry.id })
-    yield* startRun(tx, conversationId, live, { inputs: [id], first: entry.id })
+    yield* startRun(tx, conversationId, live, { inputs: [id], first: entry.id }, runTasks)
     return { id, status: "placed" } as Admission
   })

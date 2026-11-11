@@ -70,7 +70,7 @@ Claude is always a fake unless the run says otherwise: a fake `claude` plays
 the recording's Claude Code processes, one per spawn, and logs what nisse sent
 each to `evidence/fake-claude/log.ndjson`. Without `--fake-claude` it plays
 `models`, a signed-in Claude Code that answers the probe and nothing else, so
-a scripted run never starts the `claude` on your PATH. The spawns count across
+a scripted run never starts a real Claude Code. The spawns count across
 the whole run, so a recording covers one journey: drive another in a new run.
 
 Type what the recording's user typed, in the same conversation: the fakes play
@@ -83,20 +83,22 @@ opens, and a run can use both, alongside a `--script`.
 The kernel being built beside today's server runs with `NISSE_KERNEL=1`:
 `drive.ts r1 up --kernel` makes every server of the run start that way, on
 `kernel.sqlite` and the kernel wire (`schema/nisse.kernel.schema.json`). It
-serves `initialize`, `conversation/start`, `conversation/submit`,
-`conversation/watch`, `conversation/interrupt`, `approval/resolve`,
-`extensions/list`, `extensions/reload`, `status/watch`, `server/stop`,
-`providers/list`, `models/list` and the `auth/*` calls, and loads the home's
-extensions as [Extensions](features/extensions.md) says. Every provider lists,
-signs in and out, and `conversation/start` picks a model as on today's server,
-and `script` and ChatGPT (`openai`, see [OpenAI](features/openai.md)) answer;
-a run on Claude ends `failed` with `Model <provider>/<model> is not available`
-until its kind brings its run.
+serves `initialize`, `conversation/start` (with `instructions`),
+`conversation/submit` (with `steer`), `conversation/watch`,
+`conversation/interrupt`, `approval/resolve`, `extensions/list`,
+`extensions/reload`, `status/watch`, `server/stop`, `providers/list`,
+`models/list` and the `auth/*` calls, and loads the home's extensions as
+[Extensions](features/extensions.md) says. Every provider lists, signs in and
+out, and `conversation/start` picks a model as on today's server. Every
+provider answers: `script`, ChatGPT (`openai`, see [OpenAI](features/openai.md))
+and Claude, as the `claude.run` task (see [Claude](features/claude.md)).
 `rpc`, `watch`, `watch-auth`, `watch-status`, `serve`, `kill-server`, `idle`, `doctor` and
 `down` work in such a run; `watch` follows the conversation's view (see
 [Watches and views](features/views.md)) and `--until run_end` waits for a
-`nisse.run_end` entry. The TUI and `nisse exec` refuse,
-naming the step that brings them.
+`nisse.run_end` entry. The TUI runs on the kernel too, drawing the
+conversation's view: every `tui` step drives it, and a script names the
+kernel's tools in lower case (`bash`, `read`). `nisse exec` refuses, naming
+the step that brings it.
 
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its
@@ -130,8 +132,8 @@ to settle and stops it, and the next client starts one on the new code.
 ## Drive
 
 - **TUI.** `tui type <text>` types literally; `tui key <keys>` presses tmux
-  keys: `Enter` sends, `S-Enter` or `M-Enter` adds a line (`C-j` sends today, a
-  known bug), `Escape` stops the run, `Tab`
+  keys: `Enter` sends, `M-Enter` adds a line (`S-Enter` reaches the TUI as a
+  plain Enter through tmux, and `C-j` sends today, a known bug), `Escape` stops the run, `Tab`
   switches between queueing and steering while Nisse works, `C-y` allows the
   call Nisse asks about and `C-n` denies it, `C-l` signs in to a signed-out
   provider and `Escape` cancels it, `C-c` quits. Typing `/model` and `Enter`
@@ -235,9 +237,10 @@ holding the account drives it cold, like this.
   run with `drive.ts r up --openai-auth <that file>`; `down` writes the
   sign-in back when a refresh changed it. Don't drive two runs on one sign-in
   at once.
-- **Claude.** `drive.ts r up --real-claude` runs the `claude` on your PATH
-  with your own login, as a person's nisse does, and its sessions land in your
-  Claude Code configuration.
+- **Claude.** `drive.ts r up --real-claude` runs the Claude Code bundled with
+  the Claude Agent SDK, as a person's nisse does, not the `claude` on your
+  PATH, whose version may differ. It uses your own login, and its sessions land
+  in your Claude Code configuration.
 - **First check.** Before any step, `drive.ts r serve` and
   `drive.ts r rpc providers/list '{}'`: the provider is `ready` and names your
   account. Otherwise stop and report what it shows.

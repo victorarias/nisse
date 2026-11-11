@@ -10,23 +10,23 @@ failed with a message saying why, in every client.
 
 ## Sub-features
 
-- `provider-choose` [pending wire-complete] starts a conversation with `--provider <name>` from the
+- `provider-choose` [pending cli-kernel] starts a conversation with `--provider <name>` from the
   TUI or `exec`, or `provider` on `conversation/start`.
-- `provider-default` [pending wire-complete] starts with the default model's provider when none is
+- `provider-default` starts with the default model's provider when none is
   named: the project's, the home's, the one chosen last, then Claude, or the
   scripted provider when `NISSE_MODEL_SCRIPT` is set.
 - `provider-unknown` refuses an unknown provider by name, exit 1.
-- `provider-signed-out` [pending wire-complete] ends a run failed with the provider's sign-in error.
+- `provider-signed-out` ends a run failed with the provider's sign-in error.
 - `provider-config` adds the providers `config.toml` names under
   `[providers.<id>]`, with `driver = "claude"` or `"openai"`, beside the
   built-in ones; each lists, signs in and starts conversations on its own.
-- `provider-binary` [pending wire-complete] runs a Claude provider's Claude Code from `binary`,
+- `provider-binary` [pending cli-kernel] runs a Claude provider's Claude Code from `binary`,
   with `env` added to its environment and `args` added to each run's command
   line; `NISSE_CLAUDE` names the `claude` every Claude provider without a
   `binary` runs. One that does not start is `unavailable`, saying why.
-- `provider-config-invalid` [pending wire-complete] refuses to serve a home whose `config.toml` does
+- `provider-config-invalid` [pending cli-kernel] refuses to serve a home whose `config.toml` does
   not read, naming the file and the field.
-- `provider-claude` [pending wire-complete] and `provider-openai` are the real journeys, in
+- `provider-claude` and `provider-openai` are the real journeys, in
   [Claude](./claude.md) and [OpenAI](./openai.md); signing in is in
   [Sign-in](./sign-in.md).
 
@@ -175,6 +175,18 @@ Preconditions:
 - **Server restart.** The server reads `config.toml` and its environment when it starts.
 
 ## Tests
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- provider-default: a conversation that names no provider and has no default model starts on Claude, or on the scripted provider when NISSE_MODEL_SCRIPT is set
+
+Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- openai-signed-out, provider-signed-out: a conversation with ChatGPT before signing in says how to fix it
+
+Kernel wire, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- claude-answer, provider-claude: Claude's answer through Claude Code is committed as nisse's message
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

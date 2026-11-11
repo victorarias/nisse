@@ -5,6 +5,7 @@
 import { copyJson } from "@nisse/delta/json"
 import type { Draft } from "@nisse/delta"
 import {
+  type AnyTask,
   defineTask,
   endedByCrashes,
   type ConversationId,
@@ -35,7 +36,7 @@ import {
   type ToolCall,
 } from "@nisse/models"
 import { Cause, Effect, Exit, Fiber, Queue, Stream } from "effect"
-import { addTools, agentHooks, offeredTo, sectionExtension } from "./agent.ts"
+import { addTools, AgentDoc, agentHooks, offeredTo, sectionExtension } from "./agent.ts"
 import { compactionPolicy, createCompaction, estimateContext, selectCut } from "./compaction.ts"
 import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "./entries.ts"
 import { providerSessionId } from "./documents.ts"
@@ -49,6 +50,7 @@ import {
   LiveDoc,
   type LiveState,
   type RunEnd,
+  type RunTasks,
   salvageable,
   type Stored,
   type ToolSlot,
@@ -215,6 +217,9 @@ export const GenerationTask: Task<GenerationInput, GenerationCheckpoint, Generat
         if (cutOffTooOften(task, api.settings().restartLimit)) return yield* endCutOff(ctx, task)
         const { conversationId } = runtime
         const resolvedAgent = yield* api.agent
+        // The conversation's model now runs on another run task, as after a switch of provider during the run.
+        const runTask = api.runTasks.choose(resolvedAgent.model)
+        if (runTask !== undefined) return yield* handOverRun(ctx, runTask)
         const settings = api.settings()
         const { model, thinkingLevel } = resolvedAgent
         const resolved = model === undefined ? undefined : api.models().getModel(model.provider, model.modelId)
@@ -683,10 +688,17 @@ const failNothingToAnswer = (ctx: Ctx) =>
     }),
   )
 
-/** What a failed run's end needs from the table, read before the commit's first table write. */
-type Failure = { readonly policy: AfterFailedRun; readonly boundary?: Boundary }
+/** What ending a run needs of a run task: its conversation, its id, its clock, and the harness's services. */
+export type RunCtx = {
+  readonly runtime: { readonly conversationId: ConversationId; readonly taskId: TaskId; now(): number }
+  readonly api: TaskApi
+}
 
-const prepareFailure = (tx: Tx, ctx: Ctx) =>
+/** What a failed run's end needs from the table, read before the commit's first table write. */
+export type Failure = { readonly policy: AfterFailedRun; readonly boundary?: Boundary }
+
+/** Reads what `endFailedRun` needs; call it before the commit's first table write. */
+export const prepareFailure = (tx: Tx, ctx: RunCtx) =>
   Effect.gen(function* () {
     const settings = ctx.api.settings()
     const policy = settings.afterFailedRun
@@ -698,9 +710,9 @@ const prepareFailure = (tx: Tx, ctx: Ctx) =>
  * End a failed run, settling its inputs with `settlement`, and do with the inputs queued behind it what
  * `settings.afterFailedRun` says (spec 6): keep them, start the next run with them, or withdraw them.
  */
-const endFailedRun = (
+export const endFailedRun = (
   tx: Tx,
-  ctx: Ctx,
+  ctx: RunCtx,
   live: Draft<LiveState>,
   failure: Failure,
   end: Extract<RunEnd, { status: "unanswered" }>,
@@ -711,7 +723,9 @@ const endFailedRun = (
     if (failure.policy === "withdraw") yield* withdrawQueuedInputs(tx, conversationId, "run_failed")
     if (failure.boundary === undefined) return
     const { users, first } = yield* applyBoundary(tx, failure.boundary, "final", ctx.runtime.now())
-    if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first }, { keepFailure: true })
+    if (users.length > 0) {
+      yield* startRun(tx, conversationId, live, { inputs: users, first }, ctx.api.runTasks, { keepFailure: true })
+    }
   })
 
 /** The `beforeProviderRequest` replacement chain over one provider request body. */
@@ -941,7 +955,7 @@ const answer = (ctx: Ctx, message: AssistantMessage) =>
           delete live.generation
           return result
         }
-        if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
+        if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first }, api.runTasks)
         return result
       }),
     )
@@ -1032,16 +1046,24 @@ const prepareRunEndTasks = (
 const endAnsweredRun = (ctx: Ctx, answer: EntryId) =>
   ctx.runtime.commit((tx) =>
     Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
-      const { runtime, api } = ctx
-      const conversationId = runtime.conversationId
-      const boundary = yield* prepareBoundary(tx, conversationId, api.settings())
-      const live = yield* tx.doc(LiveDoc, conversationId)
-      yield* endRun(tx, live, runtime.taskId, { status: "done", answer }, ctx.api.runOwner)
-      const { users, first } = yield* applyBoundary(tx, boundary, "final", runtime.now())
-      if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
+      const conversationId = ctx.runtime.conversationId
+      const boundary = yield* prepareBoundary(tx, conversationId, ctx.api.settings())
+      yield* endAnswered(tx, ctx, yield* tx.doc(LiveDoc, conversationId), boundary, answer)
       return { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
     }),
   )
+
+/**
+ * End a run that answered, then place what the final boundary selects and start the next run for selected user items.
+ * Read `boundary` with `prepareBoundary` before the commit's first table write.
+ */
+export const endAnswered = (tx: Tx, ctx: RunCtx, live: Draft<LiveState>, boundary: Boundary, answer: EntryId) =>
+  Effect.gen(function* () {
+    const { conversationId } = ctx.runtime
+    yield* endRun(tx, live, ctx.runtime.taskId, { status: "done", answer }, ctx.api.runOwner)
+    const { users, first } = yield* applyBoundary(tx, boundary, "final", ctx.runtime.now())
+    if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first }, ctx.api.runTasks)
+  })
 
 /**
  * End a run that answered once its `finish` or `drain` phase was cut off `settings.restartLimit` times (spec 5.4): the
@@ -1183,7 +1205,7 @@ const finishToolRound = (ctx: Ctx, assistant: EntryId, tools: readonly TaskId<To
         if (terminate) {
           yield* endRun(tx, live, runtime.taskId, { status: "done", answer: assistant }, ctx.api.runOwner)
           const { users, first } = yield* applyBoundary(tx, boundary, "final", now)
-          if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first })
+          if (users.length > 0) yield* startRun(tx, conversationId, live, { inputs: users, first }, api.runTasks)
         } else if (maxTurns !== undefined && turns >= maxTurns) {
           // The turn limit ends the run like a failure: `afterFailedRun` decides the queued items, and a continue resumes
           // it on the round's results. The table was read for the boundary already, before any write.
@@ -1199,7 +1221,7 @@ const finishToolRound = (ctx: Ctx, assistant: EntryId, tools: readonly TaskId<To
           yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "reset" }, ctx.api.runOwner)
           const { users, first } = yield* applyBoundary(tx, boundary, "postTools", now)
           if (users.length > 0) {
-            yield* startRun(tx, conversationId, live, { inputs: users, first }, { keepFailure: true })
+            yield* startRun(tx, conversationId, live, { inputs: users, first }, api.runTasks, { keepFailure: true })
           }
         } else {
           const { users } = yield* applyBoundary(tx, boundary, "postTools", now)
@@ -1223,11 +1245,13 @@ export const startRun = (
   conversationId: ConversationId,
   live: Draft<LiveState>,
   run: { readonly inputs: SubmissionId[]; readonly first: EntryId | undefined },
+  runTasks: RunTasks,
   options?: { readonly keepFailure?: boolean },
 ) =>
   Effect.gen(function* () {
     const { inputs, first } = run
-    const taskId = yield* createGeneration(tx, conversationId, inputs)
+    const task = runTasks.choose((yield* tx.doc(AgentDoc, conversationId)).model) ?? GenerationTask
+    const taskId = yield* createRunTask(tx, conversationId, task, inputs)
     live.run = { taskId, inputs, turns: 0, ...(first === undefined ? {} : { first }) }
     if (options?.keepFailure !== true) delete live.runFailure
   })
@@ -1237,8 +1261,17 @@ export const startRun = (
  * and links to the other inputs'; a later one continues the trace of the commit that creates it.
  */
 const createGeneration = (tx: Tx, conversationId: ConversationId, inputs?: readonly SubmissionId[]) =>
+  createRunTask(tx, conversationId, GenerationTask, inputs)
+
+/** A run task owned by its conversation, created as `createGeneration` creates a generation; its input is empty. */
+const createRunTask = (
+  tx: Tx,
+  conversationId: ConversationId,
+  task: AnyTask<TaskServices>,
+  inputs?: readonly SubmissionId[],
+) =>
   tx.createTask(
-    GenerationTask,
+    task,
     {},
     {
       ownership: { kind: "conversation" },
@@ -1246,6 +1279,26 @@ const createGeneration = (tx: Tx, conversationId: ConversationId, inputs?: reado
       ...(inputs === undefined ? {} : { traceFrom: inputs }),
     },
   )
+
+/**
+ * Hand the run to `task`, the run task the conversation's model runs on now; this generation ends with the newest entry
+ * as its result. A conversation without entries has nothing to answer.
+ */
+const handOverRun = (ctx: Ctx, task: AnyTask<TaskServices>) =>
+  Effect.gen(function* () {
+    const { runtime } = ctx
+    const conversationId = runtime.conversationId
+    const latest = (yield* runtime.entries({}, 1)).items[0]?.id
+    if (latest === undefined) return yield* failNothingToAnswer(ctx)
+    yield* runtime.commit((tx) =>
+      Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
+        const live = yield* tx.doc(LiveDoc, conversationId)
+        handOver(live, runtime.taskId, yield* createRunTask(tx, conversationId, task))
+        delete live.generation
+        return { status: "terminal", outcome: { status: "completed", result: { entryId: latest } } }
+      }),
+    )
+  })
 
 /** Hand run control from `from` to `to`; the run's inputs move with it. */
 export function handOver(live: Draft<LiveState>, from: TaskId, to: TaskId): void {

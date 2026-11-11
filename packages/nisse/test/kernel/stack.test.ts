@@ -4,6 +4,7 @@ import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { FakeClaude } from "../support/claude.ts"
 import { deadline, RawClient } from "../support/raw.ts"
 import {
   kernelEnv,
@@ -124,7 +125,7 @@ test("wire-schema: nisse schema --kernel prints the kernel wire's schema, the on
   expect(stdout).toBe(readFileSync(join(import.meta.dir, "../../../../schema/nisse.kernel.schema.json"), "utf8"))
 })
 
-test("crash-limit: a run that keeps crashing the server stops after three tries instead of looping", async () => {
+test("crash-limit, conversation-ended: a run that keeps crashing the server stops after three tries instead of looping, and the conversation list says why", async () => {
   const nisseHome = home()
   // The command says it started through one fifo, so the test kills the server only once the call runs, and waits
   // on another, which the test opens at its end so the orphaned commands exit with it.
@@ -156,6 +157,11 @@ test("crash-limit: a run that keeps crashing the server stops after three tries 
     { outcome: "restart_limit", message: "the server stopped during this run 3 times in a row" },
   ])
   expect(transcript(view.seen()).filter((line) => line.startsWith("assistant"))).toHaveLength(3)
+  const listed = (await client.call("conversation/list")).result as Array<{ id: string; ended?: unknown }>
+  expect(listed.find((item) => item.id === conversation)?.ended).toEqual({
+    outcome: "restart_limit",
+    message: "the server stopped during this run 3 times in a row",
+  })
   client.close()
 }, 60_000)
 
@@ -307,3 +313,48 @@ test("codemode-stop: a script stuck in a long built-in stops when its run is int
   expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
   client.close()
 }, 45_000)
+
+test("provider-default: a conversation that names no provider and has no default model starts on Claude, or on the scripted provider when NISSE_MODEL_SCRIPT is set", async () => {
+  for (const [script, provider] of [
+    [true, "script"],
+    [false, "claude"],
+  ] as const) {
+    const nisseHome = home()
+    const env = await kernelEnv(nisseHome)
+    const server = await servingKernel(script ? env : { ...env, NISSE_MODEL_SCRIPT: undefined })
+    const client = await RawClient.connect(nisseHome.socket)
+    const started = await client.call("conversation/start", { cwd: nisseHome.dir })
+    expect(started.result.model.provider).toBe(provider)
+    await client.call("server/stop", null)
+    expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
+    client.close()
+  }
+})
+
+test("crash-claude-settled: a Claude Code answer committed before the server was killed is not run again", async () => {
+  using claude = new FakeClaude("crash_points")
+  const nisseHome = home()
+  const env = { ...(await kernelEnv(nisseHome)), ...claude.options.env }
+  const prompt =
+    "First write one short sentence saying that you will read the notes. Then use the Read tool to read notes.txt. Then reply with where the gnome lives, in three words."
+  const first = await servingKernel(env)
+  let client = await RawClient.connect(nisseHome.socket)
+  const conversation = (
+    await client.call("conversation/start", { cwd: nisseHome.dir, provider: "claude", approvals: "auto" })
+  ).result.conversation as string
+  const before = watchView(client, conversation)
+  await submit(client, conversation, prompt)
+  await before.until(settled(1), 20_000)
+  first.kill("SIGKILL")
+  await first.exited
+  client.close()
+
+  await servingKernel(env)
+  client = await RawClient.connect(nisseHome.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(transcript(after.view().entries)).toEqual(transcript(before.view().entries))
+  expect(transcript(after.view().entries).slice(-2)).toEqual(["assistant: Under the floor.", "run_end: answered"])
+  expect(claude.spawns()).toHaveLength(1)
+  client.close()
+}, 30_000)

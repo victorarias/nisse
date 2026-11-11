@@ -19,7 +19,7 @@ import { kernelServerLayer } from "../../src/kernel/server.ts"
 import { Lifetime } from "../../src/lifetime.ts"
 import { defaultClaude } from "./claude.ts"
 import { deadline, RawClient, type Reply } from "./raw.ts"
-import { type ServerOptions, tempHome } from "./server.ts"
+import { logRecorder, type ServerOptions, tempHome } from "./server.ts"
 import { nisse, nisseEnv } from "./terminal.ts"
 
 /** The providers a test's server has: `script` playing `script` and preferred, then those `options` configure. */
@@ -35,18 +35,27 @@ const testProviders = (
   config: options.config ?? {},
 })
 
-export const runningKernelServer = async (script: ReadonlyArray<ScriptStep> = [], options: ServerOptions = {}) => {
+export const runningKernelServer = async (
+  script: ReadonlyArray<ScriptStep> = [],
+  options: ServerOptions & { readonly connectionQueue?: number } = {},
+) => {
   const home = options.home ?? tempHome()
   const scope = Effect.runSync(Scope.make())
+  const { logged, recorder } = logRecorder()
   await Effect.runPromise(
     Layer.buildWithScope(
-      kernelServerLayer(home, { idleGrace: "1 hour", providers: testProviders(home, script, options) }),
+      kernelServerLayer(home, {
+        idleGrace: "1 hour",
+        providers: testProviders(home, script, options),
+        ...(options.connectionQueue === undefined ? {} : { connectionQueue: options.connectionQueue }),
+      }).pipe(Layer.provide(recorder)),
       scope,
     ),
   )
   const stop = () => Effect.runPromise(Scope.close(scope, Exit.void))
   return {
     home,
+    logged,
     stop,
     [Symbol.asyncDispose]: async () => {
       await stop()
@@ -178,4 +187,5 @@ export const submit = (
   text: string,
   requestId = crypto.randomUUID(),
   author = "ada",
-) => client.call("conversation/submit", { conversation, requestId, author, text })
+  steer = false,
+) => client.call("conversation/submit", { conversation, requestId, author, text, ...(steer ? { steer } : {}) })

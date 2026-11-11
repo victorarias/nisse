@@ -492,16 +492,37 @@ function extendRange(
 }
 
 /**
- * Moves the ordered messages before the last assistant message of `open` to `settled`. `orderToolResults()` of a
- * sequence equals the concatenation over its parts when each later part starts with an assistant message.
+ * Moves the ordered messages before the last response of `open` to `settled`. `orderToolResults()` of a sequence equals
+ * the concatenation over its parts when each later part starts with a response's first assistant message.
  */
 function settle(
   settled: readonly Message[],
   open: readonly Message[],
 ): { readonly settled: readonly Message[]; readonly open: readonly Message[] } {
-  const last = open.findLastIndex((message) => message.role === "assistant")
+  const last = responseStart(
+    open,
+    open.findLastIndex((message) => message.role === "assistant"),
+  )
   if (last <= 0) return { settled, open }
   return { settled: [...settled, ...orderToolResults(open.slice(0, last))], open: open.slice(last) }
+}
+
+/**
+ * The index of the first assistant message of the response the assistant message at `index` belongs to. An agent that
+ * runs its own loop, such as Claude Code, commits one response block by block: consecutive assistant messages with one
+ * `responseId`, which tool results may separate, are one response.
+ */
+function responseStart(messages: readonly Message[], index: number): number {
+  const message = messages[index]
+  if (message?.role !== "assistant" || message.responseId === undefined) return index
+  let start = index
+  for (let earlier = index - 1; earlier >= 0; earlier--) {
+    const candidate = messages[earlier]!
+    if (candidate.role === "toolResult") continue
+    if (candidate.role !== "assistant" || candidate.responseId !== message.responseId) break
+    start = earlier
+  }
+  return start
 }
 
 /** Objects `freezeJson()` froze with everything in them; `Object.isFrozen()` holds for shallow freezes too. */
@@ -565,8 +586,9 @@ function contribute(entry: EntryRecord, edit: ContextEdit | undefined): readonly
 }
 
 /**
- * Places each assistant's tool results directly after it, in call order. Results are taken from the messages before the
- * next assistant message; a missing result is synthesized and unmatched results are dropped.
+ * Places each response's tool results directly after it, in call order. A response is one assistant message, or several
+ * consecutive ones with one `responseId` (see `responseStart`), placed together. Results are taken from the messages
+ * before the next response; a missing result is synthesized and unmatched results are dropped.
  */
 export function orderToolResults(messages: readonly Message[]): Message[] {
   const ordered: Message[] = []
@@ -575,17 +597,29 @@ export function orderToolResults(messages: readonly Message[]): Message[] {
     if (message.role === "toolResult") continue
     ordered.push(message)
     if (message.role !== "assistant") continue
+    // The response's further messages: the same `responseId`, with only tool results between them.
+    let end = index + 1
     const calls = message.content.filter((content): content is ToolCall => content.type === "toolCall")
-    if (calls.length === 0) continue
-    const results = new Map<string, number>()
-    for (let next = index + 1; next < messages.length && messages[next]!.role !== "assistant"; next++) {
+    for (let next = index + 1; message.responseId !== undefined && next < messages.length; next++) {
       const candidate = messages[next]!
+      if (candidate.role === "toolResult") continue
+      if (candidate.role !== "assistant" || candidate.responseId !== message.responseId) break
+      ordered.push(candidate)
+      calls.push(...candidate.content.filter((content): content is ToolCall => content.type === "toolCall"))
+      end = next + 1
+    }
+    const results = new Map<string, number>()
+    for (let next = index + 1; next < messages.length; next++) {
+      const candidate = messages[next]!
+      if (next >= end && candidate.role === "assistant") break
       if (candidate.role === "toolResult" && !results.has(candidate.toolCallId)) results.set(candidate.toolCallId, next)
     }
     for (const call of calls) {
       const resultIndex = results.get(call.id)
       ordered.push(resultIndex === undefined ? missingResult(call, message.timestamp) : messages[resultIndex]!)
     }
+    // Go on after the response's last assistant message; its tool results were placed already.
+    index = end - 1
   }
   return ordered
 }

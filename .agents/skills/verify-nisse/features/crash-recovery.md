@@ -8,7 +8,7 @@ server three times in a row ends instead of looping.
 
 ## Sub-features
 
-- `crash-tui` [pending tui-views] finishes the answer in the open TUI after the server is killed.
+- `crash-tui` finishes the answer in the open TUI after the server is killed.
 - `crash-exec` finishes the answer for a waiting `nisse exec`, which exits 0.
 - `crash-committed` commits the answer once, in a run that ends `answered`.
 - `crash-call` records a running call as
@@ -18,7 +18,7 @@ server three times in a row ends instead of looping.
 - `crash-claude` resumes a Claude Code run whose server was killed while a
   subagent worked: the cut-off `Agent` call is recorded as interrupted, the
   subagent ends `interrupted`, and Claude Code is resumed to carry on.
-- `crash-claude-settled` [pending wire-complete] does not run a finished Claude Code answer again when
+- `crash-claude-settled` does not run a finished Claude Code answer again when
   the server dies after it.
 
 ## How to get to it
@@ -129,10 +129,18 @@ have taken effect`.
 
 ## Tests
 
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- crash-tui: the open TUI finishes the answer after the server is killed mid-answer
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- crash-claude-settled: a Claude Code answer committed before the server was killed is not run again
+
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - crash-committed: a run cut off by a crashed server is answered once after the server comes back
-- crash-limit: a run that keeps crashing the server stops after three tries instead of looping
+- crash-limit, conversation-ended: a run that keeps crashing the server stops after three tries instead of looping, and the conversation list says why
 
 Stack, `packages/nisse/test/stack.test.ts`:
 

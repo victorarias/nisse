@@ -5,7 +5,8 @@ import { defineExtension } from "@nisse/harness"
 import type { ProviderInstance } from "@nisse/models"
 import { Effect } from "effect"
 import type { Home } from "../home.ts"
-import { agentsMdInstructions, skillsInstructions } from "../workspace.ts"
+import type { Skill } from "@nisse/wire"
+import { agentsMdInstructions, attachedSkills, skillsFor, skillsInstructions } from "../workspace.ts"
 
 export const workspaceInstructions = (home: Home, instances: ReadonlyMap<string, ProviderInstance>) =>
   defineExtension({
@@ -25,3 +26,31 @@ export const workspaceInstructions = (home: Home, instances: ReadonlyMap<string,
       },
     ],
   })
+
+/** The skills input to a conversation on `agent` can name: a ChatGPT conversation's, and none for the rest. */
+export const skillsOf = (
+  home: Home,
+  instances: ReadonlyMap<string, ProviderInstance>,
+  agent: { readonly model?: { readonly provider: string }; readonly cwd?: string },
+): ReadonlyArray<Skill> => {
+  const provider = agent.model?.provider
+  if (provider === undefined || instances.get(provider)?.kind !== "openai") return []
+  return skillsFor(agent.cwd ?? home.dir, home.dir)
+}
+
+/**
+ * What a person's `text` gives the model, with the `SKILL.md` of each skill it names read now, so a later edit of the
+ * file changes later messages only; and the skills it carried, for the transcript.
+ */
+export const userInput = (text: string, skills: ReadonlyArray<Skill>) => {
+  const attached = attachedSkills(text, skills)
+  if (attached.length === 0) return { content: text, attached }
+  const content = [
+    { type: "text" as const, text },
+    ...attached.map((skill) => ({
+      type: "text" as const,
+      text: `<skill>\n<name>${skill.name}</name>\n<path>${skill.path}</path>\n${skill.text.trimEnd()}\n</skill>`,
+    })),
+  ]
+  return { content, attached }
+}

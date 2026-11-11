@@ -79,6 +79,10 @@ Preconditions:
 
 ## Tests
 
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- start-with-id: a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation
+
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - status-follow, status-ended: watching status follows each run of a tree and says how it ended
@@ -87,6 +91,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 
 - start-with-id: starting a conversation with an id it already has answers with that conversation, and an all-digit id is refused by name
 - start-with-id: a chosen id that names an object property, such as toString, opens its own conversation
+- conversation-ended: conversation/list tells a client that was not watching how a conversation's last run ended, also after a restart
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

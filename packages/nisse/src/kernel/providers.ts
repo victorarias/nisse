@@ -6,7 +6,8 @@ import { type ProviderInstance, THINKING_LEVELS, type ThinkingLevel } from "@nis
 import { type ModelSelection, UnknownEffort, UnknownProvider } from "@nisse/wire"
 import { Context, Effect, Layer } from "effect"
 import { chooseModel, type ModelAsk } from "../config.ts"
-import { openInstances, type ProviderOptions } from "../drivers/index.ts"
+import { claudeInstances, openInstances, type ProviderOptions } from "../drivers/index.ts"
+import type { ClaudeOptions } from "../drivers/claude/index.ts"
 import { taskOfRequest } from "./agents.ts"
 
 /** The model a conversation of this home started with last; a new one without a default of its own takes it. */
@@ -47,6 +48,8 @@ export class KernelProviders extends Context.Service<
     readonly instances: ReadonlyMap<string, ProviderInstance>
     /** How deep subagents nest and how many run at once: `[agents]` in `config.toml`, over the defaults. */
     readonly agents: AgentLimits
+    /** How the Claude Code of each instance Claude Code serves is started; their runs are `claude.run` tasks. */
+    readonly claude: ReadonlyMap<string, ClaudeOptions>
     /** The model a conversation in `cwd` starts with when it asks for `ask`, given the model chosen last. */
     readonly choose: (
       cwd: string,
@@ -69,6 +72,7 @@ export class KernelProviders extends Context.Service<
             maxDepth: agents?.max_depth ?? DEFAULT_AGENT_LIMITS.maxDepth,
             maxThreads: agents?.max_threads ?? DEFAULT_AGENT_LIMITS.maxThreads,
           },
+          claude: claudeInstances(options),
           choose: (cwd, ask, last) =>
             Effect.suspend(() => {
               const selection = chooseModel(cwd, ask, {

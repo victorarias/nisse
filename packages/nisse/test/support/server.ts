@@ -1,5 +1,5 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
-import { Duration, Effect, Exit, Layer, Scope } from "effect"
+import { Duration, Effect, Exit, Layer, Logger, Scope } from "effect"
 import { homeAt, type Home } from "../../src/home.ts"
 import { openAiOptions, providersLayer } from "../../src/drivers/index.ts"
 import type { ClaudeOptions } from "../../src/drivers/claude/index.ts"
@@ -14,6 +14,15 @@ import { serverLayer } from "../../src/server.ts"
 export { homeAt }
 
 export const tempHome = () => homeAt(realpathSync(mkdtempSync("/tmp/nisse-")))
+
+/** What a server logs, kept beside the console it still prints to. */
+export const logRecorder = () => {
+  const logged: Array<{ readonly level: string; readonly message: unknown }> = []
+  const recorder = Logger.make(({ logLevel, message }) => {
+    logged.push({ level: logLevel, message })
+  })
+  return { logged, recorder: Logger.layer([recorder], { mergeWithExisting: true }) }
+}
 
 export interface ServerOptions {
   readonly home?: Home
@@ -32,11 +41,16 @@ export const runningServer = async (script: Script = [], options: ServerOptions 
     config: options.config ?? {},
   })
   const scope = Effect.runSync(Scope.make())
+  const { logged, recorder } = logRecorder()
   await Effect.runPromise(
-    Layer.buildWithScope(serverLayer(home, { idleGrace: "1 hour" }).pipe(Layer.provide(providers)), scope),
+    Layer.buildWithScope(
+      serverLayer(home, { idleGrace: "1 hour" }).pipe(Layer.provide(providers), Layer.provide(recorder)),
+      scope,
+    ),
   )
   return {
     home,
+    logged,
     stop: () => Effect.runPromise(Scope.close(scope, Exit.void)),
     [Symbol.asyncDispose]: async () => {
       await Effect.runPromise(Scope.close(scope, Exit.void))
