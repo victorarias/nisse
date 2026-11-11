@@ -55,7 +55,7 @@ import { z } from "zod"
 import { Inbox } from "./inbox.ts"
 import type { SubagentLinks } from "./links.ts"
 import { textOf } from "./retell.ts"
-import { ClaudeSessionDoc, type UsageTotals } from "./session.ts"
+import { ClaudeSessionDoc } from "./session.ts"
 
 /** How a Claude Code instance is started: its executable, environment and extra arguments. */
 export interface ClaudeProcessSettings {
@@ -102,6 +102,9 @@ export type ProcessContext = {
 export const SUBAGENT_ENTRY_KIND = "nisse.subagent"
 
 export type SubagentEntry = { call: string; conversation: number; title: string; agentType?: string }
+
+/** One model's running totals in one Claude Code process, as it reports them (`modelUsage`). */
+type UsageTotals = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }
 
 /** What a call Claude Code asked a person about gets when they deny it. */
 export const DENIED = "the person did not allow this call"
@@ -201,7 +204,8 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
       let lastEntry: EntryId | undefined
       let partial = ""
       let flushedAt = 0
-      // `modelUsage` at this process's previous result; the first compares with the session's saved totals.
+      // `modelUsage` at this process's previous result: a process reports its own running totals, which a resumed
+      // session does not carry over (died_while_idle's second process reports a first turn's cache read again).
       let totals: Record<string, UsageTotals> | undefined
 
       const arrival = (agentId: string) => {
@@ -260,14 +264,12 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           lastEntry = seen
           if (at === undefined || awaitingReplay.size > 0 || resetting) return undefined
           const doc = yield* tx.doc(ClaudeSessionDoc, conversationId)
-          const kept = doc.current?.session === session ? doc.current.totals : undefined
           doc.current = {
             conversation: Number(conversationId),
             provider,
             session,
             at,
             seen: Number(seen),
-            ...(kept === undefined ? {} : { totals: kept }),
           }
           return { status: "running", checkpoint: { phase: "converse", at } }
         })
@@ -654,8 +656,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
       const spent = (modelUsage: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; costUSD: number }>) =>
         commit((tx) =>
           Effect.gen(function* () {
-            const doc = yield* tx.doc(ClaudeSessionDoc, conversationId)
-            const before = totals ?? (doc.current?.session === session ? doc.current.totals : undefined) ?? {}
+            const before = totals ?? {}
             const now: Record<string, UsageTotals> = {}
             for (const [model, usage] of Object.entries(modelUsage)) {
               now[model] = {
@@ -668,7 +669,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
             }
             for (const [model, total] of Object.entries(now)) {
               const previous = before[model]
-              // A total that went down started over, as after `/clear` or in a process that does not continue them.
+              // A total that went down started over, as after `/clear`.
               const continues =
                 previous !== undefined &&
                 (["input", "output", "cacheRead", "cacheWrite", "cost"] as const).every(
@@ -690,7 +691,6 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
               }
             }
             totals = now
-            if (doc.current?.session === session) doc.current.totals = now
             return undefined
           }),
         )

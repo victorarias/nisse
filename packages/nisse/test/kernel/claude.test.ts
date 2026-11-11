@@ -2,7 +2,7 @@
 // Claude Code played by the fake `claude` replaying a recorded process per spawn.
 import { expect, test } from "bun:test"
 import { FakeClaude } from "../support/claude.ts"
-import type { EntryRecord } from "@nisse/wire"
+import type { AuthState, EntryRecord, ProviderSnapshot } from "@nisse/wire"
 import { RawClient } from "../support/raw.ts"
 import {
   runEnds,
@@ -405,3 +405,32 @@ test("subagent-interrupt: stopping a run ends the Claude subagents working under
   expect(runEnds(session.view.seen())).toEqual([expect.objectContaining({ outcome: "interrupted" })])
   expect(runEnds(child.view.seen())).toEqual([expect.objectContaining({ outcome: "interrupted" })])
 })
+
+test("claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account", async () => {
+  using claude = new FakeClaude("terminal_sign_in")
+  await using server = await runningKernelServer([], { claude: claude.options })
+  const client = await RawClient.connect(server.home.socket)
+  const auth = client.watch<AuthState>("auth/watch")
+  const before = ((await client.call("providers/list", {})).result as Array<ProviderSnapshot>).find(
+    (provider) => provider.id === "claude",
+  )!
+
+  const started = (await client.call("auth/start", { provider: "claude" })).result as AuthState
+  await auth.until((states) => states.some((state) => state.phase === "waiting"))
+  const waiting = auth.items.find((state) => state.phase === "waiting")!
+  await client.call("auth/respond", {
+    provider: "claude",
+    flow: started.flow,
+    response: { _tag: "terminal_exited", success: true },
+  })
+  await auth.until((states) => states.at(-1)?.phase === "succeeded", 30_000)
+  client.close()
+
+  expect(before.health).toMatchObject({ status: "signed_out", message: "not signed in to Claude Code" })
+  expect(waiting.interaction).toEqual({
+    _tag: "terminal",
+    command: [claude.options.executable!, "auth", "login"],
+    env: claude.options.env!,
+  })
+  expect(auth.items.at(-1)?.message).toBe("person@example.com · Claude Max")
+}, 40_000)

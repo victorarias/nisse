@@ -8,6 +8,7 @@ import { Effect, Scope } from "effect"
 import { type EntryRecord, openSqliteStorage } from "@nisse/kernel"
 import { fromProviders } from "@nisse/models"
 import {
+  AssistantEntry,
   approveAutomatically,
   type Conversation,
   createRegistry,
@@ -17,6 +18,8 @@ import {
   hook,
   openHarness,
   ToolTask,
+  UsageDoc,
+  UserEntry,
 } from "@nisse/harness"
 import { claudeRunTasks } from "../src/index.ts"
 
@@ -307,4 +310,108 @@ test("claude-resume: a fork of a Claude conversation forks Claude Code's session
   expect(second).toContain(`--resume=${session}`)
   expect(second).toContain("--fork-session")
   expect(second!.find((arg) => arg.startsWith("--session-id"))).not.toBe(`--session-id=${session}`)
+})
+
+test("claude-resume: what each run spent is added to the conversation's usage, once", async () => {
+  const claude = fake("died_while_idle")
+  const usage = await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [])
+      const conversation = yield* start(harness, cwd)
+      yield* ask(conversation, "Remember the word PLUM. Reply with exactly: noted")
+      yield* ask(conversation, "Which word did I ask you to remember? Reply with that word only.")
+      return (yield* harness.session.snapshot(UsageDoc, conversation.id))!.models
+    }),
+  )
+  // Each process reports its own totals at its result: the two recorded results, added up.
+  expect(usage["claude/claude-haiku-5-5"]).toMatchObject({
+    input: 4,
+    output: 10,
+    cacheRead: 38_052,
+    cacheWrite: 12_626,
+    totalTokens: 50_692,
+  })
+  expect(usage["claude/claude-haiku-5-5"]!.cost.total).toBeCloseTo(0.00291112, 10)
+})
+
+test("claude-model: after a switch to another Claude model, the next run resumes the same session on it", async () => {
+  const claude = fake("switch_model")
+  await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [])
+      const conversation = yield* start(harness, cwd)
+      yield* conversation.configure({ model: { provider: "claude", modelId: "haiku" } })
+      yield* ask(conversation, "Reply with exactly: one")
+      yield* conversation.configure({ model: { provider: "claude", modelId: "sonnet" }, thinkingLevel: "low" })
+      yield* ask(conversation, "What were your two previous replies? Reply with just them, separated by a comma.")
+    }),
+  )
+  const [first, second] = spawns(claude)
+  const session = first!.find((arg) => arg.startsWith("--session-id"))!.split("=")[1]
+  expect(first).toContain("--model=haiku")
+  expect(second).toEqual(expect.arrayContaining([`--resume=${session}`, "--model=sonnet", "--effort=low"]))
+})
+
+/** Commits a turn another provider answered: the prompt, and its echo. */
+const scripted = (conversation: Conversation, text: string) =>
+  conversation.commit((tx) =>
+    Effect.gen(function* () {
+      yield* tx.appendEntry(UserEntry, conversation.id, { model: [{ role: "user", content: text, timestamp: 0 }] })
+      const answer = {
+        role: "assistant",
+        content: [{ type: "text", text: `You said: ${text}` }],
+        api: "script",
+        provider: "script",
+        model: "script",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "stop",
+        timestamp: 0,
+      }
+      yield* tx.appendEntry(AssistantEntry, conversation.id, { model: [answer as never] })
+    }),
+  )
+
+test("claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session", async () => {
+  const claude = fake("handoff")
+  const question = "Which word did I ask you to remember? Reply with just the word."
+  const last = "What was the last thing I said before this message? Reply with just that word."
+  await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [])
+      const conversation = yield* harness.createConversation({
+        ownership: { kind: "ownerless" },
+        agent: { model: { provider: "script", modelId: "script" }, cwd },
+      })
+      yield* scripted(conversation, "Remember the word lantern.")
+      yield* scripted(conversation, "x".repeat(70_000))
+      yield* scripted(conversation, "Nothing else for now.")
+      yield* conversation.configure({ model: { provider: "claude", modelId: "haiku" } })
+      yield* ask(conversation, question)
+      yield* conversation.configure({ model: { provider: "script", modelId: "script" } })
+      yield* scripted(conversation, "plum")
+      yield* conversation.configure({ model: { provider: "claude", modelId: "haiku" } })
+      yield* ask(conversation, last)
+    }),
+  )
+  const told = (spawn: number) =>
+    claude
+      .log()
+      .filter((entry) => entry.received?.type === "user" && entry.spawn === spawn)
+      .map((entry) => entry.received.message.content.map((block: { text: string }) => block.text))
+  const opening = [
+    "This Claude Code session joins a conversation it does not hold. This is the conversation so far; continue it.",
+    "Remember the word lantern.",
+    "(3 entries left out here)",
+    "Nothing else for now.",
+    "You answered: You said: Nothing else for now.",
+  ]
+  expect(told(0)).toEqual([[...opening, question]])
+  expect(told(1)).toEqual([
+    [...opening, question, "You answered: lantern", "plum", "You answered: You said: plum", last],
+  ])
+  const [first, second] = spawns(claude)
+  expect(second!.some((arg) => arg.startsWith("--resume"))).toBe(false)
+  expect(second!.find((arg) => arg.startsWith("--session-id"))).not.toBe(
+    first!.find((arg) => arg.startsWith("--session-id")),
+  )
 })

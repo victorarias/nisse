@@ -14,15 +14,7 @@ export type ClaudeSession = {
   at: string
   /** The newest entry Claude Code has been shown through `at`. */
   seen: number
-  /**
-   * Claude Code's running usage totals by model at the session's last result: a process resuming the session
-   * continues from its saved totals, so the next result's spend is what it adds to these.
-   */
-  totals?: Record<string, UsageTotals>
 }
-
-/** One model's running totals as Claude Code reports them (`modelUsage`). */
-export type UsageTotals = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }
 
 export const CLAUDE_SESSION_KIND = "claude.session"
 
