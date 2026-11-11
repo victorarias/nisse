@@ -206,61 +206,45 @@ describe("Session", () => {
       }),
     ))
 
-  test("commit-atomic: a waiter doing CPU work after its commit does not delay the next commit on the line", () =>
+  test("commit-atomic: a waiter's code after its commit runs only once the next commit on the line is published", () =>
     run(
       Effect.gen(function* () {
         const control = yield* testStorage(databasePath())
-        // No cooperative yields in this test, so only a wake run inside the line could put the waiter's work between
-        // the two commits.
-        const session = yield* openSession(control.storage).pipe(
-          Effect.provideService(Scheduler.MaxOpsBeforeYield, Number.MAX_SAFE_INTEGER),
-        )
+        const session = yield* openSession(control.storage)
         const conversationId = yield* newConversation(session)
-        const publishedAt = new Map<string, number>()
+        const events: string[] = []
         session.observeCommits({
           advance: (publication) => {
             for (const change of publication.changes) {
-              if (change.type === "entry")
-                publishedAt.set((change.value.data as { text: string }).text, performance.now())
+              if (change.type === "entry") events.push(`published ${(change.value.data as { text: string }).text}`)
             }
           },
           end: () => {},
         })
 
-        const workMs = 200
-        const latencies: number[] = []
-        for (let round = 0; round < 5; round++) {
-          control.holding = true
-          // The waiter commits, then works on the CPU as soon as it resumes.
-          const waiter = yield* Effect.forkChild(
-            Effect.tap(note(session, conversationId, `waiter ${round}`), () =>
-              Effect.sync(() => {
-                const until = performance.now() + workMs
-                while (performance.now() < until) {
-                  // Busy: this is the work a wake inside the line would run before the next job.
-                }
-              }),
-            ),
-          )
-          yield* Queue.take(control.arrived)
-          // The next commit is admitted while the waiter's commit is in storage.
-          const ready = yield* Queue.unbounded<number>()
-          const next = yield* Effect.forkChild(
-            Effect.gen(function* () {
-              yield* Queue.offer(ready, performance.now())
-              return yield* note(session, conversationId, `next ${round}`)
-            }),
-          )
-          const admittedAt = yield* Queue.take(ready)
-          control.holding = false
-          yield* Queue.offer(control.releases, undefined)
-          yield* Fiber.join(waiter)
-          yield* Fiber.join(next)
-          latencies.push(publishedAt.get(`next ${round}`)! - admittedAt)
-        }
-        // The next commit is published right after the waiter's, before the waiter's work runs.
-        expect(Math.max(...latencies)).toBeLessThan(workMs / 2)
-      }),
+        control.holding = true
+        // Whatever the waiter does once it resumes, such as CPU work, runs here.
+        const waiter = yield* Effect.forkChild(
+          Effect.tap(note(session, conversationId, "waiter"), () => Effect.sync(() => events.push("waiter resumed"))),
+        )
+        yield* Queue.take(control.arrived)
+        // The next commit is admitted while the waiter's commit is in storage.
+        const admitted = yield* Queue.unbounded<void>()
+        const next = yield* Effect.forkChild(
+          Effect.andThen(Queue.offer(admitted, undefined), note(session, conversationId, "next")),
+        )
+        yield* Queue.take(admitted)
+        control.holding = false
+        yield* Queue.offer(control.releases, undefined)
+        yield* Fiber.join(waiter)
+        yield* Fiber.join(next)
+
+        // A wake run inside the line would put the waiter's code, and all the time it takes, before the next commit.
+        expect(events).toEqual(["published waiter", "published next", "waiter resumed"])
+      }).pipe(
+        // No cooperative yields, so the order shows only how the line wakes its waiters.
+        Effect.provideService(Scheduler.MaxOpsBeforeYield, Number.MAX_SAFE_INTEGER),
+      ),
     ))
 
   test("commit-read-after-write: a commit admitted while another is in storage starts only once that one is stored, and reads it", () =>
