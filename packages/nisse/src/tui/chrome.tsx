@@ -13,8 +13,8 @@ import type {
   Status,
 } from "@nisse/protocol"
 import { Deferred, Effect, Fiber, type Scope, Stream } from "effect"
-import type { JSX } from "solid-js"
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
+import type { Accessor, JSX } from "solid-js"
+import { createContext, createEffect, createSignal, For, onCleanup, Show, useContext } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { runTerminal } from "../login.ts"
 import { VERSION } from "../version.ts"
@@ -76,9 +76,15 @@ export interface ConversationActions {
   readonly quit: () => void
 }
 
+/**
+ * The terminal's width, from the one resize subscription the screen holds: a subscription per speaker bar would pass
+ * Node's limit of ten listeners in a long transcript, and its warning would print over the screen.
+ */
+const Width = createContext<Accessor<number>>(() => 0)
+
 export const Tag = (props: { label: string; color: string }) => {
-  const dimensions = useTerminalDimensions()
-  const rule = () => "─".repeat(Math.max(0, dimensions().width - props.label.length - 6))
+  const width = useContext(Width)
+  const rule = () => "─".repeat(Math.max(0, width() - props.label.length - 6))
   return (
     <box flexDirection="row" height={1}>
       <text fg={color.background} bg={props.color}>
@@ -246,37 +252,40 @@ export const Shell = (props: {
     else if (key.name === "tab" && props.screen.status !== "idle") setSteer((on) => !on)
     else if (key.name === "escape") props.actions.interrupt()
   })
+  const dimensions = useTerminalDimensions()
   return (
-    <box flexDirection="column" flexGrow={1} backgroundColor={color.background}>
-      <Header screen={props.screen} />
-      <Show
-        when={setup.view.picker}
-        fallback={
-          <Show when={!props.screen.empty} fallback={<Splash providers={setup.view.providers} />}>
-            {props.transcript()}
-          </Show>
-        }
-      >
-        {(picker) => <ModelPicker picker={picker()} />}
-      </Show>
-      <Show when={setup.view.signIn}>{(state) => <SignInPanel state={state()} />}</Show>
-      <For each={setup.view.brokenExtensions}>
-        {(extension) => (
-          <text fg={color.yellow} marginLeft={1}>
-            {`✗ extension ${extension.name} failed to load: ${extension.message ?? "no reason given"}`}
-          </text>
-        )}
-      </For>
-      <Prompt
-        screen={props.screen}
-        setup={setup.view}
-        submit={(text) => props.actions.submit(text, steer() && props.screen.status !== "idle")}
-        openPicker={() => setup.openPicker(props.screen.model)}
-        pasteCallback={setup.pasteCallback}
-        steer={steer()}
-      />
-      <StatusBar screen={props.screen} />
-    </box>
+    <Width.Provider value={() => dimensions().width}>
+      <box flexDirection="column" flexGrow={1} backgroundColor={color.background}>
+        <Header screen={props.screen} />
+        <Show
+          when={setup.view.picker}
+          fallback={
+            <Show when={!props.screen.empty} fallback={<Splash providers={setup.view.providers} />}>
+              {props.transcript()}
+            </Show>
+          }
+        >
+          {(picker) => <ModelPicker picker={picker()} />}
+        </Show>
+        <Show when={setup.view.signIn}>{(state) => <SignInPanel state={state()} />}</Show>
+        <For each={setup.view.brokenExtensions}>
+          {(extension) => (
+            <text fg={color.yellow} marginLeft={1}>
+              {`✗ extension ${extension.name} failed to load: ${extension.message ?? "no reason given"}`}
+            </text>
+          )}
+        </For>
+        <Prompt
+          screen={props.screen}
+          setup={setup.view}
+          submit={(text) => props.actions.submit(text, steer() && props.screen.status !== "idle")}
+          openPicker={() => setup.openPicker(props.screen.model)}
+          pasteCallback={setup.pasteCallback}
+          steer={steer()}
+        />
+        <StatusBar screen={props.screen} />
+      </box>
+    </Width.Provider>
   )
 }
 

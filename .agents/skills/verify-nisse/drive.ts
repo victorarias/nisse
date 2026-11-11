@@ -666,7 +666,6 @@ const commands: Record<string, () => Promise<void> | void> = {
     args.splice(0, 1)
     switch (sub) {
       case "start": {
-        notOnKernel("The TUI", "tui-views")
         if (tuiOpen()) fail("a TUI is already open in this run: tui stop first")
         openWindow("tui", [MAIN, ...rest])
         record(`tui start ${rest.join(" ")}`)

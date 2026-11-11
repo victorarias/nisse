@@ -488,6 +488,8 @@ test("answer-scroll, tui-load-earlier: a conversation longer than the window scr
   expect(session.screen()).not.toContain("answer 1\n")
   const top = await scrollUpUntil(session, (screen) => /^ +prompt 1 *$/m.test(screen))
   expect(top).not.toContain("earlier messages")
+  // Eighty speaker bars, and no warning about listeners printed over the screen.
+  expect(session.output()).not.toContain("MaxListeners")
   expect(top).toMatch(/^ +answer 1 *$/m)
 
   // The server goes away. A prompt typed now waits for the server the TUI brings back, where the TUI watches again
