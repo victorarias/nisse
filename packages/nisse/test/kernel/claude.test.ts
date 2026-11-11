@@ -435,7 +435,7 @@ test("claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a t
   expect(auth.items.at(-1)?.message).toBe("person@example.com · Claude Max")
 }, 40_000)
 
-test("claude-session-gone: a resume at a position Claude Code compacted away starts a fresh session told the conversation", async () => {
+test("claude-compact, claude-session-gone: a resume at a position Claude Code compacted away starts a fresh session told the conversation", async () => {
   using claude = new FakeClaude("compaction_resume")
   await using session = await conversationWith(claude, { approvals: "auto" })
   await session.submit("Remember the word PLUM. Reply with exactly: noted")

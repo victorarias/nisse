@@ -10,7 +10,9 @@ provider, nisse retells the conversation to a new Claude Code session. Claude
 Code gets the conversation's model and effort, and a switch between Claude's
 models goes on in the same session. Nisse asks Claude Code how it is signed in
 and which models it offers without asking Claude anything. A Claude Code that
-cannot sign in ends the run failed with Claude Code's own message.
+cannot sign in ends the run failed with Claude Code's own message. When
+Claude Code compacts its own context, nisse keeps Claude's summary as a
+compaction; `/clear` starts a new context in nisse's transcript too.
 
 ## Sub-features
 
@@ -42,6 +44,13 @@ cannot sign in ends the run failed with Claude Code's own message.
   Code session: the first prompt, then as many of the latest entries as fit in
   about 64,000 characters, with `(N entries left out here)` between them.
 - `claude-sign-in` runs `claude auth login`, in [Sign-in](./sign-in.md).
+- `claude-compact` keeps Claude Code's own compaction, from `/compact` or its
+  own threshold, as a compaction entry holding Claude's summary. A later run
+  whose position the compaction dropped gets a fresh session told the
+  conversation, as `claude-session-gone` does.
+- `claude-clear` keeps Claude Code's `/clear` as a reset: a new context in the
+  transcript, and the next run starts a Claude Code session without the old
+  one.
 
 ## How to get to it
 
@@ -213,10 +222,35 @@ Preconditions:
 
 ## Contexts
 
+- **On the kernel.** Under `NISSE_KERNEL=1` a run is the `claude.run` task,
+  one Claude Code process per run, and its position in Claude Code's session
+  is the `claude.session` document. In a run made with
+  `drive.ts r up --kernel --fake-claude read`, run `drive.ts r serve`,
+  `drive.ts r rpc conversation/start '{"cwd": "<checkout>", "provider": "claude"}'`
+  and
+  `drive.ts r watch <id> --submit 'Use the Read tool to read notes.txt, then reply with where the gnome lives, in three words.' --until run_end --save kernel-read`:
+  `pi.user`, a `pi.assistant` calling `Read`, its `pi.tool-result`, the
+  answer `Under the floor.` and a `nisse.run_end` `answered`; `docs` holds
+  `pi.usage` with the run's spend under `claude/claude-haiku-5-5`. A second
+  `watch <id> --save reopen` from a new connection shows the same entries. The other journeys
+  above drive the same way with their fixtures, except those that need
+  `select_model`, `conversation/list` or `exec`, which reach the kernel with
+  `wire-complete`.
 - **Inside an agent.** Start the run's server without the session's `CLAUDE`, `ANTHROPIC` and `CCR` variables.
 - **Server restart.** The run resumes Claude Code's session where Nisse's transcript ends.
 
 ## Tests
+
+Provider on the kernel, `packages/nisse/test/kernel/claude.test.ts`: every
+journey the kernel wire reaches, one test per recording, including
+`compaction_resume` (`claude-compact, claude-session-gone`) and `clear`
+(`claude-clear`).
+
+Package, `packages/claude/test/claude.test.ts`: `claude.run` through a
+Harness whose registry holds extensions, for the journeys the kernel wire
+cannot reach yet: extension tools and hooks (`claude-extensions`,
+`execute-after` with `read_after_hooked`), steers between parallel results,
+forks, usage, model switches and the handoff from another provider.
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
@@ -231,6 +265,12 @@ Provider, `packages/nisse/test/claude.test.ts`:
 
 ## Gotchas
 
+- A new recording comes from a real Claude Code through
+  `packages/nisse/test/support/record-claude`: give it to a server as the
+  Claude executable with `RECORD_CLAUDE_TO=fixtures/claude/<name>.ndjson`.
+  It leaves out the machine's own skills, commands and hooks, but what Claude
+  writes may quote your settings or CLAUDE.md: read the file before
+  committing it.
 - The fake does not run Claude Code's tools: no `made.txt` appears, and a
   call's result is the recorded one. Prove nisse's side by the screen, the
   commits and the log.
