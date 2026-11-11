@@ -1,8 +1,24 @@
 // The `nisse.run_end` entry (D15): written in the commit that ends a run, whatever ended it, so a client reads how
 // every run ended from the transcript alone. It names the answer's entry rather than copying its text: the commit has
-// written before the run ends, and a commit reads tables only before its first write.
-import type { EndedRun, RunFailureReason } from "@nisse/harness"
-import { defineDoc, type EntryId, type Tx } from "@nisse/kernel"
+// written before the run ends, and a commit reads tables only before its first write. The same commit applies a model
+// a person switched to while the run worked, so a run keeps the model it started on.
+import {
+  type AgentState,
+  configure,
+  type ModelRef,
+  type EndedRun,
+  LiveDoc,
+  type RunFailureReason,
+} from "@nisse/harness"
+import {
+  type ConversationDocToken,
+  type ConversationId,
+  defineDoc,
+  type DocError,
+  type EntryId,
+  type JsonObject,
+  type Tx,
+} from "@nisse/kernel"
 import { RUN_END_KIND, type Outcome, type RunEnd } from "@nisse/wire"
 import { Effect } from "effect"
 
@@ -35,19 +51,52 @@ export const LastRunEndDoc = defineDoc<{ end?: { id: EntryId; data: RunEnd } }>(
   checkpointWhen: () => true,
 })
 
-export const writeRunEnd = (tx: Tx, run: EndedRun) =>
+/** A model and effort a person switched to; `null` effort clears it. */
+export type ModelSwitch = { model: ModelRef; thinkingLevel: NonNullable<AgentState["thinkingLevel"]> | null }
+
+/** A model switch made while a run worked, applied when that run ends. */
+const PendingModelDoc = defineDoc<{ change?: ModelSwitch }>({
+  kind: "nisse.pending_model",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({}),
+  checkpointWhen: () => true,
+})
+
+// A document access refuses a request only when this code got it wrong.
+const orBug = <A>(effect: Effect.Effect<A, DocError>) => Effect.catchTag(effect, "StorageRequestError", Effect.die)
+const doc = <T extends JsonObject>(tx: Tx, token: ConversationDocToken<T>, id: ConversationId) =>
+  orBug(tx.doc(token, id))
+
+/** Switches the conversation's model now, or when its run ends if one works. */
+export const switchModel = (tx: Tx, id: ConversationId, change: ModelSwitch) =>
   Effect.gen(function* () {
-    const { end } = run
-    let data: RunEnd
-    if (end.status === "done") {
-      data = { outcome: "answered", answer: end.answer }
-    } else if (run.answered) {
-      data = { outcome: "answered" }
-    } else {
-      data = { outcome: OUTCOMES[end.reason], message: describe(end.reason, end.detail) }
-    }
-    // Read before the entry is written, while the commit may still read; a refusal is a bug here.
-    const last = yield* Effect.catchTag(tx.doc(LastRunEndDoc, run.conversationId), "StorageRequestError", Effect.die)
-    const entry = yield* tx.appendEntry(run.conversationId, { kind: RUN_END_KIND, data })
-    last.end = { id: entry.id, data }
+    const live = yield* doc(tx, LiveDoc, id)
+    if (live.run === undefined) return yield* orBug(configure(tx, id, change))
+    ;(yield* doc(tx, PendingModelDoc, id)).change = change
   })
+
+/** Ends the conversation's run with `data`, in the commit that ends it. */
+export const endRun = (tx: Tx, id: ConversationId, data: RunEnd) =>
+  Effect.gen(function* () {
+    const pending = yield* doc(tx, PendingModelDoc, id)
+    if (pending.change !== undefined) {
+      yield* orBug(configure(tx, id, pending.change))
+      delete pending.change
+    }
+    const entry = yield* tx.appendEntry(id, { kind: RUN_END_KIND, data })
+    ;(yield* doc(tx, LastRunEndDoc, id)).end = { id: entry.id, data }
+  })
+
+export const writeRunEnd = (tx: Tx, run: EndedRun) => {
+  const { end } = run
+  const data: RunEnd =
+    end.status === "done"
+      ? { outcome: "answered", answer: end.answer }
+      : run.answered
+        ? { outcome: "answered" }
+        : { outcome: OUTCOMES[end.reason], message: describe(end.reason, end.detail) }
+  return endRun(tx, run.conversationId, data)
+}

@@ -1467,6 +1467,32 @@ test("model-switch, model-switch-provider: switching a conversation's model is r
   client.close()
 })
 
+test("model-switch: a switch made while a run works is recorded at once and answers from the next run, not mid-run", async () => {
+  await using server = await runningKernelServer([...ECHO, { text: "next" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "check it")
+  const approval = await waitingApproval(view)
+  const selection = { provider: "script", model: "script-code-mode" }
+  expect((await client.call("conversation/select_model", { conversation, author: "bo", selection })).error).toBe(
+    undefined,
+  )
+  await view.until((current) => current.seen().some((entry) => entry.kind === "nisse.model"))
+  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await view.until(settled(1))
+  await submit(client, conversation, "again")
+  await view.until(settled(2))
+  const answers = view.seen().filter((entry) => entry.kind === "pi.assistant")
+  expect(answers.map((entry) => (entry.model![0] as { model: string }).model)).toEqual([
+    "script",
+    "script",
+    "script-code-mode",
+  ])
+  expect((await list(client))[0]!.model).toEqual(selection)
+  client.close()
+})
+
 test("entries-rpc: a client reads a long transcript a page at a time, newest first or in order from an entry", async () => {
   await using server = await runningKernelServer([{ text: "a" }, { text: "b" }, { text: "c" }])
   const client = await RawClient.connect(server.home.socket)

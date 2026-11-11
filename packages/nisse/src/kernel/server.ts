@@ -6,7 +6,6 @@ import { LocalExecutionEnv } from "@nisse/env/local"
 import {
   answerApproval,
   approveAutomatically,
-  configure,
   type Conversation,
   type ConversationView,
   type ConversationWindow,
@@ -30,7 +29,6 @@ import {
   TakesNoInput,
   UnknownProvider,
   type EntryRecord as WireEntry,
-  RUN_END_KIND,
   USER_KIND,
   type View,
   type ViewItem,
@@ -49,7 +47,7 @@ import { VERSION } from "../version.ts"
 import { chosenNumber, ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
 import { agentModel, KernelProviders, LastModelDoc, selectionOf } from "./providers.ts"
 import { countStops, restartLimitMessage } from "./restarts.ts"
-import { writeRunEnd } from "./run-end.ts"
+import { endRun, switchModel, writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
 import { codeModeTools, NisseTools } from "./tools.ts"
 import { agentTools, interruptTree } from "./agents.ts"
@@ -109,12 +107,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           const stops = stoppedTooOften.get(run.conversationId)
           stoppedTooOften.delete(run.conversationId)
           if (stops === undefined || run.answered || run.end.status === "done") return writeRunEnd(tx, run)
-          return Effect.asVoid(
-            tx.appendEntry(run.conversationId, {
-              kind: RUN_END_KIND,
-              data: { outcome: "restart_limit", message: restartLimitMessage(stops) },
-            }),
-          )
+          return endRun(tx, run.conversationId, { outcome: "restart_limit", message: restartLimitMessage(stops) })
         }
         const harness = yield* Effect.acquireRelease(
           Effect.flatMap(openSqliteStorage(home.kernel), (storage) =>
@@ -343,7 +336,7 @@ const Handlers = KernelRpcs.toLayer(
           yield* Effect.orDie(
             conversation.commit((tx) =>
               Effect.gen(function* () {
-                yield* configure(tx, conversation.id, {
+                yield* switchModel(tx, conversation.id, {
                   model: model.model,
                   thinkingLevel: model.thinkingLevel ?? null,
                 })
