@@ -105,6 +105,8 @@ interface ChatGptPayload {
 export interface KernelExtensions {
   readonly list: Effect.Effect<ReadonlyArray<ExtensionInfo>>
   readonly reload: Effect.Effect<ReadonlyArray<ExtensionInfo>>
+  /** The tool names the loaded extensions' transforms removed, including names of tools nisse does not have. */
+  readonly removed: () => ReadonlyArray<string>
 }
 
 const refusalOf = (cause: Cause.Cause<unknown>) => {
@@ -151,6 +153,7 @@ export const openKernelExtensions = (
     serveSharedModules()
     let current: Loaded = { infos: [], hooks: { "execute.before": [], "execute.after": [] }, requests: [] }
     let scopes: ReadonlyArray<Scope.Closeable> = []
+    let removed: ReadonlyArray<string> = []
 
     const commit = (body: (tx: Tx) => Effect.Effect<void, unknown>) => Effect.ignore(harness().session.commit(body))
 
@@ -351,11 +354,13 @@ export const openKernelExtensions = (
       }
       const baseTools = base.flatMap((extension) => (extension.tools ?? []).map(view))
       let tools: ExtensionTool[] = baseTools
+      let removed = new Set<string>()
       const editor: ToolEditor = {
         list: () => tools,
         get: (name) => tools.find((tool) => tool.spec.name === name),
         add: (tool) => {
           tools = [...tools.filter((other) => other.spec.name !== tool.spec.name), tool]
+          removed.delete(tool.spec.name)
         },
         update: (name, edit) => {
           tools = tools.map((tool) => {
@@ -370,6 +375,7 @@ export const openKernelExtensions = (
         },
         remove: (name) => {
           tools = tools.filter((tool) => tool.spec.name !== name)
+          removed.add(name)
         },
       }
       // A transform that throws fails its extension, so none of that extension's edits may stay: run the others
@@ -379,6 +385,7 @@ export const openKernelExtensions = (
       while (again) {
         again = false
         tools = baseTools
+        removed = new Set()
         for (const transform of transforms) {
           if (failed.has(transform.extension)) continue
           try {
@@ -408,7 +415,7 @@ export const openKernelExtensions = (
       }
       const added = tools.filter((tool) => !origin.has(tool)).map(fromExtensionTool)
       registry.install(defineExtension({ name: HOST, tools: added, hooks }))
-      return failed
+      return { failed, removed: [...removed] }
     }
 
     const loadAll = Effect.gen(function* () {
@@ -464,7 +471,8 @@ export const openKernelExtensions = (
     const swap = Effect.gen(function* () {
       const { next, opened, transforms } = yield* loadAll
       const previous = scopes
-      const failed = install(transforms, next.infos)
+      const { failed, removed: nowRemoved } = install(transforms, next.infos)
+      removed = nowRemoved
       // A transform that threw fails its extension, whose hooks then end with it.
       for (const name of failed) yield* Scope.close(opened.get(name)!, Exit.void)
       for (const name of failed) opened.delete(name)
@@ -484,5 +492,6 @@ export const openKernelExtensions = (
     return {
       list: Effect.sync(() => current.infos),
       reload: lock.withPermits(1)(swap),
+      removed: () => removed,
     }
   })

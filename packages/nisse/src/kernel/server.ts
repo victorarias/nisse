@@ -107,10 +107,13 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const base = [nisseTools(images), agentTools(agents, typesOf), codeModeTools(sandbox)]
         for (const extension of base) registry.install(extension)
         registry.install(workspaceInstructions(home, instances, typesOf))
-        // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it.
+        // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it. The tools the
+        // extensions remove are known once they load, below; Claude Code is told not to use its own of them.
+        let removedTools: () => ReadonlyArray<string> = () => []
         const claudeRuns = claudeRunTasks({
           settings: (provider) => claude.get(provider),
           builtinExtensions: new Set(base.map((extension) => extension.name)),
+          withheldTools: () => removedTools(),
         })
         registry.install({ name: "claude", tasks: [claudeRuns.run, claudeRuns.subagent] })
         // A run ended for the limit was aborted; its run_end says why.
@@ -138,6 +141,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const status = yield* followTreeStatus(harness)
         // Loaded before anything runs, so the extensions guard the calls a restart resumes.
         const extensions = yield* openKernelExtensions(home, registry, base, () => harness)
+        removedTools = extensions.removed
         return { home, harness, stoppedTooOften, extensions, status, images, models }
       }).pipe(Effect.orDie),
     )
