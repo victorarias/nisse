@@ -524,8 +524,18 @@ test("subagent-spawn: a Claude subagent is listed under its parent with the call
   await session.view.until(settled(1))
   const child = await subagentOf(session)
   await child.view.until(childEnded)
-  const listed = (await session.client.call("conversation/list")).result as Array<{ id: string; lineage?: unknown }>
-  expect(listed.find((conversation) => conversation.id === child.id)!.lineage).toEqual({
+  const listed = (await session.client.call("conversation/list")).result as Array<{
+    id: string
+    cwd: string
+    model: unknown
+    lineage?: unknown
+  }>
+  const parent = listed.find((conversation) => conversation.id === session.conversation)!
+  const listedChild = listed.find((conversation) => conversation.id === child.id)!
+  // A Claude subagent works where its parent does, on its parent's model.
+  expect(listedChild.cwd).not.toBe("")
+  expect(listedChild).toMatchObject({ cwd: parent.cwd, model: parent.model })
+  expect(listedChild.lineage).toEqual({
     parent: session.conversation,
     root: session.conversation,
     call: AGENT_CALL,
