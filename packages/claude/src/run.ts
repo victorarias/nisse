@@ -5,6 +5,7 @@
 // conversation until Claude Code says the subagent ended.
 import {
   ApprovalsDoc,
+  applyBoundary,
   appendToolResult,
   convertPartial,
   cutOffCount,
@@ -18,6 +19,7 @@ import {
   prepareFailure,
   type RunCtx,
   type RunTasks,
+  startRun,
   salvageable,
   type TaskApi,
   TaskServices,
@@ -157,15 +159,27 @@ const finish = (ctx: RunCtx & { readonly runtime: Runtime }, ended: Ended) =>
     Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
       const { runtime, api } = ctx
       const answer = ended._tag === "answered" && !ended.turnLimit ? ended.answer : undefined
-      const boundary =
-        answer === undefined ? undefined : yield* prepareBoundary(tx, runtime.conversationId, api.settings())
-      const failure = answer === undefined ? yield* prepareFailure(tx, ctx) : undefined
+      const reset = ended._tag === "reset"
+      const ends = answer !== undefined || reset
+      const boundary = ends ? yield* prepareBoundary(tx, runtime.conversationId, api.settings()) : undefined
+      const failure = ends ? undefined : yield* prepareFailure(tx, ctx)
       const live = yield* tx.doc(LiveDoc, runtime.conversationId)
       yield* convertPartial(tx, live, runtime.conversationId)
       yield* expireApprovals(tx, runtime.conversationId, runtime.taskId)
       if (answer !== undefined) {
         yield* endAnswered(tx, ctx, live, boundary!, answer)
         return { status: "terminal", outcome: { status: "completed", result: { entryId: answer } } }
+      }
+      if (reset) {
+        // The queued reset cuts the run's context before an answer. The run ends before the boundary places it.
+        yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "reset" }, api.runOwner)
+        const { users, first } = yield* applyBoundary(tx, boundary!, "postTools", runtime.now())
+        if (users.length > 0) {
+          yield* startRun(tx, runtime.conversationId, live, { inputs: users, first }, api.runTasks, {
+            keepFailure: true,
+          })
+        }
+        return { status: "terminal", outcome: { status: "completed", result: {} } }
       }
       const [reason, detail] =
         ended._tag === "failed"

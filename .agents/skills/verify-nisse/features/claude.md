@@ -251,7 +251,9 @@ Package, `packages/claude/test/claude.test.ts`: `claude.run` through a
 Harness whose registry holds extensions, for the journeys the kernel wire
 cannot reach yet: extension tools and hooks, a subagent's included (`claude-extensions`,
 `execute-after` with `read_after_hooked`), steers between parallel results,
-forks, usage, model switches and the handoff from another provider.
+forks, usage, model switches, the handoff from another provider, a reset
+queued while Claude works (`claude-clear`) and a prompt's images
+(`image-input`).
 
 Provider, `packages/nisse/test/claude.test.ts`:
 

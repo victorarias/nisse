@@ -26,6 +26,7 @@ import {
   AssistantEntry,
   CompactionEntry,
   finishSlot,
+  hasQueuedReset,
   LiveDoc,
   type LiveState,
   prepareBoundary,
@@ -79,6 +80,8 @@ export type Ended =
   | { readonly _tag: "answered"; readonly answer: EntryId | undefined; readonly turnLimit: boolean }
   | { readonly _tag: "gone" }
   | { readonly _tag: "failed"; readonly message: string }
+  /** A reset was queued while the run worked: the run ends before it, and the next run starts in its context. */
+  | { readonly _tag: "reset" }
 
 export type ClaudeRunCheckpoint = { phase: "converse"; at?: string }
 
@@ -716,10 +719,18 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
       }
       send(opening)
 
-      /** Places the steers waiting in the inbox after a round of results, and hands them to Claude Code. */
+      /**
+       * Places the steers waiting in the inbox after a round of results, and hands them to Claude Code. A queued reset
+       * ends the run instead, as in nisse's own loop: the session Claude Code holds is the context the reset cuts.
+       */
+      let resetQueued = false
       const steer = commit((tx) =>
         Effect.gen(function* () {
           const boundary = yield* prepareBoundary(tx, conversationId, api.settings())
+          if (hasQueuedReset(boundary.inbox.items)) {
+            resetQueued = true
+            return undefined
+          }
           const prompts = new Map(
             boundary.inbox.items.flatMap((item) =>
               item.mode === "steer" ? [[item.id, promptOf(item.content as unknown)] as const] : [],
@@ -951,7 +962,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 )
               }
               if (anyResult && !bySubagent) yield* steer
-              return undefined
+              return resetQueued ? ({ _tag: "reset" } as const) : undefined
             }
             case "system": {
               if (message.subtype === "task_started" && message.tool_use_id && message.task_type === "local_agent") {

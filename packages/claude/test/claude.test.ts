@@ -2,7 +2,7 @@
 // host installs them, with Claude Code played by nisse's fake `claude` replaying a recorded process per spawn. These
 // cover what the kernel wire cannot reach yet: extension tools and hooks, and forks.
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Scope } from "effect"
 import { type EntryRecord, openSqliteStorage } from "@nisse/kernel"
@@ -17,6 +17,7 @@ import {
   type Harness,
   hook,
   openHarness,
+  ResetEntry,
   ToolTask,
   UsageDoc,
   UserEntry,
@@ -31,15 +32,17 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-/** A fake Claude Code playing `fixture`, and what it logged. */
-const fake = (fixture: string) => {
+/** A fake Claude Code playing the fixtures' processes one per spawn, in order, and what it logged. */
+const fake = (...fixtures: [string, ...string[]]) => {
   const dir = mkdtempSync("/tmp/nisse-claude-")
   dirs.push(dir)
+  const played = join(dir, "fixture.ndjson")
+  writeFileSync(played, fixtures.map((fixture) => readFileSync(join(FIXTURES, `${fixture}.ndjson`), "utf8")).join("\n"))
   return {
     dir,
     settings: {
       executable: FAKE,
-      env: { FAKE_CLAUDE_FIXTURE: join(FIXTURES, `${fixture}.ndjson`), FAKE_CLAUDE_DIR: dir },
+      env: { FAKE_CLAUDE_FIXTURE: played, FAKE_CLAUDE_DIR: dir },
     },
     log: (): Array<any> =>
       readFileSync(join(dir, "log.ndjson"), "utf8")
@@ -296,6 +299,59 @@ test("image-input: an image in a prompt reaches Claude Code beside its text", as
     { type: "text", text: "what is this" },
     { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
   ])
+})
+
+test("claude-clear: a reset queued while Claude works ends the run, and what was queued with it starts fresh", async () => {
+  const claude = fake("read", "text")
+  const queued: { conversation?: Conversation } = {}
+  const resets = defineExtension({
+    name: "resets",
+    hooks: [
+      hook(ToolTask, {
+        beforeTool: () =>
+          Effect.gen(function* () {
+            yield* queued.conversation!.submit({
+              type: "write",
+              entry: {
+                kind: ResetEntry.kind,
+                head: "self",
+                model: [{ role: "user", content: "start over", timestamp: 0 }],
+              },
+            })
+            yield* queued.conversation!.submit({ type: "input", content: "Reply with exactly: fixture text ok" })
+            return undefined
+          }),
+      }),
+    ],
+  })
+  const all = await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [resets])
+      const conversation = yield* start(harness, cwd)
+      queued.conversation = conversation
+      yield* ask(conversation, "read it")
+      return yield* entries(conversation)
+    }),
+  )
+  expect(all.map((entry) => entry.kind)).toEqual([
+    "pi.user",
+    "pi.assistant",
+    "pi.tool-result",
+    "pi.reset",
+    "pi.user",
+    "pi.assistant",
+  ])
+  // The next run starts a session of its own, told only what follows the reset.
+  const [first, next] = spawns(claude)
+  expect(next!.some((arg) => arg.startsWith("--resume"))).toBe(false)
+  expect(next!.find((arg) => arg.startsWith("--session-id"))).not.toBe(
+    first!.find((arg) => arg.startsWith("--session-id")),
+  )
+  const told = claude
+    .log()
+    .filter((entry) => entry.received?.type === "user" && entry.spawn === 1)
+    .map((entry) => entry.received.message.content.map((part: { text: string }) => part.text))
+  expect(told).toEqual([["start over", "Reply with exactly: fixture text ok"]])
 })
 
 test("claude-read: parallel calls of one response are each committed with the result Claude Code returned", async () => {
