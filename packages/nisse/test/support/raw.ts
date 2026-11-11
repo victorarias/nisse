@@ -128,3 +128,20 @@ export const bodies = (deliveries: ReadonlyArray<Delivery>) => entriesOf(deliver
 
 export const statusOf = (deliveries: ReadonlyArray<Delivery>) =>
   deliveries.findLast((delivery) => delivery.status)?.status
+
+/**
+ * Connects, asks `requests` times for `method`, far more answer than the socket buffers, and hangs up on the first
+ * bytes of the answer, so the server is still writing when the client goes. Resolves once the socket has closed.
+ */
+export const hangUpMidAnswer = async (path: string, method: string, params: unknown, requests = 8) => {
+  const socket = Net.connect(path)
+  await deadline(new Promise((resolve) => socket.once("connect", resolve)), DEADLINE, "connect")
+  const lines = Array.from({ length: requests }, (_, i) =>
+    JSON.stringify({ jsonrpc: "2.0", id: i + 1, method, params }),
+  )
+  socket.write(lines.join("\n") + "\n")
+  await deadline(new Promise((resolve) => socket.once("data", resolve)), DEADLINE, `${method} answer`)
+  const closed = new Promise((resolve) => socket.once("close", resolve))
+  socket.destroy()
+  await closed
+}

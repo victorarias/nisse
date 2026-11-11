@@ -3,7 +3,8 @@
 Every client speaks newline-delimited JSON-RPC 2.0 over the home's
 `nisse.sock`. A new client starts from the schema Nisse prints and says hello
 with `initialize`. A subscription whose client stops reading is ended so it can
-never slow the server.
+never slow the server, and a client that hangs up, even mid-answer, just
+leaves: the server logs no error for it.
 
 ## Sub-features
 
@@ -13,6 +14,9 @@ never slow the server.
   the field.
 - `wire-dropped` ends a subscription that falls 4096 commits behind with a
   `FellBehind` error; the connection stays open.
+- `wire-hangup` ends the connection of a client that hangs up while the
+  server is still writing to it the way a clean close does: no error in the
+  server's log, and other clients carry on.
 - `wire-unknown` says so when a client subscribes to a conversation that does
   not exist.
 
@@ -27,6 +31,11 @@ never slow the server.
 - Call `initialize` on the home's socket.
 - Build a client from `schema/nisse.schema.json`, or for a server under
   `NISSE_KERNEL=1` from `schema/nisse.kernel.schema.json`.
+
+### Triggers
+
+- A client closes its socket, as the TUI does when it quits, while the server
+  is still sending it something.
 
 ## Driving it with drive.ts
 
@@ -46,8 +55,16 @@ Preconditions:
 - **Malformed.** Run `drive.ts r rpc initialize '{"client": "verify"}'`: exit
   1, and an `error` with `"_tag": "Cause"` whose message says `Missing key` at
   `version`.
+- **Hang up.** In a run made with `--script` whose one step is a long `text`
+  with `"delayMs": 10` (400 words), run `drive.ts r serve`,
+  `drive.ts r tui start`, `drive.ts r tui wait READY`, `drive.ts r tui type go`,
+  `drive.ts r tui key Enter`, `drive.ts r tui wait word20`, then
+  `drive.ts r tui stop` while the answer still streams, and
+  `drive.ts r rpc server/stop --timeout 20000`. Save the server's window with
+  `tmux -L nisse-verify-r capture-pane -p -J -S - -t serve`: it holds only
+  `nisse 0.1.0 serving ...`, no `ERROR` line.
 - **Proof.** Keep the saved `nisse schema` output and both `rpc` answers from
-  `steps.log`.
+  `steps.log`, and the saved server window.
 
 ## Contexts
 
@@ -64,6 +81,7 @@ Preconditions:
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - wire-dropped: a client that stops reading is dropped while the others keep up
+- wire-hangup: a client that hangs up while the server still writes to it is not logged as an error
 - wire-unknown: watching a conversation that does not exist says so
 - wire-initialize: a client is answered with the server's version and the kernel protocol
 
@@ -74,12 +92,17 @@ Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NIS
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - wire-dropped: a client that stops reading is dropped while the others keep up
+- wire-hangup: a client that hangs up while the server still writes to it is not logged as an error
 - wire-unknown: subscribing to a conversation that does not exist says so
 
 ## Gotchas
 
 - `drive.ts` has no way to make a client stop reading, so `wire-dropped` is
   covered by its wire test only.
+- On macOS a TUI quitting mid-answer rarely makes the server write to a closed
+  socket: it reads the hang-up first, so the **Hang up** drive is clean even
+  without the fix. The `wire-hangup` tests make the server write after the
+  client is gone, and are the proof that tells the two apart.
 - `initialize` does not refuse a client that sends another protocol number; a
   client has to compare the answer itself. Nisse's own TUI and `exec` do not
   call `initialize`.

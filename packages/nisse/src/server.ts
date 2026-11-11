@@ -1,4 +1,3 @@
-import { BunSocketServer } from "@effect/platform-bun"
 import { NisseRpcs, PROTOCOL_VERSION } from "@nisse/protocol"
 import { Console, Duration, Effect, Layer, Stream } from "effect"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
@@ -8,6 +7,7 @@ import { Extensions } from "./extensions/index.ts"
 import type { Home } from "./home.ts"
 import { Lifetime } from "./lifetime.ts"
 import type { Providers } from "./provider.ts"
+import { homeSocketServer } from "./socket.ts"
 import { Setup } from "./setup.ts"
 import { Store } from "./store.ts"
 import { VERSION } from "./version.ts"
@@ -68,7 +68,7 @@ export const serverLayer = (home: Home, options: { readonly idleGrace: Duration.
     Layer.provide(Handlers),
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
-    Layer.provide(BunSocketServer.layer({ path: home.socket })),
+    Layer.provide(homeSocketServer(home.socket)),
     Layer.provideMerge(app),
   )
 }

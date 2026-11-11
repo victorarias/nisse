@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { homeWithExtensions } from "../support/extensions.ts"
-import { deadline, errorTag, RawClient } from "../support/raw.ts"
+import { deadline, errorTag, hangUpMidAnswer, RawClient } from "../support/raw.ts"
 import {
   runEnds,
   runningKernelServer,
@@ -147,6 +147,22 @@ test("wire-dropped: a client that stops reading is dropped while the others keep
   reader.close()
   stalled.close()
 }, 60_000)
+
+test("wire-hangup: a client that hangs up while the server still writes to it is not logged as an error", async () => {
+  await using server = await runningKernelServer([{ text: "long ".repeat(5000) }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await opened(view)
+  await submit(client, conversation, "go")
+  await view.until(settled(1))
+  await hangUpMidAnswer(server.home.socket, "conversation/watch", { conversation })
+  await submit(client, conversation, "still here")
+  await view.until(settled(2))
+  client.close()
+  await server.stop()
+  expect(server.logged.filter((entry) => entry.level === "Error")).toEqual([])
+})
 
 test("wire-unknown: watching a conversation that does not exist says so", async () => {
   await using server = await runningKernelServer()
