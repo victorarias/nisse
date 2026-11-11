@@ -1,14 +1,26 @@
-// What a ChatGPT conversation on the kernel is told of where it works: its directory, the `AGENTS.md` files and the
-// skills there, as a prompt section the harness renders before each request and commits when it changes. Claude Code
-// reads its own `CLAUDE.md` files and skills, and a script reads nothing, so their conversations get none.
+// What a ChatGPT conversation on the kernel is told of where it works: its directory, the `AGENTS.md` files, the
+// skills and the agent types there, as a prompt section the harness renders before each request and commits when it
+// changes. Claude Code reads its own `CLAUDE.md` files and skills, and a script reads nothing, so their conversations
+// get none.
 import { defineExtension } from "@nisse/harness"
 import type { ImageContent, ProviderInstance, TextContent } from "@nisse/models"
 import { Effect } from "effect"
 import type { Home } from "../home.ts"
 import type { Skill } from "@nisse/wire"
-import { agentsMdInstructions, attachedSkills, skillsFor, skillsInstructions } from "../workspace.ts"
+import { type AgentType, agentsMdInstructions, attachedSkills, skillsFor, skillsInstructions } from "../workspace.ts"
+import type { AgentTypes } from "./agents.ts"
 
-export const workspaceInstructions = (home: Home, instances: ReadonlyMap<string, ProviderInstance>) =>
+/** What ChatGPT is told of the agent types `spawn_agent` takes, or `""` when there are none. */
+const agentTypesInstructions = (types: ReadonlyArray<AgentType>) =>
+  types.length === 0
+    ? ""
+    : `\n# Agent types\n\nThe agent types \`spawn_agent\` takes as \`agent_type\`:\n${types.map((type) => `- ${type.name}: ${type.description}\n`).join("")}`
+
+export const workspaceInstructions = (
+  home: Home,
+  instances: ReadonlyMap<string, ProviderInstance>,
+  agentTypes: AgentTypes,
+) =>
   defineExtension({
     name: "nisse-workspace",
     sections: [
@@ -20,7 +32,7 @@ export const workspaceInstructions = (home: Home, instances: ReadonlyMap<string,
             const provider = agent.model?.provider
             if (provider === undefined || instances.get(provider)?.kind !== "openai") return undefined
             const cwd = agent.cwd ?? home.dir
-            const text = `The working directory is ${cwd}.\n${agentsMdInstructions(cwd, home.dir)}${skillsInstructions(cwd, home.dir, "read")}`
+            const text = `The working directory is ${cwd}.\n${agentsMdInstructions(cwd, home.dir)}${skillsInstructions(cwd, home.dir, "read")}${agentTypesInstructions(agentTypes(agent))}`
             return text.trimEnd()
           }),
       },
