@@ -65,7 +65,11 @@ const hookAnswers = (claude: Fake) =>
     .filter((output) => output !== undefined)
 
 /** A Harness running Claude conversations on `claude`, with `extensions` installed, closed with the scope. */
-const open = (claude: Fake, extensions: ReadonlyArray<Parameters<ReturnType<typeof createRegistry>["install"]>[0]>) =>
+const open = (
+  claude: Fake,
+  extensions: ReadonlyArray<Parameters<ReturnType<typeof createRegistry>["install"]>[0]>,
+  reports: Array<unknown> = [],
+) =>
   Effect.gen(function* () {
     // The fake writes the conversation's directory into its recorded paths as given; on macOS /tmp is /private/tmp.
     const dir = realpathSync(mkdtempSync("/tmp/nisse-harness-"))
@@ -76,7 +80,12 @@ const open = (claude: Fake, extensions: ReadonlyArray<Parameters<ReturnType<type
     for (const extension of extensions) registry.install(extension)
     const harness = yield* Effect.acquireRelease(
       Effect.flatMap(openSqliteStorage(join(dir, "kernel.sqlite")), (storage) =>
-        openHarness(storage, { registry, models: fromProviders([]), runTasks: tasks.runTasks }),
+        openHarness(storage, {
+          registry,
+          models: fromProviders([]),
+          runTasks: tasks.runTasks,
+          onReport: (report) => reports.push(report),
+        }),
       ),
       (harness) => Effect.ignore(harness.close),
     )
@@ -414,4 +423,54 @@ test("claude-switch: switching to Claude from another provider retells the conve
   expect(second!.find((arg) => arg.startsWith("--session-id"))).not.toBe(
     first!.find((arg) => arg.startsWith("--session-id")),
   )
+})
+
+test("execute-after: afterTool changes what Claude Code's Read returns, and says so when it can't change another tool's result", async () => {
+  const claude = fake("read_after_hooked")
+  const shout = defineExtension({
+    name: "shout",
+    hooks: [
+      hook(ToolTask, {
+        afterTool: (_call: unknown, result: { output: Array<{ type: "text"; text: string }> }) =>
+          Effect.succeed({ ...result, output: result.output.map((part) => ({ ...part, text: part.text.toUpperCase() })) }),
+      }),
+    ],
+  })
+  const reports: Array<unknown> = []
+  const all = await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [shout], reports)
+      const conversation = yield* start(harness, cwd)
+      yield* ask(
+        conversation,
+        "Use the Read tool to read notes.txt, then use the Bash tool to run `echo quiet`, then reply with exactly what each returned, separated by a comma.",
+      )
+      return yield* entries(conversation)
+    }),
+  )
+  expect(said(all).filter((line) => !line.startsWith("call"))).toEqual([
+    "user: Use the Read tool to read notes.txt, then use the Bash tool to run `echo quiet`, then reply with exactly what each returned, separated by a comma.",
+    "result Read: 1\tTHE GNOME LIVES UNDER THE FLOOR\n2\t",
+    "result Bash: quiet",
+    "assistant: THE GNOME LIVES UNDER THE FLOOR, quiet",
+  ])
+  const outputs = claude
+    .log()
+    .filter((entry) => entry.answered === "hook_callback")
+    .map((entry) => entry.received.response.response.hookSpecificOutput)
+    .filter((output) => output?.hookEventName === "PostToolUse")
+  expect(outputs).toEqual([
+    {
+      hookEventName: "PostToolUse",
+      updatedToolOutput: expect.objectContaining({
+        file: expect.objectContaining({ content: "THE GNOME LIVES UNDER THE FLOOR\n" }),
+      }),
+    },
+  ])
+  expect(reports).toEqual([
+    expect.objectContaining({
+      kind: "extension_error",
+      error: new Error("afterTool changed Bash's result, but Claude Code keeps its own result"),
+    }),
+  ])
 })

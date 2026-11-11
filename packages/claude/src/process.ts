@@ -33,6 +33,7 @@ import {
   recordUsage,
   type TaskApi,
   ToolTask,
+  type ToolExecutionResult,
   type ToolHookCall,
   type ToolHooks,
   type ToolTaskResult,
@@ -227,9 +228,12 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           .flatMap((extension) => (extension.tools ?? []).map((tool) => tool.name)),
       )
       const own = new Map(agent.tools.filter((tool) => !builtin.has(tool.name)).map((tool) => [tool.name, tool]))
-      const toolHooks = agentHooks(agent, ToolTask.definition.name)
-        .map(({ extension, handlers }) => ({ extension, handlers: handlers as Partial<ToolHooks> }))
-        .filter(({ handlers }) => typeof handlers.beforeTool === "function")
+      const allToolHooks = agentHooks(agent, ToolTask.definition.name).map(({ extension, handlers }) => ({
+        extension,
+        handlers: handlers as Partial<ToolHooks>,
+      }))
+      const toolHooks = allToolHooks.filter(({ handlers }) => typeof handlers.beforeTool === "function")
+      const afterHooks = allToolHooks.filter(({ handlers }) => typeof handlers.afterTool === "function")
 
       const abort = yield* Effect.acquireRelease(
         Effect.sync(() => {
@@ -498,6 +502,54 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
         )
       }
 
+      /**
+       * The `afterTool` chain over what one of Claude Code's own tools returned, each hook given the result before it. A
+       * failing hook is reported and leaves the result as it was.
+       */
+      const afterTool = (call: ToolHookCall, result: ToolExecutionResult) =>
+        Effect.gen(function* () {
+          let current = result
+          for (const { extension, handlers } of afterHooks) {
+            const changed = yield* Effect.exit(handlers.afterTool!(call, current, api.hookApi))
+            if (changed._tag === "Failure") {
+              if (runtime.signal.aborted || Cause.hasInterruptsOnly(changed.cause)) {
+                return yield* Effect.failCause(changed.cause)
+              }
+              api.report(Cause.squash(changed.cause), { kind: "extension", extension })
+            } else if (changed.value !== undefined) current = changed.value
+          }
+          return current
+        })
+
+      /**
+       * Hands what Claude Code's own tool returned to the extensions' `afterTool`. Claude Code takes a changed output
+       * only as the tool's own result object; for `Read`, whose object carries the file's text, nisse swaps that text
+       * (F15). Another tool's change cannot reach Claude, and is reported as such.
+       */
+      const postToolUse: HookCallback = async (input, _toolUseID, { signal }) => {
+        if (input.hook_event_name !== "PostToolUse" || input.tool_name.startsWith(OWN_TOOL)) return {}
+        const response = input.tool_response as { type?: string; file?: { content?: unknown } } | string | undefined
+        const read = typeof response === "object" && typeof response?.file?.content === "string"
+        const text = typeof response === "string" ? response : read ? (response!.file!.content as string) : JSON.stringify(response)
+        const call: ToolHookCall = {
+          type: "toolCall",
+          id: input.tool_use_id,
+          name: input.tool_name,
+          arguments: input.tool_input as ToolCall["arguments"],
+        }
+        const after = await run(afterTool(call, { output: [{ type: "text", text }] }), signal)
+        const changed = textOf(after.output ?? [])
+        if (changed === text) return {}
+        if (!read) {
+          api.report(new Error(`afterTool changed ${input.tool_name}'s result, but Claude Code keeps its own result`), {
+            kind: "extension",
+          })
+          return {}
+        }
+        const updated = { ...(response as object), file: { ...(response as { file: object }).file, content: changed } }
+        return { hookSpecificOutput: { hookEventName: "PostToolUse" as const, updatedToolOutput: updated } }
+      }
+
       /** Claude Code's summary of its own compaction, mirrored as a compaction entry that starts a new context. */
       const postCompact: HookCallback = async (input, _toolUseID, { signal }) => {
         if (input.hook_event_name !== "PostCompact") return {}
@@ -590,6 +642,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
       const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
         PreToolUse: [{ hooks: [preToolUse] }],
         PostCompact: [{ hooks: [postCompact] }],
+        ...(afterHooks.length === 0 ? {} : { PostToolUse: [{ hooks: [postToolUse] }] }),
       }
       const effort = agent.thinkingLevel === "off" || agent.thinkingLevel === undefined ? undefined : agent.thinkingLevel
       const messages = query({
