@@ -62,7 +62,9 @@ export class FakeOpenAi {
   onResponse: (body: unknown) => void = () => undefined
 
   constructor(port = 0) {
-    this.server = Bun.serve({ port, fetch: (request) => this.answer(request) })
+    // Listen on the address nisse dials. Bun.serve's default, every address ([::]:port), leaves 127.0.0.1:port free
+    // for another process to bind, and that listener then takes nisse's requests.
+    this.server = Bun.serve({ hostname: "127.0.0.1", port, fetch: (request) => this.answer(request) })
   }
 
   get base() {
