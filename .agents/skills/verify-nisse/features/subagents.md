@@ -59,7 +59,8 @@ and nisse commits each into a conversation of its own the same way.
   `agents/` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). A ChatGPT conversation
   is told them under `# Agent types` and names one as `spawn_agent`'s
   `agent_type`; an unknown one fails the call, naming the types there are.
-  The subagent's instructions end with `# You are a <name> agent` and the
+  A subagent offered no `spawn_agent` is told no types. The subagent's
+  instructions end with `# You are a <name> agent` and the
   type's body, its `lineage` has `agentType`, its card reads
   `⧉ <name> (<agent type>)`, and it runs on the type's `model` when ChatGPT
   lists it.
@@ -529,6 +530,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - subagent-spawn, subagent-model: conversation/list shows each subagent with its lineage, on its parent's model or the one its spawn_agent names, and an unlisted model fails the call
 - child-tools, subagent-message: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit
 - child-tools, subagent-agents: interrupting a subagent stops its turn and reports what it was doing
+- subagent-types: spawning an agent of a type nisse doesn't know is refused, naming it
 
 Kernel wire, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
 

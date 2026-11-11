@@ -468,6 +468,7 @@ test("subagent-types: an agent of a type gets its instructions and its model, an
     "# Agent types\n\nThe agent types `spawn_agent` takes as `agent_type`:\n- reviewer: Reviews diffs",
   )
   expect(child).toContain("# You are a reviewer agent\n\nBe strict about tests.")
+  expect(child).not.toContain("# Agent types")
   expect(JSON.parse(fake.responses()[1]!.body).input).toHaveLength(1)
   const listed = (await session.client.call("conversation/list")).result as Array<{ lineage?: unknown }>
   expect(listed.map((conversation) => conversation.lineage).filter(Boolean)).toEqual([
