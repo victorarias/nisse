@@ -244,11 +244,12 @@ Preconditions:
 Provider on the kernel, `packages/nisse/test/kernel/claude.test.ts`: every
 journey the kernel wire reaches, one test per recording, including
 `compaction_resume` (`claude-compact, claude-session-gone`) and `clear`
-(`claude-clear`).
+(`claude-clear`). `queue-run` chains `bash_allowed` and `text`: a prompt
+sent while Claude waits on an approval runs once Claude answers.
 
 Package, `packages/claude/test/claude.test.ts`: `claude.run` through a
 Harness whose registry holds extensions, for the journeys the kernel wire
-cannot reach yet: extension tools and hooks (`claude-extensions`,
+cannot reach yet: extension tools and hooks, a subagent's included (`claude-extensions`,
 `execute-after` with `read_after_hooked`), steers between parallel results,
 forks, usage, model switches and the handoff from another provider.
 

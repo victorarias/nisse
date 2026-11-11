@@ -140,20 +140,22 @@ const guard = defineExtension({
   ],
 })
 
+/** An extension tool that tells the time. */
+const clock = defineExtension({
+  name: "clock",
+  tools: [
+    defineTool({
+      name: "Clock",
+      description: "The time in a zone",
+      parameters: { type: "object", properties: { zone: { type: "string" } }, required: ["zone"] },
+      execute: (args: { zone: string }) =>
+        Effect.succeed({ output: [{ type: "text" as const, text: `noon in ${args.zone}` }] }),
+    }),
+  ],
+})
+
 test("claude-extensions: an extension's tool reaches Claude through nisse's own MCP server, without asking", async () => {
   const claude = fake("own_tool")
-  const clock = defineExtension({
-    name: "clock",
-    tools: [
-      defineTool({
-        name: "Clock",
-        description: "The time in a zone",
-        parameters: { type: "object", properties: { zone: { type: "string" } }, required: ["zone"] },
-        execute: (args: { zone: string }) =>
-          Effect.succeed({ output: [{ type: "text" as const, text: `noon in ${args.zone}` }] }),
-      }),
-    ],
-  })
   const all = await run(
     Effect.gen(function* () {
       const { harness, cwd } = yield* open(claude, [clock])
@@ -238,6 +240,28 @@ test("claude-extensions: an extension's hooks reach the calls of Claude's subage
   expect(hookAnswers(claude)).toEqual([
     { hookEventName: "PreToolUse", updatedInput: { file_path: `${cwd}/notes.txt`, limit: 1 } },
   ])
+})
+
+test("claude-extensions: an extension's tool runs for Claude's subagents, in the subagent's conversation", async () => {
+  const claude = fake("subagent_own_tool")
+  const { parent, child } = await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [clock])
+      const conversation = yield* start(harness, cwd)
+      yield* ask(conversation, "ask a subagent the time in CET")
+      const all = yield* entries(conversation)
+      const placed = all.find((entry) => entry.kind === "nisse.subagent")!.data as { conversation: number }
+      const subagent = (yield* harness.conversation(placed.conversation as never))!
+      yield* subagent.waitForIdle
+      return { parent: all, child: yield* entries(subagent) }
+    }),
+  )
+  expect(said(child).filter((line) => /^(call|result) Clock/.test(line))).toEqual([
+    'call Clock {"zone":"CET"}',
+    "result Clock: noon in CET",
+  ])
+  expect(said(parent).some((line) => line.includes("Clock {"))).toBe(false)
+  expect(said(parent).at(-1)).toBe("assistant: noon in CET")
 })
 
 test("claude-read: parallel calls of one response are each committed with the result Claude Code returned", async () => {

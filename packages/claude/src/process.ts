@@ -44,6 +44,7 @@ import type {
   AnyTask,
   ConversationId,
   EntryId,
+  EntryRecord,
   JsonObject,
   NextTaskState,
   TaskId,
@@ -340,7 +341,8 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                   task = yield* tx.createTask(
                     ToolTask,
                     { kind: "model", assistant: entry.id, callId: call.id },
-                    { ownership: { kind: "task", taskId: runtime.taskId }, abandonOnRestart: true },
+                    // Owned in the conversation the call is in, where the tool task finds it and adds its result.
+                    { ownership: { kind: "task", taskId: owner.task }, abandonOnRestart: true },
                   )
                   answered.add(call.id)
                 }
@@ -616,10 +618,12 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
             if (task === undefined) return { text: `${name} is already running`, isError: true }
             const settled = yield* runtime.waitForTask(task)
             const outcome = settled.state.outcome
-            const entry =
-              outcome.status === "completed" && outcome.result.kind === "model"
-                ? yield* runtime.entry(outcome.result.entryId)
-                : undefined
+            // A subagent's result is in its own conversation, which only a commit reads; one that writes nothing is not stored.
+            let entry: EntryRecord | undefined
+            if (outcome.status === "completed" && outcome.result.kind === "model") {
+              const id = outcome.result.entryId
+              yield* commit((tx) => Effect.map(tx.entry(id), (found) => void (entry = found)))
+            }
             const message = entry?.model?.[0] as { content?: unknown; isError?: boolean } | undefined
             return {
               text: message === undefined ? `${name} ended ${outcome.status}` : textOf(message.content),
