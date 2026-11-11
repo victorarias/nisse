@@ -45,8 +45,10 @@ Preconditions:
 - **On demand.** Run `drive.ts r doctor`: `server none running`. Run
   `drive.ts r nisse exec hi`, then `drive.ts r doctor`: a server pid running
   this checkout's `main.ts serve`.
-- **Refuse.** Run `drive.ts r nisse serve`. The saved output shows `--- exit 1`
-  at once, and stderr says `another server already serves /tmp/nisse-verify/r/home`.
+- **Refuse.** Run `drive.ts r nisse serve`. The saved output shows `--- exit 75`
+  about a second later (a starting server waits up to 1 s for a moment's
+  contention on the home lock to pass), and stderr says
+  `another server already serves /tmp/nisse-verify/r/home`.
 - **Shared.** In a fresh run, start four at once:
   `for i in 1 2 3 4; do drive.ts r nisse exec "client $i" & done; wait`. Each
   prints its own `You said: client <i>`, and `doctor` shows one server.

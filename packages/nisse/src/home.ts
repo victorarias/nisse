@@ -29,11 +29,21 @@ export const defaultHome = () => homeAt(resolve(process.env.NISSE_HOME ?? join(h
 
 export class HomeTaken extends Schema.TaggedError<HomeTaken>()("HomeTaken", { dir: Schema.String }) {}
 
+/**
+ * How long a claim waits out another process touching the lock. Other servers' claims and their failed attempts touch it
+ * for well under 2 ms (measured: max 1.6 ms over 2000 attempts under CPU load), so only a server that holds the home
+ * outlasts this wait.
+ */
+const LOCK_WAIT_MS = 1000
+
+/** The exit code of a server that refuses its home because another server holds it. */
+export const HOME_TAKEN_EXIT = 75
+
 const tryLock = (home: Home) => {
   mkdirSync(home.dir, { recursive: true, mode: 0o700 })
   const lock = new Database(home.lock, { create: true })
   try {
-    lock.run("PRAGMA busy_timeout = 0")
+    lock.run(`PRAGMA busy_timeout = ${LOCK_WAIT_MS}`)
     lock.run("PRAGMA locking_mode = EXCLUSIVE")
     lock.run("BEGIN EXCLUSIVE")
     return lock
@@ -41,12 +51,6 @@ const tryLock = (home: Home) => {
     lock.close()
     return undefined
   }
-}
-
-export const homeHeld = (home: Home) => {
-  const lock = tryLock(home)
-  lock?.close()
-  return lock === undefined
 }
 
 export const claimHome = (home: Home) =>
