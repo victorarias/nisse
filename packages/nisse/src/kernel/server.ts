@@ -53,7 +53,7 @@ import { endRun, switchModel, writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
 import { codeModeTools, nisseTools } from "./tools.ts"
 import { attachedImages } from "./images.ts"
-import { agentTools, interruptTree } from "./agents.ts"
+import { agentTools, type AgentTypes, interruptTree } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
 import { skillsOf, userInput, workspaceInstructions } from "./workspace.ts"
@@ -89,7 +89,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
-        const { instances, agents, claude } = yield* KernelProviders
+        const { instances, agents, claude, agentTypes } = yield* KernelProviders
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
         // Closed after the harness, which stops the scripts first. Closing asks a stuck worker to stop and does not wait
@@ -103,9 +103,10 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const models = fromProviders(
           [...instances.values()].flatMap((instance) => (instance.provider ? [instance.provider] : [])),
         )
-        const base = [nisseTools(images), agentTools(agents), codeModeTools(sandbox)]
+        const typesOf: AgentTypes = (agent) => agentTypes(agent.model?.provider, agent.cwd ?? home.dir)
+        const base = [nisseTools(images), agentTools(agents, typesOf), codeModeTools(sandbox)]
         for (const extension of base) registry.install(extension)
-        registry.install(workspaceInstructions(home, instances))
+        registry.install(workspaceInstructions(home, instances, typesOf))
         // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it.
         const claudeRuns = claudeRunTasks({
           settings: (provider) => claude.get(provider),

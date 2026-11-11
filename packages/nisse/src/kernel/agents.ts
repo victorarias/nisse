@@ -37,6 +37,13 @@ import type { AssistantMessage } from "@nisse/models"
 import { int, obj, oneOf, opt, str } from "@nisse/schema"
 import { rootConversation } from "@nisse/tools"
 import { Clock, Duration, Effect, Option, Stream } from "effect"
+import type { AgentType } from "../workspace.ts"
+
+/** The agent types a conversation's agent can spawn, from its provider and working directory. */
+export type AgentTypes = (agent: {
+  readonly model?: { readonly provider: string }
+  readonly cwd?: string
+}) => ReadonlyArray<AgentType>
 
 /** How a subagent's last task ended, as `list_agents` reports it. */
 export type AgentStatus = "pending_init" | "interrupted" | { completed: string } | { errored: string }
@@ -320,6 +327,12 @@ Note that passing \`fork_turns="none"\` will not pass any surrounding context to
 const spawnSchema = obj({
   task_name: str({ description: "Task name for the new agent. Use lowercase letters, digits, and underscores." }),
   message: str({ description: "Initial plain-text task for the new agent." }),
+  agent_type: opt(
+    str({
+      description:
+        "Agent type for the new agent, one your instructions list under Agent types. Omit unless explicitly asked. The selected role applies regardless of how much parent history is inherited.",
+    }),
+  ),
   fork_turns: opt(
     oneOf(["all", "none"], {
       description: "Parent history to inherit. Defaults to `all`; use `none` to start without parent history.",
@@ -336,6 +349,7 @@ const spawnSchema = obj({
 type SpawnInput = {
   task_name: string
   message: string
+  agent_type?: string
   fork_turns?: "all" | "none"
   model?: string
   reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh"
@@ -343,7 +357,7 @@ type SpawnInput = {
 
 const background = { ownership: { kind: "conversation" }, background: true } as const
 
-const spawnAgent = (limits: AgentLimits) =>
+const spawnAgent = (limits: AgentLimits, agentTypes: AgentTypes) =>
   defineTool({
     name: "spawn_agent",
     description: spawnDescription,
@@ -359,9 +373,22 @@ const spawnAgent = (limits: AgentLimits) =>
         const agent = yield* api.agent
         const parentModel = agent.model
         if (input.model !== undefined && parentModel === undefined) return failed("this agent has no model to vary")
-        if (input.model !== undefined && api.models().getModel(parentModel!.provider, input.model) === undefined)
+        const listed = (model: string | undefined) =>
+          model !== undefined && api.models().getModel(parentModel!.provider, model) !== undefined
+        if (input.model !== undefined && !listed(input.model))
           return failed(`no model ${input.model} on ${parentModel!.provider}; leave model out to use yours`)
+        const wanted = input.agent_type?.trim()
+        const types = wanted ? agentTypes(agent) : []
+        const agentType = wanted ? types.find((type) => type.name === wanted) : undefined
+        if (wanted && agentType === undefined) {
+          const known = types.map((type) => type.name)
+          return failed(`no agent type ${wanted}; there are ${known.length === 0 ? "none" : known.join(", ")}`)
+        }
+        // A type's model applies when the provider lists it; one the call names wins.
+        const model =
+          input.model ?? (parentModel !== undefined && listed(agentType?.model) ? agentType!.model : undefined)
         const task = `${own}/${name}`
+        const instructions = `${taskNameLine(task)} You are a subagent; your final answer goes to ${own}.`
         // A subagent of a conversation that runs every call without asking does too: nobody watches it to answer.
         const auto = (yield* api.snapshot(ApprovalsDoc, api.conversationId))?.auto === true
         const started = yield* api.commit((tx) =>
@@ -382,16 +409,22 @@ const spawnAgent = (limits: AgentLimits) =>
                 : yield* tx.forkConversation(api.conversationId, forkAt, { ownership })
             yield* configure(tx, child.id, {
               // The instructions a conversation started with are its own; a subagent starts without them.
-              instructions: `${taskNameLine(task)} You are a subagent; your final answer goes to ${own}.`,
-              ...(input.model === undefined
-                ? {}
-                : { model: { provider: parentModel!.provider, modelId: input.model } }),
+              instructions:
+                agentType === undefined
+                  ? instructions
+                  : `${instructions}\n\n# You are a ${agentType.name} agent\n\n${agentType.instructions}`,
+              ...(model === undefined ? {} : { model: { provider: parentModel!.provider, modelId: model } }),
               ...(input.reasoning_effort === undefined ? {} : { thinkingLevel: input.reasoning_effort }),
               // Past the depth limit a subagent is not offered spawn_agent at all.
               ...(depthOf(task) >= limits.maxDepth ? { modelTools: { remove: [{ name: "spawn_agent" }] } } : {}),
             })
             ;(yield* tx.doc(TaskPathDoc, child.id)).task = task
-            yield* recordOrigin(tx, child.id, { call: api.callId, title: name, task })
+            yield* recordOrigin(tx, child.id, {
+              call: api.callId,
+              title: name,
+              task,
+              ...(agentType === undefined ? {} : { agentType: agentType.name }),
+            })
             if (auto) yield* approveAutomatically(tx, child.id)
             registry.agents[name] = { conversationId: Number(child.id), task, reported: [], assigned: true }
             const reporter: ReporterInput = {
@@ -627,9 +660,9 @@ const treeOf = (harness: Harness, root: ConversationId) =>
   })
 
 /** The subagent tools, under `limits`; their tasks come with them, so a restart resumes pending reporters. */
-export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS) =>
+export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS, agentTypes: AgentTypes = () => []) =>
   defineExtension({
     name: AGENTS_EXTENSION,
     tasks: [Anchor, Reporter],
-    tools: [spawnAgent(limits), sendMessage, followupTask(limits), waitAgent, listAgents, interruptAgent],
+    tools: [spawnAgent(limits, agentTypes), sendMessage, followupTask(limits), waitAgent, listAgents, interruptAgent],
   })

@@ -445,6 +445,37 @@ test("start-instructions: ChatGPT is told the instructions its conversation star
   expect(child).not.toContain("Report with attn when done.")
 })
 
+test("subagent-types: an agent of a type gets its instructions and its model, and fork_turns none leaves the parent's history out", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("subagent_of_a_type")
+  await using session = await conversationWith(fake, {
+    cwd: (home) => {
+      // The fake's Claude Code config directory is the home's `claude` folder.
+      write(
+        join(home, "claude", "agents", "reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews diffs\nmodel: gpt-6-luna\n---\nBe strict about tests.",
+      )
+      return home
+    },
+  })
+  await session.submit("Get the diff reviewed.")
+  await session.view.until(settled(1), 20_000)
+  // The type names a model ChatGPT lists, so the reviewer runs on it.
+  expectRequests(fake, expected.with(1, { ...(expected[1] as object), model: "gpt-6-luna" }))
+
+  const [parent, child] = [instructionsOf(fake, 0), instructionsOf(fake, 1)]
+  expect(parent).toContain(
+    "# Agent types\n\nThe agent types `spawn_agent` takes as `agent_type`:\n- reviewer: Reviews diffs",
+  )
+  expect(child).toContain("# You are a reviewer agent\n\nBe strict about tests.")
+  expect(child).not.toContain("# Agent types")
+  expect(JSON.parse(fake.responses()[1]!.body).input).toHaveLength(1)
+  const listed = (await session.client.call("conversation/list")).result as Array<{ lineage?: unknown }>
+  expect(listed.map((conversation) => conversation.lineage).filter(Boolean)).toEqual([
+    expect.objectContaining({ task: "/root/review", title: "review", agentType: "reviewer" }),
+  ])
+})
+
 const focus = `import { Extension } from "@nisse/extension"
 import { Effect } from "effect"
 let asked = 0

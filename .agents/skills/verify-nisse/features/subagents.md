@@ -56,7 +56,14 @@ and nisse commits each into a conversation of its own the same way.
   subagents at once.
 - `subagent-types` reads agent types from `.claude/agents/*.md` from the
   directory up to the repository root, then Claude Code's config directory's
-  `agents/`; a type's `model` applies when it names an OpenAI model.
+  `agents/` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). A ChatGPT conversation
+  is told them under `# Agent types` and names one as `spawn_agent`'s
+  `agent_type`; an unknown one fails the call, naming the types there are.
+  A subagent offered no `spawn_agent` is told no types. The subagent's
+  instructions end with `# You are a <name> agent` and the
+  type's body, its `lineage` has `agentType`, its card reads
+  `⧉ <name> (<agent type>)`, and it runs on the type's `model` when ChatGPT
+  lists it.
 - `subagent-claude` gives each subagent Claude Code starts a conversation of
   its own: the parent shows `▸ Agent` and a `⧉ <description> (<agent type>)`
   card, the subagent's conversation holds its prompt, calls, results and last
@@ -430,6 +437,11 @@ Preconditions:
   `spawn_agent` tool lists `- reviewer: Reviews diffs`, and the second
   request, the subagent's, has one input item, instructions holding
   `# You are a reviewer agent`, and no `spawn_agent` tool.
+  On the kernel (`up --kernel`) the same steps give a subagent whose
+  `lineage` in `conversation/list` has `"agentType": "reviewer"`; the types
+  are listed under `# Agent types` in the parent's instructions instead of
+  the tool. Start `serve` with `CLAUDE_CONFIG_DIR` set to an empty folder
+  so your own agent types stay out.
 
 - **Claude subagent asks** (`--fake-claude subagent_asks`).
   `drive.ts r tui start --provider claude`, wait for `READY`, type
@@ -518,6 +530,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - subagent-spawn, subagent-model: conversation/list shows each subagent with its lineage, on its parent's model or the one its spawn_agent names, and an unlisted model fails the call
 - child-tools, subagent-message: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit
 - child-tools, subagent-agents: interrupting a subagent stops its turn and reports what it was doing
+- subagent-types: spawning an agent of a type nisse doesn't know is refused, naming it
 
 Kernel wire, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
 
@@ -555,6 +568,10 @@ Provider, `packages/nisse/test/openai.test.ts`:
 
 - subagent-fork: a spawned agent starts from its parent's history, and its last answer reaches the parent
 - subagent-types: an agent of a type gets its instructions, and fork_turns none leaves the parent's history out
+
+Kernel provider, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- subagent-types: an agent of a type gets its instructions and its model, and fork_turns none leaves the parent's history out
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
