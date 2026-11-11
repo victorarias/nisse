@@ -1225,13 +1225,8 @@ test("status-subagent, status-snapshot: a subagent waiting on a person shows as 
     trees: [{ _tag: "tree", conversation, status: "waiting" }],
   })
   expect(treesOf(watch.items, conversation).map((tree) => tree.status)).toEqual(["working", "waiting"])
-  // Interrupting the root's run leaves its subagent waiting, so the tree waits until the subagent is stopped too.
+  // One interrupt of the root stops its subagent too, so the whole tree goes idle.
   await client.call("conversation/interrupt", { conversation })
-  await watch.until((items) => treesOf(items, conversation).some((tree) => tree.ended))
-  expect(treesOf(watch.items, conversation).at(-1)?.status).toBe("waiting")
-  const view = watchView(client, conversation)
-  await view.until((current) => toolResults(current).length > 0)
-  await client.call("conversation/interrupt", { conversation: spawned(view, "/root/writer") })
   await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "idle", 20_000)
   const ended = treesOf(watch.items, conversation).filter((tree) => tree.ended)
   expect(ended.map((tree) => tree.ended)).toEqual([{ outcome: "interrupted", message: "aborted" }])
@@ -1276,5 +1271,51 @@ test("subagent-limits: a tree runs at most as many subagents at once as config.t
   expect(results.filter((result) => !result.isError)).toHaveLength(2)
   expect(results.filter((result) => result.isError)).toHaveLength(5)
   expect(results.find((result) => result.isError)?.text).toContain("at most 2 subagents work at once (maxThreads)")
+  client.close()
+}, 30_000)
+
+const idle = (watch: ViewWatch) => (watch.view().docs["pi.live"] as { run?: unknown } | undefined)?.run === undefined
+
+test("subagent-interrupt: interrupting a conversation stops the runs of its subagents too, and the tree goes idle", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "slow", message: "make it", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    call("bash", { command: "touch made" }, "/root/slow"),
+    call("list_agents", {}),
+    call("followup_task", { target: "slow", message: "try again" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "made it this time", agent: "/root/slow" },
+    { text: "slow is done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "start a slow one")
+  await view.until((current) => toolResults(current).length > 0)
+  const slow = watchView(client, spawned(view, "/root/slow"))
+  // The subagent waits on a person while its parent waits on it.
+  await waitingApproval(slow)
+
+  await client.call("conversation/interrupt", { conversation })
+  await view.until(settled(1), 10_000)
+  await slow.until(settled(1), 10_000)
+
+  expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
+  expect(runEnds(slow.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
+  expect(approvalsOf(slow)!.requests).toEqual({})
+  await view.until(idle)
+  await slow.until(idle)
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+
+  // The subagent stays in the tree, and takes a new task.
+  await submit(client, conversation, "go on")
+  await view.until(settled(2), 20_000)
+  expect(JSON.parse(toolResults(view).at(-3)!.text).agents).toEqual([
+    { agent_name: "/root", agent_status: "running" },
+    { agent_name: "/root/slow", agent_status: "interrupted" },
+  ])
+  expect(transcript(slow.seen()).slice(-2)).toEqual(["assistant: made it this time", "run_end: answered"])
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/slow" }])
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: slow is done", "run_end: answered"])
   client.close()
 }, 30_000)

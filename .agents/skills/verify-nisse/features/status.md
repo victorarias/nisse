@@ -73,11 +73,9 @@ Preconditions:
 - **Subagents.** A subagent waiting on a person shows its whole tree as waiting.
 - **On the kernel.** `status/watch` and `drive.ts r watch-status` work in a
   run made with `drive.ts r up --kernel`, and `seq` is the kernel's commit
-  sequence. Interrupting a conversation there ends its own run only: a
-  subagent still waiting on a person keeps the tree `waiting` until it is
-  interrupted by its own id
-  (`kernel-conversation-interrupt-stops-subagents-under` brings the shipping
-  behavior). An interrupted run's `ended` carries `"message": "aborted"`.
+  sequence. Interrupting a conversation there stops its subagents too, so a
+  tree waiting on a subagent goes `idle`. An interrupted run's `ended` carries
+  `"message": "aborted"`.
 
 ## Tests
 
