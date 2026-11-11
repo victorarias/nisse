@@ -59,11 +59,14 @@ import { skillsOf, userInput, workspaceInstructions } from "./workspace.ts"
 import { lineageOf, listConversations } from "./conversations.ts"
 
 /**
- * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
- * `wire-dropped`, 1,500 prompts submitted 100 at a time, a client that reads peaked at 34 queued changes. Past this the
- * client is told it fell behind at its next read, and watches again from the position it holds.
+ * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: 1,500
+ * prompts submitted 100 at a time to one conversation, a client that reads peaked at 34 queued changes; 300 at a time,
+ * at 64. Past this the client is told it fell behind at its next read, and watches again from the position it holds.
  */
 export const CONNECTION_QUEUE = 4096
+
+/** The server's watch limit: CONNECTION_QUEUE unless a test needs a client to fall behind sooner. */
+const ConnectionQueue = Context.Reference<number>("nisse/ConnectionQueue", { defaultValue: () => CONNECTION_QUEUE })
 
 /**
  * The home's Harness, and the runs the server stopped too often in a row (D12): counted as it opens, before anything
@@ -149,6 +152,7 @@ const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
 const Handlers = KernelRpcs.toLayer(
   Effect.gen(function* () {
     const { home, harness, stoppedTooOften, extensions, status } = yield* KernelHarness
+    const connectionQueue = yield* ConnectionQueue
     const providers = yield* KernelProviders
     const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
     const lifetime = yield* Lifetime
@@ -253,7 +257,7 @@ const Handlers = KernelRpcs.toLayer(
         Effect.gen(function* () {
           yield* lifetime.hold
           const conversation = yield* find(id)
-          const queue = yield* Queue.bounded<ViewItem, FellBehind | Cause.Done>(CONNECTION_QUEUE)
+          const queue = yield* Queue.bounded<ViewItem, FellBehind | Cause.Done>(connectionQueue)
           let behind = false
           const observation = yield* Effect.acquireRelease(
             harness
@@ -266,7 +270,7 @@ const Handlers = KernelRpcs.toLayer(
                     if (behind || Queue.offerUnsafe(queue, { _tag: "change", ops: change.ops })) return
                     behind = true
                     Effect.runSync(Queue.clear(queue))
-                    Queue.failCauseUnsafe(queue, Cause.fail(new FellBehind({ limit: CONNECTION_QUEUE })))
+                    Queue.failCauseUnsafe(queue, Cause.fail(new FellBehind({ limit: connectionQueue })))
                   },
                   end: (end) => {
                     if (end.kind === "ended") Queue.endUnsafe(queue)
@@ -398,7 +402,7 @@ const Handlers = KernelRpcs.toLayer(
           if (answered === "unknown") return yield* Effect.fail(new NoSuchApproval({ approval }))
           return { accepted: answered === "accepted" }
         }),
-      "status/watch": () => Stream.unwrap(Effect.as(lifetime.hold, status.watch(CONNECTION_QUEUE))),
+      "status/watch": () => Stream.unwrap(Effect.as(lifetime.hold, status.watch(connectionQueue))),
       "extensions/list": () => extensions.list,
       "extensions/reload": () => extensions.reload,
       // Stops once the runs in flight settle, as the shipping server does; a run is never cut off by a stop.
@@ -428,11 +432,13 @@ const afterReply = (effect: Effect.Effect<void>) =>
 export interface KernelServerOptions {
   readonly idleGrace: Duration.Input
   readonly providers: ProviderOptions
+  readonly connectionQueue?: number
 }
 
 export const kernelServerLayer = (home: Home, options: KernelServerOptions) =>
   RpcServer.layer(KernelRpcs).pipe(
     Layer.provide(Handlers),
+    Layer.provide(Layer.succeed(ConnectionQueue, options.connectionQueue ?? CONNECTION_QUEUE)),
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
     Layer.provide(homeSocketServer(home.socket)),

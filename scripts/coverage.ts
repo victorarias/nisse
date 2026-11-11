@@ -29,7 +29,6 @@ const STEPS = new Set([
   "claude-run",
   "wire-complete",
   "cli-kernel",
-  "kernel-modes",
   "tui-views",
   "switch-delete",
   "surface-conversations",

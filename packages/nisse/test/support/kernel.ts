@@ -35,15 +35,20 @@ const testProviders = (
   config: options.config ?? {},
 })
 
-export const runningKernelServer = async (script: ReadonlyArray<ScriptStep> = [], options: ServerOptions = {}) => {
+export const runningKernelServer = async (
+  script: ReadonlyArray<ScriptStep> = [],
+  options: ServerOptions & { readonly connectionQueue?: number } = {},
+) => {
   const home = options.home ?? tempHome()
   const scope = Effect.runSync(Scope.make())
   const { logged, recorder } = logRecorder()
   await Effect.runPromise(
     Layer.buildWithScope(
-      kernelServerLayer(home, { idleGrace: "1 hour", providers: testProviders(home, script, options) }).pipe(
-        Layer.provide(recorder),
-      ),
+      kernelServerLayer(home, {
+        idleGrace: "1 hour",
+        providers: testProviders(home, script, options),
+        ...(options.connectionQueue === undefined ? {} : { connectionQueue: options.connectionQueue }),
+      }).pipe(Layer.provide(recorder)),
       scope,
     ),
   )
