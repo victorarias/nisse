@@ -42,6 +42,7 @@ const withChatGpt = async (
 ) => {
   const bodies: Array<any> = []
   const server = Bun.serve({
+    hostname: "127.0.0.1",
     port: 0,
     fetch: async (request) => {
       bodies.push(await request.json())
