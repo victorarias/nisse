@@ -26,8 +26,8 @@ None yet.
 
 - Print mode: run `nisse exec '<prompt>'` on a server under `NISSE_KERNEL=1`.
 - JSON mode: run `nisse exec --json '<prompt>'` on a server under `NISSE_KERNEL=1`: one JSON line per item of the
-  conversation's `conversation/watch`, the view first, then each commit's changes, until the prompt's run ends. A
-  server without the kernel refuses `--json`.
+  conversation's `conversation/watch`, the view first, then each commit's changes, until the prompt's run ends. Without
+  `NISSE_KERNEL=1`, `exec` refuses `--json`.
 
 ## Driving it with drive.ts
 

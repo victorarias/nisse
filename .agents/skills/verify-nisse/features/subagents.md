@@ -484,6 +484,12 @@ Preconditions:
 
 ## Contexts
 
+- **On the kernel.** `exec` follows every conversation of its tree. In a run made with `drive.ts r up --kernel` and
+  the script
+  `[{"tool": {"name": "spawn_agent", "input": {"task_name": "kid", "message": "go"}}}, {"tool": {"name": "wait_agent", "input": {"timeout_ms": 600000}}}, {"text": "the kid is done"}, {"agent": "/root/kid", "tool": {"name": "bash", "input": {"command": "echo ran"}}}, {"agent": "/root/kid", "text": "could not run it"}]`,
+  `drive.ts r nisse exec delegate` prints
+  `the kid is done`, exit 0, with stderr `› spawn_agent(kid)`, `› wait_agent` and
+  `denied bash(echo ran): exec cannot ask, pass --auto to allow calls`.
 - **On the kernel.** In a `drive.ts r up --kernel --script <file>` run with the
   spawn steps above, `drive.ts r rpc conversation/list` lists each subagent
   after its parent, with `lineage` naming `parent`, `root`, `call` (the
@@ -494,6 +500,10 @@ Preconditions:
 - **Provider.** Claude keeps Claude Code's own subagents, which take input only through their parent. OpenAI uses Codex's agent tools.
 
 ## Tests
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- subagent-exec: nisse exec on the kernel without --auto denies the calls its subagents would ask about too
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

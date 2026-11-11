@@ -94,10 +94,21 @@ Preconditions:
 
 ## Contexts
 
+- **On the kernel.** In a fresh run made with `drive.ts r up --kernel`, `drive.ts r nisse exec 'hello there'`
+  prints `You said: hello there`, exit 0. With the `answer-exec-fail` script, `drive.ts r nisse exec go` prints
+  `half an ` on stdout and `provider went away` on stderr, exit 1. A prompt `exec` queued behind another run that an
+  interrupt withdraws ends `exec` with exit 1 and `the prompt was withdrawn before it ran, as an interrupt withdraws
+what waits`.
 - **Second client.** Every client sees the prompt and the same answer.
 - **Server restart.** A run the crash cut off finishes when the server returns, as [Crash recovery](./crash-recovery.md) says.
 
 ## Tests
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- mode-print, answer-exec, server-on-demand: nisse exec on the kernel starts a server, prints the answer and exits 0
+- mode-print, answer-exec-fail: nisse exec on the kernel exits 1 and says why when the run fails
+- answer-exec-fail: nisse exec on the kernel exits 1 when an interrupt withdraws its queued prompt, instead of waiting for good
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

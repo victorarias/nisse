@@ -11,7 +11,7 @@ import {
   type View,
   type ViewItem,
 } from "@nisse/wire"
-import { Effect, Stream } from "effect"
+import { Deferred, Effect, type Scope, Stream } from "effect"
 import { userName } from "../author.ts"
 import { KernelClient, type StartOptions } from "../client.ts"
 import { describeCall } from "../tui/calls.ts"
@@ -33,6 +33,11 @@ const textOf = (message: Message | undefined) =>
     .join("")
 
 const liveOf = (view: View) => view.docs["pi.live"] as Live | undefined
+
+const queued = (view: View, submission: number) =>
+  (view.docs["pi.inbox"] as { items?: ReadonlyArray<{ id: number }> } | undefined)?.items?.some(
+    (item) => item.id === submission,
+  ) === true
 
 const requestsOf = (view: View) =>
   Object.entries((view.docs["nisse.approvals"] as { requests?: Record<string, Request> } | undefined)?.requests ?? {})
@@ -103,38 +108,42 @@ export const execOnKernel = Effect.fnUntraced(function* (
       { discard: true },
     )
 
-  // Subagents ask in their own conversations. Each change to the tree's status may mean a new one; a subagent's watch
-  // ends when exec does.
+  // A watch that fails would leave a call unanswered and exec waiting for good, so it fails exec instead.
+  const failed = yield* Deferred.make<never>()
+  const watching = <E, R>(effect: Effect.Effect<void, E, R>) =>
+    Effect.forkScoped(Effect.catchCause(Effect.orDie(effect), (cause) => Deferred.failCause(failed, cause)))
+
+  // Subagents ask in their own conversations, so exec follows every conversation of the tree: it looks again when the
+  // tree's status changes, as when a subagent waits on a person, and when a followed conversation adds entries, as when
+  // it starts one. A subagent's watch ends when exec does.
   const followed = new Set([conversation])
-  const discover = Effect.gen(function* () {
-    for (const info of yield* client["conversation/list"]()) {
+  const discover: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
+    for (const info of yield* Effect.orDie(client["conversation/list"]())) {
       if (info.lineage?.root !== conversation || followed.has(info.id)) continue
       followed.add(info.id)
-      yield* Effect.forkScoped(
-        Effect.ignore(
-          following(client["conversation/watch"]({ conversation: info.id })).pipe(
-            Stream.runForEach(({ view }) => deny(info.id, view)),
+      yield* watching(
+        following(client["conversation/watch"]({ conversation: info.id })).pipe(
+          Stream.runForEach(({ view, added }) =>
+            Effect.andThen(deny(info.id, view), added.length > 0 ? discover : Effect.void),
           ),
         ),
       )
     }
   })
-  if (options.approvals !== "auto") {
-    yield* Effect.forkScoped(
-      Effect.ignore(
-        client["status/watch"]().pipe(
-          Stream.filter((item) => item._tag === "trees" || item.conversation === conversation),
-          Stream.runForEach(() => discover),
-        ),
-      ),
-    )
-  }
+  yield* watching(
+    client["status/watch"]().pipe(
+      Stream.filter((item) => item._tag === "trees" || item.conversation === conversation),
+      Stream.runForEach(() => discover),
+    ),
+  )
 
   const printer = new Printer()
   let submission: number | undefined
   // Placed once a run holds the submission; the run's first input after that is the start of what this prompt sees,
   // so a run that ends in the same commit as it is placed belongs to the input before.
   let placed = false
+  let waited = false
+  let withdrawn = false
   let started = false
   let ended: RunEnd | undefined
   const onEntry = (entry: EntryRecord) => {
@@ -152,7 +161,7 @@ export const execOnKernel = Effect.fnUntraced(function* (
       }
     } else if (entry.kind === TOAST_KIND) {
       const toast = entry.data as { extension: string; text: string }
-      printer.end()
+      // On stderr, so a message streaming to stdout goes on where it was.
       note(`◆ ${toast.extension}: ${toast.text}`)
     } else if (entry.kind === RUN_END_KIND) {
       printer.end()
@@ -173,6 +182,10 @@ export const execOnKernel = Effect.fnUntraced(function* (
         })).submission
         if (json) write(`${JSON.stringify(item)}\n`)
         placed ||= liveOf(view)?.run?.inputs.includes(submission) === true
+        // A queued input that leaves the queue without being placed was withdrawn, as an interrupt does.
+        const waiting = queued(view, submission)
+        if (!placed && waited && !waiting) withdrawn = true
+        waited ||= waiting
         if (placed) {
           for (const entry of added) if (ended === undefined) onEntry(entry)
           const live = liveOf(view)?.generation?.message
@@ -181,8 +194,11 @@ export const execOnKernel = Effect.fnUntraced(function* (
         yield* deny(conversation, view)
       }),
     ),
-    Stream.takeUntil(() => ended !== undefined),
+    Stream.takeUntil(() => ended !== undefined || withdrawn),
     Stream.runDrain,
+    Effect.raceFirst(Deferred.await(failed)),
   )
+  if (withdrawn) note("the prompt was withdrawn before it ran, as an interrupt withdraws what waits")
+  else if (ended === undefined) note("the server ended the watch before the run ended")
   return ended?.outcome === "answered"
 })
