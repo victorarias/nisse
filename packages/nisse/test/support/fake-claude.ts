@@ -6,18 +6,28 @@ const dir = process.env.FAKE_CLAUDE_DIR!
 const argv = process.argv.slice(2)
 mkdirSync(dir, { recursive: true })
 
+// A test's FakeClaude listens on log.sock to learn when a line is logged; without one, nothing listens.
+const pings = await Bun.connect({ unix: join(dir, "log.sock"), socket: { data: () => undefined } }).catch(
+  () => undefined,
+)
+pings?.unref()
+const append = (entry: unknown) => {
+  appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify(entry)}\n`)
+  pings?.write("\n")
+}
+
 if (argv[0] === "auth") {
-  appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ auth: argv.slice(1) })}\n`)
+  append({ auth: argv.slice(1) })
   if (process.env.FAKE_CLAUDE_AUTH_ASKS) {
     process.stdout.write("fake claude asks for a code: ")
     for await (const line of console) {
-      appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ authAnswer: line })}\n`)
+      append({ authAnswer: line })
       process.exit(0)
     }
   } else if (process.env.FAKE_CLAUDE_AUTH_WAITS) {
     process.stdout.write(`fake claude ${argv.join(" ")} waiting\n`)
     process.on("SIGTERM", () => {
-      appendFileSync(join(dir, "log.ndjson"), `${JSON.stringify({ authEnded: "SIGTERM" })}\n`)
+      append({ authEnded: "SIGTERM" })
       process.exit(143)
     })
     setInterval(() => undefined, 1 << 30)
@@ -35,11 +45,7 @@ const counterFile = join(dir, probe ? "probes" : "spawns")
 const spawn = Number(readFileSync(counterFile, { encoding: "utf8", flag: "a+" }) || "0")
 writeFileSync(counterFile, String(spawn + 1))
 
-const log = (entry: unknown) =>
-  appendFileSync(
-    join(dir, "log.ndjson"),
-    `${JSON.stringify(probe ? { probe: spawn, ...(entry as object) } : { spawn, ...(entry as object) })}\n`,
-  )
+const log = (entry: unknown) => append(probe ? { probe: spawn, ...(entry as object) } : { spawn, ...(entry as object) })
 log({ argv, rootConversation: process.env.NISSE_ROOT_CONVERSATION })
 
 const segments: Array<Array<any>> = []
