@@ -130,10 +130,25 @@ Preconditions:
 
 ## Contexts
 
+- **On the kernel.** In a run made with `drive.ts r up --kernel` and a script
+  whose first step calls `bash` with `echo approved-run`, start a conversation,
+  submit with a background `drive.ts r watch <id> --submit 'run the echo' --until run_end --save approve`,
+  and `drive.ts r watch <id> --save waiting` until the view's
+  `nisse.approvals` document lists a request under the call's tool task id.
+  Send `drive.ts r rpc approval/resolve '{"conversation":"<id>","approval":"<task>","author":"ada","allow":true}'`
+  and a second one as `bo` with `"allow":false` at the same moment: one says
+  `"accepted": true`, the other `"accepted": false`, and `approve` holds one
+  `nisse.approval` entry, the command's output and a run_end `answered`.
 - **Second client.** Any client can answer, and the first answer counts.
 - **Provider.** On Claude, Nisse asks before the calls Claude Code would ask about.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- approval-wire: two clients answer one approval at once and the first answer counts
+- approval-wire: a denied call is reported to the model as denied and does not run
+- tool-read-only, approval-auto: reading calls and conversations started with auto approvals run without asking
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
