@@ -211,6 +211,14 @@ Preconditions:
   `drive.ts r watch-auth --until failed` shows that flow `failed` with
   `the server stopped before this sign-in finished`, and `auth/respond` to it
   answers `{"accepted": false}`.
+  The commands work on the kernel too. In a fresh run made the same way,
+  `drive.ts r nisse login openai --device-code` prints
+  `Open http://127.0.0.1:<port>/codex/device on any device and enter the code ABCD-1234`,
+  then `signed in to openai as ada@example.com · ChatGPT Plus`, exit 0;
+  `drive.ts r nisse exec --provider openai hello` prints `Hello there`; and
+  `drive.ts r nisse logout openai` prints `signed out of openai: signed out`.
+  `drive.ts r nisse login nope` exits 1 with
+  `no provider named nope; there are script, claude, openai`.
 
 ## Contexts
 
@@ -232,6 +240,10 @@ Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `
 
 - signin-refused: an answer for another sign-in is turned away, and a sign-in the browser refused fails saying why
 - signin-cannot: nisse refuses to sign in to a provider it does not have, one with nothing to sign in to, and a way the provider does not offer
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- signout, signin-cannot: nisse logout and login on the kernel sign out of a provider and refuse one nisse does not have
 
 Screen, `packages/nisse/test/screen.test.ts`:
 

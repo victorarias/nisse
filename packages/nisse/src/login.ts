@@ -1,7 +1,37 @@
-import { authEnded, type AuthMethod, type AuthState } from "@nisse/protocol"
+import {
+  authEnded,
+  type AuthMethod,
+  type AuthResponse,
+  type AuthState,
+  type CannotSignIn,
+  type ProviderSnapshot,
+  type UnknownProvider,
+} from "@nisse/protocol"
 import { createInterface } from "node:readline"
 import { Deferred, Effect, Fiber, Stream } from "effect"
-import { Client } from "./client.ts"
+import type { RpcClientError } from "effect/rpc/RpcClientError"
+
+/** What signing in calls, which both wires serve alike: `@nisse/protocol` and the kernel's `@nisse/wire`. */
+export interface SignInClient {
+  readonly "providers/list": (payload: {}) => Effect.Effect<ReadonlyArray<ProviderSnapshot>, RpcClientError>
+  readonly "auth/start": (payload: {
+    readonly provider: string
+    readonly method?: AuthMethod
+  }) => Effect.Effect<{ readonly flow: string }, UnknownProvider | CannotSignIn | RpcClientError>
+  readonly "auth/respond": (payload: {
+    readonly provider: string
+    readonly flow: string
+    readonly response: AuthResponse
+  }) => Effect.Effect<unknown, unknown>
+  readonly "auth/cancel": (payload: {
+    readonly provider: string
+    readonly flow: string
+  }) => Effect.Effect<unknown, unknown>
+  readonly "auth/logout": (payload: {
+    readonly provider: string
+  }) => Effect.Effect<ProviderSnapshot, UnknownProvider | CannotSignIn | RpcClientError>
+  readonly "auth/watch": () => Stream.Stream<AuthState, RpcClientError>
+}
 
 const say = (text: string) => process.stderr.write(`${text}\n`)
 
@@ -42,8 +72,7 @@ export const runTerminal = (command: ReadonlyArray<string>, env: Readonly<Record
     }
   })
 
-export const login = Effect.fnUntraced(function* (provider: string, deviceCode: boolean) {
-  const client = yield* Client
+export const login = Effect.fnUntraced(function* (client: SignInClient, provider: string, deviceCode: boolean) {
   const providers = yield* client["providers/list"]({})
   const known = providers.find((snapshot) => snapshot.id === provider)
   if (!known) {
@@ -121,8 +150,7 @@ export const login = Effect.fnUntraced(function* (provider: string, deviceCode: 
   return outcome?.phase === "succeeded"
 })
 
-export const logout = Effect.fnUntraced(function* (provider: string) {
-  const client = yield* Client
+export const logout = Effect.fnUntraced(function* (client: SignInClient, provider: string) {
   return yield* client["auth/logout"]({ provider }).pipe(
     Effect.map((snapshot) => {
       say(`signed out of ${provider}: ${snapshot.health.status.replace("_", " ")}`)

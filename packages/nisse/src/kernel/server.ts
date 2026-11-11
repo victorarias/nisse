@@ -54,7 +54,7 @@ import { agentTools, interruptTree } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
 import { skillsOf, userInput, workspaceInstructions } from "./workspace.ts"
-import { lineageOf, listConversations } from "./conversations.ts"
+import { lineageOf, listConversations, wireId } from "./conversations.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: 1,500
@@ -293,6 +293,15 @@ const Handlers = KernelRpcs.toLayer(
       "conversation/start": ({ cwd, id, approvals, instructions, ...ask }) =>
         Effect.gen(function* () {
           if (id === undefined) return yield* startConversation(cwd, undefined, approvals, instructions, ask)
+          // A conversation's number opens it, as its chosen id does, and answers with the id every other call names it
+          // by; a number that names none is refused below.
+          const numbered = kernelNumber(id)
+          if (numbered !== undefined && (yield* Effect.orDie(harness.conversation(numbered))) !== undefined) {
+            return {
+              conversation: yield* wireId(harness, numbered),
+              model: selectionOf(yield* Effect.orDie(harness.resolveAgent(numbered))),
+            }
+          }
           const refused = refusedChoice(id)
           if (refused !== undefined) return yield* Effect.fail(new InvalidConversationId({ message: refused }))
           return yield* choosing.withPermits(1)(

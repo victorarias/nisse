@@ -92,13 +92,14 @@ serves `initialize`, `conversation/start` (with `instructions`),
 out, and `conversation/start` picks a model as on today's server. Every
 provider answers: `script`, ChatGPT (`openai`, see [OpenAI](features/openai.md))
 and Claude, as the `claude.run` task (see [Claude](features/claude.md)).
-`rpc`, `watch`, `watch-auth`, `watch-status`, `serve`, `kill-server`, `idle`, `doctor` and
-`down` work in such a run; `watch` follows the conversation's view (see
+`rpc`, `watch`, `watch-auth`, `watch-status`, `serve`, `nisse`, `kill-server`, `idle`,
+`doctor` and `down` work in such a run; `watch` follows the conversation's view (see
 [Watches and views](features/views.md)) and `--until run_end` waits for a
 `nisse.run_end` entry. The TUI runs on the kernel too, drawing the
 conversation's view: every `tui` step drives it, and a script names the
-kernel's tools in lower case (`bash`, `read`). `nisse exec` refuses, naming
-the step that brings it.
+kernel's tools in lower case (`bash`, `read`). Every `nisse` command speaks
+the kernel wire: `exec` (with `--json`, see [Modes](features/modes.md)),
+`login`, `logout`, `extensions` and `serve --restart`.
 
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its

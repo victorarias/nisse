@@ -133,6 +133,10 @@ Preconditions:
 
 ## Contexts
 
+- **On the kernel.** The kernel's tool is `bash`. In a run made with `drive.ts r up --kernel` and the script
+  `[{"tool": {"name": "bash", "input": {"command": "echo ran"}}}, {"text": "could not run it"}]`,
+  `drive.ts r nisse exec 'run something'` prints `could not run it`, exit 0, with stderr `› bash(echo ran)` and
+  `denied bash(echo ran): exec cannot ask, pass --auto to allow calls`.
 - **On the kernel.** In a run made with `drive.ts r up --kernel` and a script
   whose first step calls `bash` with `echo approved-run`, start a conversation,
   submit with a background `drive.ts r watch <id> --submit 'run the echo' --until run_end --save approve`,
@@ -146,6 +150,10 @@ Preconditions:
 - **Provider.** On Claude, Nisse asks before the calls Claude Code would ask about.
 
 ## Tests
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- approval-exec-deny: nisse exec on the kernel shows its calls and, without --auto, denies the ones that would change things
 
 Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
 

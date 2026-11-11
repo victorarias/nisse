@@ -21,7 +21,7 @@ compaction; `/clear` starts a new context in nisse's transcript too.
   `allow this call?`; `^Y` lets the call run, `^N` refuses it.
 - `claude-read` shows a call Claude Code allows on its own, such as a `Read`,
   with its result and no `allow this call?`.
-- `claude-exec-deny` [pending cli-kernel] makes `exec` refuse Claude's calls that would ask, unless
+- `claude-exec-deny` makes `exec` refuse Claude's calls that would ask, unless
   `--auto`.
 - `claude-auto` lets every call run in a conversation started with `--auto`.
 - `claude-resume` continues Claude Code's session in each new run, also after
@@ -233,8 +233,10 @@ Preconditions:
   answer `Under the floor.` and a `nisse.run_end` `answered`; `docs` holds
   `pi.usage` with the run's spend under `claude/claude-haiku-5-5`. A second
   `watch <id> --save reopen` from a new connection shows the same entries. The other journeys
-  above drive the same way with their fixtures, except those that need
-  `exec`, which reaches the kernel with `cli-kernel`. A Claude subagent is
+  above drive the same way with their fixtures, `exec` included: in a run made
+  with `drive.ts r up --kernel --fake-claude bash_declined`, **Exec denies**
+  prints the same stdout, stderr and exit, and with `bash_allowed`, **Auto**
+  does. A Claude subagent is
   listed by `conversation/list` with its `lineage` (no `task`), and
   `conversation/submit` or `conversation/select_model` on it answers
   `TakesNoInput`.
@@ -256,6 +258,11 @@ cannot reach yet: extension tools and hooks, a subagent's included (`claude-exte
 forks, usage, model switches, the handoff from another provider, a reset
 queued while Claude works (`claude-clear`), and images in a prompt
 (`image-input`) or an extension tool's result (`image-tool-result`).
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- claude-exec-deny: nisse exec on the kernel refuses Claude's calls that would ask
+- claude-exec-deny, claude-auto: nisse exec --auto on the kernel lets Claude's calls run without asking
 
 Provider, `packages/nisse/test/claude.test.ts`:
 

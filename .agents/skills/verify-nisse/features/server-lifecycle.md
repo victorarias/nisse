@@ -14,7 +14,7 @@ running server once its runs settle.
 - `server-idle-exit` exits the server 30 s after its last subscription closes
   and its last run settles.
 - `server-stop` stops it on `server/stop` once its runs settle.
-- `server-restart` [pending cli-kernel] replaces the running server with `nisse serve --restart`
+- `server-restart` replaces the running server with `nisse serve --restart`
   once its runs settle.
 - `server-old-home` keeps working in a home a Rust version of Nisse used: its
   `nisse.sqlite` stays as it was, and this Nisse uses `store.sqlite` beside it.
@@ -85,6 +85,14 @@ Preconditions:
   `nisse exec --auto go` in place of the TUI never exits either, and
   `rpc server/stop` in place of `--restart` finishes the TUI as it should.
 
+- **Restart on the kernel.** In a run made with `drive.ts r up --kernel` and
+  the script `[{"text": "one two three four five six seven eight", "delayMs": 300}]`,
+  run `drive.ts r serve`, then `drive.ts r nisse exec count &` and, a second
+  later, `drive.ts r nisse serve --restart &`. The `exec` prints
+  `one two three four five six seven eight` and exits 0, and `doctor` then
+  shows a new server pid whose command ends in `main.ts serve --restart`: the
+  old server let the run answer first, and the client was not left waiting.
+
 ## Contexts
 
 - **Running work.** `serve --restart` and `server/stop` wait for runs to settle.
@@ -102,6 +110,8 @@ Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NIS
 
 - server-stop: nisse serve on the kernel answers server/stop, then exits 0
 - server-old-home: a home the shipping server used starts on the kernel and keeps its database as it was
+- server-restart: nisse serve --restart on the kernel replaces the running server once its run settles
+- mode-print, answer-exec, server-on-demand: nisse exec on the kernel starts a server, prints the answer and exits 0
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
@@ -115,8 +125,6 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - server-shared: clients starting at the same moment share one server
 - server-on-demand: nisse exec says why the server it started could not run
 - server-refuse: a second server for the same home refuses to start
-
-No committed test covers `nisse serve --restart`.
 
 ## Gotchas
 
