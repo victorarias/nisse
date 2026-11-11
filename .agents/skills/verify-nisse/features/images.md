@@ -56,7 +56,8 @@ the name checks the escaping).
   `images: ["Screen Shot.png"]` and its message an `image` block.
 - **Refused.** `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "bad-1", "author": "ada", "text": "look", "images": [{"name": "broken.png", "data": "bm9wZQ==", "mimeType": "image/png"}]}'`
   answers `UnreadableImage` naming `broken.png`, and nothing is added.
-- **Exec.** `drive.ts r nisse exec "describe /tmp/nisse-verify/r/Screen\ Shot.png"`
+- **Exec.** In a fresh run made with `drive.ts r up --fake-openai text_answer`
+  (the TUI's run has played its one reply), `drive.ts r nisse exec "describe /tmp/nisse-verify/r/Screen\ Shot.png"`
   exits 0, and the newest conversation's `nisse.user` entry names
   `Screen Shot.png`.
 

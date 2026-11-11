@@ -48,7 +48,7 @@ Preconditions: a run made with `drive.ts r up`, so Nisse echoes `You said: <prom
   `drive.ts r watch <id> --submit hi --until run_end --save answer`: the first
   line is `{"_tag": "view", ...}` with `entries` and `docs`, then one
   `{"_tag": "change", "ops": [...]}` per commit, live words as `"a"` ops on
-  `docs.pi.live.generation.message`, and the entries `pi.user`,
+  `docs.pi.live.generation.message`, and the entries `nisse.user`,
   `pi.assistant` and `nisse.run_end` spliced into `entries`. A fresh
   `drive.ts r watch <id> --save fresh` shows the same entries in its first
   view, and `--from <entry id>` starts the window at that entry.

@@ -107,7 +107,7 @@ Preconditions:
   `▸ Read(<checkout>/notes.txt)` over the recorded lines
   `1  the gnome lives under the floor`, then `Under the floor.`, and no
   `allow this call?` was ever shown. The log has no `"answered": "can_use_tool"`
-  line. `drive.ts r watch <id> --save read` holds `pi.user`, a `pi.assistant`
+  line. `drive.ts r watch <id> --save read` holds `nisse.user`, a `pi.assistant`
   calling `Read`, its `pi.tool-result`, the answer `Under the floor.` and a
   `nisse.run_end` `answered`; `docs` holds `pi.usage` with the run's spend.
   A second `watch <id> --save reopen` shows the same entries. In a fresh run,
@@ -131,7 +131,7 @@ Preconditions:
   exit 0, stdout `PLUM`. The log's `"spawn": 1` argv has
   `--resume=<spawn 0's --session-id>` and `--resume-session-at=...`: the new
   server resumed Claude Code's session. `drive.ts r watch <id> --save resumed`
-  shows both runs' `pi.user`, `pi.assistant` and `nisse.run_end` entries.
+  shows both runs' `nisse.user`, `pi.assistant` and `nisse.run_end` entries.
 - **Session gone** (`session_gone`). Run
   `drive.ts r nisse exec --provider claude 'Remember the word PLUM. Reply with exactly: noted'`:
   stdout `noted`. Then

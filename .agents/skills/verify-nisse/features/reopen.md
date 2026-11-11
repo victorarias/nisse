@@ -47,7 +47,7 @@ Preconditions:
   the view's last entry, the `nisse.run_end` of `again`. Run
   `drive.ts r nisse exec --conversation <id> later`, then
   `drive.ts r watch <id> --from <entry id> --save since`. Its view's
-  `entries` start at that entry, then hold `later`'s `pi.user`,
+  `entries` start at that entry, then hold `later`'s `nisse.user`,
   `pi.assistant` and `nisse.run_end`, and nothing earlier.
 - **Chosen id.** Run `drive.ts r tui start --conversation picked-1 'first words'`,
   `drive.ts r tui wait 'You said: first words'`, `drive.ts r tui stop`: it

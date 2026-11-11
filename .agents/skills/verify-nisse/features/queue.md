@@ -47,7 +47,7 @@ Preconditions:
   `drive.ts r tui screen drained`. On the screen
   `slow one two three four five six seven eight` answers `first`,
   `fast reply` answers `second`, and the queue is empty. A second `watch <id> --save after` shows the `nisse.run_end` of `first` before the
-  `pi.user` entry of `second`, and `conversation/list` shows the
+  `nisse.user` entry of `second`, and `conversation/list` shows the
   conversation's `ended` as `answered` with `said` `fast reply`.
 - **Wire.** In a fresh run with the same script, run `drive.ts r serve`, start
   a conversation with `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`,
@@ -60,9 +60,9 @@ Preconditions:
   `submission`. A `drive.ts r watch <id>` while `first` still streams has
   `docs.pi.inbox.items` of `second` then `third`, both `"mode": "followUp"`,
   each carrying a `nisse.user` entry with `{"author": "bo"}`. Once the runs
-  settle, a fresh `watch <id>` shows `pi.user` `first`, `pi.assistant`
-  `slow one two three four five six seven eight`, `nisse.run_end`, `pi.user`
-  `second`, `pi.assistant` `fast reply`, `nisse.run_end`, `pi.user` `third`,
+  settle, a fresh `watch <id>` shows `nisse.user` `first`, `pi.assistant`
+  `slow one two three four five six seven eight`, `nisse.run_end`, `nisse.user`
+  `second`, `pi.assistant` `fast reply`, `nisse.run_end`, `nisse.user` `third`,
   `pi.assistant` `You said: third` (the script has run out, so Nisse echoes)
   and `nisse.run_end`: `second` once, and an empty inbox.
 

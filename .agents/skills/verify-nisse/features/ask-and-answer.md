@@ -16,7 +16,7 @@ printing the answer and exiting 0, or 1 when the run fails.
 - `answer-exec` prints the answer on stdout and exits 0.
 - `answer-exec-fail` prints what was said, reports the failure on stderr and
   exits 1.
-- `answer-wire` submits over the protocol and sees the `pi.user` entry, live
+- `answer-wire` submits over the protocol and sees the `nisse.user` entry, live
   text, the `pi.assistant` entry and the `nisse.run_end` entry as changes.
 - `answer-shared` shows a run started in the TUI to a second client.
 - `submit-author` names who wrote each prompt: the `author` of
@@ -65,7 +65,7 @@ Preconditions:
   `drive.ts r tui wait 'You said: first line'`, `drive.ts r tui wait READY`,
   `drive.ts r tui screen sent`: `ADA` over the three lines and `NISSE` over
   `You said: first line`, `second line`, `third line`; `drive.ts r watch <id>`
-  holds one `pi.user` entry whose text is `first line\nsecond line\nthird line`.
+  holds one `nisse.user` entry whose text is `first line\nsecond line\nthird line`.
   Then, in a fresh run, type `aa`, press `drive.ts r tui key C-j`, type
   `bb`: the panel holds two lines and nothing was sent. This fails today:
   `C-j` sends `aa` at once.
@@ -78,7 +78,7 @@ Preconditions:
 - **Shared.** With the TUI still open, run `drive.ts r rpc conversation/list`
   and take the conversation's `id`, then
   `drive.ts r watch <id> --save shared`. The first view's `entries` hold
-  `pi.user`, a `pi.assistant` with `You said: hello nisse`, and a
+  `nisse.user`, a `pi.assistant` with `You said: hello nisse`, and a
   `nisse.run_end` with `"outcome": "answered"`.
 - **Exec.** Run `drive.ts r nisse exec 'hello there'`. Exit 0, stdout
   `You said: hello there`, empty stderr.
@@ -90,7 +90,7 @@ Preconditions:
   `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` and take its `id`, then
   `drive.ts r watch <id> --submit 'tell me about the queue and the steering' --until run_end --save wire`.
   The lines show the view, the submit reply, then one `change` per commit:
-  `pi.user` spliced into `entries`, live words as `"a"` ops on
+  `nisse.user` spliced into `entries`, live words as `"a"` ops on
   `docs.pi.live.generation.message`, then `pi.assistant` and `nisse.run_end`.
 
 ## Contexts

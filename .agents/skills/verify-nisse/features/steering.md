@@ -49,9 +49,9 @@ Preconditions:
   the slow text and `▸ read(/etc/hostname)`, then `ADA` over `go left`, then
   `NISSE` over `steered reply`.
 - **Committed.** Run `drive.ts r rpc conversation/list` for the `<id>` and
-  `drive.ts r watch <id> --save steered`. The view's entries run `pi.user`
+  `drive.ts r watch <id> --save steered`. The view's entries run `nisse.user`
   `first`, a `pi.assistant` with the slow text and the call, its
-  `pi.tool-result`, `pi.user` `go left`, `pi.assistant` `steered reply`, and
+  `pi.tool-result`, `nisse.user` `go left`, `pi.assistant` `steered reply`, and
   one `nisse.run_end`: one run, not two.
 - **Wire.** In a fresh run with the same script, run `drive.ts r serve`, start
   a conversation with `rpc conversation/start '{"cwd": "/tmp"}'`, and run
@@ -74,7 +74,7 @@ Preconditions:
   and `WAITING`. Press `C-y` and wait for `READY`. The screen shows
   `✓ allowed by ada`, `ADA` over the steer, then `NISSE` over `done` and
   `done BANANA`. `drive.ts r watch <id> --save steered` has one
-  `nisse.run_end` and the steer's `pi.user` entry after the `pi.tool-result`,
+  `nisse.run_end` and the steer's `nisse.user` entry after the `pi.tool-result`,
   and `drive.ts r rpc conversation/list` shows `ended` `answered` with `said`
   `done BANANA`. In `evidence/fake-claude/log.ndjson`
   the steer is a second `user` frame sent to `"spawn": 0`, the process of the
@@ -92,7 +92,7 @@ Preconditions:
   `drive.ts r tui screen two-steers`: each steer's `ADA` entry follows the
   result of the call that was running when it was sent, then `NISSE` answers
   `done` and `BANANA`, then `CHERRY`, `done` and `BANANA`. `watch <id>` has one
-  `nisse.run_end` and both steers' `pi.user` entries before the answer. The log has both
+  `nisse.run_end` and both steers' `nisse.user` entries before the answer. The log has both
   steers as `"priority":"next"` frames to `"spawn": 0`. The recording ends
   with a third prompt, `Reply with exactly: still here`, that Claude Code
   answered in the same process; Nisse starts a new Claude Code for every run,
@@ -139,13 +139,13 @@ Preconditions:
 - **OpenAI** (`steer_after_parallel_calls`). In a fresh run made with
   `drive.ts r up --fake-openai steer_after_parallel_calls`, run
   `drive.ts r tui start --provider openai`, wait for `READY`, type
-  `echo one and two` and `Enter`, and wait for `allow this call?` on
-  `▸ bash(echo one)`. Press `Tab`, type `and three`, `Enter`, wait for
-  `steering · and three`, and press `C-y`. Wait for `bash(echo two)` and
-  `allow this call?`, press `C-y` and wait for `READY`. The screen shows both
+  `echo one and two` and `Enter`, and wait for `allow this call?`: both
+  `▸ bash(echo one)` and `▸ bash(echo two)` ask at once. Press `Tab`, type
+  `and three`, `Enter`, wait for `steering · and three`, and press `C-y` for
+  the first call, then `C-y` for the second, and wait for `READY`. The screen shows both
   calls allowed with `one` and `two`, `ADA` over `and three`, and `NISSE`
-  over `One, two, and three.`. `watch <id>` has the `pi.user`
-  `echo one and two`, both calls and their results, the `pi.user`
+  over `One, two, and three.`. `watch <id>` has the `nisse.user`
+  `echo one and two`, both calls and their results, the `nisse.user`
   `and three`, the answer and one `nisse.run_end`. In
   `evidence/fake-openai.ndjson` the first request is `as recorded` and holds
   no steer; the second holds both calls' outputs and then `and three`, and
@@ -208,7 +208,7 @@ SKILL.md's "Real accounts" first, and run the first check before any step.
   At `allow this call?` press `Tab`, type
   `Also end your reply with the word BANANA.` and `Enter`, then press `C-y`.
   Wait `--timeout 120000` for `READY`. The final answer ends with
-  `BANANA`, the steer's `pi.user` entry sits between the `pi.tool-result` and
+  `BANANA`, the steer's `nisse.user` entry sits between the `pi.tool-result` and
   the answer in `drive.ts r watch <id> --save real-claude-steer`, and the
   conversation has one `nisse.run_end`. `ls /tmp/nisse-verify/r/steered.txt` shows
   the file. Needs no person once Claude Code is signed in.
@@ -219,7 +219,7 @@ SKILL.md's "Real accounts" first, and run the first check before any step.
   and `Enter`. Once `▸ Bash(echo hi)` shows `hi` and the status is still
   `WORKING`, press `Tab`, type `Now reply with exactly: BANANA` and `Enter`,
   and wait `--timeout 120000` for `READY`. Today's behaviour, which this
-  checks: the story ends the first run, the steer's `pi.user` entry follows that
+  checks: the story ends the first run, the steer's `nisse.user` entry follows that
   run's `nisse.run_end`, and a second run answers `BANANA`; `drive.ts r watch <id> --save real-claude-late-steer` shows two `nisse.run_end`s. Report what the screen and
   the watch show if they differ: a steer folded into the story, a steer that
   never runs, or a run that does not end.
@@ -230,5 +230,5 @@ SKILL.md's "Real accounts" first, and run the first check before any step.
   `Also end your answer with the word BANANA.` and `Enter`, then press `C-y`
   at each call that follows. Wait `--timeout 120000` for `READY`. The final
   answer ends with `BANANA`, and `watch` shows one `nisse.run_end` with the
-  steer's `pi.user` entry after the first `pi.tool-result` and before the
+  steer's `nisse.user` entry after the first `pi.tool-result` and before the
   answer. Needs no person once the sign-in is kept.

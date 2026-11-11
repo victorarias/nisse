@@ -78,7 +78,7 @@ Preconditions:
   `drive.ts r tui wait 'Hello there'`, `drive.ts r tui screen answered`:
   `ADA` over `hello`, `NISSE` over `Hello there`, `openai` at the right of
   the status bar. Take the id from the header's `conversation <id>`;
-  `drive.ts r watch <id> --save answer` shows the `pi.user` `hello`, a
+  `drive.ts r watch <id> --save answer` shows the `nisse.user` `hello`, a
   `pi.assistant` `Hello there` with `"api": "openai-codex-responses"` and
   `"provider": "openai"`, and a `nisse.run_end` with `"outcome": "answered"`.
   `evidence/fake-openai.ndjson` holds one request, `as recorded`, with
@@ -96,14 +96,15 @@ Preconditions:
   start a new TUI the same way, send the same and press `C-n`:
   `✗ denied by ada` and `I was not allowed to run it.` The fake plays the
   recordings with their `Bash` renamed to nisse's `bash`; the denial's request
-  `differs` only in its result's wording,
-  `denied by ada: the person did not allow this call`.
+  `differs` only in its result's wording, which the harness wraps:
+  `<harness>\n[error] denied by ada: the person did not allow this call\n</harness>`.
 - **Exec.** `drive.ts r up --fake-openai tool_denied,tool_call`,
   `drive.ts r nisse exec --provider openai 'what does echo say?'`: exit 0,
   stdout `Let me look.` and `I was not allowed to run it.`, stderr
+  `› bash(echo hi)` then
   `denied bash(echo hi): exec cannot ask, pass --auto to allow calls`. Then
   `drive.ts r nisse exec --provider openai --auto 'what does echo say?'`:
-  exit 0, stdout ends `It printed hi.`.
+  exit 0, stdout ends `It printed hi.`, stderr `› bash(echo hi)`.
 - **Model.** `drive.ts r up --fake-openai text_answer,text_answer`,
   `drive.ts r nisse exec --provider openai --model gpt-5.5 --effort low hello`:
   exit 0, `Hello there`. Take the id from `drive.ts r rpc conversation/list`,

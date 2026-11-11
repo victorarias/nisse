@@ -2,7 +2,7 @@
 
 A run cut off by a crashed server carries on when the server comes back. The
 client that was watching reconnects, starts a new server if none runs, and
-shows the whole answer once. A call that was running when the server died is
+shows the answer the restarted run gives. A call that was running when the server died is
 recorded as interrupted and the model carries on. A run that crashes the
 server three times in a row ends instead of looping.
 
@@ -63,8 +63,9 @@ Preconditions:
 - **Exec.** In a fresh run with the same script, run `drive.ts r serve`, then
   `drive.ts r nisse exec count > /tmp/nisse-verify/r-exec.txt &`. `nisse`
   prints stdout as it arrives: once that file shows `three`, run
-  `drive.ts r kill-server`, then `wait`. The saved `nisse` output shows the
-  whole answer once and exit 0.
+  `drive.ts r kill-server`, then `wait`. The saved `nisse` output keeps the
+  words printed before the crash, then the restarted run's whole answer on a
+  new line (`one two three ` then `one two three four … ten`), and exit 0.
 - **Call cut off.** In the `crash-call` run, run `drive.ts r serve`,
   `drive.ts r tui start --auto`, `drive.ts r tui wait READY`,
   `drive.ts r tui type nap`, `drive.ts r tui key Enter`,
