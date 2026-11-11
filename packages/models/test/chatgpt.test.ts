@@ -35,8 +35,11 @@ const RENAMED: Tool = {
   parameters: { type: "object", properties: { source: { type: "string" } }, required: ["source"] },
 }
 
-test("openai-grammar-tools: a grammar tool is offered as a custom tool, its raw input arrives as its one argument and goes back raw, even after the tool changes", async () => {
-  const { events, next } = recorded()
+/** A ChatGPT server answering every request with `events`, and the `Models` seam over it. */
+const withChatGpt = async (
+  events: ReadonlyArray<unknown>,
+  use: (models: ReturnType<typeof fromProviders>, bodies: Array<any>) => Promise<void>,
+) => {
   const bodies: Array<any> = []
   const server = Bun.serve({
     port: 0,
@@ -71,7 +74,16 @@ test("openai-grammar-tools: a grammar tool is offered as a custom tool, its raw 
         }),
       ),
     )
-    const models = fromProviders([instance.provider!])
+    await use(fromProviders([instance.provider!]), bodies)
+  } finally {
+    await server.stop(true)
+    rmSync(home, { recursive: true, force: true })
+  }
+}
+
+test("openai-grammar-tools: a grammar tool is offered as a custom tool, its raw input arrives as its one argument and goes back raw, even after the tool changes", async () => {
+  const { events, next } = recorded()
+  await withChatGpt(events, async (models, bodies) => {
     const model = models.getModel("openai", "gpt-6.1-sol")!
     const context: Context = {
       tools: [EXEC],
@@ -120,8 +132,29 @@ test("openai-grammar-tools: a grammar tool is offered as a custom tool, its raw 
       { type: "custom_tool_call_output", call_id: "call_1", output: "hi\n" },
     ])
     expect(bodies[1].tools).toEqual([expect.objectContaining({ type: "custom", name: "exec" })])
-  } finally {
-    await server.stop(true)
-    rmSync(home, { recursive: true, force: true })
-  }
+  })
+})
+
+test("openai-grammar-tools: a grammar call's input streams as JSON argument text, as a function call's does, so its arguments show while the model writes them", async () => {
+  const input = 'const a = {"x": "\\n"}\nreturn a\n'
+  // The last piece arrives only with the finished item, as ChatGPT may send it.
+  const pieces = [input.slice(0, 12), input.slice(12, 20)]
+  const item = { id: "ctc_1", type: "custom_tool_call", call_id: "call_1", name: "exec" }
+  const events = [
+    { type: "response.created", response: { id: "resp_1" } },
+    { type: "response.output_item.added", item: { ...item, input: "" } },
+    ...pieces.map((delta) => ({ type: "response.custom_tool_call_input.delta", item_id: "ctc_1", delta })),
+    { type: "response.output_item.done", item: { ...item, input } },
+    { type: "response.completed", response: { id: "resp_1", usage: { input_tokens: 1, output_tokens: 1 } } },
+  ]
+  await withChatGpt(events, async (models) => {
+    const model = models.getModel("openai", "gpt-6.1-sol")!
+    const context: Context = { tools: [EXEC], messages: [{ role: "user", content: "go", timestamp: 0 }] }
+    const deltas = await Effect.runPromise(
+      Stream.runCollect(models.streamSimple(model, context)).pipe(
+        Effect.map((all) => Array.from(all).flatMap((event) => (event.type === "toolcall_delta" ? [event.delta] : []))),
+      ),
+    )
+    expect(JSON.parse(deltas.join(""))).toEqual({ code: input })
+  })
 })

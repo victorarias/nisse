@@ -79,6 +79,9 @@ const usageOf = (usage: any): Usage => {
   }
 }
 
+/** `text` as it appears inside a JSON string. */
+const jsonStringBody = (text: string) => JSON.stringify(text).slice(1, -1)
+
 type Open =
   | { readonly kind: "text"; readonly index: number; readonly block: TextContent }
   | {
@@ -87,6 +90,8 @@ type Open =
       readonly block: ToolCall
       readonly custom: boolean
       readonly args: ToolCallArgumentsStream
+      /** A custom call's raw input streamed so far. */
+      raw: string
     }
 
 /**
@@ -185,7 +190,14 @@ export class ResponseReader {
       name: typeof item.name === "string" ? item.name : "",
       arguments: {},
     }
-    const open: Open = { kind: "call", index: this.#append(block), block, custom, args: new ToolCallArgumentsStream() }
+    const open: Open = {
+      kind: "call",
+      index: this.#append(block),
+      block,
+      custom,
+      args: new ToolCallArgumentsStream(),
+      raw: "",
+    }
     if (typeof item.id === "string") this.#open.set(item.id, open)
     this.#lastCall = open
     const events: Array<AssistantMessageEvent> = [
@@ -205,14 +217,17 @@ export class ResponseReader {
   #callDelta(id: unknown, delta: string): Array<AssistantMessageEvent> {
     const open = (typeof id === "string" ? this.#open.get(id) : undefined) ?? this.#lastCall
     if (open?.kind !== "call" || delta === "") return []
-    if (open.custom) {
-      const property = this.#grammarInputs.get(open.block.name) ?? "input"
-      const raw = `${(open.block.arguments[property] as string | undefined) ?? ""}${delta}`
-      open.block.arguments = { [property]: raw }
-    } else {
+    if (!open.custom) {
       open.block.arguments = open.args.append(delta)
+      return [{ type: "toolcall_delta", contentIndex: open.index, delta, partial: this.#snapshot() }]
     }
-    return [{ type: "toolcall_delta", contentIndex: open.index, delta, partial: this.#snapshot() }]
+    // A delta is a piece of the call's arguments as JSON text, as for a function call: the raw input as its one
+    // string parameter.
+    const property = this.#grammarInputs.get(open.block.name) ?? "input"
+    const json = `${open.raw === "" ? `{${JSON.stringify(property)}:"` : ""}${jsonStringBody(delta)}`
+    open.raw += delta
+    open.block.arguments = { [property]: open.raw }
+    return [{ type: "toolcall_delta", contentIndex: open.index, delta: json, partial: this.#snapshot() }]
   }
 
   #closeText(item: any): Array<AssistantMessageEvent> {
@@ -236,9 +251,21 @@ export class ResponseReader {
     if (open.kind !== "call") return opened.events
     if (typeof item.call_id === "string") open.block.id = item.call_id
     if (typeof item.name === "string") open.block.name = item.name
+    const closing: Array<AssistantMessageEvent> = []
     if (open.custom) {
       const property = this.#grammarInputs.get(open.block.name) ?? "input"
-      open.block.arguments = { [property]: typeof item.input === "string" ? item.input : "" }
+      const input = typeof item.input === "string" ? item.input : open.raw
+      // The rest of the input and the end of the JSON text its deltas began; `toolcall_end` carries the whole call.
+      if (open.raw !== "") {
+        const rest = input.startsWith(open.raw) ? input.slice(open.raw.length) : ""
+        closing.push({
+          type: "toolcall_delta",
+          contentIndex: open.index,
+          delta: `${jsonStringBody(rest)}"}`,
+          partial: this.#snapshot(),
+        })
+      }
+      open.block.arguments = { [property]: input }
     } else {
       const parsed = parseToolCallArguments(typeof item.arguments === "string" ? item.arguments : "{}")
       open.block.arguments = parsed.arguments
@@ -247,6 +274,7 @@ export class ResponseReader {
     if (this.#lastCall === open) this.#lastCall = undefined
     return [
       ...opened.events,
+      ...closing,
       { type: "toolcall_end", contentIndex: open.index, toolCall: { ...open.block }, partial: this.#snapshot() },
     ]
   }
