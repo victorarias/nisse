@@ -12,7 +12,7 @@ server three times in a row ends instead of looping.
 - `crash-exec` finishes the answer for a waiting `nisse exec`, which exits 0.
 - `crash-committed` commits the answer once, in a run that ends `answered`.
 - `crash-call` records a running call as
-  `interrupted; it may or may not have taken effect` and goes on.
+  `Tool bash was interrupted and may have partially run` and goes on.
 - `crash-limit` ends the run with `restart_limit` after the server stopped
   during it three times in a row.
 - `crash-claude` resumes a Claude Code run whose server was killed while a
@@ -71,7 +71,7 @@ Preconditions:
   `drive.ts r tui wait 'bash(sleep 5; echo slept)'`, `drive.ts r kill-server`,
   `drive.ts r tui wait --timeout 30000 'carried on'`,
   `drive.ts r tui screen call-cut-off`. The first call shows
-  `interrupted; it may or may not have taken effect`; the restarted script
+  `Tool bash was interrupted and may have partially run`; the restarted script
   calls it again, which shows `slept`, then `carried on`. `watch <id>` shows
   the interrupted `pi.tool-result` with `"isError": true` and one
   `nisse.run_end` with `"outcome": "answered"`.
@@ -96,7 +96,7 @@ Preconditions:
   reads `interrupted` and `resumed ok` follows. `rpc conversation/list` shows
   the parent `answered` with `"said": "resumed ok"` and the subagent
   `interrupted`; `watch <parent>` shows a `pi.tool-result`
-  `interrupted; it may or may not have taken effect`, the answer `resumed ok`
+  `Tool bash was interrupted and may have partially run`, the answer `resumed ok`
   and one `nisse.run_end` with `"outcome": "answered"`, and `watch <subagent>`
   ends with one `nisse.run_end` with `"outcome": "interrupted"`. In
   `evidence/fake-claude/log.ndjson` spawn 0 has `--session-id`, spawn 1 has
@@ -168,7 +168,7 @@ call cut off by a kill is Claude's **Cut off** step in [Claude](./claude.md#with
   `resumed ok` follows. `drive.ts r rpc conversation/list` shows the parent
   `answered` with `"said": "resumed ok"` and the subagent `interrupted`;
   `drive.ts r watch <parent>` shows a `pi.tool-result` starting
-  `interrupted; it may or may not have taken effect`, and one `nisse.run_end`
+  `Tool bash was interrupted and may have partially run`, and one `nisse.run_end`
   with `"outcome": "answered"`; `drive.ts r watch <subagent>` ends with one
   `nisse.run_end` with `"outcome": "interrupted"`. A new
   `drive.ts r tui start --conversation <parent>` shows the same screen. A
