@@ -2,8 +2,10 @@
 // socket, with ChatGPT played by the fake OpenAI server replaying the recorded exchanges in `fixtures/openai`.
 import { expect, test } from "bun:test"
 import type { EntryRecord } from "@nisse/wire"
-import { readFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import type { Home } from "../../src/home.ts"
+import { homeWithExtensions } from "../support/extensions.ts"
 import { accessToken, ACCOUNT, FakeOpenAi, matches, signIn } from "../support/openai.ts"
 import { deadline, RawClient } from "../support/raw.ts"
 import { runningKernelServer, settled, submit, transcript, type ViewWatch, watchView } from "../support/kernel.ts"
@@ -13,13 +15,25 @@ const KERNEL_TOOLS = { Bash: "bash" }
 
 const conversationWith = async (
   fake: FakeOpenAi,
-  options: { approvals?: "ask" | "auto"; signedIn?: boolean; model?: string; effort?: string } = {},
+  options: {
+    approvals?: "ask" | "auto"
+    signedIn?: boolean
+    model?: string
+    effort?: string
+    instructions?: string
+    home?: Home
+    cwd?: (home: string) => string
+  } = {},
 ) => {
-  const server = await runningKernelServer([], { openai: fake.options() })
+  const server = await runningKernelServer([], {
+    openai: fake.options(),
+    ...(options.home === undefined ? {} : { home: options.home }),
+  })
   if (options.signedIn ?? true) await signIn(server.home)
   const client = await RawClient.connect(server.home.socket)
   const started = await client.call("conversation/start", {
-    cwd: server.home.dir,
+    cwd: options.cwd?.(server.home.dir) ?? server.home.dir,
+    ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
     provider: "openai",
     approvals: options.approvals ?? "auto",
     ...(options.model === undefined ? {} : { model: options.model }),
@@ -38,6 +52,7 @@ const conversationWith = async (
     [Symbol.asyncDispose]: async () => {
       client.close()
       await server[Symbol.asyncDispose]()
+      if (options.home !== undefined) rmSync(options.home.dir, { recursive: true, force: true })
     },
   }
 }
@@ -76,7 +91,7 @@ test("openai-answer, telemetry-identity: a ChatGPT answer is committed, asked fo
   const body = JSON.parse(request!.body)
   // One id keys the conversation at ChatGPT: its prompt cache and its session.
   expect(request!.headers.get("session-id")).toBe(body.prompt_cache_key)
-  expect(body.instructions).toStartWith("You are a test.")
+  expect(body.instructions).toStartWith("You are Nisse")
 })
 
 test("openai-answer: a recorded ChatGPT exchange replays into the same answer", async () => {
@@ -302,4 +317,186 @@ test("compaction-overflow, models-overflow: ChatGPT's context-window error compa
     role: "user",
     content: [{ type: "input_text", text: "again" }],
   })
+})
+
+const write = (path: string, text: string) => {
+  mkdirSync(join(path, ".."), { recursive: true })
+  writeFileSync(path, text)
+}
+
+/** A repository under `home` with AGENTS.md files and skills at several levels; answers the folder to work in. */
+const project = (home: string) => {
+  const repo = join(home, "repo")
+  mkdirSync(join(repo, ".git"), { recursive: true })
+  write(join(home, "AGENTS.md"), "Home rules.")
+  write(join(repo, "AGENTS.md"), "Repo rules.")
+  write(join(repo, "app", "AGENTS.md"), "App rules.")
+  write(join(repo, "app", "AGENTS.override.md"), "App override rules.")
+  write(
+    join(repo, ".agents", "skills", "review", "SKILL.md"),
+    "---\nname: review\ndescription: Review a diff\n---\nLook hard.",
+  )
+  write(
+    join(repo, "app", ".claude", "skills", "review", "SKILL.md"),
+    "---\nname: review\ndescription: Nearer review\n---\nLook nearer.",
+  )
+  write(join(repo, ".claude", "skills", "plain", "SKILL.md"), "No frontmatter.")
+  write(join(home, "skills", "ship", "SKILL.md"), "---\nname: ship\ndescription: >\n  Ship it\n  carefully\n---\nShip.")
+  return join(repo, "app")
+}
+
+const instructionsOf = (fake: FakeOpenAi, request: number): string =>
+  JSON.parse(fake.responses()[request]!.body).instructions
+
+test("openai-instructions, agents-md, skills-found, skills-nearest, skills-frontmatter: ChatGPT is told its working directory, the AGENTS.md files from home down to it, and the skills it can use", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, { cwd: project })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+
+  const home = session.server.home.dir
+  const app = join(home, "repo", "app")
+  const skills = (review: string) =>
+    [
+      "# Skills",
+      "",
+      "A skill is a folder of instructions for one kind of task, in a `SKILL.md` file. When a task matches a skill's description, `read` its `SKILL.md` before you start, and follow it. When a message names a skill with `/name` or `$name`, the skill's `SKILL.md` comes with the message; follow it. Relative paths in a skill are relative to its folder.",
+      "",
+      `- plain:  (file: ${join(home, "repo", ".claude", "skills", "plain", "SKILL.md")})`,
+      review,
+      `- ship: Ship it carefully (file: ${join(home, "skills", "ship", "SKILL.md")})`,
+    ].join("\n")
+  expect(instructionsOf(fake, 0)).toEndWith(
+    [
+      "",
+      `The working directory is ${app}.`,
+      `# AGENTS.md instructions from ${join(home, "AGENTS.md")}\n\nHome rules.`,
+      `# AGENTS.md instructions from ${join(home, "repo", "AGENTS.md")}\n\nRepo rules.`,
+      `# AGENTS.md instructions from ${join(app, "AGENTS.override.md")}\n\nApp override rules.`,
+      skills(`- review: Nearer review (file: ${join(app, ".claude", "skills", "review", "SKILL.md")})`),
+    ].join("\n\n"),
+  )
+
+  // What the folders hold is read again for each request.
+  rmSync(join(app, ".claude"), { recursive: true })
+  write(join(home, "repo", "AGENTS.md"), "New repo rules.")
+  await session.submit("again")
+  await session.view.until(settled(2))
+  const again = instructionsOf(fake, 1)
+  expect(again).toContain("\n\nNew repo rules.\n")
+  expect(again).not.toContain("\n\nRepo rules.\n")
+  expect(again).toEndWith(
+    skills(`- review: Review a diff (file: ${join(home, "repo", ".agents", "skills", "review", "SKILL.md")})`),
+  )
+})
+
+test("openai-instructions: every tool ChatGPT's instructions name is one its request offers, by the same name", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, { cwd: project })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const { instructions, tools } = JSON.parse(fake.responses()[0]!.body)
+  const offered: Array<string> = tools.map((tool: { name: string }) => tool.name)
+  const named = [...(instructions as string).matchAll(/`([^`]+)`/g)].map((match) => match[1]!)
+  // A name that differs from an offered tool's only in case is a tool the model is told of but not offered.
+  const toolLike = named.filter((name) => offered.some((tool) => tool.toLowerCase() === name.toLowerCase()))
+  expect(toolLike).toEqual(expect.arrayContaining(["read", "grep", "glob", "write", "edit", "apply_patch", "bash"]))
+  expect(toolLike.filter((name) => !offered.includes(name))).toEqual([])
+})
+
+test("skills-found: a conversation outside any repository is told only its own folder's skills and the home's", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, {
+    cwd: (home) => {
+      project(home)
+      write(join(home, "loose", ".agents", "skills", "near", "SKILL.md"), "---\ndescription: Here\n---\n")
+      return join(home, "loose")
+    },
+  })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const instructions = instructionsOf(fake, 0)
+  expect(instructions).toContain("- near: Here")
+  expect(instructions).toContain("- ship: Ship it carefully")
+  expect(instructions).not.toContain("- review:")
+  expect(instructions).not.toContain("Repo rules.")
+  expect(instructions).toContain("Home rules.")
+})
+
+test("start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files, and a subagent is not", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("subagent")
+  await using session = await conversationWith(fake, { cwd: project, instructions: "Report with attn when done." })
+  await session.submit("Ask a scout where the gnome lives.")
+  await session.view.until(settled(1), 20_000)
+  expectRequests(fake, expected)
+  const [parent, child] = [instructionsOf(fake, 0), instructionsOf(fake, 1)]
+  expect(parent).toEndWith("\n\n<instructions>\nReport with attn when done.\n</instructions>")
+  expect(parent.indexOf("Report with attn when done.")).toBeGreaterThan(parent.indexOf("App override rules."))
+  expect(child).toContain("App override rules.")
+  expect(child).not.toContain("Report with attn when done.")
+})
+
+const focus = `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+let asked = 0
+export default Extension.define((ctx) =>
+  ctx.request.hook((request) =>
+    Effect.sync(() => {
+      asked += 1
+      request.instructions.push("Request " + asked + " in " + request.conversation.cwd + ".")
+      request.tools = request.tools.filter((name) => name === "bash" || name === "made_up")
+      request.tools.push("made_up")
+    }),
+  ),
+)`
+
+test("request-hook: an extension's request hook adds instructions and narrows the tools of each request to the model", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("tool_call", KERNEL_TOOLS)
+  const home = homeWithExtensions({ "focus.ts": focus })
+  await using session = await conversationWith(fake, { home })
+  await session.submit("what does echo say?")
+  await session.view.until(settled(1))
+  expect(session.said().at(-2)).toBe("assistant: It printed hi.")
+  expectRequests(fake, expected)
+  const requests = fake.responses().map((response) => JSON.parse(response.body))
+  expect(requests.map((request) => request.instructions)).toEqual([
+    expect.stringMatching(new RegExp(`^You are Nisse[^]*\\nRequest 1 in ${home.dir}\\.\\n$`)),
+    expect.stringMatching(new RegExp(`^You are Nisse[^]*\\nRequest 2 in ${home.dir}\\.\\n$`)),
+  ])
+  expect(requests.map((request) => request.tools.map((tool: { name: string }) => tool.name))).toEqual([
+    ["bash"],
+    ["bash"],
+  ])
+})
+
+test("hook-failure: a request hook that fails is skipped with a toast, and the model gets the request as it was", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  const home = homeWithExtensions({
+    "broken.ts": `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.request.hook((request) => {
+    request.tools = []
+    request.instructions.push("Never sent.")
+    return Effect.fail("no network")
+  }),
+)`,
+  })
+  await using session = await conversationWith(fake, { home })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const toasts = session.view.seen().filter((entry) => entry.kind === "nisse.toast")
+  expect(toasts.map((entry) => entry.data)).toEqual([{ extension: "broken", text: "request failed: no network" }])
+  const { instructions, tools } = JSON.parse(fake.responses()[0]!.body)
+  expect(instructions).not.toContain("Never sent.")
+  expect(tools.map((tool: { name: string }) => tool.name)).toEqual(
+    expect.arrayContaining(["read", "write", "edit", "bash", "grep", "glob", "spawn_agent", "wait_agent"]),
+  )
 })

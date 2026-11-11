@@ -397,7 +397,7 @@ const watchView = async () => {
     settleAfterQuiet()
     if (!submitted) {
       submitted = true
-      const params = { conversation, requestId: crypto.randomUUID(), text: submit }
+      const params = { conversation, requestId: crypto.randomUUID(), author: "ada", text: submit }
       client.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "conversation/submit", params }) + "\n")
     }
     client.write(JSON.stringify({ jsonrpc: "2.0", method: "@effect/rpc/Ack", params: { requestId: 1 } }) + "\n")
@@ -636,7 +636,6 @@ const commands: Record<string, () => Promise<void> | void> = {
   "watch-auth": () => follow("watch-auth", "auth/watch", ({ item, until }) => item.phase === until),
 
   "watch-status": () => {
-    notOnKernel("watch-status", "nisse-surface-part-2-extension-host")
     return follow("watch-status", "status/watch", ({ item, until, conversation }) => {
       const trees: Array<any> = item._tag === "trees" ? item.trees : [item]
       const mine = trees.filter((tree) => !conversation || tree.conversation === conversation)

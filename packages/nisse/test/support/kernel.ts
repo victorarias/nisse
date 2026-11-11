@@ -2,7 +2,15 @@
 // the kernel wire: the first view with every later change applied, as a client keeps it.
 import { applyImmutable, type Op } from "@nisse/delta"
 import type { ScriptStep } from "@nisse/models"
-import { type EntryRecord, RUN_END_KIND, type RunEnd, type View, type ViewItem, type Window } from "@nisse/wire"
+import {
+  type EntryRecord,
+  RUN_END_KIND,
+  USER_KIND,
+  type RunEnd,
+  type View,
+  type ViewItem,
+  type Window,
+} from "@nisse/wire"
 import { rmSync } from "node:fs"
 import { type Duration, Effect, Exit, Layer, Scope } from "effect"
 import type { Home } from "../../src/home.ts"
@@ -74,9 +82,9 @@ export const kernelEnv = async (home: Home, script: ReadonlyArray<ScriptStep> = 
   return nisseEnv(home, { NISSE_KERNEL: "1", NISSE_MODEL_SCRIPT: path })
 }
 
-/** `nisse serve` on the kernel, once it listens. */
-export const servingKernel = async (env: Record<string, string | undefined>) => {
-  const server = nisse(["serve"], env)
+/** `nisse serve` on the kernel, run in `cwd`, once it listens. */
+export const servingKernel = async (env: Record<string, string | undefined>, cwd?: string) => {
+  const server = nisse(["serve"], env, cwd)
   const log = server.stderr.getReader()
   let printed = ""
   while (!printed.includes("serving")) {
@@ -148,7 +156,7 @@ export const transcript = (entries: ReadonlyArray<EntryRecord>) =>
         : Array.isArray(content)
           ? content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("")
           : ""
-    if (entry.kind === "pi.user") return [`user: ${text(message?.content)}`]
+    if (entry.kind === "pi.user" || entry.kind === USER_KIND) return [`user: ${text(message?.content)}`]
     if (entry.kind === "pi.assistant") {
       const cut = message?.stopReason === "stop" || message?.stopReason === "toolUse" ? "" : ` [${message?.stopReason}]`
       return [`assistant: ${text(message?.content)}${cut}`]
@@ -163,5 +171,10 @@ export const transcript = (entries: ReadonlyArray<EntryRecord>) =>
 export const start = async (client: RawClient, cwd = "/work") =>
   (await client.call("conversation/start", { cwd })).result.conversation as string
 
-export const submit = (client: RawClient, conversation: string, text: string, requestId = crypto.randomUUID()) =>
-  client.call("conversation/submit", { conversation, requestId, text })
+export const submit = (
+  client: RawClient,
+  conversation: string,
+  text: string,
+  requestId = crypto.randomUUID(),
+  author = "ada",
+) => client.call("conversation/submit", { conversation, requestId, author, text })

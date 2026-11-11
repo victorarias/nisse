@@ -10,12 +10,12 @@ conversation. attn uses these to run Nisse sessions.
 
 ## Sub-features
 
-- `status-snapshot` [pending wire-complete] opens with every tree that is not idle; the rest are idle.
+- `status-snapshot` opens with every tree that is not idle; the rest are idle.
 - `status-follow` reports `working`, `waiting` and `idle` for each tree, in
   `seq` order.
 - `status-subagent` shows a subagent waiting on a person as its whole tree
   `waiting`.
-- `status-ended` [pending wire-complete] carries the outcome of the root's run and its last message.
+- `status-ended` carries the outcome of the root's run and its last message.
 - `conversation-ended` shows how a conversation's last run ended, as `ended`
   on it in `conversation/list`, on a start with an existing id and in a
   subscription's snapshot; a conversation that never ran has none.
@@ -71,10 +71,19 @@ Preconditions:
   `drive.ts r serve` the same call answers the same conversation, and an
   all-digit id such as `"42"` is refused by name.
 - **Subagents.** A subagent waiting on a person shows its whole tree as waiting.
+- **On the kernel.** `status/watch` and `drive.ts r watch-status` work in a
+  run made with `drive.ts r up --kernel`, and `seq` is the kernel's commit
+  sequence. Interrupting a conversation there stops its subagents too, so a
+  tree waiting on a subagent goes `idle`. An interrupted run's `ended` carries
+  `"message": "aborted"`.
 
 ## Tests
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- status-follow, status-ended: watching status follows each run of a tree and says how it ended
+- status-subagent, status-snapshot: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later
+- approval-restart, status-snapshot: a call waiting for approval across a restart, whose hook computes other arguments on the rerun, asks again with them
 
 - start-with-id: starting a conversation with an id it already has answers with that conversation, and an all-digit id is refused by name
 - start-with-id: a chosen id that names an object property, such as toString, opens its own conversation

@@ -34,6 +34,9 @@ export type Outcome = typeof Outcome.Type
 
 export const RUN_END_KIND = "nisse.run_end"
 
+/** A person's input: the entry its user message is placed as, with data `{ author }`. */
+export const USER_KIND = "nisse.user"
+
 export const RunEnd = Schema.Struct({
   outcome: Outcome,
   message: Schema.optionalKey(Schema.String.annotate({ description: "Why the run ended without an answer." })),
@@ -169,6 +172,12 @@ export const StartConversation = Rpc.make("conversation/start", {
       Schema.String.annotate({ description: "Without a provider, it goes to the default model's provider." }),
     ),
     effort: Schema.optionalKey(Schema.String),
+    instructions: Schema.optionalKey(
+      Schema.String.annotate({
+        description:
+          "Instructions the model follows in this conversation, beside its own. Its subagents don't get them.",
+      }),
+    ),
   },
   success: Schema.Struct({
     conversation: ConversationId,
@@ -184,6 +193,9 @@ export const Submit = Rpc.make("conversation/submit", {
   payload: {
     conversation: ConversationId,
     requestId: Schema.String.annotate({ description: "Submitting again with the same id is answered once." }),
+    author: Schema.String.annotate({
+      description: `Who wrote it; the input is placed as a ${USER_KIND} entry naming them, and waits in pi.inbox with them.`,
+    }),
     text: Schema.String,
   },
   success: Schema.Struct({ submission: Schema.Int }),
@@ -218,6 +230,75 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
   }),
   error: Schema.Union([NoSuchConversation, NoSuchApproval]),
 })
+
+export const ExtensionInfo = Schema.Struct({
+  name: Schema.String,
+  path: Schema.String,
+  state: Schema.Literals(["loaded", "failed", "disabled"]),
+  message: Schema.optionalKey(Schema.String.annotate({ description: "Why it failed to load." })),
+})
+export type ExtensionInfo = typeof ExtensionInfo.Type
+
+export const ListExtensions = Rpc.make("extensions/list", {
+  success: Schema.Array(ExtensionInfo).annotate({
+    description: "Every extension in the home, in the order they load.",
+  }),
+})
+
+export const ReloadExtensions = Rpc.make("extensions/reload", {
+  success: Schema.Array(ExtensionInfo).annotate({
+    description:
+      "Loads every extension again from disk, with its options from config.toml, then swaps them in, clears every status line and unloads the old ones.",
+  }),
+})
+
+export const TreeStatus = Schema.TaggedStruct("tree", {
+  conversation: ConversationId.annotate({
+    description: "A conversation people started; its tree is it and its subagents.",
+  }),
+  seq: Schema.Int.annotate({
+    description:
+      "The commit the tree's status changed at; 0 for a tree that was already busy when the server started, before any change.",
+  }),
+  status: Schema.Literals(["idle", "working", "waiting"]).annotate({
+    description: "waiting when a conversation in the tree waits on a person, working when one runs, idle otherwise.",
+  }),
+  ended: Schema.optionalKey(
+    Schema.Struct({
+      outcome: Outcome,
+      message: Schema.optionalKey(Schema.String.annotate({ description: "Why the run ended without an answer." })),
+      said: Schema.optionalKey(
+        Schema.String.annotate({ description: "The last message the model wrote in the conversation." }),
+      ),
+    }).annotate({ description: "The run of the conversation itself ended at seq." }),
+  ),
+})
+export type TreeStatus = typeof TreeStatus.Type
+
+export const TreeSnapshot = Schema.TaggedStruct("trees", {
+  seq: Schema.Int.annotate({
+    description:
+      "The last commit this server published before the watch began; 0 when it has published none since it started. Every later item has a greater seq.",
+  }),
+  trees: Schema.Array(TreeStatus).annotate({ description: "Every tree that is not idle; the rest are idle." }),
+})
+
+export const TreeItem = Schema.Union([TreeSnapshot, TreeStatus])
+export type TreeItem = typeof TreeItem.Type
+
+export const WatchStatus = Rpc.make("status/watch", {
+  success: TreeItem.annotate({
+    description: "The status of every tree, then each commit that changes one or ends the run of its root.",
+  }),
+  error: FellBehind,
+  stream: true,
+})
+
+/** Each extension's status line in a conversation, by extension name; the view's document of this kind. */
+export const STATUS_LINES_KIND = "nisse.status_lines"
+
+/** An entry `{ extension, text }`: an extension told the people in the conversation something. */
+export const TOAST_KIND = "nisse.toast"
 
 export const StopServer = Rpc.make("server/stop")
 
@@ -352,6 +433,9 @@ export const KernelRpcs = RpcGroup.make(
   Watch,
   Interrupt,
   ResolveApproval,
+  ListExtensions,
+  ReloadExtensions,
+  WatchStatus,
   StopServer,
   ListProviders,
   ListModels,

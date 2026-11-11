@@ -1,6 +1,6 @@
 // The providers of a home served on the kernel: every instance its config names, opened from its kind, with the
 // sign-ins, health and model lists over them, and how a new conversation's model is chosen.
-import type { Agent } from "@nisse/harness"
+import { type Agent, type AgentLimits, DEFAULT_AGENT_LIMITS } from "@nisse/harness"
 import { defineDoc } from "@nisse/kernel"
 import { type ProviderInstance, THINKING_LEVELS, type ThinkingLevel } from "@nisse/models"
 import { type ModelSelection, UnknownEffort, UnknownProvider } from "@nisse/wire"
@@ -45,6 +45,8 @@ export class KernelProviders extends Context.Service<
   KernelProviders,
   {
     readonly instances: ReadonlyMap<string, ProviderInstance>
+    /** How deep subagents nest and how many run at once: `[agents]` in `config.toml`, over the defaults. */
+    readonly agents: AgentLimits
     /** The model a conversation in `cwd` starts with when it asks for `ask`, given the model chosen last. */
     readonly choose: (
       cwd: string,
@@ -60,8 +62,13 @@ export class KernelProviders extends Context.Service<
         // A subagent's script requests take the steps of its task path.
         const instances = yield* openInstances(options, (context) => taskOfRequest(context.messages))
         const home = options.config.default_model
+        const agents = options.config.agents
         return KernelProviders.of({
           instances,
+          agents: {
+            maxDepth: agents?.max_depth ?? DEFAULT_AGENT_LIMITS.maxDepth,
+            maxThreads: agents?.max_threads ?? DEFAULT_AGENT_LIMITS.maxThreads,
+          },
           choose: (cwd, ask, last) =>
             Effect.suspend(() => {
               const selection = chooseModel(cwd, ask, {

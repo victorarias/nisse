@@ -1,6 +1,8 @@
 // The kernel wire (NISSE_KERNEL=1): a real server in process, driven as a raw JSON-RPC client over its socket.
 import { expect, test } from "bun:test"
-import { rmSync } from "node:fs"
+import { rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { homeWithExtensions } from "../support/extensions.ts"
 import { deadline, errorTag, RawClient } from "../support/raw.ts"
 import {
   runEnds,
@@ -14,9 +16,11 @@ import {
   watchView,
 } from "../support/kernel.ts"
 import { tempHome } from "../support/server.ts"
-import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
+import { KERNEL_PROTOCOL_VERSION, STATUS_LINES_KIND, TOAST_KIND, USER_KIND } from "@nisse/wire"
 import { VERSION } from "../../src/version.ts"
 
+type Tree = { _tag: "tree"; conversation: string; seq: number; status: string; ended?: Record<string, string> }
+type Trees = { _tag: "trees"; seq: number; trees: Array<Tree> } | Tree
 const opened = (watch: ViewWatch) => watch.until(() => true)
 
 /** The model has said something the view shows live, before the run ends. */
@@ -729,6 +733,544 @@ test("child-tools: interrupting a subagent stops its turn and reports what it wa
   expect(runEnds(slow.seen())).toEqual([expect.objectContaining({ outcome: "interrupted" })])
   expect(approvalsOf(slow)!.requests).toEqual({})
   expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+  client.close()
+}, 30_000)
+
+/** What the people in a conversation see of its calls: each call, each toast and each result, in order. */
+const callsAndToasts = (watch: ViewWatch) =>
+  watch.seen().flatMap((entry): Array<string> => {
+    const message = entry.model?.[0] as
+      | { content: Array<{ type: string; text?: string; name?: string; arguments?: unknown }>; isError?: boolean }
+      | undefined
+    if (entry.kind === TOAST_KIND) {
+      const toast = entry.data as { extension: string; text: string }
+      return [`toast ${toast.extension}: ${toast.text}`]
+    }
+    if (entry.kind === "pi.assistant")
+      return message!.content.flatMap((block) =>
+        block.type === "toolCall" ? [`call ${block.name} ${JSON.stringify(block.arguments)}`] : [],
+      )
+    if (entry.kind === "pi.tool-result") {
+      const text = message!.content.map((block) => block.text ?? "").join("")
+      return [`result${message!.isError ? " error" : ""}: ${text}`]
+    }
+    return []
+  })
+/** A result the harness wrote without running the call, as the model reads it. */
+const notRun = (why: string) => `result error: <harness>\n[error] ${why}\n</harness>`
+/** The results the harness wrote without running their calls. */
+const whyNotRun = (watch: ViewWatch) =>
+  callsAndToasts(watch).filter((line) => line.startsWith("result error: <harness>"))
+const statusLines = (watch: ViewWatch) =>
+  (watch.view().docs[STATUS_LINES_KIND] as { lines: Record<string, string> } | undefined)?.lines ?? {}
+const startAuto = async (client: RawClient, cwd: string, id?: string) =>
+  (await client.call("conversation/start", { cwd, approvals: "auto", ...(id === undefined ? {} : { id }) })).result
+    .conversation as string
+
+const clockAndNoGlob = `
+import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    tools.add(
+      Tool.make({
+        name: "Clock",
+        description: "The time in " + String(ctx.options.city ?? "nowhere"),
+        input: Schema.Struct({ zone: Schema.String }),
+        readOnly: true,
+        run: ({ zone }) => Effect.succeed(Tool.ok("noon in " + zone)),
+      }),
+    )
+    tools.remove("glob")
+    tools.update("read", (tool) => {
+      tool.readOnly = false
+    })
+  }),
+)
+`
+
+test("tools-transform, extensions-load: an extension's tool answers the model's calls, a tool it removes is gone, and one it makes not read-only asks", async () => {
+  const home = homeWithExtensions({ "clock.ts": clockAndNoGlob }, `[extensions.clock]\ncity = "Oslo"\n`)
+  await using server = await runningKernelServer(
+    [
+      { tool: { name: "Clock", input: { zone: "CET" } } },
+      { tool: { name: "glob", input: { pattern: "*" } } },
+      { tool: { name: "read", input: { path: "notes.txt" } } },
+      { text: "done" },
+    ],
+    { home },
+  )
+  await Bun.write(`${home.dir}/notes.txt`, "gnome\n")
+  const client = await RawClient.connect(server.home.socket)
+  expect((await client.call("extensions/list")).result).toEqual([
+    { name: "clock", path: join(home.extensions, "clock.ts"), state: "loaded" },
+  ])
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "what time is it")
+  const approval = await waitingApproval(view)
+  expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "read" })
+  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await view.until(settled(1))
+  expect(callsAndToasts(view)).toEqual([
+    `call Clock {"zone":"CET"}`,
+    "result: noon in CET",
+    `call glob {"pattern":"*"}`,
+    notRun("Tool glob is not available"),
+    `call read {"path":"notes.txt"}`,
+    "result: gnome\n",
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+const guard = `
+import { Extension, Tool } from "@nisse/extension"
+import { Effect } from "effect"
+
+export default Extension.define((ctx) =>
+  Effect.gen(function* () {
+    yield* ctx.tool.hook("execute.before", (call) =>
+      Effect.gen(function* () {
+        if (call.tool !== "bash") return
+        const command = String((call.input as { command: string }).command)
+        if (command.includes("rm -rf")) return yield* Tool.refuse("that deletes too much")
+        call.input = { command: command.replace("hello", "hej") }
+      }),
+    )
+    yield* ctx.tool.hook("execute.after", (call) =>
+      Effect.gen(function* () {
+        call.outcome.output = call.outcome.output.toUpperCase()
+        yield* call.conversation.status(
+          "ran " + call.tool + " in " + call.conversation.id + " at " + call.conversation.model.effort,
+        )
+        yield* call.conversation.toast(call.tool + " ran " + String((call.input as { command: string }).command))
+      }),
+    )
+  }),
+)
+`
+
+test("execute-before, execute-after, toast, status-line: an extension can refuse a call, change what runs and what the model sees, and tell every client", async () => {
+  const home = homeWithExtensions({ "guard.ts": guard })
+  await using server = await runningKernelServer(
+    [
+      { tool: { name: "bash", input: { command: "rm -rf precious" } } },
+      { tool: { name: "bash", input: { command: "echo hello" } } },
+      { text: "done" },
+    ],
+    { home },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (
+    await client.call("conversation/start", { cwd: home.dir, approvals: "auto", id: "guarded", effort: "high" })
+  ).result.conversation as string
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "clean up")
+  await view.until(settled(1))
+  expect(callsAndToasts(view)).toEqual([
+    `call bash {"command":"rm -rf precious"}`,
+    notRun("Tool call blocked: guard refused this call: that deletes too much"),
+    `call bash {"command":"echo hello"}`,
+    "toast guard: bash ran echo hej",
+    "result: HEJ\n",
+  ])
+  expect(statusLines(view)).toEqual({ guard: "ran bash in guarded at high" })
+  const other = await RawClient.connect(server.home.socket)
+  const late = watchView(other, conversation)
+  await opened(late)
+  expect(statusLines(late)).toEqual({ guard: "ran bash in guarded at high" })
+  client.close()
+  other.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+test("subagent-root-env, tool-root-env: an extension's tool run by a subagent knows the conversation people started", async () => {
+  const home = homeWithExtensions({
+    "rooted.ts": `import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    tools.add(
+      Tool.make({
+        name: "Root",
+        description: "Says which conversation people started",
+        input: Schema.Struct({}),
+        readOnly: true,
+        run: (_, context) => Effect.succeed(Tool.ok("root=" + context.env.NISSE_ROOT_CONVERSATION)),
+      }),
+    )
+  }),
+)`,
+  })
+  await using server = await runningKernelServer(
+    [
+      { tool: { name: "spawn_agent", input: { task_name: "envy", message: "show your root", fork_turns: "none" } } },
+      { tool: { name: "wait_agent", input: { timeout_ms: 600000 } } },
+      { text: "envy answered" },
+      { agent: "/root/envy", tool: { name: "Root", input: {} } },
+      { agent: "/root/envy", text: "shown" },
+    ],
+    { home },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate")
+  await view.until(settled(1), 20_000)
+  const child = watchView(client, spawned(view, "/root/envy"))
+  await child.until(() => toolResults(child).length > 0)
+  expect(toolResults(child).map((result) => result.text)).toEqual([`root=${conversation}`])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+}, 30_000)
+
+test("extensions-failed, hook-failure: an extension that fails to load is listed with why, while the others load and run", async () => {
+  const home = homeWithExtensions(
+    {
+      "broken.ts": `export default 42`,
+      "crashes/index.ts": `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.before", () => Effect.die(new Error("the guard crashed"))),
+)`,
+      "off.ts": `throw new Error("a disabled extension never runs")`,
+      "throws.ts": `throw new Error("the clock broke")`,
+      "twisted.ts": `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  Effect.gen(function* () {
+    // Its edits before the transform that throws are dropped with it, so read stays.
+    yield* ctx.tool.transform((tools) => tools.remove("read"))
+    yield* ctx.tool.transform(() => { throw new Error("no such tool") })
+    yield* ctx.tool.hook("execute.before", () => Effect.die(new Error("a failed extension never runs")))
+  }),
+)`,
+      "bad name.ts": `export default 1`,
+    },
+    `[extensions.off]\nenabled = false\n`,
+  )
+  await using server = await runningKernelServer(
+    [{ tool: { name: "read", input: { path: "notes.txt" } } }, { text: "done" }],
+    { home },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  expect((await client.call("extensions/list")).result).toEqual([
+    {
+      name: "bad name",
+      path: join(home.extensions, "bad name.ts"),
+      state: "failed",
+      message: "an extension's name may use only letters, digits, - and _",
+    },
+    {
+      name: "broken",
+      path: join(home.extensions, "broken.ts"),
+      state: "failed",
+      message: "it exports no extension; export default Extension.define(...)",
+    },
+    { name: "crashes", path: join(home.extensions, "crashes", "index.ts"), state: "loaded" },
+    { name: "off", path: join(home.extensions, "off.ts"), state: "disabled" },
+    { name: "throws", path: join(home.extensions, "throws.ts"), state: "failed", message: "the clock broke" },
+    {
+      name: "twisted",
+      path: join(home.extensions, "twisted.ts"),
+      state: "failed",
+      message: "its tool transform failed: no such tool",
+    },
+  ])
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "read it")
+  await view.until(settled(1))
+  expect(callsAndToasts(view)).toEqual([
+    `call read {"path":"notes.txt"}`,
+    "toast crashes: execute.before failed: the guard crashed",
+    notRun("Tool call blocked: crashes refused this call: it failed: the guard crashed"),
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+const statusSaying = (text: string) => `import { Extension } from "@nisse/extension"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.after", (call) => call.conversation.status("${text}")),
+)`
+const READ = [{ tool: { name: "read", input: { path: "notes.txt" } } }, { text: "done" }]
+
+test("reload: reloading runs the extensions as they are now, and no status outlives the code that set it", async () => {
+  const home = homeWithExtensions({ "lines.ts": statusSaying("first") })
+  await Bun.write(`${home.dir}/notes.txt`, "gnome\n")
+  const statusIn = async (client: RawClient, conversation: string) => {
+    const watch = watchView(client, conversation)
+    await opened(watch)
+    return statusLines(watch)
+  }
+  let conversation: string
+  {
+    await using server = await runningKernelServer([...READ, ...READ], { home })
+    const client = await RawClient.connect(server.home.socket)
+    conversation = await start(client, home.dir)
+    const view = watchView(client, conversation)
+    await submit(client, conversation, "read it")
+    await view.until(settled(1))
+    expect(await statusIn(client, conversation)).toEqual({ lines: "first" })
+
+    writeFileSync(join(home.extensions, "lines.ts"), statusSaying("second"))
+    expect((await client.call("extensions/reload")).result).toEqual([
+      { name: "lines", path: join(home.extensions, "lines.ts"), state: "loaded" },
+    ])
+    expect(await statusIn(client, conversation)).toEqual({})
+    await submit(client, conversation, "read it again")
+    await view.until(settled(2))
+    expect(await statusIn(client, conversation)).toEqual({ lines: "second" })
+    client.close()
+  }
+  rmSync(join(home.extensions, "lines.ts"))
+  {
+    await using server = await runningKernelServer([], { home })
+    const client = await RawClient.connect(server.home.socket)
+    expect(await statusIn(client, conversation)).toEqual({})
+    client.close()
+  }
+  rmSync(home.dir, { recursive: true })
+})
+
+/**
+ * A gate a test opens: the server runs in the test's process, so an extension waits on it by name, and the server's own
+ * load and hook limits are its deadline.
+ */
+const gate = (name: string) => {
+  const opened = Promise.withResolvers<void>()
+  ;(globalThis as Record<string, unknown>)[name] = opened.promise
+  return {
+    open: () => opened.resolve(),
+    [Symbol.dispose]: () => delete (globalThis as Record<string, unknown>)[name],
+  }
+}
+const awaitGate = (name: string) => `Effect.promise(() => globalThis[${JSON.stringify(name)}])`
+
+const refusingAfter = (reason: string, loadsAfter?: string) => `import { Extension, Tool } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  Effect.gen(function* () {
+    ${loadsAfter === undefined ? "" : `yield* ${awaitGate(loadsAfter)}`}
+    yield* ctx.tool.hook("execute.before", () => Tool.refuse("${reason}"))
+  }),
+)`
+
+test("reload: while extensions reload, the loaded ones keep guarding calls until their replacements are ready", async () => {
+  const home = homeWithExtensions({ "guard.ts": refusingAfter("the old guard says no") })
+  const script = [{ tool: { name: "bash", input: { command: "echo hi" } } }, { text: "done" }]
+  await using server = await runningKernelServer([...script, ...script], { home })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await startAuto(client, home.dir)
+  const view = watchView(client, conversation)
+
+  using ready = gate("nisseNewGuardReady")
+  writeFileSync(join(home.extensions, "guard.ts"), refusingAfter("the new guard says no", "nisseNewGuardReady"))
+  const reloading = client.call("extensions/reload")
+  await submit(client, conversation, "say hi")
+  await view.until(settled(1))
+  expect(whyNotRun(view)).toEqual([notRun("Tool call blocked: guard refused this call: the old guard says no")])
+
+  ready.open()
+  expect((await reloading).result).toEqual([
+    { name: "guard", path: join(home.extensions, "guard.ts"), state: "loaded" },
+  ])
+  await submit(client, conversation, "say hi again")
+  await view.until(settled(2))
+  expect(whyNotRun(view)).toEqual([
+    notRun("Tool call blocked: guard refused this call: the old guard says no"),
+    notRun("Tool call blocked: guard refused this call: the new guard says no"),
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+test("status-line: a hook still running when its extension is unloaded can't bring back a status line", async () => {
+  const home = homeWithExtensions({})
+  await Bun.write(`${home.dir}/notes.txt`, "gnome\n")
+  using released = gate("nisseSlowReleased")
+  writeFileSync(
+    join(home.extensions, "slow.ts"),
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.after", (call) =>
+    Effect.gen(function* () {
+      yield* ${awaitGate("nisseSlowReleased")}
+      yield* call.conversation.status("stale")
+    }),
+  ),
+)`,
+  )
+  await using server = await runningKernelServer(READ, { home })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "read it")
+  await view.until((watch) => watch.seen().some((entry) => entry.kind === "pi.assistant"))
+
+  rmSync(join(home.extensions, "slow.ts"))
+  expect((await client.call("extensions/reload")).result).toEqual([])
+  released.open()
+  await view.until(settled(1))
+  expect(statusLines(view)).toEqual({})
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+const rewriting = (command: string) => `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.before", (call) => Effect.sync(() => { call.input = { command: "${command}" } })),
+)`
+
+test("approval-restart, status-snapshot: a call waiting for approval across a restart, whose hook computes other arguments on the rerun, asks again with them", async () => {
+  const home = homeWithExtensions({ "rewrite.ts": rewriting("echo one") })
+  let conversation: string
+  let approval: string
+  {
+    await using server = await runningKernelServer(
+      [{ tool: { name: "bash", input: { command: "echo model" } } }, { text: "done" }],
+      { home },
+    )
+    const client = await RawClient.connect(server.home.socket)
+    conversation = await start(client, home.dir)
+    const view = watchView(client, conversation)
+    await submit(client, conversation, "say it")
+    approval = await waitingApproval(view)
+    expect(approvalsOf(view)!.requests[approval]).toMatchObject({ arguments: { command: "echo one" } })
+    client.close()
+  }
+  writeFileSync(join(home.extensions, "rewrite.ts"), rewriting("echo two"))
+  {
+    await using server = await runningKernelServer([{ text: "done" }], { home })
+    const client = await RawClient.connect(server.home.socket)
+    const view = watchView(client, conversation)
+    const asked = (watch: ViewWatch) => approvalsOf(watch)?.requests[approval] as { arguments?: unknown } | undefined
+    await view.until((watch) => JSON.stringify(asked(watch)?.arguments) === `{"command":"echo two"}`)
+    const status = client.watch<Trees>("status/watch")
+    await status.until((items) => items.length > 0)
+    expect(status.items[0]).toMatchObject({ _tag: "trees", trees: [{ conversation, status: "waiting" }] })
+    expect(asked(view)).not.toHaveProperty("answer")
+    await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+    await view.until(settled(1))
+    expect(toolResults(view)).toEqual([{ text: "two\n", isError: false }])
+    client.close()
+  }
+  rmSync(home.dir, { recursive: true })
+})
+
+test("reload: a config.toml that stops reading fails every extension in a reload, and says why", async () => {
+  const home = homeWithExtensions({ "lines.ts": statusSaying("first") })
+  await using server = await runningKernelServer([], { home })
+  const client = await RawClient.connect(server.home.socket)
+  writeFileSync(join(home.dir, "config.toml"), "[extensions.lines\n")
+  const [lines] = (await client.call("extensions/reload")).result as Array<{ state: string; message: string }>
+  expect(lines).toMatchObject({ state: "failed", message: expect.stringContaining(`${home.dir}/config.toml: `) })
+  expect((await client.call("extensions/list")).result).toEqual([lines])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+const treesOf = (items: ReadonlyArray<Trees>, conversation: string) =>
+  items.filter((item): item is Tree => item._tag === "tree" && item.conversation === conversation)
+
+test("status-follow, status-ended: watching status follows each run of a tree and says how it ended", async () => {
+  await using server = await runningKernelServer([{ text: "all done" }, { text: "again" }])
+  const client = await RawClient.connect(server.home.socket)
+  const watch = client.watch<Trees>("status/watch")
+  await watch.until((items) => items.length > 0)
+  expect(watch.items[0]).toMatchObject({ _tag: "trees", trees: [] })
+  const conversation = (await client.call("conversation/start", { cwd: "/work", id: "followed" })).result
+    .conversation as string
+  await submit(client, conversation, "go")
+  await watch.until((items) => treesOf(items, conversation).some((tree) => tree.ended))
+  await submit(client, conversation, "go again")
+  await watch.until((items) => treesOf(items, conversation).filter((tree) => tree.ended).length === 2)
+
+  const seen = treesOf(watch.items, conversation)
+  expect(seen.map(({ status, ended }) => ({ status, ended }))).toEqual([
+    { status: "working", ended: undefined },
+    { status: "idle", ended: { outcome: "answered", said: "all done" } },
+    { status: "working", ended: undefined },
+    { status: "idle", ended: { outcome: "answered", said: "again" } },
+  ])
+  const seqs = seen.map((tree) => tree.seq)
+  expect(seqs).toEqual([...seqs].sort((a, b) => a - b))
+  expect(new Set(seqs).size).toBe(4)
+  client.close()
+})
+
+test("status-subagent, status-snapshot: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const watch = client.watch<Trees>("status/watch")
+  await watch.until((items) => items.length > 0)
+  const conversation = await start(client, server.home.dir)
+  await submit(client, conversation, "have someone write a note")
+  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "waiting", 20_000)
+
+  const late = await RawClient.connect(server.home.socket)
+  const lateWatch = late.watch<Trees>("status/watch")
+  await lateWatch.until((items) => items.length > 0)
+  expect(lateWatch.items[0]).toMatchObject({
+    _tag: "trees",
+    trees: [{ _tag: "tree", conversation, status: "waiting" }],
+  })
+  expect(treesOf(watch.items, conversation).map((tree) => tree.status)).toEqual(["working", "waiting"])
+  // One interrupt of the root stops its subagent too, so the whole tree goes idle.
+  await client.call("conversation/interrupt", { conversation })
+  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "idle", 20_000)
+  const ended = treesOf(watch.items, conversation).filter((tree) => tree.ended)
+  expect(ended.map((tree) => tree.ended)).toEqual([{ outcome: "interrupted", message: "aborted" }])
+  client.close()
+  late.close()
+}, 30_000)
+
+test("submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs", async () => {
+  await using server = await runningKernelServer([
+    { text: "the first answer", delayMs: 100 },
+    { text: "second answer" },
+  ])
+  const ada = await RawClient.connect(server.home.socket)
+  const bo = await RawClient.connect(server.home.socket)
+  const conversation = await start(ada)
+  const view = watchView(bo, conversation)
+  await submit(ada, conversation, "one", undefined, "ada")
+  await view.until(speaking)
+  await submit(bo, conversation, "two", undefined, "bo")
+  await view.until((watch) => ((watch.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
+  expect((view.view().docs["pi.inbox"] as { items: unknown[] }).items).toEqual([
+    expect.objectContaining({ entry: { kind: USER_KIND, data: { author: "bo" } } }),
+  ])
+  await view.until(settled(2))
+  const users = view.seen().filter((entry) => entry.kind === USER_KIND)
+  expect(users.map((entry) => entry.data)).toEqual([{ author: "ada" }, { author: "bo" }])
+  expect(transcript(view.seen()).filter((line) => line.startsWith("user: "))).toEqual(["user: one", "user: two"])
+  ada.close()
+  bo.close()
+})
+
+test("subagent-limits: a tree runs at most as many subagents at once as config.toml allows", async () => {
+  await using server = await runningKernelServer([spawnSeven, { text: "spawned them" }, ...holding], {
+    config: { agents: { max_threads: 2 } },
+  })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "fan out")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view)
+  expect(results.filter((result) => !result.isError)).toHaveLength(2)
+  expect(results.filter((result) => result.isError)).toHaveLength(5)
+  expect(results.find((result) => result.isError)?.text).toContain("at most 2 subagents work at once (maxThreads)")
   client.close()
 }, 30_000)
 

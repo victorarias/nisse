@@ -42,7 +42,10 @@ export type ConversationView = {
   readonly entries: readonly EntryRecord[]
   /** ID of the entry just before the window; absent when the window starts the transcript. */
   readonly before?: EntryId
-  /** `pi.agent`, `pi.live`, `pi.inbox`, `pi.provider`, `pi.usage` and `nisse.approvals`, keyed by kind; absent documents are absent. */
+  /**
+   * `pi.agent`, `pi.live`, `pi.inbox`, `pi.provider`, `pi.usage`, `nisse.approvals` and the host's `viewDocs`, keyed by
+   * kind; absent documents are absent.
+   */
   readonly docs: Readonly<Record<string, JsonObject>>
 }
 
@@ -63,7 +66,6 @@ const DEFAULT_WINDOW_MIN = 50
 const SCAN_PAGE_SIZE = 256
 
 const MOUNTED: readonly AnyDocToken[] = [AgentDoc, LiveDoc, InboxDoc, ProviderDoc, UsageDoc, ApprovalsDoc]
-const MOUNTED_KINDS: ReadonlySet<string> = new Set(MOUNTED.map((token) => token.definition.kind))
 
 /** One observer of a mount and its window: the bounds and the revision it was last given. */
 type Windowed = {
@@ -87,14 +89,19 @@ type WindowBounds = { readonly from: EntryId | undefined; readonly min: number; 
 /** The view mounts of a Harness: at most one per conversation. */
 export class ConversationViews {
   readonly #session: Session
+  readonly #mounted: readonly AnyDocToken[]
+  readonly #kinds: ReadonlySet<string>
   readonly #mounts = new Map<ConversationId, Mount>()
   #closed = false
 
-  constructor(session: Session) {
+  /** `docs`: the host's conversation documents the view carries beside the built-in ones. */
+  constructor(session: Session, docs: readonly AnyDocToken[] = []) {
     this.#session = session
+    this.#mounted = [...MOUNTED, ...docs]
+    this.#kinds = new Set(this.#mounted.map((token) => token.definition.kind))
     session.observeCommits({
       advance: (publication) => {
-        for (const [id, mount] of this.#mounts) advance(id, mount, publication)
+        for (const [id, mount] of this.#mounts) advance(id, mount, publication, this.#kinds)
       },
       end: () => {},
     })
@@ -133,7 +140,7 @@ export class ConversationViews {
     observer: DocumentObserver<ConversationView>,
   ): Effect.Effect<DocumentObservation<ConversationView>, ReadFailure> {
     return Effect.gen({ self: this }, function* () {
-      const mount = this.#mounts.get(id) ?? (yield* build(reads, id))
+      const mount = this.#mounts.get(id) ?? (yield* build(reads, id, this.#mounted))
       const { entries, before } = yield* loadWindow(reads.storage, id, bounds)
       // The close may begin while the mount hydrates; register nothing then.
       if (this.#closed) return yield* Effect.fail(closedError(this.#session))
@@ -170,13 +177,13 @@ function resolveWindow(window: ConversationWindow | undefined): WindowBounds {
 }
 
 /** Hydrates a mount on the line: the conversation and its built-in documents. */
-function build(reads: LineReads, id: ConversationId): Effect.Effect<Mount, ReadError> {
+function build(reads: LineReads, id: ConversationId, mounted: readonly AnyDocToken[]): Effect.Effect<Mount, ReadError> {
   return Effect.gen(function* () {
     const conversation = yield* reads.storage.conversation(id)
     if (conversation === undefined) return yield* Effect.die(new Error(`Conversation ${id} does not exist`))
     const docs: Record<string, JsonObject> = {}
     const incarnations = new Map<string, { id: DocumentId; version: number }>()
-    for (const token of MOUNTED) {
+    for (const token of mounted) {
       const loaded = yield* (
         reads.document as (token: AnyDocToken, id: ConversationId) => ReturnType<LineReads["document"]>
       )(token, id)
@@ -242,7 +249,7 @@ function scanUpTo(storage: StorageReads, query: EntryQuery, limit: number): Effe
  * documents are applied once and shared; each window takes the appended entries and, past its `max`, drops its oldest
  * down to its `min` in one splice.
  */
-function advance(id: ConversationId, mount: Mount, publication: CommitPublication): void {
+function advance(id: ConversationId, mount: Mount, publication: CommitPublication, kinds: ReadonlySet<string>): void {
   const docOps: Op[] = []
   const appended: EntryRecord[] = []
   for (const change of publication.changes) {
@@ -252,7 +259,7 @@ function advance(id: ConversationId, mount: Mount, publication: CommitPublicatio
     }
     if (change.type !== "document" || change.conversationId !== id) continue
     const kind = change.record.kind
-    if (!MOUNTED_KINDS.has(kind) || change.record.key !== undefined) continue
+    if (!kinds.has(kind) || change.record.key !== undefined) continue
     const path: NonEmptyPath = ["docs", kind]
     const mounted = mount.incarnations.get(kind)
     if (change.kind === "retire") {

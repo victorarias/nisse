@@ -151,6 +151,8 @@ export type HarnessOptions<T extends ToolRegistration = ToolRegistration> = {
   readonly onReport?: (report: Report) => void
   /** Runs in the commit that ends a run, whatever ended it. */
   readonly runEnded?: RunEndedHook
+  /** Conversation documents of the host's that the conversation view carries beside the built-in ones. */
+  readonly viewDocs?: readonly AnyDocToken[]
   /** Runs in every commit that creates or forks a conversation, after the built-in creation hook. */
   readonly conversationCreated?: (tx: Tx, record: ConversationRecord) => Effect.Effect<void, unknown>
 }
@@ -383,7 +385,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
     this.#scheduler = scheduler
     this.#effectClock = clock
     this.#contexts = contexts
-    this.#views = new ConversationViews(session)
+    this.#views = new ConversationViews(session, this.#options.viewDocs)
     this.#graph = new TaskGraphView(session, scheduler)
     this.#submissions = new Submissions(
       session,

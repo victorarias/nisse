@@ -373,6 +373,25 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   `tool_result`s `flaky refused this call: it failed: boom` and
   `flaky refused this call: it failed: Operation timed out after '10s'`,
   both `"error":true`, and the third `fine`.
+- **On the kernel.** In a fresh run made with `drive.ts r up --kernel` and
+  `--script` steps
+  `[{"tool": {"name": "bash", "input": {"command": "rm -rf ./precious"}}}, {"tool": {"name": "bash", "input": {"command": "echo hello"}}}, {"tool": {"name": "Clock", "input": {"zone": "CET"}}}, {"tool": {"name": "glob", "input": {"pattern": "*"}}}, {"text": "all done"}]`,
+  write `guard.ts` with `"Bash"` replaced by `"bash"`, `clock.ts` with
+  `"WebFetch"` replaced by `"glob"` (as `extensions/clock/index.ts`), and
+  `broken.ts`, and append `[extensions.guard]\ngreeting = "hallo"\n` to
+  `config.toml`. Run `drive.ts r serve`, then `drive.ts r rpc extensions/list`:
+  `broken` `failed` with
+  `it exports no extension; export default Extension.define(...)`, then
+  `clock` and `guard` `loaded`. Run
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp/nisse-verify/r", "approvals": "auto", "id": "guarded"}'`
+  and `drive.ts r watch guarded --submit "tidy my home" --until run_end --save hooks`:
+  the first `bash` result reads
+  `Tool call blocked: guard refused this call: that deletes too much`, the
+  second `hallo` after the toast `{"extension":"guard","text":"bash finished"}`,
+  `Clock` answers `noon in CET`, `glob` reads `Tool glob is not available`,
+  and the view's `nisse.status_lines` is `{"lines":{"guard":"last ran Clock"}}`.
+  Remove `broken.ts` and run `drive.ts r rpc extensions/reload`: only `clock`
+  and `guard`, and a new `drive.ts r watch guarded` shows `"lines":{}`.
 - **Load limit.** In a fresh run made with `drive.ts r up`, copy in
   `guard.ts` and `sleepy.ts`. Run `drive.ts r nisse extensions`: after about
   10 s it prints `guard  loaded ...` and
@@ -389,8 +408,43 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 - **Provider.** On Claude the request hook does not run, and `execute.after` cannot change the results of Claude Code's own tools.
 - **Server restart.** Status lines clear, so none outlives the code that set it.
 - **Second client.** Status lines and toasts are committed, so every client sees them, then and later.
+- **On the kernel.** In a run made with `drive.ts r up --kernel` the server loads the same extensions with the same
+  `@nisse/extension` API, and serves `extensions/list` and `extensions/reload`; `nisse extensions` and the TUI wait
+  for wire-complete and tui-views. The kernel's tools are named `read`, `write`, `edit`, `apply_patch`, `bash`, `grep`
+  and `glob`, so a hook or transform names them so. A status line is the view's `nisse.status_lines` document
+  (`{"lines": {"<name>": "<text>"}}`), and a toast a `nisse.toast` entry `{ extension, text }`. A refused or failed
+  `execute.before` reaches the model as `Tool call blocked: <name> refused this call: <why>`, and a removed tool as
+  `Tool <name> is not available`. Transforms run once per load, not at each turn, so one that throws fails its
+  extension's load with `its tool transform failed: <why>` and the extension's hooks never run. The transcript keeps
+  the model's own arguments; `execute.before`'s change shows in what runs, its result, the approval request and
+  `execute.after`'s `input`.
+  `ctx.request.hook` runs on each ChatGPT request as the harness's
+  `beforeProviderRequest` hook: what it pushes to `instructions` goes after the
+  request's own, and it narrows the tools offered; on `script` it does not run.
+  A hook's `conversation` has no
+  `lineage` there yet: kernel conversations carry lineage on the wire from wire-complete, and hooks get it then.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- tools-transform, extensions-load: an extension's tool answers the model's calls, a tool it removes is gone, and one it makes not read-only asks
+- execute-before, execute-after, toast, status-line: an extension can refuse a call, change what runs and what the model sees, and tell every client
+- extensions-failed, hook-failure: an extension that fails to load is listed with why, while the others load and run
+- reload: reloading runs the extensions as they are now, and no status outlives the code that set it
+- reload: while extensions reload, the loaded ones keep guarding calls until their replacements are ready
+- status-line: a hook still running when its extension is unloaded can't bring back a status line
+- reload: a config.toml that stops reading fails every extension in a reload, and says why
+
+Kernel provider, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- request-hook: an extension's request hook adds instructions and narrows the tools of each request to the model
+- hook-failure: a request hook that fails is skipped with a toast, and the model gets the request as it was
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`:
+
+- extensions-load: a home named relative to the folder nisse serves from loads its extensions, listed by full path
+- reload: a server on the kernel refuses to start on a config.toml that does not read, and says why
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
@@ -423,6 +477,8 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - extensions-load: a home named relative to the folder nisse runs in loads its extensions
 
 ## Gotchas
+
+- `drive.ts r rpc` takes no `--save`; redirect its output into `evidence/` instead.
 
 - No committed test covers the name errors, a throwing transform, clearing a
   status line, a `config.toml` that stops reading before a reload, or
