@@ -36,9 +36,9 @@ or the script. A home's config names instances of a kind, such as `openai` and
 - `provider`, the `Provider` this seam routes the instance's requests to,
   named by the instance's id. Claude Code runs its own loop and has none.
 
-`scriptInstance(steps)` is the `script` provider as an instance. ChatGPT's and
-Claude Code's kinds live in `packages/nisse/src/drivers` until their packages
-take them.
+`scriptInstance(steps)` is the `script` provider as an instance,
+`chatGptInstance` ChatGPT's. Claude Code's account is `claudeAccount` in
+`packages/claude`.
 
 ## Providers
 
