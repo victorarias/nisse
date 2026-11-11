@@ -172,6 +172,12 @@ export const StartConversation = Rpc.make("conversation/start", {
       Schema.String.annotate({ description: "Without a provider, it goes to the default model's provider." }),
     ),
     effort: Schema.optionalKey(Schema.String),
+    instructions: Schema.optionalKey(
+      Schema.String.annotate({
+        description:
+          "Instructions the model follows in this conversation, beside its own. Its subagents don't get them.",
+      }),
+    ),
   },
   success: Schema.Struct({
     conversation: ConversationId,

@@ -115,6 +115,26 @@ export const skillsFor = (cwd: string, home: string): Array<Skill> => {
   return [...skills.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
+const SKILLS = `# Skills
+
+A skill is a folder of instructions for one kind of task, in a \`SKILL.md\` file. When a task matches a skill's description, \`Read\` its \`SKILL.md\` before you start, and follow it. When a message names a skill with \`/name\` or \`$name\`, the skill's \`SKILL.md\` comes with the message; follow it. Relative paths in a skill are relative to its folder.
+
+`
+
+/** What ChatGPT is told of the `AGENTS.md` files of a conversation in `cwd`: one block each, or `""`. */
+export const agentsMdInstructions = (cwd: string, home: string) =>
+  agentsMd(cwd, home)
+    .map((file) => `\n# AGENTS.md instructions from ${file.path}\n\n${file.text.trimEnd()}\n`)
+    .join("")
+
+/** What ChatGPT is told of the skills a conversation in `cwd` can use, or `""` when it has none. */
+export const skillsInstructions = (cwd: string, home: string) => {
+  const skills = skillsFor(cwd, home)
+  return skills.length === 0
+    ? ""
+    : `\n${SKILLS}${skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.path})\n`).join("")}`
+}
+
 const skillName = (text: string) => (text.match(/^[\p{L}\p{N}\-_.:]*/u)?.[0] ?? "").replace(/[.:]+$/, "")
 
 export const attachedSkills = (text: string, skills: ReadonlyArray<Skill>): Array<AttachedSkill> => {
