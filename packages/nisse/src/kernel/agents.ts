@@ -34,7 +34,7 @@ import {
 import type { AssistantMessage } from "@nisse/models"
 import { int, obj, oneOf, opt, str } from "@nisse/schema"
 import { rootConversation } from "@nisse/tools"
-import { Duration, Effect, Option, Stream } from "effect"
+import { Clock, Duration, Effect, Option, Stream } from "effect"
 
 /** How a subagent's last task ended, as `list_agents` reports it. */
 export type AgentStatus = "pending_init" | "interrupted" | { completed: string } | { errored: string }
@@ -178,14 +178,28 @@ const Reporter = defineTask<ReporterInput, ReporterState, null, TaskServices>({
         if (report !== undefined) {
           const { task, sender } = reporter.input
           const parent = (yield* (yield* TaskServices).conversation(runtime.conversationId))!
-          yield* parent.submit({
+          const content = mailText("final_answer", sender, task, report)
+          const entry = mailEntry("final_answer", sender, task)
+          const submission = yield* parent.submit({
             type: "input",
-            content: mailText("final_answer", sender, task, report),
+            content,
             // Into the parent's running turn at its next step, as other mail; an idle parent starts a turn.
             whenBusy: "steer",
-            entry: mailEntry("final_answer", sender, task),
+            entry,
             requestId: `agent-report:${reporter.id}`,
           })
+          const settled = yield* submission.wait
+          // Withdrawn before it was placed, as when the person stops the parent: the answer still joins its transcript,
+          // once the stopped run has ended, so it lands then instead of waiting in the queue for the next prompt.
+          if (settled.status === "unanswered" && settled.entry === undefined) {
+            yield* parent.waitForIdle
+            const timestamp = yield* Clock.currentTimeMillis
+            yield* parent.submit({
+              type: "write",
+              entry: { ...entry, model: [{ role: "user", content, timestamp }] as unknown as JsonObject[] },
+              requestId: `agent-report-kept:${reporter.id}`,
+            })
+          }
         }
         yield* runtime.commit(() =>
           Effect.succeed({ status: "terminal", outcome: { status: "completed", result: null } }),

@@ -566,6 +566,30 @@ test("subagent-limits, child-tools: a follow-up task does not wake an idle subag
   client.close()
 }, 30_000)
 
+test("child-tools: a subagent's answer that waits in its parent's queue still reaches it when the person stops the parent", async () => {
+  await using server = await runningKernelServer([
+    {
+      tools: [
+        { name: "spawn_agent", input: { task_name: "writer", message: "write a note", fork_turns: "none" } },
+        { name: "bash", input: { command: "echo waiting" } },
+      ],
+    },
+    { text: "the note is written", agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  // The parent holds on its call's approval while the writer's answer queues behind it.
+  await waitingApproval(view)
+  await view.until((current) => ((current.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
+  await client.call("conversation/interrupt", { conversation })
+  await view.until((current) => mails(current).length > 0, 10_000)
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
+  client.close()
+}, 30_000)
+
 test("child-tools: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit", async () => {
   await using server = await runningKernelServer([
     call("spawn_agent", { task_name: "helper", message: "first", fork_turns: "none" }),
