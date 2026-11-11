@@ -82,8 +82,8 @@ test("openai-answer, telemetry-identity: a ChatGPT answer is committed, asked fo
   await using session = await conversationWith(fake)
   await session.submit("hello")
   await session.view.until(settled(1))
-  expect(session.said()).toEqual(["user: hello", "assistant: Hello there", "run_end: answered"])
   expectRequests(fake, expected)
+  expect(session.said()).toEqual(["user: hello", "assistant: Hello there", "run_end: answered"])
   const [request] = fake.responses()
   expect(request!.headers.get("authorization")).toBe(`Bearer ${accessToken("first")}`)
   expect(request!.headers.get("chatgpt-account-id")).toBe(ACCOUNT)
@@ -100,12 +100,12 @@ test("openai-answer: a recorded ChatGPT exchange replays into the same answer", 
   await using session = await conversationWith(fake)
   await session.submit("what does `echo hi` print?")
   await session.view.until(settled(1))
+  expectRequests(fake, expected)
   expect(session.said()).toEqual([
     "user: what does `echo hi` print?",
     "assistant: `echo hi` prints:\n\n```text\nhi\n```",
     "run_end: answered",
   ])
-  expectRequests(fake, expected)
 })
 
 test("openai-tools: nisse offers its tools, runs the call the model asks for and sends back the result", async () => {
@@ -114,6 +114,7 @@ test("openai-tools: nisse offers its tools, runs the call the model asks for and
   await using session = await conversationWith(fake)
   await session.submit("what does echo say?")
   await session.view.until(settled(1))
+  expectRequests(fake, expected)
   expect(session.said()).toEqual([
     "user: what does echo say?",
     "assistant: Let me look.",
@@ -123,7 +124,6 @@ test("openai-tools: nisse offers its tools, runs the call the model asks for and
   expect(calls(session.view.seen())).toEqual([
     expect.objectContaining({ id: "call_1", name: "bash", arguments: { command: "echo hi" } }),
   ])
-  expectRequests(fake, expected)
   const tools = JSON.parse(fake.responses()[0]!.body).tools
   expect(tools.map((tool: { name: string }) => tool.name)).toEqual(
     expect.arrayContaining(["read", "write", "edit", "bash", "grep", "glob", "spawn_agent", "wait_agent"]),
@@ -149,13 +149,13 @@ test("openai-tools, telemetry-identity: a call the person denies reaches the mod
     allow: false,
   })
   await session.view.until(settled(1))
-  expect(session.said().at(-2)).toBe("assistant: I was not allowed to run it.")
-  const answer = session.view.seen().find((entry) => entry.kind === "nisse.approval")
-  expect(answer?.data).toMatchObject({ approval, author: "ada", allow: false })
   // The recording's result is the shipping server's wording; the kernel's harness words a denial its own way.
   const denied = (expected[1] as { input: Array<{ output?: string }> }).input[3]!
   denied.output = "<harness>\n[error] denied by ada: the person did not allow this call\n</harness>"
   expectRequests(fake, expected)
+  expect(session.said().at(-2)).toBe("assistant: I was not allowed to run it.")
+  const answer = session.view.seen().find((entry) => entry.kind === "nisse.approval")
+  expect(answer?.data).toMatchObject({ approval, author: "ada", allow: false })
 })
 
 test("openai-refresh: a turned-down token is refreshed once, saved, and used from then on", async () => {
@@ -190,8 +190,8 @@ test("openai-failed: a cut stream and a reached usage limit each end the run wit
     await using session = await conversationWith(fake)
     await session.submit("hello")
     await session.view.until(settled(1))
-    expect(session.said()).toEqual(["user: hello", `assistant: ${kept} [error]`, `run_end: failed (${message})`])
     expect(fake.responses()).toHaveLength(1)
+    expect(session.said()).toEqual(["user: hello", `assistant: ${kept} [error]`, `run_end: failed (${message})`])
   }
 })
 
@@ -203,12 +203,12 @@ test("openai-failed, run-error-classes: a response that failed on ChatGPT's side
   await session.submit("hello")
   // The harness waits its first backoff, 2 s, before trying again.
   await session.view.until(settled(1), 10_000)
+  expect(fake.responses()).toHaveLength(2)
   expect(session.said()).toEqual(["user: hello", "assistant:  [error]", "assistant: Hello there", "run_end: answered"])
   const failed = session.view.seen().find((entry) => entry.kind === "pi.assistant")!.model![0] as {
     errorMessage: string
   }
   expect(failed.errorMessage).toBe("the response failed (server_error): The model crashed.")
-  expect(fake.responses()).toHaveLength(2)
 })
 
 test("openai-signed-out: a conversation with ChatGPT before signing in says how to fix it", async () => {
@@ -216,8 +216,8 @@ test("openai-signed-out: a conversation with ChatGPT before signing in says how 
   await using session = await conversationWith(fake, { signedIn: false })
   await session.submit("hello")
   await session.view.until(settled(1))
-  expect(session.said().at(-1)).toContain("not signed in to ChatGPT")
   expect(fake.responses()).toHaveLength(0)
+  expect(session.said().at(-1)).toContain("not signed in to ChatGPT")
 })
 
 test("interrupt-wire: a ChatGPT answer streams live, and interrupting it closes the request and keeps what was said", async () => {
@@ -462,8 +462,8 @@ test("request-hook: an extension's request hook adds instructions and narrows th
   await using session = await conversationWith(fake, { home })
   await session.submit("what does echo say?")
   await session.view.until(settled(1))
-  expect(session.said().at(-2)).toBe("assistant: It printed hi.")
   expectRequests(fake, expected)
+  expect(session.said().at(-2)).toBe("assistant: It printed hi.")
   const requests = fake.responses().map((response) => JSON.parse(response.body))
   expect(requests.map((request) => request.instructions)).toEqual([
     expect.stringMatching(new RegExp(`^You are Nisse[^]*\\nRequest 1 in ${home.dir}\\.\\n$`)),

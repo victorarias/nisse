@@ -4,11 +4,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { join } from "node:path"
 import { installedCodeModeHost } from "./support/code-mode-host.ts"
 import { accessToken, ACCOUNT, EMAIL, FakeOpenAi, matches, signIn } from "./support/openai.ts"
-import { bodies, deadline, RawClient } from "./support/raw.ts"
+import { bodies, deadline, RawClient, statusOf } from "./support/raw.ts"
 import { runningServer, tempHome } from "./support/server.ts"
 
 const settled = (count: number) => (deliveries: ReadonlyArray<Delivery>) =>
-  bodies(deliveries).filter((body) => body._tag === "run_end").length >= count && deliveries.at(-1)?.status === "idle"
+  bodies(deliveries).filter((body) => body._tag === "run_end").length >= count && statusOf(deliveries) === "idle"
 
 const said = (deliveries: ReadonlyArray<Delivery>): Array<unknown> =>
   bodies(deliveries).filter(
@@ -73,11 +73,11 @@ test("openai-answer: a ChatGPT answer is committed as nisse's message, asked for
   await using session = await conversationWith(fake)
   await session.submit("hello")
   await session.view.until(settled(1))
+  expectRequests(fake, expected)
   expect(said(session.view.deliveries)).toEqual([
     { _tag: "message", text: "Hello there" },
     { _tag: "run_end", outcome: "answered" },
   ])
-  expectRequests(fake, expected)
   const headers = fake.responses()[0]!.headers
   expect(headers.get("authorization")).toBe(`Bearer ${accessToken("first")}`)
   expect(headers.get("chatgpt-account-id")).toBe(ACCOUNT)
@@ -94,11 +94,11 @@ test("openai-answer: a recorded ChatGPT exchange replays into the same answer", 
   await using session = await conversationWith(fake)
   await session.submit("what does `echo hi` print?")
   await session.view.until(settled(1))
+  expectRequests(fake, expected)
   expect(said(session.view.deliveries)).toEqual([
     { _tag: "message", text: "`echo hi` prints:\n\n```text\nhi\n```" },
     { _tag: "run_end", outcome: "answered" },
   ])
-  expectRequests(fake, expected)
 })
 
 test("openai-tools: nisse offers its tools, runs the call the model asks for and sends back the result", async () => {
@@ -107,6 +107,7 @@ test("openai-tools: nisse offers its tools, runs the call the model asks for and
   await using session = await conversationWith(fake)
   await session.submit("what does echo say?")
   await session.view.until(settled(1))
+  expectRequests(fake, expected)
   expect(said(session.view.deliveries)).toEqual([
     { _tag: "message", text: "Let me look." },
     { _tag: "tool_call", call: "call_1", tool: "Bash", input: { command: "echo hi" } },
@@ -114,7 +115,6 @@ test("openai-tools: nisse offers its tools, runs the call the model asks for and
     { _tag: "message", text: "It printed hi." },
     { _tag: "run_end", outcome: "answered" },
   ])
-  expectRequests(fake, expected)
   const tools = JSON.parse(fake.responses()[0]!.body).tools.map((tool: { name: string }) => tool.name)
   expect(tools).toEqual([
     "Read",
@@ -137,7 +137,7 @@ test("openai-tools: a call the person denies reaches the model as denied", async
   const expected = fake.play("tool_denied")
   await using session = await conversationWith(fake, { approvals: "ask" })
   await session.submit("what does echo say?")
-  await session.view.until((deliveries) => deliveries.at(-1)?.status === "waiting")
+  await session.view.until((deliveries) => statusOf(deliveries) === "waiting")
   const approval = bodies(session.view.deliveries).find((body) => body._tag === "approval") as { approval: string }
   await session.client.call("approval/resolve", {
     conversation: session.conversation,
@@ -146,8 +146,8 @@ test("openai-tools: a call the person denies reaches the model as denied", async
     allow: false,
   })
   await session.view.until(settled(1))
-  expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "I was not allowed to run it." })
   expectRequests(fake, expected)
+  expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "I was not allowed to run it." })
 })
 
 test("steer-openai: a steer sent while calls run reaches the model after all of them, before its next answer", async () => {
@@ -158,7 +158,7 @@ test("steer-openai: a steer sent while calls run reaches the model after all of 
   const answer = async (count: number) => {
     await session.view.until(
       (deliveries) =>
-        deliveries.at(-1)?.status === "waiting" &&
+        statusOf(deliveries) === "waiting" &&
         bodies(deliveries).filter((body) => body._tag === "approval").length === count,
     )
     const approval = bodies(session.view.deliveries).findLast((body) => body._tag === "approval") as {
@@ -175,8 +175,8 @@ test("steer-openai: a steer sent while calls run reaches the model after all of 
   await session.submit("and three", true)
   await answer(2)
   await session.view.until(settled(1))
-  expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "One, two, and three." })
   expectRequests(fake, expected)
+  expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "One, two, and three." })
 })
 
 test("openai-refresh: an expired token is refreshed once, saved, and used from then on", async () => {
@@ -508,6 +508,7 @@ test("openai-model: a switched model and effort reach ChatGPT from the next run 
   await session.view.until(settled(2))
 
   expect(switched.error).toBeUndefined()
+  expect(fake.responses()).toHaveLength(2)
   const [first, second] = fake.responses().map((request) => JSON.parse(request.body))
   expect(first.model).toBe("gpt-5.5")
   expect(first.reasoning).toBeUndefined()
@@ -592,7 +593,7 @@ test("skills-attach: a skill named in a steer comes with it for the model the ru
   fake.play("tool_denied")
   await using session = await conversationWith(fake, { cwd: project, approvals: "ask" })
   await session.submit("what does echo say?")
-  await session.view.until((deliveries) => deliveries.at(-1)?.status === "waiting")
+  await session.view.until((deliveries) => statusOf(deliveries) === "waiting")
   await session.client.call("conversation/select_model", {
     conversation: session.conversation,
     author: "ada",
@@ -664,6 +665,7 @@ withCodeModeHost(
     await using session = await conversationWith(fake, inCodeMode)
     await session.submit("what does echo say?")
     await session.view.until(settled(1))
+    expect(fake.responses()).toHaveLength(2)
     const tools = JSON.parse(fake.responses()[0]!.body).tools
     expect(tools.map((tool: { type: string; name: string }) => [tool.type, tool.name])).toEqual([
       ["custom", "exec"],
@@ -812,8 +814,8 @@ withCodeModeHost(
     expect(nested).toMatchObject({ call: calls[1]!.call, output: "hi\n", error: false })
     expect(script!.output).toStartWith("Script completed\n")
     expect(script!.output).toEndWith("Output:\nhi\n")
-    expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "It says hi." })
     expectRequests(fake, expected)
+    expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "It says hi." })
   },
 )
 
@@ -1168,10 +1170,10 @@ test("code-mode-missing: a code-mode model without the code-mode host says how t
   })
   await session.submit("hello")
   await session.view.until(settled(1))
+  expect(fake.responses()).toHaveLength(0)
   expect(said(session.view.deliveries)).toEqual([
     { _tag: "run_end", outcome: "failed", message: expect.stringContaining("scripts/code-mode-host.sh") },
   ])
-  expect(fake.responses()).toHaveLength(0)
 })
 
 const childOf = async (session: Awaited<ReturnType<typeof conversationWith>>) => {
