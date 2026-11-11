@@ -18,6 +18,7 @@ import type {
 import type { ExecutionEnv } from "@nisse/env"
 import type { Models } from "@nisse/models"
 import { Context, type Effect, type Scope } from "effect"
+import type { RunOwner } from "./live.ts"
 import type { AdmissionError, Submission } from "./submissions.ts"
 import type { Agent, ContextView, HookApi, Settings, SubmissionDraft } from "./types.ts"
 
@@ -79,6 +80,8 @@ export interface TaskApi {
   ): Effect.Effect<DocumentWatch<DocValue<K>> | undefined, InvocationEnded | ReadFailure, Scope.Scope>
   /** A handle of an existing conversation, bound to this invocation; `undefined` when absent. */
   conversation(id: ConversationId): Effect.Effect<ConversationHandle | undefined, InvocationEnded | ReadFailure>
+  /** The task's conversation and the host's `runEnded`, for the commit that ends a run. */
+  readonly runOwner: RunOwner
   /** Forwards a non-fatal failure: the task's own `task_error`, or one of extension or host code it called. */
   report(error: unknown, from?: ReportFrom): void
 }

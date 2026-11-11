@@ -7,7 +7,7 @@ Clients and extensions follow conversations and documents through windowed views
 - `view-watch` [kernel] Conversation watch (R477-527, §9): Every client follows a conversation live
 - `view-resume` [kernel] Resume a watch from a position (§9.3): A reconnect gets only what it missed
 - `view-window` [kernel] Conversation view with a window, minimum 50, up to twice (§9.3): A long conversation opens instantly
-- `watch-rpc` [pending wire-complete] The client path for Conversation view with a window, minimum 50, up to twice (§9.3): A long conversation opens instantly
+- `watch-rpc` The client path for Conversation view with a window, minimum 50, up to twice (§9.3): A long conversation opens instantly
 - `view-transcript` [kernel] `ConversationTranscript` items (§9.3): A client gets a ready model of the transcript
 - `view-gap` [kernel] Transcript gap marker (§9.3): A client knows history is missing and where
 - `view-load-earlier` [kernel] `earlier`, `loadEarlier` (§9.3): Scroll back and load more
@@ -32,14 +32,31 @@ None yet.
 
 ### Agents
 
-- Not reachable yet: `watch-rpc` lands with `wire-complete`, which adds its entry point and recipe.
+- Call `conversation/watch` on a server under `NISSE_KERNEL=1`, with an optional `window` of `from`, `min` and `max`.
 - Not reachable yet: `tui-load-earlier` lands with `tui-views`, which adds its entry point and recipe.
 
 ## Sources
 
 Feature ledger area P: spec §4, §8.2, §9; README Watching a Conversation; examples 04-watches, 20-late-join, 31-transcript, 36-durable-views.
 
+## Contexts
+
+- **On the kernel.** In a run made with `drive.ts r up --kernel --script s.json`,
+  `drive.ts r serve`, take the id from
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`, and run
+  `drive.ts r watch <id> --submit hi --until run_end --save answer`: the first
+  line is `{"_tag": "view", ...}` with `entries` and `docs`, then one
+  `{"_tag": "change", "ops": [...]}` per commit, live words as `"a"` ops on
+  `docs.pi.live.generation.message`, and the entries `pi.user`,
+  `pi.assistant` and `nisse.run_end` spliced into `entries`. A fresh
+  `drive.ts r watch <id> --save fresh` shows the same entries in its first
+  view, and `--from <entry id>` starts the window at that entry.
+
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- watch-rpc: a watch through a window opens on the newest entries, and from a position gets only what followed
 
 `bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
 

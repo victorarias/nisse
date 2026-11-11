@@ -88,6 +88,18 @@ Preconditions:
 
 ## Tests
 
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- server-idle-exit: the server exits once no client is connected and nothing is running
+- server-idle-exit: a submission's run keeps the server up after its client leaves, past the idle grace
+- server-stop: stopping the server answers the caller, then the server exits
+- server-stop: stopping the server while nisse answers lets the answer finish first
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- server-stop: nisse serve on the kernel answers server/stop, then exits 0
+- server-old-home: a home the shipping server used starts on the kernel and keeps its database as it was
+
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - server-idle-exit: the server exits once no client is connected and nothing is running

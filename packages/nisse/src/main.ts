@@ -11,6 +11,7 @@ import { readScript } from "./drivers/script.ts"
 import { readHomeConfig } from "./config.ts"
 import { login, logout } from "./login.ts"
 import { protocolSchema } from "./schema.ts"
+import { serveKernel } from "./kernel/server.ts"
 import { serve } from "./server.ts"
 import { VERSION } from "./version.ts"
 
@@ -106,6 +107,7 @@ const serveCommand = Command.make(
   },
   Effect.fn(function* ({ restart }) {
     const home = defaultHome()
+    if (process.env.NISSE_KERNEL === "1") return yield* serveKernelHome(home)
     if (restart) yield* stopRunningServer(home)
     const claim = claimHome(home)
     const claimed = restart ? claim.pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 300 })) : claim
@@ -130,6 +132,20 @@ const serveCommand = Command.make(
     )
   }),
 ).pipe(Command.withDescription("Run this home's server in the foreground"))
+
+// A stuck code-mode worker survives terminate() and keeps the process alive (F19), so the end of the server's lifetime
+// ends the process.
+const serveKernelHome = (home: Home) =>
+  Effect.gen(function* () {
+    const script = yield* readScript(process.env.NISSE_MODEL_SCRIPT || undefined)
+    const served = yield* Effect.scoped(
+      Effect.andThen(claimHome(home), serveKernel(home, { idleGrace: IDLE_GRACE, script })),
+    ).pipe(
+      Effect.as(true),
+      Effect.catchTag("HomeTaken", () => Effect.as(refuse(`another server already serves ${home.dir}`), false)),
+    )
+    if (served) process.exit(0)
+  })
 
 const execCommand = Command.make(
   "exec",
@@ -213,9 +229,14 @@ const extensionsCommand = Command.make(
 
 const schemaCommand = Command.make(
   "schema",
-  {},
-  Effect.fn(function* () {
-    yield* Console.log(JSON.stringify(protocolSchema(), null, 2))
+  {
+    kernel: Flag.Boolean("kernel").pipe(
+      Flag.withDescription("Print the schema of the wire a server under NISSE_KERNEL=1 speaks"),
+      Flag.withDefault(false),
+    ),
+  },
+  Effect.fn(function* ({ kernel }) {
+    yield* Console.log(JSON.stringify(protocolSchema(kernel), null, 2))
   }),
 ).pipe(Command.withDescription("Print the protocol's JSON Schema"))
 

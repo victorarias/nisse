@@ -47,10 +47,25 @@ Preconditions:
 
 ## Contexts
 
+- **On the kernel.** In a run made with `drive.ts r up --kernel` and a script
+  whose step speaks slowly, such as
+  `[{"text": "one two three four five six", "delayMs": 300}]`, start a
+  `drive.ts r watch <id> --submit count --until run_end --save interrupted`
+  in the background, wait until its output holds a live word such as
+  `"two "`, and run
+  `drive.ts r rpc conversation/interrupt '{"conversation": "<id>"}'`: the
+  watch ends on a `pi.assistant` entry with what was said and
+  `"stopReason": "aborted"`, then `nisse.run_end` with
+  `{"outcome": "interrupted", "message": "aborted"}`.
+
 - **Second client.** Any client can interrupt, and every client sees the run end `interrupted`.
 - **Subagents.** Stopping a run stops every subagent under it. `Esc` in a subagent's own conversation stops it and any subagent under it, not its parent.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

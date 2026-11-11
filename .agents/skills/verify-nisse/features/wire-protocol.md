@@ -7,8 +7,8 @@ never slow the server.
 
 ## Sub-features
 
-- `wire-schema` [pending wire-complete] prints the protocol's JSON Schema and version.
-- `wire-initialize` [pending wire-complete] answers a client with the server's version and protocol.
+- `wire-schema` prints the protocol's JSON Schema and version, and with `--kernel` the kernel wire's.
+- `wire-initialize` answers a client with the server's version and protocol.
 - `wire-malformed` [pending wire-complete] answers a call with missing fields with an error that names
   the field.
 - `wire-dropped` ends a subscription that falls 4096 commits behind with a
@@ -20,12 +20,13 @@ never slow the server.
 
 ### People
 
-- Run `nisse schema`.
+- Run `nisse schema`, or `nisse schema --kernel` for the kernel wire.
 
 ### Agents
 
 - Call `initialize` on the home's socket.
-- Build a client from `schema/nisse.schema.json`.
+- Build a client from `schema/nisse.schema.json`, or for a server under
+  `NISSE_KERNEL=1` from `schema/nisse.kernel.schema.json`.
 
 ## Driving it with drive.ts
 
@@ -48,7 +49,27 @@ Preconditions:
 - **Proof.** Keep the saved `nisse schema` output and both `rpc` answers from
   `steps.log`.
 
+## Contexts
+
+- **On the kernel.** In a run made with `drive.ts r up --kernel`, run
+  `drive.ts r nisse schema --kernel`: JSON titled `Nisse kernel protocol`,
+  the same text as `schema/nisse.kernel.schema.json`. `drive.ts r serve` and
+  `drive.ts r rpc initialize '{"client": "verify", "version": "1", "protocol": 1}'`
+  answer with the server's `version` and `"protocol": 1`. A watch that falls
+  4096 changes behind ends with `FellBehind` and its `limit`; the client
+  watches again with `window.from` set to the entry after the last it holds.
+
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- wire-dropped: a client that stops reading is dropped while the others keep up
+- wire-unknown: watching a conversation that does not exist says so
+- wire-initialize: a client is answered with the server's version and the kernel protocol
+
+Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- wire-schema: nisse schema --kernel prints the kernel wire's schema, the one committed beside the code
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
@@ -66,4 +87,4 @@ Wire, `packages/nisse/test/wire.test.ts`:
   last commit it received. The socket does not close, so waiting for it to
   close never notices.
 - After a protocol change, run `bun run schema` and commit
-  `schema/nisse.schema.json`.
+  `schema/nisse.schema.json` and `schema/nisse.kernel.schema.json`.
