@@ -44,6 +44,7 @@ import { committedSignIns } from "./sign-ins.ts"
 import { NisseTools } from "./tools.ts"
 import { agentTools } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
+import { followTreeStatus, type TreeStatuses } from "./status.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
@@ -60,6 +61,7 @@ export type KernelHarnessService = {
   readonly harness: Harness
   readonly stoppedTooOften: Map<ConversationId, number>
   readonly extensions: KernelExtensions
+  readonly status: TreeStatuses
 }
 
 export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
@@ -100,9 +102,10 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           (harness) => Effect.ignore(harness.close),
         )
         for (const [id, stops] of yield* countStops(harness)) stoppedTooOften.set(id, stops)
+        const status = yield* followTreeStatus(harness)
         // Loaded before anything runs, so the extensions guard the calls a restart resumes.
         const extensions = yield* openKernelExtensions(home, registry, base, () => harness)
-        return { harness, stoppedTooOften, extensions }
+        return { harness, stoppedTooOften, extensions, status }
       }).pipe(Effect.orDie),
     )
 }
@@ -118,7 +121,7 @@ const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
 
 const Handlers = KernelRpcs.toLayer(
   Effect.gen(function* () {
-    const { harness, stoppedTooOften, extensions } = yield* KernelHarness
+    const { harness, stoppedTooOften, extensions, status } = yield* KernelHarness
     const providers = yield* KernelProviders
     const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
     const lifetime = yield* Lifetime
@@ -287,6 +290,7 @@ const Handlers = KernelRpcs.toLayer(
           if (answered === "unknown") return yield* Effect.fail(new NoSuchApproval({ approval }))
           return { accepted: answered === "accepted" }
         }),
+      "status/watch": () => Stream.unwrap(Effect.as(lifetime.hold, status.watch(CONNECTION_QUEUE))),
       "extensions/list": () => extensions.list,
       "extensions/reload": () => extensions.reload,
       // Stops once the runs in flight settle, as the shipping server does; a run is never cut off by a stop.

@@ -240,6 +240,42 @@ export const ReloadExtensions = Rpc.make("extensions/reload", {
   }),
 })
 
+export const TreeStatus = Schema.TaggedStruct("tree", {
+  conversation: ConversationId.annotate({
+    description: "A conversation people started; its tree is it and its subagents.",
+  }),
+  seq: Schema.Int.annotate({ description: "The commit the tree's status changed at." }),
+  status: Schema.Literals(["idle", "working", "waiting"]).annotate({
+    description: "waiting when a conversation in the tree waits on a person, working when one runs, idle otherwise.",
+  }),
+  ended: Schema.optionalKey(
+    Schema.Struct({
+      outcome: Outcome,
+      message: Schema.optionalKey(Schema.String.annotate({ description: "Why the run ended without an answer." })),
+      said: Schema.optionalKey(
+        Schema.String.annotate({ description: "The last message the model wrote in the conversation." }),
+      ),
+    }).annotate({ description: "The run of the conversation itself ended at seq." }),
+  ),
+})
+export type TreeStatus = typeof TreeStatus.Type
+
+export const TreeSnapshot = Schema.TaggedStruct("trees", {
+  seq: Schema.Int.annotate({ description: "The last commit before the watch began." }),
+  trees: Schema.Array(TreeStatus).annotate({ description: "Every tree that is not idle; the rest are idle." }),
+})
+
+export const TreeItem = Schema.Union([TreeSnapshot, TreeStatus])
+export type TreeItem = typeof TreeItem.Type
+
+export const WatchStatus = Rpc.make("status/watch", {
+  success: TreeItem.annotate({
+    description: "The status of every tree, then each commit that changes one or ends the run of its root.",
+  }),
+  error: FellBehind,
+  stream: true,
+})
+
 /** Each extension's status line in a conversation, by extension name; the view's document of this kind. */
 export const STATUS_LINES_KIND = "nisse.status_lines"
 
@@ -381,6 +417,7 @@ export const KernelRpcs = RpcGroup.make(
   ResolveApproval,
   ListExtensions,
   ReloadExtensions,
+  WatchStatus,
   StopServer,
   ListProviders,
   ListModels,

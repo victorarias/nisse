@@ -555,6 +555,175 @@
       },
       "stream": false
     },
+    "status/watch": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "trees"
+                ]
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "The last commit before the watch began."
+              },
+              "trees": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "_tag": {
+                      "type": "string",
+                      "enum": [
+                        "tree"
+                      ]
+                    },
+                    "conversation": {
+                      "type": "string",
+                      "description": "A conversation people started; its tree is it and its subagents."
+                    },
+                    "seq": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991,
+                      "description": "The commit the tree's status changed at."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "idle",
+                        "working",
+                        "waiting"
+                      ],
+                      "description": "waiting when a conversation in the tree waits on a person, working when one runs, idle otherwise."
+                    },
+                    "ended": {
+                      "type": "object",
+                      "properties": {
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "answered",
+                            "interrupted",
+                            "failed",
+                            "restart_limit"
+                          ]
+                        },
+                        "message": {
+                          "type": "string",
+                          "description": "Why the run ended without an answer."
+                        },
+                        "said": {
+                          "type": "string",
+                          "description": "The last message the model wrote in the conversation."
+                        }
+                      },
+                      "required": [
+                        "outcome"
+                      ],
+                      "additionalProperties": true,
+                      "description": "The run of the conversation itself ended at seq."
+                    }
+                  },
+                  "required": [
+                    "_tag",
+                    "conversation",
+                    "seq",
+                    "status"
+                  ],
+                  "additionalProperties": true
+                },
+                "description": "Every tree that is not idle; the rest are idle."
+              }
+            },
+            "required": [
+              "_tag",
+              "seq",
+              "trees"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "tree"
+                ]
+              },
+              "conversation": {
+                "type": "string",
+                "description": "A conversation people started; its tree is it and its subagents."
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "The commit the tree's status changed at."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "idle",
+                  "working",
+                  "waiting"
+                ],
+                "description": "waiting when a conversation in the tree waits on a person, working when one runs, idle otherwise."
+              },
+              "ended": {
+                "type": "object",
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "answered",
+                      "interrupted",
+                      "failed",
+                      "restart_limit"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "description": "Why the run ended without an answer."
+                  },
+                  "said": {
+                    "type": "string",
+                    "description": "The last message the model wrote in the conversation."
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "additionalProperties": true,
+                "description": "The run of the conversation itself ended at seq."
+              }
+            },
+            "required": [
+              "_tag",
+              "conversation",
+              "seq",
+              "status"
+            ],
+            "additionalProperties": true
+          }
+        ],
+        "description": "The status of every tree, then each commit that changes one or ends the run of its root."
+      },
+      "error": {
+        "$ref": "#/$defs/FellBehindEncoded"
+      },
+      "stream": true
+    },
     "server/stop": {
       "params": {
         "type": "null"

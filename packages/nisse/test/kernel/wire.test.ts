@@ -19,6 +19,8 @@ import { tempHome } from "../support/server.ts"
 import { KERNEL_PROTOCOL_VERSION, STATUS_LINES_KIND, TOAST_KIND } from "@nisse/wire"
 import { VERSION } from "../../src/version.ts"
 
+type Tree = { _tag: "tree"; conversation: string; seq: number; status: string; ended?: Record<string, string> }
+type Trees = { _tag: "trees"; seq: number; trees: Array<Tree> } | Tree
 const opened = (watch: ViewWatch) => watch.until(() => true)
 
 /** The model has said something the view shows live, before the run ends. */
@@ -1067,7 +1069,7 @@ export default Extension.define((ctx) =>
   ctx.tool.hook("execute.before", (call) => Effect.sync(() => { call.input = { command: "${command}" } })),
 )`
 
-test("approval-restart: a call waiting for approval across a restart, whose hook computes other arguments on the rerun, asks again with them", async () => {
+test("approval-restart, status-snapshot: a call waiting for approval across a restart, whose hook computes other arguments on the rerun, asks again with them", async () => {
   const home = homeWithExtensions({ "rewrite.ts": rewriting("echo one") })
   let conversation: string
   let approval: string
@@ -1091,6 +1093,9 @@ test("approval-restart: a call waiting for approval across a restart, whose hook
     const view = watchView(client, conversation)
     const asked = (watch: ViewWatch) => approvalsOf(watch)?.requests[approval] as { arguments?: unknown } | undefined
     await view.until((watch) => JSON.stringify(asked(watch)?.arguments) === `{"command":"echo two"}`)
+    const status = client.watch<Trees>("status/watch")
+    await status.until((items) => items.length > 0)
+    expect(status.items[0]).toMatchObject({ _tag: "trees", trees: [{ conversation, status: "waiting" }] })
     expect(asked(view)).not.toHaveProperty("answer")
     await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
     await view.until(settled(1))
@@ -1111,3 +1116,67 @@ test("reload: a config.toml that stops reading fails every extension in a reload
   client.close()
   rmSync(home.dir, { recursive: true })
 })
+
+const treesOf = (items: ReadonlyArray<Trees>, conversation: string) =>
+  items.filter((item): item is Tree => item._tag === "tree" && item.conversation === conversation)
+
+test("status-follow, status-ended: watching status follows each run of a tree and says how it ended", async () => {
+  await using server = await runningKernelServer([{ text: "all done" }, { text: "again" }])
+  const client = await RawClient.connect(server.home.socket)
+  const watch = client.watch<Trees>("status/watch")
+  await watch.until((items) => items.length > 0)
+  expect(watch.items[0]).toMatchObject({ _tag: "trees", trees: [] })
+  const conversation = (await client.call("conversation/start", { cwd: "/work", id: "followed" })).result
+    .conversation as string
+  await submit(client, conversation, "go")
+  await watch.until((items) => treesOf(items, conversation).some((tree) => tree.ended))
+  await submit(client, conversation, "go again")
+  await watch.until((items) => treesOf(items, conversation).filter((tree) => tree.ended).length === 2)
+
+  const seen = treesOf(watch.items, conversation)
+  expect(seen.map(({ status, ended }) => ({ status, ended }))).toEqual([
+    { status: "working", ended: undefined },
+    { status: "idle", ended: { outcome: "answered", said: "all done" } },
+    { status: "working", ended: undefined },
+    { status: "idle", ended: { outcome: "answered", said: "again" } },
+  ])
+  const seqs = seen.map((tree) => tree.seq)
+  expect(seqs).toEqual([...seqs].sort((a, b) => a - b))
+  expect(new Set(seqs).size).toBe(4)
+  client.close()
+})
+
+test("status-subagent, status-snapshot: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const watch = client.watch<Trees>("status/watch")
+  await watch.until((items) => items.length > 0)
+  const conversation = await start(client, server.home.dir)
+  await submit(client, conversation, "have someone write a note")
+  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "waiting", 20_000)
+
+  const late = await RawClient.connect(server.home.socket)
+  const lateWatch = late.watch<Trees>("status/watch")
+  await lateWatch.until((items) => items.length > 0)
+  expect(lateWatch.items[0]).toMatchObject({
+    _tag: "trees",
+    trees: [{ _tag: "tree", conversation, status: "waiting" }],
+  })
+  expect(treesOf(watch.items, conversation).map((tree) => tree.status)).toEqual(["working", "waiting"])
+  // Interrupting the root's run leaves its subagent waiting, so the tree waits until the subagent is stopped too.
+  await client.call("conversation/interrupt", { conversation })
+  await watch.until((items) => treesOf(items, conversation).some((tree) => tree.ended))
+  expect(treesOf(watch.items, conversation).at(-1)?.status).toBe("waiting")
+  const view = watchView(client, conversation)
+  await view.until((current) => toolResults(current).length > 0)
+  await client.call("conversation/interrupt", { conversation: spawned(view, "/root/writer") })
+  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "idle", 20_000)
+  const ended = treesOf(watch.items, conversation).filter((tree) => tree.ended)
+  expect(ended.map((tree) => tree.ended)).toEqual([{ outcome: "interrupted", message: "aborted" }])
+  client.close()
+  late.close()
+}, 30_000)
