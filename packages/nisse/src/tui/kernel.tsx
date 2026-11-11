@@ -23,8 +23,20 @@ import {
   MODEL_KIND,
   type View,
 } from "@nisse/wire"
-import { Deferred, Effect, type Scope, Stream } from "effect"
-import { type Accessor, createMemo, createRoot, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js"
+import { Deferred, Effect, Schedule, type Scope, Stream } from "effect"
+import {
+  type Accessor,
+  createEffect,
+  createMemo,
+  createRoot,
+  createSignal,
+  For,
+  Match,
+  onCleanup,
+  Show,
+  Switch,
+  untrack,
+} from "solid-js"
 import { userName } from "../author.ts"
 import type { StartOptions } from "../client.ts"
 import { KernelClient } from "../kernel/client.ts"
@@ -77,6 +89,10 @@ const textOf = (content: Message["content"]) =>
   typeof content === "string"
     ? content
     : (content ?? []).flatMap((block) => (block.type === "text" && block.text ? [block.text] : [])).join("")
+
+/** What a person wrote: their input's first text, before the skills it named, which follow it as text of their own. */
+const typedOf = (content: Message["content"]) =>
+  typeof content === "string" ? content : (content?.find((block) => block.type === "text")?.text ?? "")
 
 const callsOf = (message: Message | undefined): ReadonlyArray<ToolCallBlock> =>
   typeof message?.content === "string"
@@ -143,7 +159,12 @@ const statusOf = (docs: Docs) =>
  * Follows `id` for as long as `scope` is open: watches its view and, when the watch drops (the client fell behind, or
  * the server went away), watches again from where the transcript reaches. Fails `done` when there is no such conversation.
  */
-const follow = (client: KernelClient["Service"], id: string, scope: Scope.Scope, done: Deferred.Deferred<void, string>) =>
+const follow = (
+  client: KernelClient["Service"],
+  id: string,
+  scope: Scope.Scope,
+  done: Deferred.Deferred<void, string>,
+) =>
   Effect.gen(function* () {
     const transcript = new ConversationTranscript((query, limit) =>
       client["conversation/entries"]({
@@ -185,7 +206,12 @@ const follow = (client: KernelClient["Service"], id: string, scope: Scope.Scope,
     )
     yield* Effect.forkIn(rewatch, scope)
     const load = (effect: Effect.Effect<TranscriptView, unknown>) =>
-      Effect.runFork(effect.pipe(Effect.tap((next) => Effect.sync(() => show(next))), Effect.ignore))
+      Effect.runFork(
+        effect.pipe(
+          Effect.tap((next) => Effect.sync(() => show(next))),
+          Effect.ignore,
+        ),
+      )
     // Memos, so what reads only the items does not run again for a change to the documents, such as a streamed word.
     const { items, docs } = createRoot(() => ({
       items: createMemo(() => view()?.items ?? []),
@@ -267,7 +293,7 @@ const lastActivity = (child: Followed) => {
       const text = textOf(message?.content)
       if (text !== "") return lastLine(text)
     }
-    if (entry.kind === "pi.user" || entry.kind === USER_KIND) return lastLine(textOf(messageOf(entry)?.content))
+    if (entry.kind === "pi.user" || entry.kind === USER_KIND) return lastLine(typedOf(messageOf(entry)?.content))
   }
   return ""
 }
@@ -277,9 +303,7 @@ const childState = (child: Followed | undefined): { label: string; tone: string 
   const status = statusOf(child.docs())
   if (status === "working") return { label: "working", tone: color.cyan }
   if (status === "waiting") return { label: "waiting on you", tone: color.yellow }
-  const end = child
-    .items()
-    .findLast((item) => item.kind === "entry" && item.entry.kind === RUN_END_KIND)
+  const end = child.items().findLast((item) => item.kind === "entry" && item.entry.kind === RUN_END_KIND)
   const outcome = end?.kind === "entry" ? dataOf<RunEnd>(end.entry).outcome : "answered"
   if (outcome === "answered") return { label: "done", tone: color.dim }
   return { label: outcome === "interrupted" ? "interrupted" : "failed", tone: color.yellow }
@@ -430,7 +454,7 @@ const EntryView = (props: {
         <UserView
           label={(data.author ?? "you").toUpperCase()}
           tone={color.magenta}
-          text={textOf(messageOf(entry)?.content)}
+          text={typedOf(messageOf(entry)?.content)}
           skills={(data.skills ?? []).map((skill) => skill.name)}
         />
       )
@@ -516,10 +540,11 @@ const Transcript = (props: { followed: Followed; tree: Tree }) => {
   const markers = new Map<TranscriptItem, { renderable: Renderable; load: () => void }>()
   /** The distance from the bottom to keep while a load inserts entries above the rows in view. */
   let anchor: number | undefined
+  // Measured inside the content, which a scroll moves as a whole, against where the scroll has it now.
   const visible = (renderable: Renderable) => {
     if (!box) return false
-    const top = box.viewport.screenY
-    return renderable.screenY + renderable.height > top && renderable.screenY < top + box.viewport.height
+    const at = renderable.y - box.content.y
+    return at + renderable.height > box.scrollTop && at < box.scrollTop + box.viewport.height
   }
   const check = () => {
     for (const marker of markers.values()) {
@@ -560,7 +585,7 @@ const Transcript = (props: { followed: Followed; tree: Tree }) => {
       stickyStart="bottom"
       paddingLeft={1}
       paddingRight={1}
-      verticalScrollbarOptions={{ onChange: check }}
+      onMouseScroll={() => queueMicrotask(check)}
     >
       <For each={rows()}>
         {(item, at) => (
@@ -600,7 +625,7 @@ const Transcript = (props: { followed: Followed; tree: Tree }) => {
       <For each={queued()}>
         {(item) => (
           <text fg={color.dim} marginLeft={2}>
-            {`${item.mode === "steer" ? "steering" : "queued"} · ${textOf(item.content)}`}
+            {`${item.mode === "steer" ? "steering" : "queued"} · ${typedOf(item.content)}`}
           </text>
         )}
       </For>
@@ -617,12 +642,13 @@ export const kernelTui = Effect.fnUntraced(function* (
   prompt: string | undefined,
 ) {
   const client = yield* KernelClient
-  const started = yield* client["conversation/start"]({
-    cwd: process.cwd(),
-    ...options,
-    ...(id === undefined ? {} : { id }),
-  })
-  const conversation = started.conversation
+  // A number names a conversation the server numbered; any other id is one a client chose, and starting with it
+  // opens that conversation or starts it.
+  const numbered = id !== undefined && /^\d+$/.test(id)
+  const started = numbered
+    ? undefined
+    : yield* client["conversation/start"]({ cwd: process.cwd(), ...options, ...(id === undefined ? {} : { id }) })
+  const conversation = started?.conversation ?? id!
   const info = (yield* client["conversation/list"]()).find((each) => each.id === conversation)
   const done = yield* Deferred.make<void, string>()
   const scope = yield* Effect.scope
@@ -637,14 +663,16 @@ export const kernelTui = Effect.fnUntraced(function* (
     },
     parents,
   }
-  const followChildren = (parent: Followed) =>
-    createMemo(() => {
-      for (const child of subagentsOf(parent)) {
-        if (child in children()) continue
-        parents[child] = parent.id
-        const followed = Effect.runSync(follow(client, child, scope, done))
-        setChildren((all) => ({ ...all, [child]: followed }))
-        followChildren(followed)
+  // Follows each subagent once some conversation the TUI follows shows it started.
+  const followSubagents = () =>
+    createEffect(() => {
+      for (const parent of [root, ...Object.values(children())]) {
+        for (const child of subagentsOf(parent)) {
+          if (child in untrack(children)) continue
+          parents[child] = parent.id
+          const followed = Effect.runSync(follow(client, child, scope, done))
+          setChildren((all) => ({ ...all, [child]: followed }))
+        }
       }
     })
 
@@ -667,7 +695,7 @@ export const kernelTui = Effect.fnUntraced(function* (
       return root.docs()["pi.agent"]?.cwd ?? info?.cwd
     },
     get model() {
-      return selectionOf(root.docs()["pi.agent"]) ?? started.model
+      return selectionOf(root.docs()["pi.agent"]) ?? info?.model
     },
     get status() {
       return status()
@@ -690,10 +718,15 @@ export const kernelTui = Effect.fnUntraced(function* (
     },
   }
   const actions: ConversationActions = {
-    submit: (text, steer) =>
+    // While the server is away the prompt is sent again under the same request id, which the server answers once.
+    submit: (text, steer) => {
+      const payload = { conversation, requestId: crypto.randomUUID(), author: userName(), text, steer }
       Effect.runFork(
-        client["conversation/submit"]({ conversation, requestId: crypto.randomUUID(), author: userName(), text, steer }),
-      ),
+        client["conversation/submit"](payload).pipe(
+          Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
+        ),
+      )
+    },
     answer: (allow) => {
       const asking = [root, ...Object.values(tree.children)].find((each) => pendingCalls(each.docs()).length > 0)
       const pending = asking && pendingCalls(asking.docs())[0]
@@ -711,7 +744,7 @@ export const kernelTui = Effect.fnUntraced(function* (
 
   yield* showUntilDone(
     () => {
-      followChildren(root)
+      followSubagents()
       createMemo((was: string) => {
         const now = status()
         if (now === "idle") setWorkingSince(undefined)
@@ -732,4 +765,3 @@ export const kernelTui = Effect.fnUntraced(function* (
     (opened) => (renderer = opened),
   )
 })
-

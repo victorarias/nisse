@@ -272,7 +272,11 @@ const nisse = Command.make(
         await import("@opentui/solid/preload")
         return import("./tui/kernel.tsx")
       })
-      return yield* kernelTui(Option.getOrUndefined(conversation), startWith(flags), Option.getOrUndefined(prompt)).pipe(
+      return yield* kernelTui(
+        Option.getOrUndefined(conversation),
+        startWith(flags),
+        Option.getOrUndefined(prompt),
+      ).pipe(
         Effect.provide(kernelClientLayer(home)),
         Effect.catchIf(
           (error): error is ServerFailed => error instanceof ServerFailed,
