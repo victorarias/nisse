@@ -89,8 +89,9 @@ serves `initialize`, `conversation/start`, `conversation/submit`,
 `providers/list`, `models/list` and the `auth/*` calls, and loads the home's
 extensions as [Extensions](features/extensions.md) says. Every provider lists,
 signs in and out, and `conversation/start` picks a model as on today's server,
-but only `script` answers: a run on any other provider ends `failed` with
-`Model <provider>/<model> is not available` until its kind brings its run.
+and `script` and ChatGPT (`openai`, see [OpenAI](features/openai.md)) answer;
+a run on Claude ends `failed` with `Model <provider>/<model> is not available`
+until its kind brings its run.
 `rpc`, `watch`, `watch-auth`, `watch-status`, `serve`, `kill-server`, `idle`, `doctor` and
 `down` work in such a run; `watch` follows the conversation's view (see
 [Watches and views](features/views.md)) and `--until run_end` waits for a

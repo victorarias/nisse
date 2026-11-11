@@ -53,26 +53,51 @@ take them.
   `tokensPerSecond`, and usage estimated from the prompt with a simulated prompt
   cache per `sessionId`.
 
+## ChatGPT
+
+`@nisse/models/chatgpt` reaches ChatGPT through a person's ChatGPT sign-in.
+`chatGptInstance(id, options)` opens one instance: its account (browser and
+device-code sign-in, token refresh, health, the model catalog ChatGPT lists or
+the one bundled in `models.json`) and the provider behind the seam, which sends
+each request to `/codex/responses` and streams the answer back.
+
+- Every system message is folded into `instructions`, after the instance's
+  own; the tools are the transcript's current ones. Nothing is stored on
+  ChatGPT's side (`store: false`), so each request carries the whole input.
+  Failed or stopped responses are left out of it, and a call left without a
+  result is sent with `No result provided`.
+- A tool whose `constrainedSampling` is a grammar is offered as a custom tool.
+  The raw text the model writes for a call fills the tool's one string
+  parameter, and goes back raw.
+- A request ChatGPT turns down with 401 refreshes the sign-in once and goes
+  again. Failures are the stream's `error` event: the HTTP status and body, a
+  usage limit with its plan and reset time, the response's error code and
+  message (`context_length_exceeded` is read as an overflow), or a stream cut
+  before the response ended.
+- `originator: nisse` names nisse on every request and sign-in; the provider's
+  `sessionId` is both the `session-id` header and the `prompt_cache_key`.
+
 ## Copied code
 
 From pi-ai (`packages/ai/src`) in earendil-works/pi at commit `7d073328e`, under
 the MIT license in `LICENSE`:
 
-| File                | From                                        | Left out                                          |
-| ------------------- | ------------------------------------------- | ------------------------------------------------- |
-| `types.ts`          | `types.ts`                                  | provider option and compat types, telemetry spans |
-| `model-schema.ts`   | `providers/model-schema.ts`, as plain types | the catalog schemas                               |
-| `estimate.ts`       | `utils/estimate.ts`                         |                                                   |
-| `overflow.ts`       | `utils/overflow.ts`                         |                                                   |
-| `retry.ts`          | `utils/retry.ts`                            | `retryAssistantCall`; the harness retries         |
-| `streaming-json.ts` | `utils/streaming-json.ts`                   |                                                   |
-| `json-parse.ts`     | `utils/json-parse.ts`                       | `parseStreamingJson` and `partial-json`           |
-| `transcript.ts`     | `utils/transcript.ts`                       |                                                   |
-| `text.ts`           | `utils/text.ts`                             |                                                   |
-| `uuid.ts`           | `utils/uuid.ts`                             |                                                   |
-| `identity.ts`       | `utils/identity.ts`                         | header formatting for other providers             |
-| `diagnostics.ts`    | `utils/diagnostics.ts`                      |                                                   |
-| `faux.ts`           | `providers/faux.ts`, ported to Effect       |                                                   |
+| File                 | From                                            | Left out                                          |
+| -------------------- | ----------------------------------------------- | ------------------------------------------------- |
+| `types.ts`           | `types.ts`                                      | provider option and compat types, telemetry spans |
+| `model-schema.ts`    | `providers/model-schema.ts`, as plain types     | the catalog schemas                               |
+| `estimate.ts`        | `utils/estimate.ts`                             |                                                   |
+| `overflow.ts`        | `utils/overflow.ts`                             |                                                   |
+| `retry.ts`           | `utils/retry.ts`                                | `retryAssistantCall`; the harness retries         |
+| `streaming-json.ts`  | `utils/streaming-json.ts`                       |                                                   |
+| `json-parse.ts`      | `utils/json-parse.ts`                           | `parseStreamingJson` and `partial-json`           |
+| `transcript.ts`      | `utils/transcript.ts`                           |                                                   |
+| `text.ts`            | `utils/text.ts`                                 |                                                   |
+| `uuid.ts`            | `utils/uuid.ts`                                 |                                                   |
+| `identity.ts`        | `utils/identity.ts`                             | header formatting for other providers             |
+| `diagnostics.ts`     | `utils/diagnostics.ts`                          |                                                   |
+| `faux.ts`            | `providers/faux.ts`, ported to Effect           |                                                   |
+| `chatgpt/grammar.ts` | `api/constrained-sampling.ts`, the grammar half | JSON-schema strict mode                           |
 
 `validation.ts` keeps pi-ai's `validateToolArguments` over `@nisse/schema`'s
 `checkToolArguments`. `test/overflow.test.ts` and `test/retry.test.ts` are

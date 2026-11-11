@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { Effect, Schema } from "effect"
-import { ProviderError } from "../../provider.ts"
+import { ProviderError } from "../kind.ts"
 
 export const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 const ACCOUNT_CLAIM = "https://api.openai.com/auth"
