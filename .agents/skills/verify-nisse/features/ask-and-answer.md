@@ -19,6 +19,9 @@ printing the answer and exiting 0, or 1 when the run fails.
 - `answer-wire` submits over the protocol and sees the user entry, live text,
   the `message` entry and the `run_end` entry as commits.
 - `answer-shared` shows a run started in the TUI to a second client.
+- `submit-author` names who wrote each prompt: the `author` of
+  `conversation/submit` is on the prompt while it waits in the queue and on its
+  entry once it runs, for every client.
 - `answer-author` [pending tui-views] names the TUI's and `exec`'s messages after `USER`, or the
   system's user name when `USER` is not set.
 - `answer-scroll` [pending tui-views] scrolls the transcript with the mouse wheel.
@@ -100,6 +103,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 
 - answer-wire, answer-shared: every client of a conversation sees the prompt, the answer and how the run ended
 - answer-failed: a model failure is recorded after what was said and the conversation goes idle
+- submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

@@ -1,8 +1,5 @@
 import type { Conversation, ConversationId, ExtensionInfo } from "@nisse/protocol"
-import { existsSync, readdirSync, statSync } from "node:fs"
-import { join } from "node:path"
 import { Cause, Context, Effect, Exit, Layer, Scope } from "effect"
-import { readHomeConfig } from "../config.ts"
 import type { Home } from "../home.ts"
 import type { Call } from "../provider.ts"
 import { Store } from "../store.ts"
@@ -10,7 +7,6 @@ import type { Tool, ToolOutcome } from "../tools/tool.ts"
 import {
   Refused,
   type ConversationHandle,
-  type Extension,
   type ModelRequest,
   type ToolCall,
   type ToolEditor,
@@ -18,11 +14,15 @@ import {
   type ToolHooks,
   type ToolResult,
 } from "./api.ts"
+import {
+  failureReason as reason,
+  forgetExtensions,
+  HOOK_LIMIT,
+  importExtension,
+  LOAD_LIMIT,
+  planExtensions,
+} from "./discover.ts"
 import { serveSharedModules } from "./modules.ts"
-
-const LOAD_LIMIT = "10 seconds"
-const HOOK_LIMIT = "10 seconds"
-const NAME = /^[A-Za-z0-9_-]+$/
 
 interface Registered<A> {
   readonly extension: string
@@ -48,32 +48,6 @@ interface Loaded {
   readonly transforms: Array<Registered<(tools: ToolEditor) => void>>
   readonly hooks: { readonly [Name in keyof ToolHooks]: Array<Registered<Hook<Name>>> }
   readonly requests: Array<Registered<(request: ModelRequest) => Effect.Effect<void, unknown>>>
-}
-
-interface Found {
-  readonly name: string
-  readonly path: string
-}
-
-const found = (dir: string): ReadonlyArray<Found> =>
-  existsSync(dir)
-    ? readdirSync(dir)
-        .sort()
-        .flatMap((entry) => {
-          const path = join(dir, entry)
-          if (entry.endsWith(".ts") && statSync(path).isFile()) return [{ name: entry.slice(0, -".ts".length), path }]
-          const index = join(path, "index.ts")
-          return statSync(path).isDirectory() && existsSync(index) ? [{ name: entry, path: index }] : []
-        })
-    : []
-
-const reason = (cause: Cause.Cause<unknown>) => {
-  const error = Cause.squash(cause)
-  return error instanceof Error ? error.message : String(error)
-}
-
-const forget = (dir: string) => {
-  for (const path of Object.keys(require.cache)) if (path.startsWith(`${dir}/`)) delete require.cache[path]
 }
 
 export class Extensions extends Context.Service<
@@ -142,13 +116,14 @@ export class Extensions extends Context.Service<
               }),
           )
 
-        const load = (into: Loaded, scope: Scope.Closeable, extension: Found, options: Record<string, unknown>) =>
+        const load = (
+          into: Loaded,
+          scope: Scope.Closeable,
+          extension: { name: string; path: string },
+          options: Record<string, unknown>,
+        ) =>
           Effect.gen(function* () {
-            const module = yield* Effect.tryPromise({ try: () => import(extension.path), catch: (error) => error })
-            const define = module.default as Extension | undefined
-            if (typeof define !== "function") {
-              return yield* Effect.fail(new Error("it exports no extension; export default Extension.define(...)"))
-            }
+            const define = yield* importExtension(extension.path)
             yield* define({
               name: extension.name,
               options,
@@ -167,8 +142,7 @@ export class Extensions extends Context.Service<
           }).pipe(Effect.timeout(LOAD_LIMIT), Scope.provide(scope))
 
         const loadAll = Effect.gen(function* () {
-          forget(home.extensions)
-          const config = yield* Effect.result(readHomeConfig(home.dir))
+          forgetExtensions(home.extensions)
           const loaded: Array<ExtensionInfo> = []
           const opened: Array<Scope.Closeable> = []
           const next: Loaded = {
@@ -178,29 +152,14 @@ export class Extensions extends Context.Service<
             hooks: { "execute.before": [], "execute.after": [] },
             requests: [],
           }
-          for (const extension of found(home.extensions)) {
-            const info = { name: extension.name, path: extension.path }
-            if (config._tag === "Failure") {
-              loaded.push({ ...info, state: "failed", message: `${config.failure.path}: ${config.failure.message}` })
+          for (const planned of yield* planExtensions(home.dir, home.extensions)) {
+            if ("info" in planned) {
+              loaded.push(planned.info)
               continue
             }
-            const { enabled, ...options } = config.success.extensions?.[extension.name] ?? {}
-            if (enabled === false) {
-              loaded.push({ ...info, state: "disabled" })
-              continue
-            }
-            if (!NAME.test(extension.name) || loaded.some((other) => other.name === extension.name)) {
-              loaded.push({
-                ...info,
-                state: "failed",
-                message: NAME.test(extension.name)
-                  ? `another extension is named ${extension.name}`
-                  : "an extension's name may use only letters, digits, - and _",
-              })
-              continue
-            }
+            const info = { name: planned.name, path: planned.path }
             const scope = yield* Scope.make()
-            const exit = yield* Effect.exit(load(next, scope, extension, options))
+            const exit = yield* Effect.exit(load(next, scope, planned, planned.options))
             if (Exit.isSuccess(exit)) {
               opened.push(scope)
               loaded.push({ ...info, state: "loaded" })

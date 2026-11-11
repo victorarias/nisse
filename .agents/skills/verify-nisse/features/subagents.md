@@ -467,6 +467,11 @@ Preconditions:
 
 ## Tests
 
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- subagent-limits: a tree runs at most as many subagents at once as config.toml allows
+- subagent-root-env, tool-root-env: an extension's tool run by a subagent knows the conversation people started
+
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - subagent-interrupt: interrupting a conversation stops the runs of its subagents too
@@ -474,6 +479,7 @@ Wire, `packages/nisse/test/wire.test.ts`:
 - subagent-answer: a subagent's answer lands in its idle parent's transcript without starting a run
 - subagent-followup: a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent
 - subagent-limits: a tree runs at most as many subagents at once as config.toml allows
+- subagent-root-env, tool-root-env: an extension's tool run by a subagent knows the conversation people started
 - subagent-limits: a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows
 - status-subagent: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later
 - subagent-root-env, tool-root-env: commands a conversation runs, its subagents' included, know the conversation people started

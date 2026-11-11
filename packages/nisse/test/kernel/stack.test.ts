@@ -1,11 +1,12 @@
 // The `nisse` binary on the kernel (NISSE_KERNEL=1), over its socket: stop, kill, restart.
 import { afterEach, expect, test } from "bun:test"
 import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
-import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { deadline, RawClient } from "../support/raw.ts"
 import { kernelEnv, runEnds, servingKernel, settled, start, submit, transcript, watchView } from "../support/kernel.ts"
+import { homeAt } from "../../src/home.ts"
 import { tempHome } from "../support/server.ts"
 import { nisse, stopServer } from "../support/terminal.ts"
 
@@ -177,3 +178,34 @@ test("start-with-id: a conversation opened on a client's id survives a restart, 
   expect((after.view().docs["pi.agent"] as { cwd?: string }).cwd).toBe(nisseHome.dir)
   client.close()
 }, 30_000)
+
+test("extensions-load: a home named relative to the folder nisse serves from loads its extensions, listed by full path", async () => {
+  const folder = home()
+  const relative = homeAt(join(folder.dir, "h1"))
+  homes.unshift(relative)
+  mkdirSync(relative.extensions, { recursive: true })
+  writeFileSync(
+    join(relative.extensions, "clock.ts"),
+    `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define(() => Effect.void)
+`,
+  )
+  const env = { ...(await kernelEnv(relative)), NISSE_HOME: "h1" }
+  const server = await servingKernel(env, folder.dir)
+  const client = await RawClient.connect(relative.socket)
+  expect((await client.call("extensions/list")).result).toEqual([
+    { name: "clock", path: `${relative.extensions}/clock.ts`, state: "loaded" },
+  ])
+  client.close()
+  await stopServer(relative)
+  expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
+})
+
+test("reload: a server on the kernel refuses to start on a config.toml that does not read, and says why", async () => {
+  const nisseHome = home()
+  await Bun.write(`${nisseHome.dir}/config.toml`, "[extensions.guard\n")
+  const server = nisse(["serve"], await kernelEnv(nisseHome))
+  expect(await deadline(server.exited, 10_000, "server exit")).toBe(1)
+  expect(await new Response(server.stderr).text()).toContain(`${nisseHome.dir}/config.toml`)
+})

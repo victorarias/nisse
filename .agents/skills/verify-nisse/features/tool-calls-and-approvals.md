@@ -23,6 +23,9 @@ conversation was started with `--auto`, which runs every call without asking.
   `--auto`, from the TUI or `exec`.
 - `approval-interrupt` expires a waiting approval when the run is
   interrupted.
+- `approval-restart` keeps a call waiting for approval across a restart, and
+  asks again, with the new arguments, when its extensions' hooks change them
+  on the rerun: an answer holds only for the arguments it was given.
 - `tool-output-live` shows a command's output as it prints, under its call
   while the status reads `WORKING`, then commits it whole with the result.
 - `tool-root-env` runs every command with `NISSE_ROOT_CONVERSATION` set to the
@@ -149,6 +152,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - approval-wire: two clients answer one approval at once and the first answer counts
 - approval-wire: a denied call is reported to the model as denied and does not run, and an unknown approval is refused by name
 - tool-read-only, approval-auto: reading calls and conversations started with auto approvals run without asking
+- approval-restart, status-snapshot: a call waiting for approval across a restart, whose hook computes other arguments on the rerun, asks again with them
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
