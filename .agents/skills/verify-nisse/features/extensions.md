@@ -418,7 +418,8 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   extension's load with `its tool transform failed: <why>` and the extension's hooks never run. The transcript keeps
   the model's own arguments; `execute.before`'s change shows in what runs, its result, the approval request and
   `execute.after`'s `input`.
-  `ctx.request.hook` registers and does nothing until ChatGPT runs on the kernel. A hook's `conversation` has no
+  `ctx.request.hook` registers and does nothing on the kernel yet
+  (`kernel-chatgpt-cwd-agents-md-skills`). A hook's `conversation` has no
   `lineage` there yet: kernel conversations carry lineage on the wire from wire-complete, and hooks get it then.
 
 ## Tests
