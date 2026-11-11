@@ -111,6 +111,23 @@ const save = (name: string, content: string) => {
   return path
 }
 
+// Concurrent commands in one run each claim their own number: the exclusive
+// create fails for a name another command already took, and the next one is tried.
+const saveNumbered = (suffix: string, content: string) => {
+  mkdirSync(evidence, { recursive: true })
+  for (let n = readFileSync(join(evidence, "steps.log"), "utf8").split("\n").length; ; n++) {
+    const path = join(evidence, `${String(n).padStart(3, "0")}-${suffix}`)
+    try {
+      writeFileSync(path, content, { flag: "wx" })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue
+      throw error
+    }
+    record(`saved ${path}`)
+    return path
+  }
+}
+
 const flag = (name: string) => {
   const at = args.indexOf(name)
   if (at < 0) return undefined
@@ -509,8 +526,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text(), streamed])
     const tail = `--- stderr\n${stderr}--- exit ${code}\n`
     process.stdout.write(tail)
-    const n = readFileSync(join(evidence, "steps.log"), "utf8").split("\n").length
-    save(`${String(n).padStart(3, "0")}-nisse.txt`, `$ ${line}\n--- stdout\n${stdout}${tail}`)
+    saveNumbered("nisse.txt", `$ ${line}\n--- stdout\n${stdout}${tail}`)
   },
 
   idle: async () => {
