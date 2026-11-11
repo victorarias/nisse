@@ -439,8 +439,8 @@ test("start-with-id: starting a conversation with an id it already has answers w
   const id = crypto.randomUUID()
   const first = await client.call("conversation/start", { id, cwd: "/work" })
   const again = await client.call("conversation/start", { id, cwd: "/elsewhere" })
-  expect(first.result).toEqual({ conversation: id })
-  expect(again.result).toEqual({ conversation: id })
+  expect(first.result).toEqual({ conversation: id, model: { provider: "script", model: "script" } })
+  expect(again.result).toEqual({ conversation: id, model: { provider: "script", model: "script" } })
   const view = watchView(client, id)
   await submit(client, id, "hi")
   await view.until(settled(1))
@@ -465,6 +465,7 @@ test("start-with-id: a chosen id that names an object property, such as toString
   await client.call("conversation/start", { id: "first", cwd: "/work" })
   expect((await client.call("conversation/start", { id: "toString", cwd: "/work" })).result).toEqual({
     conversation: "toString",
+    model: { provider: "script", model: "script" },
   })
   const view = watchView(client, "toString")
   await submit(client, "toString", "hi")

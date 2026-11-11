@@ -189,11 +189,35 @@ Preconditions:
   `drive.ts r rpc auth/start '{"provider": "openai", "method": "terminal"}'`:
   an error, `openai can't sign in by terminal`.
 
+- **On the kernel.** In a fresh run made with
+  `drive.ts r up --kernel --fake-openai text_answer --openai-signed-out --openai-refreshes 1`,
+  write `[providers.openai-work]` with `driver = "openai"` to the home's
+  `config.toml`, run `drive.ts r serve`, start
+  `drive.ts r watch-auth --until succeeded --save device-code-work &` and run
+  `drive.ts r rpc auth/start '{"provider": "openai-work", "method": "device_code"}'`:
+  the watch shows `starting`, `waiting` with code `ABCD-1234`, `verifying`,
+  then `succeeded` with `ada@example.com · ChatGPT Plus`. `auth/` holds
+  `openai-work.json` alone, and `providers/list` shows `openai-work` `ready`
+  while `openai` stays `signed_out`.
+  `drive.ts r rpc auth/logout '{"provider": "openai-work"}'` answers it
+  `signed_out` and removes the file. The **Cannot** calls over `rpc` fail
+  `CannotSignIn` for `script` and for `openai` by `terminal`, and
+  `UnknownProvider` for `nope`.
+  The kernel commits every sign-in state to the `nisse.sign_ins` document
+  before any connection sees it. Start
+  `drive.ts r rpc auth/start '{"provider": "openai", "method": "device_code"}'`,
+  wait for `drive.ts r watch-auth --until waiting`, then
+  `drive.ts r kill-server` and `drive.ts r serve`:
+  `drive.ts r watch-auth --until failed` shows that flow `failed` with
+  `the server stopped before this sign-in finished`, and `auth/respond` to it
+  answers `{"accepted": false}`.
+
 ## Contexts
 
 - **SSH.** OpenAI's sign-in from the TUI and `nisse login` uses a device code, because a browser elsewhere cannot reach port 1455. Claude has only its terminal sign-in.
 - **Second client.** Any client can start, follow, answer or cancel a sign-in.
 - **Idle.** The server exits 30 s after its last client leaves, even while a sign-in waits.
+- **Restart, on the kernel.** A sign-in still running when the server stops ends `failed` for the next server's connections; today's server forgets it.
 
 ## Tests
 
@@ -219,6 +243,12 @@ Provider, `packages/nisse/test/openai.test.ts`:
 Provider, `packages/nisse/test/claude.test.ts`:
 
 - claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account
+
+Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- signin-device-code, signout: one instance signs in and out on its own, and every connection sees it
+- signin-shared: a sign-in the server stopped during is failed for every connection of the next server
+- provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
 
 ## Gotchas
 

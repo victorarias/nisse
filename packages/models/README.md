@@ -23,6 +23,23 @@ seam, and the providers behind it.
 - `streamSimple` normalizes the context into a transcript, merges the request's
   `identity` over the default one, and sets `durationMs` on the final message.
 
+## Provider kinds
+
+A provider kind (`src/kind.ts`) is one way to reach models: ChatGPT, Claude Code
+or the script. A home's config names instances of a kind, such as `openai` and
+`openai-work`, and `ProviderKind.open(id, settings)` opens each one as a
+`ProviderInstance`:
+
+- its account: `health`, `models`, `defaultModel`, `signInMethods`, `signIn`
+  and `signOut`, the same for every kind, which the server serves as
+  `providers/list`, `models/list` and `auth/*`;
+- `provider`, the `Provider` this seam routes the instance's requests to,
+  named by the instance's id. Claude Code runs its own loop and has none.
+
+`scriptInstance(steps)` is the `script` provider as an instance. ChatGPT's and
+Claude Code's kinds live in `packages/nisse/src/drivers` until their packages
+take them.
+
 ## Providers
 
 - `scriptProvider(steps)` (`src/script.ts`) plays `NISSE_MODEL_SCRIPT`'s steps

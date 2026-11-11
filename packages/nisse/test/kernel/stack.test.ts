@@ -154,7 +154,10 @@ test("start-with-id: a conversation opened on a client's id survives a restart, 
   const id = crypto.randomUUID()
   const first = await servingKernel(env)
   let client = await RawClient.connect(nisseHome.socket)
-  expect((await client.call("conversation/start", { id, cwd: nisseHome.dir })).result).toEqual({ conversation: id })
+  expect((await client.call("conversation/start", { id, cwd: nisseHome.dir })).result).toEqual({
+    conversation: id,
+    model: { provider: "script", model: "script" },
+  })
   const before = watchView(client, id)
   await submit(client, id, "remember")
   await before.until(settled(1))
@@ -164,7 +167,10 @@ test("start-with-id: a conversation opened on a client's id survives a restart, 
 
   await servingKernel(env)
   client = await RawClient.connect(nisseHome.socket)
-  expect((await client.call("conversation/start", { id, cwd: "/elsewhere" })).result).toEqual({ conversation: id })
+  expect((await client.call("conversation/start", { id, cwd: "/elsewhere" })).result).toEqual({
+    conversation: id,
+    model: { provider: "script", model: "script" },
+  })
   const after = watchView(client, id)
   await after.until(() => true)
   expect(transcript(after.view().entries)).toEqual(["user: remember", "assistant: noted", "run_end: answered"])

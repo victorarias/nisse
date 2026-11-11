@@ -1,5 +1,5 @@
 // The server a home runs under NISSE_KERNEL=1: one Harness over `kernel.sqlite`, served over the home's socket with
-// the kernel wire (`@nisse/wire`). The model is the `script` provider until providers come to the kernel.
+// the kernel wire (`@nisse/wire`). Conversations run on the home's providers (`./providers.ts`).
 import { BunSocketServer } from "@effect/platform-bun"
 import { LocalExecutionEnv } from "@nisse/env/local"
 import {
@@ -13,7 +13,7 @@ import {
   type Harness,
 } from "@nisse/harness"
 import { type ConversationId, type EntryId, idFromNumber, openSqliteStorage, type Tx } from "@nisse/kernel"
-import { fromProviders, type ScriptStep, scriptProvider, SCRIPT_MODEL } from "@nisse/models"
+import { fromProviders } from "@nisse/models"
 import {
   FellBehind,
   InvalidConversationId,
@@ -30,14 +30,19 @@ import {
 import { Cause, Console, Context, type Duration, Effect, Exit, Layer, Queue, Scope, Semaphore, Stream } from "effect"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as RpcServer from "effect/rpc/RpcServer"
+import type { ModelAsk } from "../config.ts"
+import type { ProviderOptions } from "../drivers/index.ts"
 import type { Home } from "../home.ts"
 import { Lifetime } from "../lifetime.ts"
+import { Setup } from "../setup.ts"
 import { VERSION } from "../version.ts"
 import { chosenNumber, ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
+import { agentModel, KernelProviders, LastModelDoc, selectionOf } from "./providers.ts"
 import { countStops, restartLimitMessage } from "./restarts.ts"
 import { writeRunEnd } from "./run-end.ts"
+import { committedSignIns } from "./sign-ins.ts"
 import { NisseTools } from "./tools.ts"
-import { agentTools, taskOfRequest } from "./agents.ts"
+import { agentTools } from "./agents.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
@@ -53,10 +58,11 @@ export const CONNECTION_QUEUE = 4096
 export type KernelHarnessService = { readonly harness: Harness; readonly stoppedTooOften: Map<ConversationId, number> }
 
 export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
-  static readonly layer = (home: Home, script: ReadonlyArray<ScriptStep>) =>
+  static readonly layer = (home: Home) =>
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
+        const { instances } = yield* KernelProviders
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
         registry.install(NisseTools)
@@ -78,8 +84,9 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           Effect.flatMap(openSqliteStorage(home.kernel), (storage) =>
             openHarness(storage, {
               registry,
-              // A subagent's requests take the steps of its task path.
-              models: fromProviders([scriptProvider(script, (context) => taskOfRequest(context.messages))]),
+              models: fromProviders(
+                [...instances.values()].flatMap((instance) => (instance.provider ? [instance.provider] : [])),
+              ),
               env: ({ cwd }) => Effect.succeed(new LocalExecutionEnv({ cwd: cwd ?? home.dir })),
               runEnded,
             }),
@@ -104,6 +111,8 @@ const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
 const Handlers = KernelRpcs.toLayer(
   Effect.gen(function* () {
     const { harness, stoppedTooOften } = yield* KernelHarness
+    const providers = yield* KernelProviders
+    const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
     const lifetime = yield* Lifetime
     // Keeps the server up while the harness has work, such as a run a submission started or a crash left.
     const scope = yield* Effect.scope
@@ -161,23 +170,32 @@ const Handlers = KernelRpcs.toLayer(
     // Starts with a chosen id one at a time, so two starts with one new id make one conversation.
     const choosing = yield* Semaphore.make(1)
 
-    const startConversation = (cwd: string, id: string | undefined, approvals: "ask" | "auto" | undefined) =>
+    const startConversation = (
+      cwd: string,
+      id: string | undefined,
+      approvals: "ask" | "auto" | undefined,
+      ask: ModelAsk,
+    ) =>
       Effect.gen(function* () {
+        const last = yield* Effect.orDie(harness.session.snapshot(LastModelDoc))
+        const { selection, instance } = yield* providers.choose(cwd, ask, last?.selection)
+        const model = yield* agentModel(selection, instance)
         // One commit: a second start with the same id finds the first one's mapping.
         let started: ConversationId | undefined
         const conversation = yield* Effect.orDie(
           harness.createConversation({
             ownership: { kind: "ownerless" },
-            agent: { model: { provider: SCRIPT_MODEL.provider, modelId: SCRIPT_MODEL.id }, cwd },
+            agent: { ...model, cwd },
             init: (tx, created) =>
               Effect.gen(function* () {
                 started = created
                 if (approvals === "auto") yield* approveAutomatically(tx, created)
                 if (id !== undefined) (yield* tx.doc(ConversationIdsDoc)).ids[id] = Number(created)
+                ;(yield* tx.doc(LastModelDoc)).selection = { ...selection }
               }),
           }),
         )
-        return { conversation: id ?? String(started ?? conversation.id) }
+        return { conversation: id ?? String(started ?? conversation.id), model: selectionOf(model) }
       })
 
     const watch = (id: string, window: Window | undefined) =>
@@ -225,15 +243,17 @@ const Handlers = KernelRpcs.toLayer(
 
     return KernelRpcs.of({
       initialize: () => Effect.succeed({ version: VERSION, protocol: KERNEL_PROTOCOL_VERSION }),
-      "conversation/start": ({ cwd, id, approvals }) =>
+      "conversation/start": ({ cwd, id, approvals, ...ask }) =>
         Effect.gen(function* () {
-          if (id === undefined) return yield* startConversation(cwd, undefined, approvals)
+          if (id === undefined) return yield* startConversation(cwd, undefined, approvals, ask)
           const refused = refusedChoice(id)
           if (refused !== undefined) return yield* Effect.fail(new InvalidConversationId({ message: refused }))
           return yield* choosing.withPermits(1)(
             Effect.gen(function* () {
               const existing = chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id)
-              return existing === undefined ? yield* startConversation(cwd, id, approvals) : { conversation: id }
+              if (existing === undefined) return yield* startConversation(cwd, id, approvals, ask)
+              const agent = yield* Effect.orDie(harness.resolveAgent(idFromNumber<ConversationId>(existing)))
+              return { conversation: id, model: selectionOf(agent) }
             }),
           )
         }),
@@ -261,6 +281,14 @@ const Handlers = KernelRpcs.toLayer(
         }),
       // Stops once the runs in flight settle, as the shipping server does; a run is never cut off by a stop.
       "server/stop": () => Effect.andThen(Effect.ignore(quiet), afterReply(lifetime.stop)),
+      "providers/list": ({ refresh }) => setup.providers(refresh ?? false),
+      "models/list": ({ refresh }) => setup.models(refresh ?? false),
+      "auth/start": ({ provider, method }) => setup.start(provider, method),
+      "auth/respond": ({ provider, flow, response }) =>
+        Effect.map(setup.respond(provider, flow, response), (accepted) => ({ accepted })),
+      "auth/cancel": ({ provider, flow }) => Effect.map(setup.cancel(provider, flow), (accepted) => ({ accepted })),
+      "auth/logout": ({ provider }) => setup.logout(provider),
+      "auth/watch": () => Stream.unwrap(Effect.as(lifetime.hold, setup.watch)),
     })
   }),
 )
@@ -275,24 +303,24 @@ const afterReply = (effect: Effect.Effect<void>) =>
     }),
   )
 
-export const kernelServerLayer = (
-  home: Home,
-  options: { readonly idleGrace: Duration.Input; readonly script: ReadonlyArray<ScriptStep> },
-) =>
+export interface KernelServerOptions {
+  readonly idleGrace: Duration.Input
+  readonly providers: ProviderOptions
+}
+
+export const kernelServerLayer = (home: Home, options: KernelServerOptions) =>
   RpcServer.layer(KernelRpcs).pipe(
     Layer.provide(Handlers),
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
     Layer.provide(BunSocketServer.layer({ path: home.socket })),
-    Layer.provideMerge(KernelHarness.layer(home, options.script)),
+    Layer.provideMerge(KernelHarness.layer(home)),
+    Layer.provideMerge(KernelProviders.layer(options.providers)),
     Layer.provideMerge(Lifetime.layer(options.idleGrace)),
   )
 
 /** Serves the home until its lifetime ends: stopped, or idle past the grace. */
-export const serveKernel = (
-  home: Home,
-  options: { readonly idleGrace: Duration.Input; readonly script: ReadonlyArray<ScriptStep> },
-) =>
+export const serveKernel = (home: Home, options: KernelServerOptions) =>
   Effect.gen(function* () {
     const lifetime = yield* Lifetime
     yield* Console.error(`nisse ${VERSION} serving ${home.dir} on the kernel`)

@@ -2,6 +2,7 @@
 // next unused step for its agent; with none left, it answers `You said: <the last user text>`. It streams word by
 // word, with `delayMs` before each word.
 import { Duration, Effect, Schema, Stream } from "effect"
+import { nothingToSignIn, type ProviderInstance } from "./kind.ts"
 import type { Provider } from "./models.ts"
 import { failure, replay } from "./replay.ts"
 import { contentText } from "./text.ts"
@@ -118,3 +119,17 @@ export function scriptProvider(
       }),
   }
 }
+
+/** The `script` provider as a home's instance: always ready, one model, nothing to sign in to. */
+export const scriptInstance = (
+  steps: readonly ScriptStep[],
+  agentOf?: (context: TranscriptContext) => string | undefined,
+): ProviderInstance => ({
+  id: "script",
+  kind: "script",
+  defaultModel: SCRIPT_MODEL.id,
+  health: () => Effect.succeed({ status: "ready" }),
+  models: () => Effect.succeed([{ id: SCRIPT_MODEL.id, name: SCRIPT_MODEL.name, efforts: [] }]),
+  ...nothingToSignIn,
+  provider: scriptProvider(steps, agentOf),
+})

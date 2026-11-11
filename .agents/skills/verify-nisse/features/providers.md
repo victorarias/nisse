@@ -133,8 +133,7 @@ Preconditions:
   `claude-alt` is `ready`, and `claude-gone` is `unavailable` with a message
   that says Claude Code's binary was not found at
   `/tmp/nisse-verify/r/no-claude` and ends
-  `install Claude Code or set its binary`. That message fails today: it
-  reads `An error occurred in Effect.tryPromise; install Claude Code or set its binary`.
+  `install Claude Code or set its binary`.
   Run
   `drive.ts r nisse exec --provider claude-alt 'Reply with exactly: fixture text ok'`:
   stdout `fixture text ok`, exit 0. `evidence/claude-alt/log.ndjson`, where
@@ -154,6 +153,23 @@ Preconditions:
   and `at ["providers"]["gem"]["driver"]`. Run `drive.ts r nisse exec hi`:
   exit 1, empty stdout, and the same stderr from the server it tried to start.
 
+- **On the kernel.** In a fresh run made with `drive.ts r up --kernel`, write
+  the **Config** file above, plus
+  `default_model = { provider = "openai-work", model = "gpt-5.5", effort = "high" }`
+  at its top. Run `drive.ts r serve` and `drive.ts r rpc providers/list '{}'`:
+  the same five providers, `openai` and `openai-work` both `signed_out`.
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` answers a
+  `conversation` and
+  `"model": {"provider": "openai-work", "model": "gpt-5.5", "effort": "high"}`;
+  with `"provider": "nope"` it fails `UnknownProvider`. Submitting to that
+  conversation ends its run `failed` with
+  `Model openai-work/gpt-5.5 is not available`: ChatGPT's run comes to the
+  kernel with its own step. Write the **Binary, env and args** file instead
+  and serve again: `claude-gone` is `unavailable` with
+  `Claude Code native binary not found at /tmp/nisse-verify/r/no-claude. ...; install Claude Code or set its binary`.
+  The **Invalid config** file makes `NISSE_KERNEL=1 nisse serve` exit 1 with
+  the same stderr.
+
 ## Contexts
 
 - **Server restart.** The server reads `config.toml` and its environment when it starts.
@@ -164,6 +180,12 @@ Wire, `packages/nisse/test/wire.test.ts`:
 
 - provider-unknown: starting a conversation with a provider nisse does not have says so
 - provider-config: the providers config.toml names can start conversations beside the built-in ones
+
+Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
+- provider-unknown, model-flags: a conversation starts on the model and effort it names, and nisse refuses a provider or effort it does not have
+- provider-binary: a Claude provider whose binary is missing is unavailable, saying where it looked
 
 ## Gotchas
 
