@@ -1,6 +1,5 @@
 // The server a home runs under NISSE_KERNEL=1: one Harness over `kernel.sqlite`, served over the home's socket with
 // the kernel wire (`@nisse/wire`). Conversations run on the home's providers (`./providers.ts`).
-import { BunSocketServer } from "@effect/platform-bun"
 import { claudeRunTasks } from "@nisse/claude"
 import { CodemodeSandbox } from "@nisse/codemode/sandbox"
 import { LocalExecutionEnv } from "@nisse/env/local"
@@ -37,6 +36,7 @@ import type { ModelAsk } from "../config.ts"
 import type { ProviderOptions } from "../drivers/index.ts"
 import type { Home } from "../home.ts"
 import { Lifetime } from "../lifetime.ts"
+import { homeSocketServer } from "../socket.ts"
 import { Setup } from "../setup.ts"
 import { VERSION } from "../version.ts"
 import { chosenNumber, ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
@@ -355,7 +355,7 @@ export const kernelServerLayer = (home: Home, options: KernelServerOptions) =>
     Layer.provide(Handlers),
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
-    Layer.provide(BunSocketServer.layer({ path: home.socket })),
+    Layer.provide(homeSocketServer(home.socket)),
     Layer.provideMerge(KernelHarness.layer(home)),
     Layer.provideMerge(KernelProviders.layer(options.providers)),
     Layer.provideMerge(Lifetime.layer(options.idleGrace)),
