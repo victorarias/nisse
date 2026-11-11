@@ -57,14 +57,21 @@ import {
   PI_ATTRIBUTION,
   withClientIdentity,
 } from "@nisse/models"
-import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Scope, type Tracer } from "effect"
+import { Cause, Clock, Context, Data, Deferred, Effect, Exit, Layer, Scope, type Tracer } from "effect"
 import { AgentDoc, agentHooks, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"
 import { createCompaction } from "./compaction.ts"
 import { ContextReads } from "./context.ts"
 import { ProviderDoc } from "./documents.ts"
 import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts"
-import { LIMITS_RESTARTS, LiveDoc, type RunEndedHook, settleSchedulerOutcome } from "./live.ts"
+import {
+  GENERATION_RUNS,
+  limitsRestarts,
+  LiveDoc,
+  type RunEndedHook,
+  type RunTasks,
+  settleSchedulerOutcome,
+} from "./live.ts"
 import {
   type AbortResult,
   type AdmissionError,
@@ -97,6 +104,9 @@ export const DEFAULT_HARNESS_IDENTITY: ClientIdentity = { attribution: PI_ATTRIB
 
 /** What a viewer's calls that would run tasks fail with. */
 const RUNNING_REFUSED = new ReadOnlySession({ message: "Read-only Harness: running tasks refused" })
+
+/** A conversation whose run task is not `pi.generation` compacts its own context, so `compact()` refuses. */
+export class CompactionRefused extends Data.TaggedError("CompactionRefused")<{ readonly message: string }> {}
 
 /** A failure the Harness forwards to its host instead of failing what it was doing. */
 export type ReportInfo =
@@ -153,6 +163,8 @@ export type HarnessOptions<T extends ToolRegistration = ToolRegistration> = {
   readonly runEnded?: RunEndedHook
   /** Conversation documents of the host's that the conversation view carries beside the built-in ones. */
   readonly viewDocs?: readonly AnyDocToken[]
+  /** The host's run tasks besides `pi.generation`, and which one an agent's model runs on. */
+  readonly runTasks?: RunTasks
   /** Runs in every commit that creates or forks a conversation, after the built-in creation hook. */
   readonly conversationCreated?: (tx: Tx, record: ConversationRecord) => Effect.Effect<void, unknown>
 }
@@ -173,7 +185,9 @@ export interface Conversation {
    * Starts a manual compaction of the conversation, focused by `instructions` (spec 8.7). It never takes run control:
    * its summary is placed like a write. `Conversation.abort()` aborts it.
    */
-  compact(instructions?: string): Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession>
+  compact(
+    instructions?: string,
+  ): Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession | CompactionRefused>
   /** Admits a submission in its own commit (spec 6). */
   submit(draft: SubmissionDraft): Effect.Effect<Submission, AdmissionError | ReadError | CommitError>
   /** Admits a submission inside `tx`, before the commit's first table write; it is stored or lost with that commit. */
@@ -209,6 +223,8 @@ export type HarnessInspection = {
 export interface Harness<T extends ToolRegistration = ToolRegistration> {
   readonly session: Session
   readonly registry: RegistryReader<T>
+  /** The tasks that carry runs besides `pi.generation`. */
+  readonly runTasks: RunTasks
   /** Enables scheduling; calls that ask for progress enable it too. A viewer refuses (spec 2.2). */
   readonly resume: Effect.Effect<void, ReadOnlySession>
   /** When the Session next needs a running process (spec 5.6). */
@@ -302,8 +318,9 @@ export const openHarness = <T extends ToolRegistration>(
         registry: options.registry,
         services: (phase) => Layer.succeed(TaskServices, host.taskApi(phase)),
         restartLimit: () => host.settings().restartLimit,
-        limitsRestarts: (kind) => LIMITS_RESTARTS.has(kind),
-        settleOutcome: (tx, record, outcome) => settleSchedulerOutcome(tx, record, outcome, options.runEnded),
+        limitsRestarts: (kind) => limitsRestarts(host.runTasks, kind),
+        settleOutcome: (tx, record, outcome) =>
+          settleSchedulerOutcome(tx, record, outcome, host.runTasks, options.runEnded),
         withdrawInputs: (tx, conversationId) => withdrawQueuedInputs(tx, conversationId),
         queuedInputs: (reads) => queuedConversations(reads),
         report: (error, report, snapshot, span) => host.report(error, host.taskReport(report, snapshot), span),
@@ -361,6 +378,11 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
   /** The host's clock behind `safeNow`; `undefined` for Effect's `Clock`. */
   readonly clock: (() => number) | undefined
 
+  /** The host's run tasks; without any, every run is a chain of generations. */
+  get runTasks(): RunTasks {
+    return this.#options.runTasks ?? GENERATION_RUNS
+  }
+
   /** The context the Harness opened in, whose metric registry reports are counted in. */
   readonly #telemetry: Context.Context<never>
 
@@ -393,6 +415,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       () => this.settings(),
       this.#options.readOnly === true ? Effect.void : scheduler.resume,
       telemetry,
+      this.runTasks,
     )
     return this
   }
@@ -628,8 +651,20 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
         const input = { reason: "manual" as const, ...(instructions === undefined ? {} : { instructions }) }
         return Effect.andThen(
           this.resume,
-          commitIn(this.session, { conversationId: id }, (tx) => createCompaction(tx, id, input)),
-        ) as Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession>
+          commitIn(this.session, { conversationId: id }, (tx) =>
+            Effect.gen({ self: this }, function* () {
+              // An agent that runs its own loop compacts its own context; the compaction task has no model to ask.
+              const model = (yield* tx.doc(AgentDoc, id)).model
+              const runTask = this.runTasks.choose(model)
+              if (runTask !== undefined) {
+                return yield* new CompactionRefused({
+                  message: `${model?.provider ?? "This provider"} compacts its own context: ${runTask.definition.name} runs this conversation`,
+                })
+              }
+              return yield* createCompaction(tx, id, input)
+            }),
+          ),
+        ) as Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession | CompactionRefused>
       },
       submit: ((first: SubmissionDraft | Tx, second?: SubmissionDraft) =>
         isDraft(first)
@@ -685,6 +720,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       models: () => this.models(),
       env: runtime.guard(this.#env(conversationId)),
       runOwner: { conversationId, runEnded: this.#options.runEnded },
+      runTasks: this.runTasks,
       hooks: {
         each: (name, invoke) =>
           runtime.guard(

@@ -4,6 +4,7 @@
 import type { Draft } from "@nisse/delta"
 import { copyJson, type JsonValue } from "@nisse/delta/json"
 import {
+  type AnyTask,
   type ConversationId,
   defineDoc,
   type DocError,
@@ -19,10 +20,11 @@ import {
   type TypedEntry,
 } from "@nisse/kernel"
 import type { AssistantMessage, JsonRepresentation, Usage } from "@nisse/models"
+import type { TaskServices } from "./services.ts"
 import { Effect } from "effect"
 import { removeApproval } from "./approvals.ts"
 import { AssistantEntry, stored } from "./entries.ts"
-import type { CompactionReason, ToolDiagnostic } from "./types.ts"
+import type { CompactionReason, ModelRef, ToolDiagnostic } from "./types.ts"
 import { recordUsage } from "./usage.ts"
 
 /** A typed value as a document stores it: plain JSON with mutable containers. */
@@ -215,16 +217,35 @@ function renameReason(value: JsonObject): JsonObject {
   return Object.fromEntries(Object.entries(value).map(([key, field]) => [key === "reason" ? "trigger" : key, field]))
 }
 
-/** Built-in task kinds that can own `pi.live.run`. */
-export const RUN_TASK_KINDS: ReadonlySet<string> = new Set(["pi.generation"])
+/** The built-in run task's kind. */
+export const GENERATION_TASK_KIND = "pi.generation"
 const TOOL_TASK_KIND = "pi.tool"
 const COMPACTION_TASK_KIND = "pi.compaction"
 
 /**
- * Built-in task kinds that end themselves once cut off `settings.restartLimit` times (`TaskRecord.restarts`); the
- * scheduler faults a task of any other kind instead (spec 5.4).
+ * The tasks that can carry a run besides `pi.generation`, which the host names, such as one that drives an agent
+ * running its own loop. Each kind may own `pi.live.run` and ends itself at `settings.restartLimit`, as a generation does.
  */
-export const LIMITS_RESTARTS: ReadonlySet<string> = new Set([...RUN_TASK_KINDS, TOOL_TASK_KIND, COMPACTION_TASK_KIND])
+export type RunTasks = {
+  /** Every kind besides `pi.generation` that may own `pi.live.run`, including a hosted conversation's lifecycle task. */
+  readonly kinds: ReadonlySet<string>
+  /** The task that carries a run of an agent with `model`; `undefined` for `pi.generation`. */
+  readonly choose: (model: ModelRef | undefined) => AnyTask<TaskServices> | undefined
+}
+
+/** A host without run tasks of its own: every run is a chain of generations. */
+export const GENERATION_RUNS: RunTasks = { kinds: new Set(), choose: () => undefined }
+
+/** Whether a task of `kind` may own `pi.live.run`. */
+export const isRunTask = (runTasks: RunTasks, kind: string): boolean =>
+  kind === GENERATION_TASK_KIND || runTasks.kinds.has(kind)
+
+/**
+ * Whether a task of `kind` ends itself once cut off `settings.restartLimit` times (`TaskRecord.restarts`); the scheduler
+ * faults a task of any other kind instead (spec 5.4).
+ */
+export const limitsRestarts = (runTasks: RunTasks, kind: string): boolean =>
+  isRunTask(runTasks, kind) || kind === TOOL_TASK_KIND || kind === COMPACTION_TASK_KIND
 
 /** Whether `task` was cut off `restartLimit` times in a row, so its phase ends it instead of running. */
 export const cutOffTooOften = (task: { readonly restarts?: number }, restartLimit: number): boolean =>
@@ -431,6 +452,7 @@ export const settleSchedulerOutcome = (
   tx: Tx,
   record: TaskRecord,
   outcome: SchedulerOutcome,
+  runTasks: RunTasks,
   runEnded?: RunEndedHook,
 ): Effect.Effect<void, StorageError | DocError> =>
   Effect.gen(function* () {
@@ -453,7 +475,7 @@ export const settleSchedulerOutcome = (
       else failCompactionStatus(live, record.id, outcome.status === "faulted" ? outcome.error.message : outcome.reason)
       return
     }
-    if (!RUN_TASK_KINDS.has(record.kind)) return
+    if (!isRunTask(runTasks, record.kind)) return
     const live = yield* tx.doc(LiveDoc, record.conversationId)
     if (live.run?.taskId !== record.id) return
     // Cut off, the abort handler may have died converting the partial: the run ends without it.

@@ -31,7 +31,7 @@ export type ApprovalRequest = {
 export type ApprovalsState = {
   /** Every call runs without asking. */
   auto?: true
-  /** By the call's tool task ID. */
+  /** By the waiting task: a tool task's ID, or `<task>/<call>` for a call an agent running its own loop makes. */
   requests: Record<string, ApprovalRequest>
 }
 
@@ -60,9 +60,10 @@ export const approveAutomatically = (tx: Tx, conversationId: ConversationId): Ef
   })
 
 /**
- * Answers the request `approval` (its tool task ID) in `tx`: `accepted` when it was waiting, `answered` when another
- * answer came first or its call has settled since, and `unknown` when the conversation has no such call. Reads a table,
- * so it comes before the commit's first table write.
+ * Answers the request `approval` in `tx`: `accepted` when it was waiting, `answered` when another answer came first or
+ * its call has settled since, and `unknown` when the conversation has no such call. A request is keyed by the task that
+ * waits for it: a tool task's ID, or `<task>/<call>` for a call of an agent running its own loop, which asks through the
+ * task that holds that agent's process. Reads a table, so it comes before the commit's first table write.
  */
 export const answerApproval = (
   tx: Tx,
@@ -71,12 +72,15 @@ export const answerApproval = (
   answer: { readonly allow: boolean; readonly author: string; readonly at: number },
 ): Effect.Effect<"accepted" | "answered" | "unknown", StorageError | DocError> =>
   Effect.gen(function* () {
-    const taskId = /^[1-9][0-9]*$/.test(approval) ? idFromNumber<TaskId>(Number(approval)) : undefined
-    const record = taskId === undefined ? undefined : yield* tx.task(taskId)
-    if (record?.kind !== "pi.tool" || record.conversationId !== conversationId) return "unknown"
     const doc = yield* tx.doc(ApprovalsDoc, conversationId)
-    const request = doc.requests[approval]
-    if (request === undefined || request.answer !== undefined) return "answered"
+    const request = Object.hasOwn(doc.requests, approval) ? doc.requests[approval] : undefined
+    if (request === undefined) {
+      // Settled since, when the waiting task is this conversation's.
+      const waiting = /^([1-9][0-9]*)(?:\/.+)?$/.exec(approval)?.[1]
+      const record = waiting === undefined ? undefined : yield* tx.task(idFromNumber<TaskId>(Number(waiting)))
+      return record?.conversationId === conversationId ? "answered" : "unknown"
+    }
+    if (request.answer !== undefined) return "answered"
     request.answer = { allow: answer.allow, author: answer.author, at: answer.at }
     const data: ApprovalEntry = {
       approval,
@@ -89,8 +93,12 @@ export const answerApproval = (
     return "accepted"
   })
 
-/** Removes the request of a settling tool task, in the commit that settles it. */
-export const removeApproval = (tx: Tx, conversationId: ConversationId, taskId: TaskId): Effect.Effect<void, DocError> =>
+/** Removes the request of a settling tool task, in the commit that settles it; `key` is the request's own key. */
+export const removeApproval = (
+  tx: Tx,
+  conversationId: ConversationId,
+  key: TaskId | string,
+): Effect.Effect<void, DocError> =>
   Effect.map(tx.doc(ApprovalsDoc, conversationId), (doc) => {
-    delete doc.requests[String(taskId)]
+    delete doc.requests[String(key)]
   })
