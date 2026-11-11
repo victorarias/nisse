@@ -91,7 +91,7 @@ test("openai-answer, telemetry-identity: a ChatGPT answer is committed, asked fo
   const body = JSON.parse(request!.body)
   // One id keys the conversation at ChatGPT: its prompt cache and its session.
   expect(request!.headers.get("session-id")).toBe(body.prompt_cache_key)
-  expect(body.instructions).toStartWith("You are a test.")
+  expect(body.instructions).toStartWith("You are Nisse")
 })
 
 test("openai-answer: a recorded ChatGPT exchange replays into the same answer", async () => {
@@ -362,15 +362,15 @@ test("openai-instructions, agents-md, skills-found, skills-nearest, skills-front
     [
       "# Skills",
       "",
-      "A skill is a folder of instructions for one kind of task, in a `SKILL.md` file. When a task matches a skill's description, `Read` its `SKILL.md` before you start, and follow it. When a message names a skill with `/name` or `$name`, the skill's `SKILL.md` comes with the message; follow it. Relative paths in a skill are relative to its folder.",
+      "A skill is a folder of instructions for one kind of task, in a `SKILL.md` file. When a task matches a skill's description, `read` its `SKILL.md` before you start, and follow it. When a message names a skill with `/name` or `$name`, the skill's `SKILL.md` comes with the message; follow it. Relative paths in a skill are relative to its folder.",
       "",
       `- plain:  (file: ${join(home, "repo", ".claude", "skills", "plain", "SKILL.md")})`,
       review,
       `- ship: Ship it carefully (file: ${join(home, "skills", "ship", "SKILL.md")})`,
     ].join("\n")
-  expect(instructionsOf(fake, 0)).toBe(
+  expect(instructionsOf(fake, 0)).toEndWith(
     [
-      "You are a test.",
+      "",
       `The working directory is ${app}.`,
       `# AGENTS.md instructions from ${join(home, "AGENTS.md")}\n\nHome rules.`,
       `# AGENTS.md instructions from ${join(home, "repo", "AGENTS.md")}\n\nRepo rules.`,
@@ -390,6 +390,21 @@ test("openai-instructions, agents-md, skills-found, skills-nearest, skills-front
   expect(again).toEndWith(
     skills(`- review: Review a diff (file: ${join(home, "repo", ".agents", "skills", "review", "SKILL.md")})`),
   )
+})
+
+test("openai-instructions: every tool ChatGPT's instructions name is one its request offers, by the same name", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, { cwd: project })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const { instructions, tools } = JSON.parse(fake.responses()[0]!.body)
+  const offered: Array<string> = tools.map((tool: { name: string }) => tool.name)
+  const named = [...(instructions as string).matchAll(/`([^`]+)`/g)].map((match) => match[1]!)
+  // A name that differs from an offered tool's only in case is a tool the model is told of but not offered.
+  const toolLike = named.filter((name) => offered.some((tool) => tool.toLowerCase() === name.toLowerCase()))
+  expect(toolLike).toEqual(expect.arrayContaining(["read", "grep", "glob", "write", "edit", "apply_patch", "bash"]))
+  expect(toolLike.filter((name) => !offered.includes(name))).toEqual([])
 })
 
 test("skills-found: a conversation outside any repository is told only its own folder's skills and the home's", async () => {
@@ -451,8 +466,8 @@ test("request-hook: an extension's request hook adds instructions and narrows th
   expectRequests(fake, expected)
   const requests = fake.responses().map((response) => JSON.parse(response.body))
   expect(requests.map((request) => request.instructions)).toEqual([
-    expect.stringMatching(new RegExp(`^You are a test\\.\\n[^]*\\nRequest 1 in ${home.dir}\\.\\n$`)),
-    expect.stringMatching(new RegExp(`^You are a test\\.\\n[^]*\\nRequest 2 in ${home.dir}\\.\\n$`)),
+    expect.stringMatching(new RegExp(`^You are Nisse[^]*\\nRequest 1 in ${home.dir}\\.\\n$`)),
+    expect.stringMatching(new RegExp(`^You are Nisse[^]*\\nRequest 2 in ${home.dir}\\.\\n$`)),
   ])
   expect(requests.map((request) => request.tools.map((tool: { name: string }) => tool.name))).toEqual([
     ["bash"],

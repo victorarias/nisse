@@ -45,7 +45,7 @@ const instructionsFor = (options: OpenAiOptions, conversation: Conversation) => 
   let text = `${options.instructions}\nThe working directory is ${cwd}.\n`
   text += agentsMdInstructions(cwd, options.home)
   if (conversation.instructions !== undefined) text += `\n${conversation.instructions.trimEnd()}\n`
-  text += skillsInstructions(cwd, options.home)
+  text += skillsInstructions(cwd, options.home, "Read")
   const wanted = conversation.lineage?.agentType
   const agentType = wanted ? agentTypes(cwd, options.claudeConfig).find((type) => type.name === wanted) : undefined
   if (agentType) text += `\n# You are a ${agentType.name} agent\n\n${agentType.instructions}\n`
