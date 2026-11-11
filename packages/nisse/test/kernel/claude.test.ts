@@ -26,22 +26,24 @@ const results = (entries: ReadonlyArray<EntryRecord>) =>
     .filter((entry) => entry.kind === "pi.tool-result")
     .map((entry) => {
       const message = entry.model![0] as { content: Array<{ text?: string }>; isError: boolean; toolCallId: string }
-      return { call: message.toolCallId, text: message.content.map((b) => b.text ?? "").join(""), isError: message.isError }
+      return {
+        call: message.toolCallId,
+        text: message.content.map((b) => b.text ?? "").join(""),
+        isError: message.isError,
+      }
     })
 const calls = (entries: ReadonlyArray<EntryRecord>) =>
   entries.flatMap((entry) =>
     entry.kind === "pi.assistant"
-      ? ((entry.model![0] as { content: Array<{ type: string; id?: string; name?: string; arguments?: unknown }> }).content
+      ? (
+          entry.model![0] as { content: Array<{ type: string; id?: string; name?: string; arguments?: unknown }> }
+        ).content
           .filter((block) => block.type === "toolCall")
-          .map((block) => ({ id: block.id!, name: block.name!, arguments: block.arguments })))
+          .map((block) => ({ id: block.id!, name: block.name!, arguments: block.arguments }))
       : [],
   )
 
-const conversationWith = async (
-  claude: FakeClaude,
-  ask: Record<string, string> = {},
-  options: ServerOptions = {},
-) => {
+const conversationWith = async (claude: FakeClaude, ask: Record<string, string> = {}, options: ServerOptions = {}) => {
   const server = await runningKernelServer([], { ...options, claude: claude.options })
   const client = await RawClient.connect(server.home.socket)
   const conversation = (

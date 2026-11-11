@@ -287,13 +287,15 @@ const Handlers = KernelRpcs.toLayer(
           const conversation = yield* find(id)
           const entry = { kind: USER_KIND, data: { author } }
           const submission = yield* heldUntilIdle(
-            Effect.orDie(conversation.submit({
+            Effect.orDie(
+              conversation.submit({
                 type: "input",
                 content: text,
                 requestId,
                 entry,
                 ...(steer ? { whenBusy: "steer" as const } : {}),
-              })),
+              }),
+            ),
           )
           return { submission: submission.id }
         }),

@@ -70,7 +70,9 @@ function told(messages: readonly Message[]): Told[] {
       if (part.type === "text" && part.text !== "") return [{ text: `You answered: ${part.text}`, asked: false }]
       if (part.type !== "toolCall") return []
       const result = results.get(part.id) ?? "no result"
-      return [{ text: `You called ${part.name} with ${JSON.stringify(part.arguments)} and got: ${result}`, asked: false }]
+      return [
+        { text: `You called ${part.name} with ${JSON.stringify(part.arguments)} and got: ${result}`, asked: false },
+      ]
     })
   })
 }

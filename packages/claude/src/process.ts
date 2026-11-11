@@ -347,7 +347,12 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 // Assigned whole: a draft records an array it is given, not what is pushed to it afterwards.
                 live.tools = [
                   ...(live.tools ?? []),
-                  { callId: call.id, name: call.name, status: "running", ...(task === undefined ? {} : { taskId: task }) },
+                  {
+                    callId: call.id,
+                    name: call.name,
+                    status: "running",
+                    ...(task === undefined ? {} : { taskId: task }),
+                  },
                 ]
                 if (owner.main && live.run?.taskId === runtime.taskId && owner.response === seen.response) {
                   live.run.first ??= entry.id
@@ -400,10 +405,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
         })
 
       const autoApproved = (owner: Owner) =>
-        Effect.map(
-          runtime.snapshot(ApprovalsDoc, owner.conversationId),
-          (doc) => doc?.auto === true,
-        )
+        Effect.map(runtime.snapshot(ApprovalsDoc, owner.conversationId), (doc) => doc?.auto === true)
 
       /** Asks a person about the call in its conversation's `nisse.approvals`, and waits for the first answer. */
       const approve = (owner: Owner, call: ToolCall) =>
@@ -530,7 +532,12 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
         if (input.hook_event_name !== "PostToolUse" || input.tool_name.startsWith(OWN_TOOL)) return {}
         const response = input.tool_response as { type?: string; file?: { content?: unknown } } | string | undefined
         const read = typeof response === "object" && typeof response?.file?.content === "string"
-        const text = typeof response === "string" ? response : read ? (response!.file!.content as string) : JSON.stringify(response)
+        const text =
+          typeof response === "string"
+            ? response
+            : read
+              ? (response!.file!.content as string)
+              : JSON.stringify(response)
         const call: ToolHookCall = {
           type: "toolCall",
           id: input.tool_use_id,
@@ -644,7 +651,8 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
         PostCompact: [{ hooks: [postCompact] }],
         ...(afterHooks.length === 0 ? {} : { PostToolUse: [{ hooks: [postToolUse] }] }),
       }
-      const effort = agent.thinkingLevel === "off" || agent.thinkingLevel === undefined ? undefined : agent.thinkingLevel
+      const effort =
+        agent.thinkingLevel === "off" || agent.thinkingLevel === undefined ? undefined : agent.thinkingLevel
       const messages = query({
         prompt: inbox,
         options: {
@@ -700,13 +708,27 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           if (users.length === 0) return undefined
           const live = yield* tx.doc(LiveDoc, conversationId)
           if (live.run?.taskId === runtime.taskId) live.run.inputs.push(...users)
-          send(users.flatMap((id) => [texts.get(id) ?? ""]).filter((text) => text !== ""), "next")
+          send(
+            users.flatMap((id) => [texts.get(id) ?? ""]).filter((text) => text !== ""),
+            "next",
+          )
           return undefined
         }),
       )
 
       /** Adds what the process spent since its last result to `pi.usage`, keyed by provider and model (F16). */
-      const spent = (modelUsage: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number; costUSD: number }>) =>
+      const spent = (
+        modelUsage: Record<
+          string,
+          {
+            inputTokens: number
+            outputTokens: number
+            cacheReadInputTokens: number
+            cacheCreationInputTokens: number
+            costUSD: number
+          }
+        >,
+      ) =>
         commit((tx) =>
           Effect.gen(function* () {
             const before = totals ?? {}
@@ -735,7 +757,10 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 cacheRead: total.cacheRead - base.cacheRead,
                 cacheWrite: total.cacheWrite - base.cacheWrite,
                 totalTokens:
-                  total.input + total.output + total.cacheRead + total.cacheWrite -
+                  total.input +
+                  total.output +
+                  total.cacheRead +
+                  total.cacheWrite -
                   (base.input + base.output + base.cacheRead + base.cacheWrite),
                 cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: total.cost - base.cost },
               }
@@ -841,7 +866,12 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                   if (block.type === "text") yield* recordText(child, block.text, response, undefined)
                   else if (block.type === "tool_use")
                     yield* sight({
-                      call: { type: "toolCall", id: block.id, name: toolName(block.name), arguments: block.input as ToolCall["arguments"] },
+                      call: {
+                        type: "toolCall",
+                        id: block.id,
+                        name: toolName(block.name),
+                        arguments: block.input as ToolCall["arguments"],
+                      },
                       owner: child,
                       response,
                     })
@@ -857,7 +887,12 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 if (block.type === "text") yield* recordText(main, block.text, response, message.uuid)
                 else if (block.type === "tool_use") {
                   yield* sight({
-                    call: { type: "toolCall", id: block.id, name: toolName(block.name), arguments: block.input as ToolCall["arguments"] },
+                    call: {
+                      type: "toolCall",
+                      id: block.id,
+                      name: toolName(block.name),
+                      arguments: block.input as ToolCall["arguments"],
+                    },
                     owner: main,
                     response,
                     at: message.uuid,

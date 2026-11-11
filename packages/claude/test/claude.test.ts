@@ -110,7 +110,9 @@ const said = (all: ReadonlyArray<EntryRecord>) =>
   all.flatMap((entry) =>
     (entry.model ?? []).flatMap((message: any) => {
       if (message.role === "toolResult")
-        return [`result ${message.toolName}: ${message.content.map((part: any) => part.text).join("")}${message.isError ? " (error)" : ""}`]
+        return [
+          `result ${message.toolName}: ${message.content.map((part: any) => part.text).join("")}${message.isError ? " (error)" : ""}`,
+        ]
       if (message.role === "assistant")
         return message.content.map((part: any) =>
           part.type === "toolCall" ? `call ${part.name} ${JSON.stringify(part.arguments)}` : `assistant: ${part.text}`,
@@ -208,7 +210,10 @@ test("claude-extensions: an extension's rewrite of a call is what Claude Code ru
     "result Bash: rewritten",
   ])
   expect(hookAnswers(claude)).toEqual([
-    { hookEventName: "PreToolUse", updatedInput: { command: "echo rewritten", description: "Print the word original" } },
+    {
+      hookEventName: "PreToolUse",
+      updatedInput: { command: "echo rewritten", description: "Print the word original" },
+    },
   ])
 })
 
@@ -372,7 +377,14 @@ const scripted = (conversation: Conversation, text: string) =>
         api: "script",
         provider: "script",
         model: "script",
-        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
         stopReason: "stop",
         timestamp: 0,
       }
@@ -432,7 +444,10 @@ test("execute-after: afterTool changes what Claude Code's Read returns, and says
     hooks: [
       hook(ToolTask, {
         afterTool: (_call: unknown, result: { output: Array<{ type: "text"; text: string }> }) =>
-          Effect.succeed({ ...result, output: result.output.map((part) => ({ ...part, text: part.text.toUpperCase() })) }),
+          Effect.succeed({
+            ...result,
+            output: result.output.map((part) => ({ ...part, text: part.text.toUpperCase() })),
+          }),
       }),
     ],
   })

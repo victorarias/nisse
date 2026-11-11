@@ -285,7 +285,10 @@ const makeSubagentTask = (shared: Shared) =>
               const detail = ended.summary ?? `The subagent ${ended.status === "stopped" ? "was stopped" : "failed"}`
               const reason = ended.status === "stopped" ? "aborted" : "model_error"
               yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason, detail }, api.runOwner)
-              return { status: "terminal", outcome: { status: "failed", error: { message: detail, detail: { reason } } } }
+              return {
+                status: "terminal",
+                outcome: { status: "failed", error: { message: detail, detail: { reason } } },
+              }
             }),
           )
         }),

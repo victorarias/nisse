@@ -40,7 +40,10 @@ const scrub = (frame: any): unknown => {
   }
   const response = frame.type === "control_response" ? frame.response?.response : undefined
   if (response?.claude_code_version !== undefined) {
-    return { ...frame, response: { ...frame.response, response: { claude_code_version: response.claude_code_version } } }
+    return {
+      ...frame,
+      response: { ...frame.response, response: { claude_code_version: response.claude_code_version } },
+    }
   }
   return frame
 }
