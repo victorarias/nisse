@@ -1,4 +1,4 @@
-import { type ProviderInstance, type ProviderKind, scriptInstance } from "@nisse/models"
+import { type ProviderInstance, type ProviderKind, scriptInstance, type TranscriptContext } from "@nisse/models"
 import type { ModelSelection } from "@nisse/protocol"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -71,12 +71,18 @@ export const openAiKind = (options: (id: string) => OpenAiOptions): ProviderKind
   open: (id) => Effect.map(openAiDriver(options(id)), (driver) => accountOf(id, driver)),
 })
 
-/** Every provider instance of a home, by id: `script` when there is a script, then each one configured. */
-export const openInstances = (options: ProviderOptions) =>
+/**
+ * Every provider instance of a home, by id: `script` when there is a script, then each one configured. `scriptAgent`
+ * names the agent a script request is for, from its context.
+ */
+export const openInstances = (
+  options: ProviderOptions,
+  scriptAgent?: (context: TranscriptContext) => string | undefined,
+) =>
   Effect.gen(function* () {
     const kinds = { claude: claudeKind(options.claude), openai: openAiKind(options.openai) }
     const instances = new Map<string, ProviderInstance>()
-    if (options.script) instances.set("script", scriptInstance(options.script))
+    if (options.script) instances.set("script", scriptInstance(options.script, scriptAgent))
     for (const [id, settings] of Object.entries(configured(options.config)))
       instances.set(id, yield* kinds[settings.driver].open(id, settings))
     return instances as ReadonlyMap<string, ProviderInstance>

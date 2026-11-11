@@ -57,6 +57,18 @@
             "type": "string",
             "description": "The directory the conversation works in."
           },
+          "id": {
+            "type": "string",
+            "description": "The id to name it by, chosen by the client; not all digits. Starting again with an id that names a conversation answers with that one and changes nothing."
+          },
+          "approvals": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "auto"
+            ],
+            "description": "Default ask."
+          },
           "provider": {
             "type": "string",
             "description": "Absent for the default: the project's default_model, the home's, the model chosen last, else the preferred provider."
@@ -79,7 +91,7 @@
         "properties": {
           "conversation": {
             "type": "string",
-            "description": "A conversation's id, as conversation/start gave it."
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "model": {
             "type": "object",
@@ -100,7 +112,7 @@
               "provider"
             ],
             "additionalProperties": true,
-            "description": "The model it starts with, defaults applied."
+            "description": "The model it runs, defaults applied, with the provider's default model when none was named; for an id that names one, that conversation's."
           }
         },
         "required": [
@@ -111,6 +123,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/InvalidConversationIdEncoded"
+          },
           {
             "$ref": "#/$defs/UnknownProviderEncoded"
           },
@@ -127,7 +142,7 @@
         "properties": {
           "conversation": {
             "type": "string",
-            "description": "A conversation's id, as conversation/start gave it."
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "requestId": {
             "type": "string",
@@ -169,7 +184,7 @@
         "properties": {
           "conversation": {
             "type": "string",
-            "description": "A conversation's id, as conversation/start gave it."
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "window": {
             "type": "object",
@@ -288,7 +303,7 @@
                         },
                         "kind": {
                           "type": "string",
-                          "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`."
+                          "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call."
                         },
                         "model": {
                           "type": "array"
@@ -326,7 +341,7 @@
                   },
                   "docs": {
                     "type": "object",
-                    "description": "pi.agent, pi.live, pi.inbox, pi.provider and pi.usage, by kind; pi.live holds the run in flight."
+                    "description": "pi.agent, pi.live, pi.inbox, pi.provider, pi.usage and nisse.approvals, by kind; pi.live holds the run in flight, nisse.approvals the calls waiting for a person."
                   }
                 },
                 "required": [
@@ -400,6 +415,59 @@
       },
       "error": {
         "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
+    },
+    "approval/resolve": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "approval": {
+            "type": "string",
+            "description": "A key of the view's nisse.approvals `requests`: the call's tool task."
+          },
+          "author": {
+            "type": "string",
+            "description": "Who answers; the transcript names them."
+          },
+          "allow": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "conversation",
+          "approval",
+          "author",
+          "allow"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "False when another answer came first, or the call is no longer waiting: the first answer counts."
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchApprovalEncoded"
+          }
+        ]
       },
       "stream": false
     },
@@ -1044,6 +1112,25 @@
     }
   },
   "$defs": {
+    "InvalidConversationIdEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "InvalidConversationId"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": true
+    },
     "UnknownProviderEncoded": {
       "type": "object",
       "properties": {
@@ -1146,6 +1233,25 @@
       "required": [
         "_tag",
         "limit"
+      ],
+      "additionalProperties": true
+    },
+    "NoSuchApprovalEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "NoSuchApproval"
+          ]
+        },
+        "approval": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "approval"
       ],
       "additionalProperties": true
     },

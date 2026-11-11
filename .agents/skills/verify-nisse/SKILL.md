@@ -40,7 +40,9 @@ the steps in order across all its runs: a step says its `text`, then fails the
 run with `fail`, or calls its `tool` and goes on to the next step in the same
 run, or ends the run. Once the steps run out Nisse echoes, and a restarted
 server starts them over. `--script` copies the file into the run, so later
-edits to it do nothing. `up` with or without a script makes the scripted
+edits to it do nothing. On `--kernel` a step can also make several calls in
+one response with `tools`, a list of `{name, input}`, and `agent` (such as
+`/root/writer`) gives a step to that subagent's requests. `up` with or without a script makes the scripted
 provider the one a conversation falls back to; real providers and models are
 chosen with `--provider` and `--model`, see [Providers](features/providers.md)
 and [Models](features/models.md). Each window `serve` or

@@ -1,10 +1,11 @@
 // The `nisse` binary on the kernel (NISSE_KERNEL=1), over its socket: stop, kill, restart.
 import { afterEach, expect, test } from "bun:test"
 import { KERNEL_PROTOCOL_VERSION } from "@nisse/wire"
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { deadline, RawClient } from "../support/raw.ts"
-import { kernelEnv, servingKernel, settled, start, submit, transcript, watchView } from "../support/kernel.ts"
+import { kernelEnv, runEnds, servingKernel, settled, start, submit, transcript, watchView } from "../support/kernel.ts"
 import { tempHome } from "../support/server.ts"
 import { nisse, stopServer } from "../support/terminal.ts"
 
@@ -111,3 +112,68 @@ test("wire-schema: nisse schema --kernel prints the kernel wire's schema, the on
   expect(Object.keys(schema.methods)).toContain("conversation/watch")
   expect(stdout).toBe(readFileSync(join(import.meta.dir, "../../../../schema/nisse.kernel.schema.json"), "utf8"))
 })
+
+test("crash-limit: a run that keeps crashing the server stops after three tries instead of looping", async () => {
+  const nisseHome = home()
+  // The command says it started through one fifo, so the test kills the server only once the call runs, and waits
+  // on another, which the test opens at its end so the orphaned commands exit with it.
+  const fifo = join(nisseHome.dir, "started.fifo")
+  const release = join(nisseHome.dir, "release.fifo")
+  expect(Bun.spawnSync(["mkfifo", fifo, release]).exitCode).toBe(0)
+  await using _released = { [Symbol.asyncDispose]: async () => closeSync(openSync(release, "r+")) }
+  const env = await kernelEnv(nisseHome, [
+    { tool: { name: "bash", input: { command: `echo ran > ${fifo}; cat ${release}` } } },
+  ])
+  let conversation: string | undefined
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const server = await servingKernel(env)
+    const client = await RawClient.connect(nisseHome.socket)
+    conversation ??= (await client.call("conversation/start", { cwd: nisseHome.dir, approvals: "auto" })).result
+      .conversation as string
+    if (attempt === 1) await submit(client, conversation, "go")
+    // Each server's model calls again, after its call was cut off; kill the server while that call runs.
+    expect(await deadline(readFile(fifo, "utf8"), 10_000, `call ${attempt} started`)).toBe("ran\n")
+    server.kill("SIGKILL")
+    await server.exited
+    client.close()
+  }
+  await servingKernel(env)
+  const client = await RawClient.connect(nisseHome.socket)
+  const view = watchView(client, conversation!)
+  await view.until(settled(1), 10_000)
+  expect(runEnds(view.seen())).toEqual([
+    { outcome: "restart_limit", message: "the server stopped during this run 3 times in a row" },
+  ])
+  expect(transcript(view.seen()).filter((line) => line.startsWith("assistant"))).toHaveLength(3)
+  client.close()
+}, 60_000)
+
+test("start-with-id: a conversation opened on a client's id survives a restart, and a second start with it is answered", async () => {
+  const nisseHome = home()
+  const env = await kernelEnv(nisseHome, [{ text: "noted" }])
+  const id = crypto.randomUUID()
+  const first = await servingKernel(env)
+  let client = await RawClient.connect(nisseHome.socket)
+  expect((await client.call("conversation/start", { id, cwd: nisseHome.dir })).result).toEqual({
+    conversation: id,
+    model: { provider: "script", model: "script" },
+  })
+  const before = watchView(client, id)
+  await submit(client, id, "remember")
+  await before.until(settled(1))
+  first.kill("SIGKILL")
+  await first.exited
+  client.close()
+
+  await servingKernel(env)
+  client = await RawClient.connect(nisseHome.socket)
+  expect((await client.call("conversation/start", { id, cwd: "/elsewhere" })).result).toEqual({
+    conversation: id,
+    model: { provider: "script", model: "script" },
+  })
+  const after = watchView(client, id)
+  await after.until(() => true)
+  expect(transcript(after.view().entries)).toEqual(["user: remember", "assistant: noted", "run_end: answered"])
+  expect((after.view().docs["pi.agent"] as { cwd?: string }).cwd).toBe(nisseHome.dir)
+  client.close()
+}, 30_000)

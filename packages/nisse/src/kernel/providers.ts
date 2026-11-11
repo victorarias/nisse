@@ -1,11 +1,13 @@
 // The providers of a home served on the kernel: every instance its config names, opened from its kind, with the
 // sign-ins, health and model lists over them, and how a new conversation's model is chosen.
+import type { Agent } from "@nisse/harness"
 import { defineDoc } from "@nisse/kernel"
 import { type ProviderInstance, THINKING_LEVELS, type ThinkingLevel } from "@nisse/models"
 import { type ModelSelection, UnknownEffort, UnknownProvider } from "@nisse/wire"
 import { Context, Effect, Layer } from "effect"
 import { chooseModel, type ModelAsk } from "../config.ts"
 import { openInstances, type ProviderOptions } from "../drivers/index.ts"
+import { taskOfRequest } from "./agents.ts"
 
 /** The model a conversation of this home started with last; a new one without a default of its own takes it. */
 export const LastModelDoc = defineDoc<{ selection?: ModelSelection }>({
@@ -32,6 +34,13 @@ export const agentModel = (selection: ModelSelection, instance: ProviderInstance
     }
   })
 
+/** The model an agent runs, as a selection: an empty model id is the provider's own choice. */
+export const selectionOf = (agent: Pick<Agent, "model"> & { readonly thinkingLevel?: string }): ModelSelection => ({
+  provider: agent.model?.provider ?? "",
+  ...(agent.model?.modelId ? { model: agent.model.modelId } : {}),
+  ...(agent.thinkingLevel === undefined || agent.thinkingLevel === "off" ? {} : { effort: agent.thinkingLevel }),
+})
+
 export class KernelProviders extends Context.Service<
   KernelProviders,
   {
@@ -48,7 +57,8 @@ export class KernelProviders extends Context.Service<
     Layer.effect(
       KernelProviders,
       Effect.gen(function* () {
-        const instances = yield* openInstances(options)
+        // A subagent's script requests take the steps of its task path.
+        const instances = yield* openInstances(options, (context) => taskOfRequest(context.messages))
         const home = options.config.default_model
         return KernelProviders.of({
           instances,

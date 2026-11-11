@@ -54,6 +54,11 @@ export type ToolRegistration = Tool & {
   readonly replay?: "safe" | "unsafe"
   readonly executionMode?: "parallel" | "sequential"
   readonly callers?: readonly ToolCaller[]
+  /**
+   * A call waits for a person's answer in `nisse.approvals` before it runs, unless the conversation approves
+   * automatically; a denied call settles with a `denied` error and does not run (D13).
+   */
+  readonly asks?: true
   /** Not offered to the model until `modelTools` loads it; other tools can call it any time. */
   readonly deferred?: true
   /** Repairs the model's arguments before validation; a throw makes them invalid. */

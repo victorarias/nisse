@@ -65,9 +65,19 @@ Preconditions:
 
 ## Contexts
 
+- **On the kernel.** In a run made with `drive.ts r up --kernel`,
+  `drive.ts r rpc conversation/start '{"cwd":"/tmp","id":"launcher-7"}'`
+  answers `"conversation": "launcher-7"`; after `drive.ts r kill-server` and
+  `drive.ts r serve` the same call answers the same conversation, and an
+  all-digit id such as `"42"` is refused by name.
 - **Subagents.** A subagent waiting on a person shows its whole tree as waiting.
 
 ## Tests
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- start-with-id: starting a conversation with an id it already has answers with that conversation, and an all-digit id is refused by name
+- start-with-id: a chosen id that names an object property, such as toString, opens its own conversation
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

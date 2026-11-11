@@ -96,7 +96,7 @@ test("model-default: a new conversation takes the project's default model, else 
         config: { default_model: { provider: "openai", model: "gpt-test" } },
       })
       const client = await RawClient.connect(server.home.socket)
-      expect(await modelOf(client, { cwd: inside })).toEqual({ provider: "script", effort: "low" })
+      expect(await modelOf(client, { cwd: inside })).toEqual({ provider: "script", model: "script", effort: "low" })
       expect(await modelOf(client)).toEqual({ provider: "openai", model: "gpt-test" })
       expect(await modelOf(client, { model: "gpt-other" })).toEqual({ provider: "openai", model: "gpt-other" })
       client.close()
@@ -123,7 +123,7 @@ test("provider-unknown, model-flags: a conversation starts on the model and effo
   const client = await RawClient.connect(server.home.socket)
 
   const started = await startWith(client, { provider: "script", effort: "low" })
-  expect(started.model).toEqual({ provider: "script", effort: "low" })
+  expect(started.model).toEqual({ provider: "script", model: "script", effort: "low" })
   expect(await agentOf(client, started.conversation)).toEqual({
     model: { provider: "script", modelId: "script" },
     thinkingLevel: "low",

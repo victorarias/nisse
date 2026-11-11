@@ -137,7 +137,8 @@ Preconditions:
 - **On the kernel.** In a fresh run made with `drive.ts r up --kernel`, write
   the **Defaults from config** files and run the same three
   `conversation/start` calls: each answers a `conversation` and the same
-  `model`, and `drive.ts r watch <id>` shows it in the view's `pi.agent` as
+  `model`, with the provider's default model filled in when none is named
+  (`{"provider": "script", "model": "script", "effort": "low"}`), and `drive.ts r watch <id>` shows it in the view's `pi.agent` as
   `"model": {"provider": ..., "modelId": ...}` with the effort as
   `thinkingLevel`. Start one with `"provider": "claude", "model": "opus"`, run
   `drive.ts r kill-server` and `drive.ts r serve`, then remove both files'
