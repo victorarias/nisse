@@ -354,6 +354,31 @@ test("claude-clear: a reset queued while Claude works ends the run, and what was
   expect(told).toEqual([["start over", "Reply with exactly: fixture text ok"]])
 })
 
+test("image-tool-result: an image an extension tool returns reaches Claude Code beside its text", async () => {
+  const claude = fake("own_tool")
+  const picture = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" }
+  const camera = defineExtension({
+    name: "clock",
+    tools: [
+      defineTool({
+        name: "Clock",
+        description: "The time in a zone, and a picture of the clock",
+        parameters: { type: "object", properties: { zone: { type: "string" } }, required: ["zone"] },
+        execute: (args: { zone: string }) =>
+          Effect.succeed({ output: [{ type: "text" as const, text: `noon in ${args.zone}` }, picture] }),
+      }),
+    ],
+  })
+  await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [camera])
+      yield* ask(yield* start(harness, cwd), "what time is it")
+    }),
+  )
+  const reply = claude.log().find((entry) => entry.answered === "mcp_message")!.received.response.response
+  expect(JSON.stringify(reply)).toContain(JSON.stringify([{ type: "text", text: "noon in CET" }, picture]))
+})
+
 test("claude-read: parallel calls of one response are each committed with the result Claude Code returned", async () => {
   const claude = fake("parallel_reads_hooked")
   const all = await run(

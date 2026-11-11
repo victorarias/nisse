@@ -252,8 +252,8 @@ Harness whose registry holds extensions, for the journeys the kernel wire
 cannot reach yet: extension tools and hooks, a subagent's included (`claude-extensions`,
 `execute-after` with `read_after_hooked`), steers between parallel results,
 forks, usage, model switches, the handoff from another provider, a reset
-queued while Claude works (`claude-clear`) and a prompt's images
-(`image-input`).
+queued while Claude works (`claude-clear`), and images in a prompt
+(`image-input`) or an extension tool's result (`image-tool-result`).
 
 Provider, `packages/nisse/test/claude.test.ts`:
 

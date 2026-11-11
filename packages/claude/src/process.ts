@@ -156,6 +156,21 @@ const extraArgs = (args: ReadonlyArray<string>) => {
   return extra
 }
 
+type McpPart = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+
+/** A tool result as MCP carries it: its text and its images, whose shape MCP shares with nisse's. */
+const mcpContent = (content: unknown): McpPart[] => {
+  if (!Array.isArray(content)) return [{ type: "text", text: String(content ?? "") }]
+  return (content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>).flatMap(
+    (part): McpPart[] =>
+      part.type === "text"
+        ? [{ type: "text", text: part.text ?? "" }]
+        : part.type === "image"
+          ? [{ type: "image", data: part.data!, mimeType: part.mimeType! }]
+          : [],
+  )
+}
+
 const userMessage = (parts: ReadonlyArray<Said>, priority?: "next"): SDKUserMessage => ({
   type: "user",
   message: {
@@ -632,10 +647,17 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
         const id = toolUseOf(extra)
         const outcome = await run(
           Effect.gen(function* () {
-            if (id === undefined) return { text: `Claude Code called ${name} without a call id`, isError: true }
+            if (id === undefined) {
+              return {
+                content: [{ type: "text" as const, text: `Claude Code called ${name} without a call id` }],
+                isError: true,
+              }
+            }
             const seen = yield* Deferred.await(sighting(id))
             const { task } = yield* record(seen, input)
-            if (task === undefined) return { text: `${name} is already running`, isError: true }
+            if (task === undefined) {
+              return { content: [{ type: "text" as const, text: `${name} is already running` }], isError: true }
+            }
             const settled = yield* runtime.waitForTask(task)
             const outcome = settled.state.outcome
             // A subagent's result is in its own conversation, which only a commit reads; one that writes nothing is not stored.
@@ -645,14 +667,14 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
               yield* commit((tx) => Effect.map(tx.entry(id), (found) => void (entry = found)))
             }
             const message = entry?.model?.[0] as { content?: unknown; isError?: boolean } | undefined
-            return {
-              text: message === undefined ? `${name} ended ${outcome.status}` : textOf(message.content),
-              isError: message?.isError ?? true,
+            if (message === undefined) {
+              return { content: [{ type: "text" as const, text: `${name} ended ${outcome.status}` }], isError: true }
             }
+            return { content: mcpContent(message.content), isError: message.isError ?? true }
           }),
           (extra as { signal?: AbortSignal } | undefined)?.signal,
         )
-        return { content: [{ type: "text" as const, text: outcome.text }], isError: outcome.isError }
+        return outcome
       }
 
       const mcpServers =
