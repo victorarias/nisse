@@ -4,6 +4,8 @@
 // answer back. Both are durable tasks, so a restart resumes them (spec 7.3, example 22).
 import {
   type AgentLimits,
+  ApprovalsDoc,
+  approveAutomatically,
   AssistantEntry,
   ConversationIdle,
   configure,
@@ -296,6 +298,8 @@ const spawnAgent = (limits: AgentLimits) =>
         if (input.model !== undefined && api.models().getModel(parentModel!.provider, input.model) === undefined)
           return failed(`no model ${input.model} on ${parentModel!.provider}; leave model out to use yours`)
         const task = `${own}/${name}`
+        // A subagent of a conversation that runs every call without asking does too: nobody watches it to answer.
+        const auto = (yield* api.snapshot(ApprovalsDoc, api.conversationId))?.auto === true
         const started = yield* api.commit((tx) =>
           Effect.gen(function* () {
             const registry = yield* tx.doc(AgentsDoc, api.conversationId)
@@ -325,6 +329,7 @@ const spawnAgent = (limits: AgentLimits) =>
               ...(depthOf(task) >= limits.maxDepth ? { modelTools: { remove: [{ name: "spawn_agent" }] } } : {}),
             })
             ;(yield* tx.doc(TaskPathDoc, child.id)).task = task
+            if (auto) yield* approveAutomatically(tx, child.id)
             registry.agents[name] = { conversationId: Number(child.id), task, reported: [] }
             const reporter: ReporterInput = {
               name,

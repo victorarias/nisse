@@ -63,9 +63,10 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         registry.install(agentTools())
         // A run ended for the limit was aborted; its run_end says why.
         const runEnded = (tx: Tx, run: EndedRun) => {
+          // The first run to end after the abort is the one the limit stopped, however it ended.
           const stops = stoppedTooOften.get(run.conversationId)
-          if (stops === undefined || run.answered || run.end.status === "done") return writeRunEnd(tx, run)
           stoppedTooOften.delete(run.conversationId)
+          if (stops === undefined || run.answered || run.end.status === "done") return writeRunEnd(tx, run)
           return Effect.asVoid(
             tx.appendEntry(run.conversationId, {
               kind: RUN_END_KIND,
