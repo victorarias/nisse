@@ -1,12 +1,15 @@
 // The kernel server's extension host: the home's extensions, loaded from disk with the `@nisse/extension` API both
 // servers serve, and run as harness extensions. Their tool transforms edit nisse's own tool extensions once per load;
-// `execute.before` and `execute.after` run as the tool task's `beforeTool` and `afterTool` hooks; status lines are a
+// `execute.before` and `execute.after` run as the tool task's `beforeTool` and `afterTool` hooks, and request hooks as the
+// generation task's `beforeProviderRequest` on ChatGPT's requests; status lines are a
 // committed conversation document the view carries, and toasts are `nisse.toast` entries.
 import {
   defineExtension,
+  GenerationTask,
   type Extension as HarnessExtension,
   type Harness,
   hook,
+  type HookApi,
   type Registry,
   type ToolExecutionApi,
   type ToolExecutionResult,
@@ -15,6 +18,8 @@ import {
   ToolTask,
 } from "@nisse/harness"
 import { type ConversationId, defineDoc, type JsonObject, type Tx } from "@nisse/kernel"
+import type { Api, Model } from "@nisse/models"
+import { CHATGPT_API } from "@nisse/models/chatgpt"
 import { rootConversation } from "@nisse/tools"
 import { Cause, Effect, Exit, Scope, Semaphore } from "effect"
 import type { ModelSelection } from "@nisse/protocol"
@@ -22,6 +27,7 @@ import { STATUS_LINES_KIND, TOAST_KIND } from "@nisse/wire"
 import type { Home } from "../home.ts"
 import {
   type Extension,
+  type ModelRequest,
   Refused,
   type ToolCall,
   type ToolEditor,
@@ -82,9 +88,18 @@ interface About {
   readonly model: ModelSelection
 }
 
+type RequestHook = (request: ModelRequest) => Effect.Effect<void, unknown>
+
 interface Loaded {
   readonly infos: Array<ExtensionInfo>
   readonly hooks: { readonly [Name in keyof ToolHooks]: Array<Registered<Hook<Name>>> }
+  readonly requests: Array<Registered<RequestHook>>
+}
+
+/** What a request hook may change of a ChatGPT request body. */
+interface ChatGptPayload {
+  readonly instructions: string
+  readonly tools: ReadonlyArray<{ readonly name: string }>
 }
 
 export interface KernelExtensions {
@@ -134,7 +149,7 @@ export const openKernelExtensions = (
 ): Effect.Effect<KernelExtensions, never, Scope.Scope> =>
   Effect.gen(function* () {
     serveSharedModules()
-    let current: Loaded = { infos: [], hooks: { "execute.before": [], "execute.after": [] } }
+    let current: Loaded = { infos: [], hooks: { "execute.before": [], "execute.after": [] }, requests: [] }
     let scopes: ReadonlyArray<Scope.Closeable> = []
 
     const commit = (body: (tx: Tx) => Effect.Effect<void, unknown>) => Effect.ignore(harness().session.commit(body))
@@ -283,7 +298,47 @@ export const openKernelExtensions = (
         }
       })
 
-    const hooks = hook(ToolTask, { beforeTool, afterTool })
+    /**
+     * The request hooks over one ChatGPT request: each may add instructions, sent after the request's own, and narrow
+     * the tools offered. A hook that fails is skipped with a toast. Only ChatGPT's requests are shaped, as on the
+     * shipping server.
+     */
+    const beforeProviderRequest = (request: { readonly model: Model<Api>; readonly payload: unknown }, api: HookApi) =>
+      Effect.gen(function* () {
+        const loaded = current
+        if (loaded.requests.length === 0 || request.model.api !== CHATGPT_API) return undefined
+        const payload = request.payload as ChatGptPayload
+        const offered = payload.tools.map((tool) => tool.name)
+        const conversation = yield* about(api)
+        let instructions: ReadonlyArray<string> = []
+        let tools = offered
+        for (const registered of [...loaded.requests]) {
+          const event: ModelRequest = {
+            conversation: yield* handle(api.conversationId, conversation, registered.extension, loaded),
+            instructions: [...instructions],
+            tools: [...tools],
+          }
+          const exit = yield* runHook(
+            api.conversationId,
+            registered.extension,
+            "request",
+            Effect.suspend(() => registered.value(event)),
+          )
+          if (Exit.isFailure(exit)) continue
+          instructions = event.instructions.map(String)
+          tools = offered.filter((name) => event.tools.includes(name))
+        }
+        if (instructions.length === 0 && tools.length === offered.length) return undefined
+        return {
+          payload: {
+            ...payload,
+            instructions: payload.instructions + instructions.map((text) => `\n${text.trimEnd()}\n`).join(""),
+            tools: payload.tools.filter((tool) => tools.includes(tool.name)),
+          },
+        }
+      })
+
+    const hooks = [hook(ToolTask, { beforeTool, afterTool }), hook(GenerationTask, { beforeProviderRequest })]
 
     /** Runs the transforms over `base`'s tools, then installs the edited base and the extensions' own tools. */
     const install = (transforms: ReadonlyArray<Registered<(tools: ToolEditor) => void>>, infos: ExtensionInfo[]) => {
@@ -355,7 +410,7 @@ export const openKernelExtensions = (
         registry.install({ ...extension, tools: edited })
       }
       const added = tools.filter((tool) => !origin.has(tool)).map(fromExtensionTool)
-      registry.install(defineExtension({ name: HOST, tools: added, hooks: [hooks] }))
+      registry.install(defineExtension({ name: HOST, tools: added, hooks }))
       return failed
     }
 
@@ -364,7 +419,7 @@ export const openKernelExtensions = (
       const infos: Array<ExtensionInfo> = []
       const opened = new Map<string, Scope.Closeable>()
       const transforms: Array<Registered<(tools: ToolEditor) => void>> = []
-      const next: Loaded = { infos, hooks: { "execute.before": [], "execute.after": [] } }
+      const next: Loaded = { infos, hooks: { "execute.before": [], "execute.after": [] }, requests: [] }
       const register = <A>(list: Array<Registered<A>>, entry: Registered<A>) =>
         Effect.andThen(
           Effect.sync(() => void list.push(entry)),
@@ -393,8 +448,7 @@ export const openKernelExtensions = (
                 hook: (name, run) =>
                   register(next.hooks[name] as Array<Registered<typeof run>>, { extension: planned.name, value: run }),
               },
-              // Shaping requests is ChatGPT's, which the kernel does not run yet.
-              request: { hook: () => Effect.void },
+              request: { hook: (run) => register(next.requests, { extension: planned.name, value: run }) },
             })
           }).pipe(Effect.timeout(LOAD_LIMIT), Scope.provide(scope)),
         )

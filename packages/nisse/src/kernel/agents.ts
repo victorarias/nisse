@@ -371,12 +371,8 @@ const spawnAgent = (limits: AgentLimits) =>
                 ? yield* tx.createConversation({ ownership })
                 : yield* tx.forkConversation(api.conversationId, forkAt, { ownership })
             yield* configure(tx, child.id, {
-              instructions: [
-                agent.instructions,
-                `${taskNameLine(task)} You are a subagent; your final answer goes to ${own}.`,
-              ]
-                .filter((line) => line !== undefined)
-                .join("\n\n"),
+              // The instructions a conversation started with are its own; a subagent starts without them.
+              instructions: `${taskNameLine(task)} You are a subagent; your final answer goes to ${own}.`,
               ...(input.model === undefined
                 ? {}
                 : { model: { provider: parentModel!.provider, modelId: input.model } }),

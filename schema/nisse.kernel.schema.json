@@ -79,6 +79,10 @@
           },
           "effort": {
             "type": "string"
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Instructions the model follows in this conversation, beside its own. Its subagents don't get them."
           }
         },
         "required": [

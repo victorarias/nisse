@@ -46,6 +46,7 @@ import { NisseTools } from "./tools.ts"
 import { agentTools } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
+import { workspaceInstructions } from "./workspace.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
@@ -75,6 +76,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const registry = createRegistry()
         const base = [NisseTools, agentTools(agents)]
         for (const extension of base) registry.install(extension)
+        registry.install(workspaceInstructions(home, instances))
         // A run ended for the limit was aborted; its run_end says why.
         const runEnded = (tx: Tx, run: EndedRun) => {
           // The first run to end after the abort is the one the limit stopped, however it ended.
@@ -186,6 +188,7 @@ const Handlers = KernelRpcs.toLayer(
       cwd: string,
       id: string | undefined,
       approvals: "ask" | "auto" | undefined,
+      instructions: string | undefined,
       ask: ModelAsk,
     ) =>
       Effect.gen(function* () {
@@ -197,7 +200,7 @@ const Handlers = KernelRpcs.toLayer(
         const conversation = yield* Effect.orDie(
           harness.createConversation({
             ownership: { kind: "ownerless" },
-            agent: { ...model, cwd },
+            agent: { ...model, cwd, ...(instructions === undefined ? {} : { instructions }) },
             init: (tx, created) =>
               Effect.gen(function* () {
                 started = created
@@ -255,15 +258,15 @@ const Handlers = KernelRpcs.toLayer(
 
     return KernelRpcs.of({
       initialize: () => Effect.succeed({ version: VERSION, protocol: KERNEL_PROTOCOL_VERSION }),
-      "conversation/start": ({ cwd, id, approvals, ...ask }) =>
+      "conversation/start": ({ cwd, id, approvals, instructions, ...ask }) =>
         Effect.gen(function* () {
-          if (id === undefined) return yield* startConversation(cwd, undefined, approvals, ask)
+          if (id === undefined) return yield* startConversation(cwd, undefined, approvals, instructions, ask)
           const refused = refusedChoice(id)
           if (refused !== undefined) return yield* Effect.fail(new InvalidConversationId({ message: refused }))
           return yield* choosing.withPermits(1)(
             Effect.gen(function* () {
               const existing = chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id)
-              if (existing === undefined) return yield* startConversation(cwd, id, approvals, ask)
+              if (existing === undefined) return yield* startConversation(cwd, id, approvals, instructions, ask)
               const agent = yield* Effect.orDie(harness.resolveAgent(idFromNumber<ConversationId>(existing)))
               return { conversation: id, model: selectionOf(agent) }
             }),
