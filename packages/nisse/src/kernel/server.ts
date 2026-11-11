@@ -266,8 +266,9 @@ const Handlers = KernelRpcs.toLayer(
           return { submission: submission.id }
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),
+      // Stops the conversation's runs and its subagents', in one commit: each subagent hangs off a background task.
       "conversation/interrupt": ({ conversation: id }) =>
-        Effect.flatMap(find(id), (conversation) => Effect.orDie(conversation.abort())),
+        Effect.flatMap(find(id), (conversation) => Effect.orDie(conversation.abort({ background: true }))),
       "approval/resolve": ({ conversation: id, approval, author, allow }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)

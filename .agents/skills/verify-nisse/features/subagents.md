@@ -293,6 +293,27 @@ Preconditions:
   `⧉ slowpoke interrupted`, `▸ wait_agent` shows
   `interrupted; it may or may not have taken effect`, then `◆ interrupted`.
 
+- **Interrupt on the kernel** (`up --kernel`). With the script
+
+  ```json
+  [
+    { "tool": { "name": "spawn_agent", "input": { "task_name": "slow", "message": "make it", "fork_turns": "none" } } },
+    { "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
+    { "tool": { "name": "bash", "input": { "command": "touch made" } }, "agent": "/root/slow" }
+  ]
+  ```
+
+  run `drive.ts r serve`, start a conversation with `conversation/start`, and
+  `drive.ts r watch <id> --submit 'start a slow one' --save root-start`; take
+  the subagent's id from the `details` of the `spawn_agent` result.
+  `drive.ts r watch <subagent id>` shows its `bash` call in
+  `nisse.approvals`. Run
+  `drive.ts r rpc conversation/interrupt '{"conversation": "<id>"}'` (result
+  `null`) on the root only. `drive.ts r watch <id>` and
+  `drive.ts r watch <subagent id>` each end with a `nisse.run_end`
+  `interrupted`, no `pi.live` run, and the subagent's approval requests are
+  empty; `made` was never created.
+
 - **Follow-up.** With the script
 
   ```json
@@ -502,6 +523,10 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - subagent-claude: a call a Claude subagent wants to make waits for a person in the subagent's conversation
 - subagent-interrupt: stopping a Claude subagent stops only it, and its parent's run carries on
 - subagent-interrupt: stopping a run ends the Claude subagents working under it
+
+Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- subagent-interrupt: interrupting a conversation stops the runs of its subagents too, and the tree goes idle
 
 ## Gotchas
 

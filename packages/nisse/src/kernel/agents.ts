@@ -30,6 +30,7 @@ import {
   idFromNumber,
   type JsonObject,
   type NextTaskState,
+  type TaskId,
 } from "@nisse/kernel"
 import type { AssistantMessage } from "@nisse/models"
 import { int, obj, oneOf, opt, str } from "@nisse/schema"
@@ -179,27 +180,20 @@ const Reporter = defineTask<ReporterInput, ReporterState, null, TaskServices>({
         if (report !== undefined) {
           const { task, sender } = reporter.input
           const parent = (yield* (yield* TaskServices).conversation(runtime.conversationId))!
-          const content = mailText("final_answer", sender, task, report)
-          const entry = mailEntry("final_answer", sender, task)
           const submission = yield* parent.submit({
             type: "input",
-            content,
+            content: mailText("final_answer", sender, task, report),
             // Into the parent's running turn at its next step, as other mail; an idle parent starts a turn.
             whenBusy: "steer",
-            entry,
-            requestId: `agent-report:${reporter.id}`,
+            entry: mailEntry("final_answer", sender, task),
+            requestId: reportRequest(reporter.id),
           })
           const settled = yield* submission.wait
-          // Withdrawn before it was placed, as when the person stops the parent: the answer still joins its transcript,
+          // Withdrawn before it was placed, as when the parent alone is stopped: the answer still joins its transcript,
           // once the stopped run has ended, so it lands then instead of waiting in the queue for the next prompt.
           if (settled.status === "unanswered" && settled.entry === undefined) {
             yield* parent.waitForIdle
-            const timestamp = yield* Clock.currentTimeMillis
-            yield* parent.submit({
-              type: "write",
-              entry: { ...entry, model: [{ role: "user", content, timestamp }] as unknown as JsonObject[] },
-              requestId: `agent-report-kept:${reporter.id}`,
-            })
+            yield* parent.submit(keptReport(reporter, report, yield* Clock.currentTimeMillis))
           }
         }
         yield* runtime.commit(() =>
@@ -207,15 +201,52 @@ const Reporter = defineTask<ReporterInput, ReporterState, null, TaskServices>({
         )
       }),
   },
+  // Aborted with the parent's whole tree, as when a person stops it: the subagent's run stopped in the same commit. An
+  // answer not yet placed in the parent still joins its transcript once the stopped run has ended, as in `report`.
   abort: (reporter, runtime) =>
-    runtime.commit((tx) =>
-      Effect.gen(function* () {
-        const agent = (yield* tx.doc(AgentsDoc, runtime.conversationId)).agents[reporter.input.name]
-        if (agent !== undefined) delete agent.assigned
-        return { status: "terminal", outcome: { status: "aborted" } } as const
-      }),
-    ),
+    Effect.gen(function* () {
+      const checkpoint = reporter.state.checkpoint
+      const report = checkpoint.phase === "report" ? checkpoint.report : undefined
+      const parent = (yield* (yield* TaskServices).conversation(runtime.conversationId))!
+      if (report !== undefined) yield* parent.waitForIdle
+      const timestamp = yield* Clock.currentTimeMillis
+      yield* runtime.commit((tx) =>
+        Effect.gen(function* () {
+          // An admission comes before the commit's other writes.
+          if (report !== undefined) {
+            const sent = yield* tx.submissionByRequest(runtime.conversationId, reportRequest(reporter.id))
+            if (sent?.entry === undefined) yield* parent.submit(tx, keptReport(reporter, report, timestamp))
+          }
+          const agent = (yield* tx.doc(AgentsDoc, runtime.conversationId)).agents[reporter.input.name]
+          if (agent !== undefined) {
+            delete agent.assigned
+            if (checkpoint.phase === "deliver") agent.status = "interrupted"
+          }
+          return { status: "terminal", outcome: { status: "aborted" } } as const
+        }),
+      )
+    }),
 })
+
+const reportRequest = (reporter: TaskId) => `agent-report:${reporter}`
+
+/** A subagent's answer as a write into its parent's transcript: it starts no run. */
+const keptReport = (
+  reporter: { readonly id: TaskId; readonly input: ReporterInput },
+  report: string,
+  timestamp: number,
+) => {
+  const { task, sender } = reporter.input
+  const content = mailText("final_answer", sender, task, report)
+  return {
+    type: "write",
+    entry: {
+      ...mailEntry("final_answer", sender, task),
+      model: [{ role: "user", content, timestamp }] as unknown as JsonObject[],
+    },
+    requestId: `agent-report-kept:${reporter.id}`,
+  } as const
+}
 
 const textOf = (message: AssistantMessage | undefined) =>
   (message?.content ?? []).flatMap((block) => (block.type === "text" ? [block.text] : [])).join("")
