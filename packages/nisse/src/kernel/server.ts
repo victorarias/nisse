@@ -23,6 +23,7 @@ import {
   NoSuchApproval,
   NoSuchConversation,
   RUN_END_KIND,
+  USER_KIND,
   type View,
   type ViewItem,
   type Window,
@@ -268,11 +269,12 @@ const Handlers = KernelRpcs.toLayer(
             }),
           )
         }),
-      "conversation/submit": ({ conversation: id, requestId, text }) =>
+      "conversation/submit": ({ conversation: id, requestId, author, text }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
+          const entry = { kind: USER_KIND, data: { author } }
           const submission = yield* heldUntilIdle(
-            Effect.orDie(conversation.submit({ type: "input", content: text, requestId })),
+            Effect.orDie(conversation.submit({ type: "input", content: text, requestId, entry })),
           )
           return { submission: submission.id }
         }),

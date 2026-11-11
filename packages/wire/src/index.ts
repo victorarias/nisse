@@ -34,6 +34,9 @@ export type Outcome = typeof Outcome.Type
 
 export const RUN_END_KIND = "nisse.run_end"
 
+/** A person's input: the entry its user message is placed as, with data `{ author }`. */
+export const USER_KIND = "nisse.user"
+
 export const RunEnd = Schema.Struct({
   outcome: Outcome,
   message: Schema.optionalKey(Schema.String.annotate({ description: "Why the run ended without an answer." })),
@@ -184,6 +187,9 @@ export const Submit = Rpc.make("conversation/submit", {
   payload: {
     conversation: ConversationId,
     requestId: Schema.String.annotate({ description: "Submitting again with the same id is answered once." }),
+    author: Schema.String.annotate({
+      description: `Who wrote it; the input is placed as a ${USER_KIND} entry naming them, and waits in pi.inbox with them.`,
+    }),
     text: Schema.String,
   },
   success: Schema.Struct({ submission: Schema.Int }),

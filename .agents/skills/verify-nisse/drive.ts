@@ -397,7 +397,7 @@ const watchView = async () => {
     settleAfterQuiet()
     if (!submitted) {
       submitted = true
-      const params = { conversation, requestId: crypto.randomUUID(), text: submit }
+      const params = { conversation, requestId: crypto.randomUUID(), author: "ada", text: submit }
       client.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "conversation/submit", params }) + "\n")
     }
     client.write(JSON.stringify({ jsonrpc: "2.0", method: "@effect/rpc/Ack", params: { requestId: 1 } }) + "\n")

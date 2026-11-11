@@ -148,6 +148,10 @@
             "type": "string",
             "description": "Submitting again with the same id is answered once."
           },
+          "author": {
+            "type": "string",
+            "description": "Who wrote it; the input is placed as a nisse.user entry naming them, and waits in pi.inbox with them."
+          },
           "text": {
             "type": "string"
           }
@@ -155,6 +159,7 @@
         "required": [
           "conversation",
           "requestId",
+          "author",
           "text"
         ],
         "additionalProperties": true

@@ -16,7 +16,7 @@ import {
   watchView,
 } from "../support/kernel.ts"
 import { tempHome } from "../support/server.ts"
-import { KERNEL_PROTOCOL_VERSION, STATUS_LINES_KIND, TOAST_KIND } from "@nisse/wire"
+import { KERNEL_PROTOCOL_VERSION, STATUS_LINES_KIND, TOAST_KIND, USER_KIND } from "@nisse/wire"
 import { VERSION } from "../../src/version.ts"
 
 type Tree = { _tag: "tree"; conversation: string; seq: number; status: string; ended?: Record<string, string> }
@@ -1180,3 +1180,27 @@ test("status-subagent, status-snapshot: a subagent waiting on a person shows as 
   client.close()
   late.close()
 }, 30_000)
+
+test("submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs", async () => {
+  await using server = await runningKernelServer([
+    { text: "the first answer", delayMs: 100 },
+    { text: "second answer" },
+  ])
+  const ada = await RawClient.connect(server.home.socket)
+  const bo = await RawClient.connect(server.home.socket)
+  const conversation = await start(ada)
+  const view = watchView(bo, conversation)
+  await submit(ada, conversation, "one", undefined, "ada")
+  await view.until(speaking)
+  await submit(bo, conversation, "two", undefined, "bo")
+  await view.until((watch) => ((watch.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
+  expect((view.view().docs["pi.inbox"] as { items: unknown[] }).items).toEqual([
+    expect.objectContaining({ entry: { kind: USER_KIND, data: { author: "bo" } } }),
+  ])
+  await view.until(settled(2))
+  const users = view.seen().filter((entry) => entry.kind === USER_KIND)
+  expect(users.map((entry) => entry.data)).toEqual([{ author: "ada" }, { author: "bo" }])
+  expect(transcript(view.seen()).filter((line) => line.startsWith("user: "))).toEqual(["user: one", "user: two"])
+  ada.close()
+  bo.close()
+})
