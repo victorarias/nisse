@@ -1217,14 +1217,14 @@ test("subagent-fork: a spawned agent starts from its parent's history, and its l
   expect(parentSaw.at(-2)).toEqual({ _tag: "message", text: "The scout says: under the floor." })
 })
 
-test("subagent-types: an agent of a type gets its instructions, and fork_turns none leaves the parent's history out", async () => {
+test("subagent-types: an agent of a type gets its instructions and its model, and fork_turns none leaves the parent's history out", async () => {
   await using fake = new FakeOpenAi()
   fake.play("subagent_of_a_type")
   await using session = await conversationWith(fake, {
     cwd: (home) => {
       write(
         join(home, "claude", "agents", "reviewer.md"),
-        "---\nname: reviewer\ndescription: Reviews diffs\n---\nBe strict about tests.",
+        "---\nname: reviewer\ndescription: Reviews diffs\nmodel: gpt-6-luna\n---\nBe strict about tests.",
       )
       return home
     },

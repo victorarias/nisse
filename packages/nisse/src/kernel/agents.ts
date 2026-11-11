@@ -37,6 +37,7 @@ import type { AssistantMessage } from "@nisse/models"
 import { int, obj, oneOf, opt, str } from "@nisse/schema"
 import { rootConversation } from "@nisse/tools"
 import { Clock, Duration, Effect, Option, Stream } from "effect"
+import type { AgentType } from "../workspace.ts"
 
 /** How a subagent's last task ended, as `list_agents` reports it. */
 export type AgentStatus = "pending_init" | "interrupted" | { completed: string } | { errored: string }
@@ -320,6 +321,12 @@ Note that passing \`fork_turns="none"\` will not pass any surrounding context to
 const spawnSchema = obj({
   task_name: str({ description: "Task name for the new agent. Use lowercase letters, digits, and underscores." }),
   message: str({ description: "Initial plain-text task for the new agent." }),
+  agent_type: opt(
+    str({
+      description:
+        "Agent type for the new agent, one of those the agent_types section lists. Omit unless explicitly asked. The type applies however much parent history is inherited.",
+    }),
+  ),
   fork_turns: opt(
     oneOf(["all", "none"], {
       description: "Parent history to inherit. Defaults to `all`; use `none` to start without parent history.",
@@ -336,6 +343,7 @@ const spawnSchema = obj({
 type SpawnInput = {
   task_name: string
   message: string
+  agent_type?: string
   fork_turns?: "all" | "none"
   model?: string
   reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh"
@@ -343,7 +351,13 @@ type SpawnInput = {
 
 const background = { ownership: { kind: "conversation" }, background: true } as const
 
-const spawnAgent = (limits: AgentLimits) =>
+/** The agent types a conversation on `provider` working in `cwd`, or the home without one, can spawn. */
+export type AgentTypes = (provider: string, cwd: string | undefined) => ReadonlyArray<AgentType>
+
+/** What a subagent of `type` is told of its type, after the lines that name its task. */
+const typeInstructions = (type: AgentType) => `\n\n# You are a ${type.name} agent\n\n${type.instructions}`
+
+const spawnAgent = (limits: AgentLimits, types: AgentTypes) =>
   defineTool({
     name: "spawn_agent",
     description: spawnDescription,
@@ -361,6 +375,19 @@ const spawnAgent = (limits: AgentLimits) =>
         if (input.model !== undefined && parentModel === undefined) return failed("this agent has no model to vary")
         if (input.model !== undefined && api.models().getModel(parentModel!.provider, input.model) === undefined)
           return failed(`no model ${input.model} on ${parentModel!.provider}; leave model out to use yours`)
+        const wanted = input.agent_type?.trim()
+        const known = wanted && parentModel !== undefined ? types(parentModel.provider, agent.cwd) : []
+        const agentType = wanted ? known.find((type) => type.name === wanted) : undefined
+        if (wanted && agentType === undefined)
+          return failed(
+            `no agent type ${wanted}; there are ${known.length === 0 ? "none" : known.map((type) => type.name).join(", ")}`,
+          )
+        // A type's model applies when the provider lists it; a model asked for in the call comes first.
+        const typeModel =
+          agentType?.model !== undefined && api.models().getModel(parentModel!.provider, agentType.model) !== undefined
+            ? agentType.model
+            : undefined
+        const model = input.model ?? typeModel
         const task = `${own}/${name}`
         // A subagent of a conversation that runs every call without asking does too: nobody watches it to answer.
         const auto = (yield* api.snapshot(ApprovalsDoc, api.conversationId))?.auto === true
@@ -382,16 +409,19 @@ const spawnAgent = (limits: AgentLimits) =>
                 : yield* tx.forkConversation(api.conversationId, forkAt, { ownership })
             yield* configure(tx, child.id, {
               // The instructions a conversation started with are its own; a subagent starts without them.
-              instructions: `${taskNameLine(task)} You are a subagent; your final answer goes to ${own}.`,
-              ...(input.model === undefined
-                ? {}
-                : { model: { provider: parentModel!.provider, modelId: input.model } }),
+              instructions: `${taskNameLine(task)} You are a subagent; your final answer goes to ${own}.${agentType === undefined ? "" : typeInstructions(agentType)}`,
+              ...(model === undefined ? {} : { model: { provider: parentModel!.provider, modelId: model } }),
               ...(input.reasoning_effort === undefined ? {} : { thinkingLevel: input.reasoning_effort }),
               // Past the depth limit a subagent is not offered spawn_agent at all.
               ...(depthOf(task) >= limits.maxDepth ? { modelTools: { remove: [{ name: "spawn_agent" }] } } : {}),
             })
             ;(yield* tx.doc(TaskPathDoc, child.id)).task = task
-            yield* recordOrigin(tx, child.id, { call: api.callId, title: name, task })
+            yield* recordOrigin(tx, child.id, {
+              call: api.callId,
+              title: name,
+              task,
+              ...(agentType === undefined ? {} : { agentType: agentType.name }),
+            })
             if (auto) yield* approveAutomatically(tx, child.id)
             registry.agents[name] = { conversationId: Number(child.id), task, reported: [], assigned: true }
             const reporter: ReporterInput = {
@@ -626,10 +656,30 @@ const treeOf = (harness: Harness, root: ConversationId) =>
     return tree
   })
 
-/** The subagent tools, under `limits`; their tasks come with them, so a restart resumes pending reporters. */
-export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS) =>
+/**
+ * The subagent tools, under `limits`, spawning the agent `types`; their tasks come with them, so a restart resumes
+ * pending reporters. While `spawn_agent` is offered, a section lists the types it takes: they depend on the
+ * conversation's directory, and a tool's declaration is the same everywhere.
+ */
+export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS, types: AgentTypes = () => []) =>
   defineExtension({
     name: AGENTS_EXTENSION,
     tasks: [Anchor, Reporter],
-    tools: [spawnAgent(limits), sendMessage, followupTask(limits), waitAgent, listAgents, interruptAgent],
+    tools: [spawnAgent(limits, types), sendMessage, followupTask(limits), waitAgent, listAgents, interruptAgent],
+    sections: [
+      {
+        key: "agent_types",
+        render: ({ agent }) =>
+          Effect.sync(() => {
+            const provider = agent.model?.provider
+            if (provider === undefined || !agent.tools.some((tool) => tool.name === "spawn_agent")) return undefined
+            const listed = types(provider, agent.cwd)
+            if (listed.length === 0) return undefined
+            return [
+              "The agent types spawn_agent takes as agent_type:",
+              ...listed.map((type) => `- ${type.name}: ${type.description}`),
+            ].join("\n")
+          }),
+      },
+    ],
   })

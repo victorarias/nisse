@@ -288,6 +288,38 @@ test("subagent-fork: a spawned agent's requests carry its own conversation, and 
   expect(session.said().at(-2)).toBe("assistant: The scout says: under the floor.")
 })
 
+test("subagent-types: an agent of a type gets its instructions and its model, and fork_turns none leaves the parent's history out", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("subagent_of_a_type")
+  await using session = await conversationWith(fake, {
+    cwd: (home) => {
+      write(
+        join(home, "claude", "agents", "reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews diffs\nmodel: gpt-6-luna\n---\nBe strict about tests.",
+      )
+      return home
+    },
+  })
+  await session.submit("Get the diff reviewed.")
+  await session.view.until(settled(1), 20_000)
+  expectRequests(fake, expected)
+
+  const [parent, child] = fake.responses().map((request) => JSON.parse(request.body))
+  expect(parent.instructions).toContain(
+    "<agent_types>\nThe agent types spawn_agent takes as agent_type:\n- reviewer: Reviews diffs\n</agent_types>",
+  )
+  expect(child.instructions).toContain("# You are a reviewer agent\n\nBe strict about tests.")
+  // Past the depth limit the reviewer is offered no spawn_agent, so it is told of no types.
+  expect(child.instructions).not.toContain("<agent_types>")
+  expect(JSON.stringify(child.input)).not.toContain("Get the diff reviewed.")
+  const listed = (await session.client.call("conversation/list")).result as Array<{ lineage?: unknown }>
+  expect(listed.find((conversation) => conversation.lineage !== undefined)?.lineage).toMatchObject({
+    task: "/root/review",
+    agentType: "reviewer",
+  })
+  expect(session.said().at(-2)).toBe("assistant: The reviewer approves.")
+})
+
 test("compaction-overflow, models-overflow: ChatGPT's context-window error compacts the conversation, and the request goes again", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("context_overflow")

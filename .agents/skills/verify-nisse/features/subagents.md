@@ -56,7 +56,12 @@ and nisse commits each into a conversation of its own the same way.
   subagents at once.
 - `subagent-types` reads agent types from `.claude/agents/*.md` from the
   directory up to the repository root, then Claude Code's config directory's
-  `agents/`; a type's `model` applies when it names an OpenAI model.
+  `agents/` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). `spawn_agent` takes
+  `agent_type`, and ChatGPT is told the types with their descriptions; an
+  unknown type fails the call, naming it. A subagent of a type is told
+  `# You are a <name> agent` and the type's body, its `lineage` and card name
+  the type, and the type's `model` applies when it names a model ChatGPT
+  lists.
 - `subagent-claude` gives each subagent Claude Code starts a conversation of
   its own: the parent shows `▸ Agent` and a `⧉ <description> (<agent type>)`
   card, the subagent's conversation holds its prompt, calls, results and last
@@ -490,6 +495,21 @@ Preconditions:
   `drive.ts r nisse exec delegate` prints
   `the kid is done`, exit 0, with stderr `› spawn_agent(kid)`, `› wait_agent` and
   `denied bash(echo ran): exec cannot ask, pass --auto to allow calls`.
+- **On the kernel, agent types.** In a run made with
+  `drive.ts r up --kernel --fake-openai subagent_of_a_type`, drive **Agent
+  types, no history** as written, with
+  `CLAUDE_CONFIG_DIR=/tmp/nisse-verify/r/claude-config drive.ts r serve` so
+  your own agent types stay out, and `model: gpt-6-luna` in `reviewer.md`'s
+  frontmatter. The parent's instructions hold
+  `<agent_types>` listing `- reviewer: Reviews diffs` (the kernel's
+  `spawn_agent` declaration is the same in every directory, so the list is a
+  prompt section), and the subagent's request is on `gpt-6-luna`, with
+  `# You are a reviewer agent` and no `<agent_types>`. `conversation/list`
+  shows the subagent's `lineage` with `"agentType": "reviewer"`, and
+  `drive.ts r tui start --conversation <id>` draws `⧉ review (reviewer) done`.
+  In a `--kernel --script` run, a step calling `spawn_agent` with
+  `"agent_type": "reviewer"` gets `no agent type reviewer; there are none`: a
+  script reads no agent types.
 - **On the kernel.** In a `drive.ts r up --kernel --script <file>` run with the
   spawn steps above, `drive.ts r rpc conversation/list` lists each subagent
   after its parent, with `lineage` naming `parent`, `root`, `call` (the
@@ -518,6 +538,11 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - subagent-spawn, subagent-model: conversation/list shows each subagent with its lineage, on its parent's model or the one its spawn_agent names, and an unlisted model fails the call
 - child-tools, subagent-message: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit
 - child-tools, subagent-agents: interrupting a subagent stops its turn and reports what it was doing
+- subagent-types: spawning an agent of a type nisse doesn't know is refused, naming it
+
+Provider on the kernel, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- subagent-types: an agent of a type gets its instructions and its model, and fork_turns none leaves the parent's history out
 
 Kernel wire, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
 
@@ -554,7 +579,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 Provider, `packages/nisse/test/openai.test.ts`:
 
 - subagent-fork: a spawned agent starts from its parent's history, and its last answer reaches the parent
-- subagent-types: an agent of a type gets its instructions, and fork_turns none leaves the parent's history out
+- subagent-types: an agent of a type gets its instructions and its model, and fork_turns none leaves the parent's history out
 
 Provider, `packages/nisse/test/claude.test.ts`:
 

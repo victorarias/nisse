@@ -613,6 +613,20 @@ test("child-tools, approval-auto: a subagent of a conversation that runs calls w
   client.close()
 }, 30_000)
 
+test("subagent-types: spawning an agent of a type nisse doesn't know is refused, naming it", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "review", message: "review it", agent_type: "reviewer" }),
+    { text: "no reviewer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "get it reviewed")
+  await view.until(settled(1))
+  expect(toolResults(view)).toEqual([{ text: "no agent type reviewer; there are none", isError: true }])
+  client.close()
+})
+
 /** Six subagents `/root/a1`.. that each hold on an approval, and a seventh the limit refuses, spawned at once. */
 const SEVEN = ["a1", "a2", "a3", "a4", "a5", "a6", "a7"]
 const holding = SEVEN.map((name) => ({

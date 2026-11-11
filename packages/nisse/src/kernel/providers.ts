@@ -8,6 +8,7 @@ import { Context, Effect, Layer } from "effect"
 import { chooseModel, type ModelAsk } from "../config.ts"
 import { claudeInstances, openInstances, type ProviderOptions } from "../drivers/index.ts"
 import type { ClaudeOptions } from "../drivers/claude/index.ts"
+import { type AgentType, agentTypes } from "../workspace.ts"
 import { taskOfRequest } from "./agents.ts"
 
 /** The model a conversation of this home started with last; a new one without a default of its own takes it. */
@@ -48,6 +49,11 @@ export class KernelProviders extends Context.Service<
     readonly instances: ReadonlyMap<string, ProviderInstance>
     /** How deep subagents nest and how many run at once: `[agents]` in `config.toml`, over the defaults. */
     readonly agents: AgentLimits
+    /**
+     * The agent types `spawn_agent` takes in a conversation on `provider` working in `cwd`: a ChatGPT instance reads
+     * them from Claude Code's agent files; Claude Code has its own subagents, and a script reads nothing.
+     */
+    readonly agentTypes: (provider: string, cwd: string) => ReadonlyArray<AgentType>
     /** How the Claude Code of each instance Claude Code serves is started; their runs are `claude.run` tasks. */
     readonly claude: ReadonlyMap<string, ClaudeOptions>
     /** The model a conversation in `cwd` starts with when it asks for `ask`, given the model chosen last. */
@@ -73,6 +79,8 @@ export class KernelProviders extends Context.Service<
             maxThreads: agents?.max_threads ?? DEFAULT_AGENT_LIMITS.maxThreads,
           },
           claude: claudeInstances(options),
+          agentTypes: (provider, cwd) =>
+            instances.get(provider)?.kind === "openai" ? agentTypes(cwd, options.openai(provider).claudeConfig) : [],
           choose: (cwd, ask, last) =>
             Effect.suspend(() => {
               const selection = chooseModel(cwd, ask, {

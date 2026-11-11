@@ -89,7 +89,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
-        const { instances, agents, claude } = yield* KernelProviders
+        const { instances, agents, claude, agentTypes } = yield* KernelProviders
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
         // Closed after the harness, which stops the scripts first. Closing asks a stuck worker to stop and does not wait
@@ -103,7 +103,11 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const models = fromProviders(
           [...instances.values()].flatMap((instance) => (instance.provider ? [instance.provider] : [])),
         )
-        const base = [nisseTools(images), agentTools(agents), codeModeTools(sandbox)]
+        const base = [
+          nisseTools(images),
+          agentTools(agents, (provider, cwd) => agentTypes(provider, cwd ?? home.dir)),
+          codeModeTools(sandbox),
+        ]
         for (const extension of base) registry.install(extension)
         registry.install(workspaceInstructions(home, instances))
         // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it.
