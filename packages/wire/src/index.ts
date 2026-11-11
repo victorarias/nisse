@@ -171,7 +171,7 @@ export const StartConversation = Rpc.make("conversation/start", {
     id: Schema.optionalKey(
       Schema.String.annotate({
         description:
-          "The id to name it by, chosen by the client; not all digits. Starting again with an id that names a conversation answers with that one and changes nothing.",
+          "The id to name it by, chosen by the client; not all digits. Starting with an id that names a conversation, a chosen one or its number, answers with that one and changes nothing.",
       }),
     ),
     approvals: Schema.optionalKey(Approvals.annotate({ description: "Default ask." })),

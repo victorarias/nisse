@@ -75,6 +75,7 @@ Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NIS
 
 - start-with-id: a conversation opened on a client's id survives a restart, and a second start with it is answered
 - chosen-id: nisse exec --conversation on the kernel starts a conversation with an id it does not name yet, and continues it
+- reopen-continue: nisse exec --conversation on the kernel continues a conversation by the number it was given
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

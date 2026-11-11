@@ -293,6 +293,11 @@ const Handlers = KernelRpcs.toLayer(
       "conversation/start": ({ cwd, id, approvals, instructions, ...ask }) =>
         Effect.gen(function* () {
           if (id === undefined) return yield* startConversation(cwd, undefined, approvals, instructions, ask)
+          // A conversation's number opens it, as its chosen id does; a number that names none is refused below.
+          const numbered = kernelNumber(id)
+          if (numbered !== undefined && (yield* Effect.orDie(harness.conversation(numbered))) !== undefined) {
+            return { conversation: id, model: selectionOf(yield* Effect.orDie(harness.resolveAgent(numbered))) }
+          }
           const refused = refusedChoice(id)
           if (refused !== undefined) return yield* Effect.fail(new InvalidConversationId({ message: refused }))
           return yield* choosing.withPermits(1)(

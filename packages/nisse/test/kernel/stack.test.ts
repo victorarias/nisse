@@ -526,6 +526,26 @@ test("chosen-id: nisse exec --conversation on the kernel starts a conversation w
   ])
 }, 30_000)
 
+test("reopen-continue: nisse exec --conversation on the kernel continues a conversation by the number it was given", async () => {
+  const nisseHome = home()
+  const env = await kernelEnv(nisseHome)
+  expect(await finished(nisse(["exec", "first"], env))).toMatchObject({ code: 0, stdout: "You said: first\n" })
+  const { id } = (await conversationsOf(nisseHome))[0]!
+  expect(id).toMatch(/^[0-9]+$/)
+  expect(await finished(nisse(["exec", "-c", id, "again"], env))).toMatchObject({
+    code: 0,
+    stdout: "You said: again\n",
+  })
+  expect(await transcriptOf(nisseHome, id)).toEqual([
+    "user: first",
+    "assistant: You said: first",
+    "run_end: answered",
+    "user: again",
+    "assistant: You said: again",
+    "run_end: answered",
+  ])
+}, 30_000)
+
 test("provider-choose, model-flags: nisse exec on the kernel starts on the provider, model and effort it names", async () => {
   const nisseHome = home()
   const env = await kernelEnv(nisseHome)
