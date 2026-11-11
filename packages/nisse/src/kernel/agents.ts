@@ -582,7 +582,7 @@ const interruptAgent = defineTool({
     }),
 })
 
-export const AGENTS_EXTENSION = "nisse-agents"
+const AGENTS_EXTENSION = "nisse-agents"
 
 /**
  * Stops a conversation's runs and every subagent's under it, as `conversation/interrupt` promises. Each conversation of

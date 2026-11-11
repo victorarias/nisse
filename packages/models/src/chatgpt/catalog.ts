@@ -53,6 +53,7 @@ const chatModel = (provider: string, baseUrl: string, model: typeof Listed.Type)
   reasoning: (model.supported_reasoning_levels ?? []).length > 0,
   input: ["text", "image"],
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  ...(model.tool_mode === "code_mode_only" ? { toolMode: "code_mode_only" as const } : {}),
   contextWindow: model.context_window ?? 0,
   maxTokens: 0,
 })

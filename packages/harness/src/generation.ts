@@ -36,7 +36,7 @@ import {
   type ToolCall,
 } from "@nisse/models"
 import { Cause, Effect, Exit, Fiber, Queue, Stream } from "effect"
-import { addTools, AgentDoc, agentHooks, sectionExtension } from "./agent.ts"
+import { addTools, AgentDoc, agentHooks, offeredTo, sectionExtension } from "./agent.ts"
 import { compactionPolicy, createCompaction, estimateContext, selectCut } from "./compaction.ts"
 import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "./entries.ts"
 import { providerSessionId } from "./documents.ts"
@@ -216,14 +216,15 @@ export const GenerationTask: Task<GenerationInput, GenerationCheckpoint, Generat
         const { runtime, api } = ctx
         if (cutOffTooOften(task, api.settings().restartLimit)) return yield* endCutOff(ctx, task)
         const { conversationId } = runtime
-        const agent = yield* api.agent
+        const resolvedAgent = yield* api.agent
         // The conversation's model now runs on another run task, as after a switch of provider during the run.
-        const runTask = api.runTasks.choose(agent.model)
+        const runTask = api.runTasks.choose(resolvedAgent.model)
         if (runTask !== undefined) return yield* handOverRun(ctx, runTask)
         const settings = api.settings()
-        const { model, thinkingLevel } = agent
+        const { model, thinkingLevel } = resolvedAgent
         const resolved = model === undefined ? undefined : api.models().getModel(model.provider, model.modelId)
         if (model === undefined || resolved === undefined) return yield* failNoModel(ctx, model)
+        const agent = offeredTo(resolvedAgent, resolved)
         const { attempt, compacted, overflow, threshold: blocked } = task.state.checkpoint
         if (compacted !== undefined && overflow !== undefined) {
           const [outcome] = yield* runtime.outcomes([compacted])

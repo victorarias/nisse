@@ -9,6 +9,7 @@
     "@anthropic-ai/claude-agent-sdk": "0.3.312",
     "@effect/platform-bun": "4.0.6",
     "@nisse/claude": "workspace:*",
+    "@nisse/codemode": "workspace:*",
     "@nisse/env": "workspace:*",
     "@nisse/harness": "workspace:*",
     "@nisse/kernel": "workspace:*",

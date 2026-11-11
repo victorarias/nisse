@@ -1,0 +1,24 @@
+{
+  "name": "@nisse/codemode",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sandbox": "./src/sandbox/index.ts",
+    "./sandbox/declarations": "./src/sandbox/declarations.ts",
+    "./sandbox/portable": "./src/sandbox/portable.ts",
+    "./sandbox/source": "./src/sandbox/source.ts",
+    "./sandbox/worker": "./src/sandbox/runtime/worker.ts"
+  },
+  "dependencies": {
+    "@nisse/env": "workspace:*",
+    "@nisse/harness": "workspace:*",
+    "@nisse/kernel": "workspace:*",
+    "@nisse/models": "workspace:*",
+    "@nisse/schema": "workspace:*",
+    "@nisse/tools": "workspace:*",
+    "effect": "4.0.6",
+    "quickjs-wasi": "3.6.2"
+  }
+}

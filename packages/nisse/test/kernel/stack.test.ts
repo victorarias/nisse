@@ -5,7 +5,17 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { deadline, RawClient } from "../support/raw.ts"
-import { kernelEnv, runEnds, servingKernel, settled, start, submit, transcript, watchView } from "../support/kernel.ts"
+import {
+  kernelEnv,
+  runEnds,
+  servingKernel,
+  settled,
+  start,
+  submit,
+  transcript,
+  type ViewWatch,
+  watchView,
+} from "../support/kernel.ts"
 import { homeAt } from "../../src/home.ts"
 import { tempHome } from "../support/server.ts"
 import { nisse, stopServer } from "../support/terminal.ts"
@@ -209,3 +219,91 @@ test("reload: a server on the kernel refuses to start on a config.toml that does
   expect(await deadline(server.exited, 10_000, "server exit")).toBe(1)
   expect(await new Response(server.stderr).text()).toContain(`${nisseHome.dir}/config.toml`)
 })
+
+/** A conversation on the script's code-mode model, whose calls run without asking. */
+const codeModeConversation = async (client: RawClient, cwd: string) =>
+  (await client.call("conversation/start", { cwd, approvals: "auto", model: "script-code-mode" })).result
+    .conversation as string
+
+/** The text of the conversation's `codemode` result. */
+const codemodeResult = (entries: ReadonlyArray<{ kind: string; model?: ReadonlyArray<unknown> }>) =>
+  entries.flatMap((entry) => {
+    const message = entry.model?.[0] as { role?: string; toolName?: string; content?: Array<any> } | undefined
+    return message?.role === "toolResult" && message.toolName === "codemode"
+      ? [message.content!.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n")]
+      : []
+  })
+
+test("codemode-replay: a script whose server is killed during a nested call resumes in a new server without running its finished calls again", async () => {
+  const nisseHome = home()
+  const fifo = join(nisseHome.dir, "started.fifo")
+  const release = join(nisseHome.dir, "release.fifo")
+  const log = join(nisseHome.dir, "calls.log")
+  expect(Bun.spawnSync(["mkfifo", fifo, release]).exitCode).toBe(0)
+  // Opened at the end, so the call the kill orphaned exits with the test.
+  await using _released = { [Symbol.asyncDispose]: async () => closeSync(openSync(release, "r+")) }
+  const code = [
+    `await tools.bash({ command: "echo first >> ${log}" })`,
+    `try { await tools.bash({ command: "echo ran > ${fifo}; cat ${release}" }) } catch (error) { text("second: " + error.message) }`,
+    `await tools.bash({ command: "echo third >> ${log}" })`,
+  ].join("\n")
+  const first = await servingKernel(await kernelEnv(nisseHome, [{ tool: { name: "codemode", input: { code } } }]))
+  let client = await RawClient.connect(nisseHome.socket)
+  const conversation = await codeModeConversation(client, nisseHome.dir)
+  await submit(client, conversation, "go")
+  expect(await deadline(readFile(fifo, "utf8"), 10_000, "the second call started")).toBe("ran\n")
+  first.kill("SIGKILL")
+  await first.exited
+  client.close()
+
+  // A script's steps start over in a new process: the restarted model answers the script's result.
+  await servingKernel(await kernelEnv(nisseHome, [{ text: "done" }]))
+  client = await RawClient.connect(nisseHome.socket)
+  const view = watchView(client, conversation)
+  await view.until(settled(1), 20_000)
+  // The first call ran once, before the kill; the cut-off call is not run again, and the script went on after it.
+  expect(readFileSync(log, "utf8")).toBe("first\nthird\n")
+  const [result] = codemodeResult(view.seen())
+  expect(result).toStartWith("Script completed")
+  expect(result).toContain("second: ")
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: done", "run_end: answered"])
+  client.close()
+}, 40_000)
+
+test("codemode-stop: a script stuck in a long built-in stops when its run is interrupted, and the server then exits at once", async () => {
+  const nisseHome = home()
+  // A naive search QuickJS runs without checking for an interrupt: about 40 s on an M-series Mac (receipt: half the
+  // string took 19 s after its abort). A worker in it survives `terminate()` (F19).
+  const code = [
+    `await tools.bash({ command: "true" })`,
+    `const haystack = "a".repeat(1 << 23)`,
+    `text(haystack.indexOf("a".repeat(1 << 12) + "b"))`,
+  ].join("\n")
+  const server = await servingKernel(await kernelEnv(nisseHome, [{ tool: { name: "codemode", input: { code } } }]))
+  const client = await RawClient.connect(nisseHome.socket)
+  const conversation = await codeModeConversation(client, nisseHome.dir)
+  const view = watchView(client, conversation)
+  await view.until(() => true)
+  await submit(client, conversation, "go")
+  const live = (current: ViewWatch) =>
+    current.view().docs["pi.live"] as { nestedTools?: Array<{ status: string }> } | undefined
+  await view.until((current) => live(current)?.nestedTools?.some((slot) => slot.status === "done") === true, 10_000)
+  // Nothing is committed once the worker enters the search, and interrupting it before then lets the worker end
+  // cleanly, which proves nothing (measured: 5 of 5 runs passed without serve's exit). The server's CPU is the one
+  // sign that the worker is inside: an idle server spends at most 0.02 s in a second (the idle-server test above).
+  const before = cpuSeconds(server.pid)
+  await deadline(
+    (async () => {
+      while (cpuSeconds(server.pid) - before < 0.3) await Bun.sleep(50)
+    })(),
+    20_000,
+    "the script searching",
+  )
+  // Interrupting the run stops the script without waiting for its worker, which goes on searching.
+  await client.call("conversation/interrupt", { conversation })
+  await view.until(settled(1), 5000)
+  // With the run ended the server stops, and its process ends though the worker still searches.
+  expect(await client.call("server/stop", null)).toMatchObject({ result: null })
+  expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
+  client.close()
+}, 45_000)

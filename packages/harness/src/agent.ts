@@ -3,6 +3,7 @@
 import type { Draft } from "@nisse/delta"
 import { copyJson } from "@nisse/delta/json"
 import { type ConversationId, type ConversationRecord, defineDoc, type Tx, type DocError } from "@nisse/kernel"
+import type { Api, Model } from "@nisse/models"
 import { Effect } from "effect"
 import type {
   Agent,
@@ -299,6 +300,15 @@ export function resolveAgent<T extends ToolRegistration>(
     ...(state?.maxTurns === undefined ? {} : { maxTurns: state.maxTurns }),
     ...(state?.compaction === undefined ? {} : { compaction: state.compaction }),
   }
+}
+
+/**
+ * The agent as a request to `model` offers it: a model that takes only code mode is offered just the `codeMode` tools,
+ * any other model all tools but those.
+ */
+export const offeredTo = <T extends ToolRegistration>(agent: Agent<T>, model: Model<Api>): Agent<T> => {
+  const codeMode = model.toolMode === "code_mode_only"
+  return { ...agent, tools: agent.tools.filter((tool) => (tool.codeMode === true) === codeMode) }
 }
 
 /** The tools offered to the model, as `AgentState.modelTools` describes. */

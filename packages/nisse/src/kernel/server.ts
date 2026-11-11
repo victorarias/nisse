@@ -2,6 +2,7 @@
 // the kernel wire (`@nisse/wire`). Conversations run on the home's providers (`./providers.ts`).
 import { BunSocketServer } from "@effect/platform-bun"
 import { claudeRunTasks } from "@nisse/claude"
+import { CodemodeSandbox } from "@nisse/codemode/sandbox"
 import { LocalExecutionEnv } from "@nisse/env/local"
 import {
   answerApproval,
@@ -43,8 +44,8 @@ import { agentModel, KernelProviders, LastModelDoc, selectionOf } from "./provid
 import { countStops, restartLimitMessage } from "./restarts.ts"
 import { writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
-import { NisseTools } from "./tools.ts"
-import { AGENTS_EXTENSION, agentTools, interruptTree } from "./agents.ts"
+import { codeModeTools, NisseTools } from "./tools.ts"
+import { agentTools, interruptTree } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
 import { workspaceInstructions } from "./workspace.ts"
@@ -75,13 +76,19 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         const { instances, agents, claude } = yield* KernelProviders
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
-        const base = [NisseTools, agentTools(agents)]
+        // Closed after the harness, which stops the scripts first. Closing asks a stuck worker to stop and does not wait
+        // for it (F19).
+        const sandbox = yield* Effect.acquireRelease(
+          Effect.sync(() => new CodemodeSandbox()),
+          (sandbox) => Effect.promise(() => sandbox.close()),
+        )
+        const base = [NisseTools, agentTools(agents), codeModeTools(sandbox)]
         for (const extension of base) registry.install(extension)
         registry.install(workspaceInstructions(home, instances))
         // Claude Code has its own tools and subagents, so nisse's built-in ones are not offered to it.
         const claudeRuns = claudeRunTasks({
           settings: (provider) => claude.get(provider),
-          builtinExtensions: new Set([NisseTools.name, AGENTS_EXTENSION]),
+          builtinExtensions: new Set(base.map((extension) => extension.name)),
         })
         registry.install({ name: "claude", tasks: [claudeRuns.run, claudeRuns.subagent] })
         // A run ended for the limit was aborted; its run_end says why.

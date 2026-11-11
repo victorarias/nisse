@@ -1,4 +1,2 @@
-import { unimplemented } from "../../../../unimplemented.ts";
-
-export const CodemodeSandboxBase = unimplemented("CodemodeSandboxBase", "codemode-package");
-export const errorMessage = unimplemented("errorMessage", "codemode-package");
+// Re-exports @nisse/codemode's copy of this module.
+export * from "../../../../../codemode/src/sandbox/runtime/execution.ts";

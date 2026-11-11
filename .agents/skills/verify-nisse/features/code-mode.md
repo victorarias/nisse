@@ -11,46 +11,52 @@ run in Codex's `codex-code-mode-host`, which `scripts/code-mode-host.sh`
 installs; without it a code-mode run fails saying how to install it.
 `gpt-5.5` keeps direct tools and needs no host.
 
+This is the path the binary runs today. On the kernel (`NISSE_KERNEL=1`), the
+same models get one `codemode` tool whose scripts run in nisse's own
+sandbox, with no host: [Durable code mode](./durable-code-mode.md). The host
+path and its use cases go when the kernel replaces it (`switch-delete`);
+`code-mode-models` holds on both.
+
 ## Sub-features
 
-- `code-mode-models` [pending codemode-package] puts the models ChatGPT marks code-mode-only in code
+- `code-mode-models` puts the models ChatGPT marks code-mode-only in code
   mode: in the list nisse ships, every listed model but `gpt-5.5`, such as
   `gpt-5.6-terra` and `gpt-6-sol`.
-- `code-mode-install` [pending codemode-package] installs the pinned host with
+- `code-mode-install` [pending switch-delete] installs the pinned host with
   `scripts/code-mode-host.sh` into `NISSE_HOME/bin`, or the folder it is
   given, and prints its path; a second run finds it and prints the same path.
-- `code-mode-find` [pending codemode-package] uses `NISSE_CODE_MODE_HOST` when the server's environment
+- `code-mode-find` [pending switch-delete] uses `NISSE_CODE_MODE_HOST` when the server's environment
   sets it, else `NISSE_HOME/bin/codex-code-mode-host`, else
   `codex-code-mode-host` on `PATH`.
-- `code-mode-missing` fails the run with
+- `code-mode-missing` [pending switch-delete] fails the run with
   `this model works in code mode, which needs Codex's codex-code-mode-host; install it with scripts/code-mode-host.sh, or point NISSE_CODE_MODE_HOST at it`,
   before it asks ChatGPT anything.
-- `code-mode-calls` [pending codemode-package] commits `exec` as a `tool_call` whose `input` is the
+- `code-mode-calls` [pending switch-delete] commits `exec` as a `tool_call` whose `input` is the
   script, then each call the script makes as a `tool_call` with
   `"parent": "<exec call>"` and its `tool_result`, then the script's result.
   The TUI shows `▸ exec`, then `▸ Bash(<command>)` and the rest.
-- `code-mode-cells` [pending codemode-package] gives a script that yields (`Script running with cell ID
+- `code-mode-cells` [pending switch-delete] gives a script that yields (`Script running with cell ID
 <exec call>`) a `cell` call under its `exec`, shown as `▸ cell(<exec call>)`,
   that ends when the script does: with `Script completed`, `Script failed` or
   `Script terminated` from `wait`, or `interrupted` when the host stops, the
   run ends or the server stops first. A script that stops before finishing,
   as its `exec` or as its `cell`, tells the model what its calls finished.
-- `code-mode-tools` [pending codemode-package] gives a script, as `tools` and `ALL_TOOLS`, exactly the
+- `code-mode-tools` [pending switch-delete] gives a script, as `tools` and `ALL_TOOLS`, exactly the
   tools its request offered: nisse's tools and the agent tools, less any an
   extension's request hook withheld. Codex's own nested tools, such as
   `exec_command`, are not among them: a script that calls one fails with
   `TypeError: tools.<name> is not a function`.
-- `code-mode-approvals` [pending codemode-package] asks before a nested call that changes things, with
+- `code-mode-approvals` [pending switch-delete] asks before a nested call that changes things, with
   `allow this call?`, `^Y`, `^N` or `approval/resolve`; `exec` denies them and
   `--auto` allows them, as for any call.
-- `code-mode-host-life` [pending codemode-package] starts one host for the whole server on the first
+- `code-mode-host-life` [pending switch-delete] starts one host for the whole server on the first
   script any conversation runs, keeps one session per conversation in it so a
   later script can `load` what an earlier one `store`d, and stops it after
   five minutes with no code-mode run active; the next script starts a new one,
   and a host that dies ends every conversation's running scripts. A `wait` on a script whose host stopped answers
   `no running cell <id>; it already finished, or the code-mode host running it stopped`,
   even after a new host started other scripts.
-- `code-mode-script` [pending codemode-package] is what a model's calls take. `exec` is raw JavaScript,
+- `code-mode-script` [pending switch-delete] is what a model's calls take. `exec` is raw JavaScript,
   else `exec expects raw JavaScript source text`; a first line
   `// @exec: {"yield_time_ms": N, "max_output_tokens": N}` sets when it yields
   and its output budget. `wait` takes `cell_id` (else
@@ -59,7 +65,7 @@ installs; without it a code-mode run fails saying how to install it.
   `Warning: truncated output (original token count: N)`. Scripts have `text`,
   `exit`, `store`, `load`, `setTimeout`, `clearTimeout`, `ALL_TOOLS` and
   `yield_control`.
-- `code-mode-host-failed` [pending codemode-package] ends the run when the host will not start, with
+- `code-mode-host-failed` [pending switch-delete] ends the run when the host will not start, with
   `could not start <program>: ...`, `the code-mode host did not answer its handshake...`
   or `the code-mode host turned nisse down: ...`.
 
@@ -83,7 +89,7 @@ Preconditions:
 - A fresh run for each group of steps, and `drive.ts r down` after. The
   missing host and the host lookup need no sign-in: a run that finds the
   host goes on to fail `not signed in to ChatGPT`.
-- `code-mode-install` [pending codemode-package] downloads from `github.com`; a second install finds
+- `code-mode-install` downloads from `github.com`; a second install finds
   the host and downloads nothing.
 - The scripted steps use `--fake-openai` with the `code_mode_*` fixtures,
   whose model is `gpt-6.1-sol`, and install the host first with
@@ -349,6 +355,13 @@ each step names.
 ## Contexts
 
 - **Provider.** OpenAI only, and `gpt-5.5` keeps direct tools and needs no host.
+
+This is the path the binary runs today. On the kernel (`NISSE_KERNEL=1`), the
+same models get one `codemode` tool whose scripts run in nisse's own
+sandbox, with no host: [Durable code mode](./durable-code-mode.md). The host
+path and its use cases go when the kernel replaces it (`switch-delete`);
+`code-mode-models` holds on both.
+
 - **Idle.** Nisse starts the host on the first script and stops it after five idle minutes.
 
 ## Tests
