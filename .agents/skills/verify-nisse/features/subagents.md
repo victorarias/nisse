@@ -399,9 +399,9 @@ Preconditions:
   `drive.ts r watch <id> --submit 'Get the diff reviewed.' --until run_end --save typed`:
   the answer is `The reviewer approves.`, and `conversation/list` shows the
   subagent with `"agentType": "reviewer"` in its `lineage` and no
-  `forkedAt`. In `evidence/fake-openai.ndjson` the parent's instructions list
-  `- reviewer: Reviews diffs` under `# Agent types` (the recording has them in
-  the tool, so the first request `differs` there), and the second request,
+  `forkedAt`. In `evidence/fake-openai.ndjson`, all `as recorded`, the
+  parent's instructions list `- reviewer: Reviews diffs` under
+  `# Agent types`, and the second request,
   the subagent's, has one input item, instructions holding
   `# You are a reviewer agent`, and no `spawn_agent` tool.
 
