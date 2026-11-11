@@ -250,7 +250,10 @@ export const TreeStatus = Schema.TaggedStruct("tree", {
   conversation: ConversationId.annotate({
     description: "A conversation people started; its tree is it and its subagents.",
   }),
-  seq: Schema.Int.annotate({ description: "The commit the tree's status changed at." }),
+  seq: Schema.Int.annotate({
+    description:
+      "The commit the tree's status changed at; 0 for a tree that was already busy when the server started, before any change.",
+  }),
   status: Schema.Literals(["idle", "working", "waiting"]).annotate({
     description: "waiting when a conversation in the tree waits on a person, working when one runs, idle otherwise.",
   }),
@@ -267,7 +270,10 @@ export const TreeStatus = Schema.TaggedStruct("tree", {
 export type TreeStatus = typeof TreeStatus.Type
 
 export const TreeSnapshot = Schema.TaggedStruct("trees", {
-  seq: Schema.Int.annotate({ description: "The last commit before the watch began." }),
+  seq: Schema.Int.annotate({
+    description:
+      "The last commit this server published before the watch began; 0 when it has published none since it started. Every later item has a greater seq.",
+  }),
   trees: Schema.Array(TreeStatus).annotate({ description: "Every tree that is not idle; the rest are idle." }),
 })
 

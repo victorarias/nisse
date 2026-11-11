@@ -842,7 +842,9 @@ export default Extension.define((ctx) =>
     yield* ctx.tool.hook("execute.after", (call) =>
       Effect.gen(function* () {
         call.outcome.output = call.outcome.output.toUpperCase()
-        yield* call.conversation.status("ran " + call.tool + " in " + call.conversation.id)
+        yield* call.conversation.status(
+          "ran " + call.tool + " in " + call.conversation.id + " at " + call.conversation.model.effort,
+        )
         yield* call.conversation.toast(call.tool + " ran " + String((call.input as { command: string }).command))
       }),
     )
@@ -861,7 +863,9 @@ test("execute-before, execute-after, toast, status-line: an extension can refuse
     { home },
   )
   const client = await RawClient.connect(server.home.socket)
-  const conversation = await startAuto(client, home.dir, "guarded")
+  const conversation = (
+    await client.call("conversation/start", { cwd: home.dir, approvals: "auto", id: "guarded", effort: "high" })
+  ).result.conversation as string
   const view = watchView(client, conversation)
   await submit(client, conversation, "clean up")
   await view.until(settled(1))
@@ -872,11 +876,11 @@ test("execute-before, execute-after, toast, status-line: an extension can refuse
     "toast guard: bash ran echo hej",
     "result: HEJ\n",
   ])
-  expect(statusLines(view)).toEqual({ guard: "ran bash in guarded" })
+  expect(statusLines(view)).toEqual({ guard: "ran bash in guarded at high" })
   const other = await RawClient.connect(server.home.socket)
   const late = watchView(other, conversation)
   await opened(late)
-  expect(statusLines(late)).toEqual({ guard: "ran bash in guarded" })
+  expect(statusLines(late)).toEqual({ guard: "ran bash in guarded at high" })
   client.close()
   other.close()
   rmSync(home.dir, { recursive: true })
@@ -1032,12 +1036,25 @@ test("reload: reloading runs the extensions as they are now, and no status outli
   rmSync(home.dir, { recursive: true })
 })
 
-const refusingAfter = (reason: string, loadsOnceExists = "") => `import { Extension, Tool } from "@nisse/extension"
-import { existsSync } from "node:fs"
+/**
+ * A gate a test opens: the server runs in the test's process, so an extension waits on it by name, and the server's own
+ * load and hook limits are its deadline.
+ */
+const gate = (name: string) => {
+  const opened = Promise.withResolvers<void>()
+  ;(globalThis as Record<string, unknown>)[name] = opened.promise
+  return {
+    open: () => opened.resolve(),
+    [Symbol.dispose]: () => delete (globalThis as Record<string, unknown>)[name],
+  }
+}
+const awaitGate = (name: string) => `Effect.promise(() => globalThis[${JSON.stringify(name)}])`
+
+const refusingAfter = (reason: string, loadsAfter?: string) => `import { Extension, Tool } from "@nisse/extension"
 import { Effect } from "effect"
 export default Extension.define((ctx) =>
   Effect.gen(function* () {
-    while (${JSON.stringify(loadsOnceExists)} !== "" && !existsSync(${JSON.stringify(loadsOnceExists)})) yield* Effect.sleep("10 millis")
+    ${loadsAfter === undefined ? "" : `yield* ${awaitGate(loadsAfter)}`}
     yield* ctx.tool.hook("execute.before", () => Tool.refuse("${reason}"))
   }),
 )`
@@ -1050,14 +1067,14 @@ test("reload: while extensions reload, the loaded ones keep guarding calls until
   const conversation = await startAuto(client, home.dir)
   const view = watchView(client, conversation)
 
-  const ready = join(home.dir, "new-guard-ready")
-  writeFileSync(join(home.extensions, "guard.ts"), refusingAfter("the new guard says no", ready))
+  using ready = gate("nisseNewGuardReady")
+  writeFileSync(join(home.extensions, "guard.ts"), refusingAfter("the new guard says no", "nisseNewGuardReady"))
   const reloading = client.call("extensions/reload")
   await submit(client, conversation, "say hi")
   await view.until(settled(1))
   expect(whyNotRun(view)).toEqual([notRun("Tool call blocked: guard refused this call: the old guard says no")])
 
-  writeFileSync(ready, "")
+  ready.open()
   expect((await reloading).result).toEqual([
     { name: "guard", path: join(home.extensions, "guard.ts"), state: "loaded" },
   ])
@@ -1074,16 +1091,15 @@ test("reload: while extensions reload, the loaded ones keep guarding calls until
 test("status-line: a hook still running when its extension is unloaded can't bring back a status line", async () => {
   const home = homeWithExtensions({})
   await Bun.write(`${home.dir}/notes.txt`, "gnome\n")
-  const released = join(home.dir, "released")
+  using released = gate("nisseSlowReleased")
   writeFileSync(
     join(home.extensions, "slow.ts"),
     `import { Extension } from "@nisse/extension"
-import { existsSync } from "node:fs"
 import { Effect } from "effect"
 export default Extension.define((ctx) =>
   ctx.tool.hook("execute.after", (call) =>
     Effect.gen(function* () {
-      while (!existsSync(${JSON.stringify(released)})) yield* Effect.sleep("10 millis")
+      yield* ${awaitGate("nisseSlowReleased")}
       yield* call.conversation.status("stale")
     }),
   ),
@@ -1098,7 +1114,7 @@ export default Extension.define((ctx) =>
 
   rmSync(join(home.extensions, "slow.ts"))
   expect((await client.call("extensions/reload")).result).toEqual([])
-  writeFileSync(released, "")
+  released.open()
   await view.until(settled(1))
   expect(statusLines(view)).toEqual({})
   client.close()

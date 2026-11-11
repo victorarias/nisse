@@ -41,6 +41,7 @@ import {
 import { serveSharedModules } from "../extensions/modules.ts"
 import type { Tool as ExtensionTool } from "../tools/tool.ts"
 import { ConversationIdsDoc } from "./ids.ts"
+import { selectionOf } from "./providers.ts"
 
 /** Each extension's status line in one conversation, by extension name. */
 export const StatusLinesDoc = defineDoc<{ lines: Record<string, string> }>({
@@ -201,10 +202,7 @@ export const openKernelExtensions = (
         ),
         (agent) => ({
           cwd: agent?.cwd ?? home.dir,
-          model:
-            agent?.model === undefined
-              ? { provider: "" }
-              : { provider: agent.model.provider, model: agent.model.modelId },
+          model: agent === undefined ? { provider: "" } : selectionOf(agent),
         }),
       )
 

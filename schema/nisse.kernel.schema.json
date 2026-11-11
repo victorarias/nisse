@@ -579,7 +579,7 @@
                 "type": "integer",
                 "minimum": -9007199254740991,
                 "maximum": 9007199254740991,
-                "description": "The last commit before the watch began."
+                "description": "The last commit this server published before the watch began; 0 when it has published none since it started. Every later item has a greater seq."
               },
               "trees": {
                 "type": "array",
@@ -600,7 +600,7 @@
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991,
-                      "description": "The commit the tree's status changed at."
+                      "description": "The commit the tree's status changed at; 0 for a tree that was already busy when the server started, before any change."
                     },
                     "status": {
                       "type": "string",
@@ -674,7 +674,7 @@
                 "type": "integer",
                 "minimum": -9007199254740991,
                 "maximum": 9007199254740991,
-                "description": "The commit the tree's status changed at."
+                "description": "The commit the tree's status changed at; 0 for a tree that was already busy when the server started, before any change."
               },
               "status": {
                 "type": "string",
