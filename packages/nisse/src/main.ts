@@ -3,7 +3,7 @@ import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option, Schedule } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import type { ExtensionInfo, UnknownProvider } from "@nisse/protocol"
-import { Client, clientLayer, ServerFailed, type StartOptions } from "./client.ts"
+import { Client, clientLayer, kernelClientLayer, ServerFailed, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, HOME_TAKEN_EXIT, type Home } from "./home.ts"
 import { openAiOptions, type ProviderOptions, providersLayer } from "./drivers/index.ts"
@@ -266,6 +266,25 @@ const nisse = Command.make(
   },
   Effect.fn(function* ({ prompt, conversation, ...flags }) {
     const home = defaultHome()
+    if (process.env.NISSE_KERNEL === "1") {
+      const { kernelTui } = yield* Effect.promise(async () => {
+        await import("@opentui/solid/preload")
+        return import("./tui/kernel.tsx")
+      })
+      return yield* kernelTui(
+        Option.getOrUndefined(conversation),
+        startWith(flags),
+        Option.getOrUndefined(prompt),
+      ).pipe(
+        Effect.provide(kernelClientLayer(home)),
+        Effect.catchIf(
+          (error): error is ServerFailed => error instanceof ServerFailed,
+          (error) => refuse(error.output),
+        ),
+        Effect.scoped,
+        Effect.catchTag("UnknownProvider", unknownProvider),
+      )
+    }
     const { tui } = yield* Effect.promise(async () => {
       await import("@opentui/solid/preload")
       return import("./tui/main.tsx")

@@ -425,6 +425,10 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 
 ## Tests
 
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- status-line, toast, extensions-failed: a person sees what extensions say in the footer and the transcript, and which failed to load
+
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - tools-transform, extensions-load: an extension's tool answers the model's calls, a tool it removes is gone, and one it makes not read-only asks

@@ -8,7 +8,7 @@ server three times in a row ends instead of looping.
 
 ## Sub-features
 
-- `crash-tui` [pending tui-views] finishes the answer in the open TUI after the server is killed.
+- `crash-tui` finishes the answer in the open TUI after the server is killed.
 - `crash-exec` finishes the answer for a waiting `nisse exec`, which exits 0.
 - `crash-committed` commits the answer once, in a run that ends `answered`.
 - `crash-call` records a running call as
@@ -128,6 +128,10 @@ have taken effect`.
 - **Provider.** On every provider a running call is recorded as interrupted. Claude Code is also told which calls were cut off.
 
 ## Tests
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- crash-tui: the open TUI finishes the answer after the server is killed mid-answer
 
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 

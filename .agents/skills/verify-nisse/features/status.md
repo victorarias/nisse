@@ -79,6 +79,10 @@ Preconditions:
 
 ## Tests
 
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- start-with-id: a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation
+
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - status-follow, status-ended: watching status follows each run of a tree and says how it ended

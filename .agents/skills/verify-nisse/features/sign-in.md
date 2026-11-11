@@ -221,6 +221,13 @@ Preconditions:
 
 ## Tests
 
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- signin-status: the splash lists every provider and how it is signed in
+- signin-terminal: ^L signs in to a signed-out Claude by running its own sign-in in the terminal
+- signin-cancel: a sign-in cancelled from another connection stops Claude's sign-in in the terminal
+- signin-shared: an open TUI shows a sign-in another connection finished
+
 Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - signin-refused: an answer for another sign-in is turned away, and a sign-in the browser refused fails saying why

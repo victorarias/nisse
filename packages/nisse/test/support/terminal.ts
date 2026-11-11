@@ -78,5 +78,9 @@ export const screenSession = (args: Array<string>, env: Record<string, string | 
     exited: process.exited,
     kill: () => process.kill(),
     hangUp: () => process.kill("SIGHUP"),
+    /** Stops the TUI reading anything, as a frozen terminal does, until `resume`. */
+    pause: () => process.kill("SIGSTOP"),
+    resume: () => process.kill("SIGCONT"),
+    pid: process.pid,
   }
 }

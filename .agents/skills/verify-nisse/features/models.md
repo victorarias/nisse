@@ -22,7 +22,7 @@ next run. Switching providers keeps the conversation.
   switch, `Esc` close) or `conversation/select_model`, commits a `model`
   entry shown as `◆ <name> switched to <provider> · <model> · <effort>`, and
   refuses a provider nisse does not have.
-- `model-status` [pending tui-views] shows the conversation's model at the right of the status
+- `model-status` shows the conversation's model at the right of the status
   bar, from its start and after every switch, in every TUI.
 - `model-switch-provider` keeps the conversation across providers: the new
   provider is told what was said.
@@ -159,6 +159,10 @@ Preconditions:
 - **Second client.** A switch is an entry everyone sees, and applies from the next run.
 
 ## Tests
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- model-list, model-status: /model lists every provider's models, enter switches the conversation's model, and the status bar names it
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

@@ -24,8 +24,8 @@ const usage = `usage: drive.ts <run> <command> [args]
                                    SDK's bundled Claude Code with your own login. --openai-auth copies a real
                                    ChatGPT sign-in in, and down writes it back if a refresh rotated it.
                                    --kernel runs every server of the run with NISSE_KERNEL=1: rpc,
-                                   watch, watch-auth, serve, kill-server, idle, doctor and down work;
-                                   the TUI, nisse exec and watch-status wait for later steps
+                                   watch, watch-auth, serve, kill-server, idle, doctor, down and the
+                                   TUI work; nisse exec waits for a later step
   doctor                           is this run's instance worth driving?
   nisse <args...>                  run the nisse CLI against the run's home
   serve                            start the run's server in the foreground of a tmux window
@@ -666,7 +666,6 @@ const commands: Record<string, () => Promise<void> | void> = {
     args.splice(0, 1)
     switch (sub) {
       case "start": {
-        notOnKernel("The TUI", "tui-views")
         if (tuiOpen()) fail("a TUI is already open in this run: tui stop first")
         openWindow("tui", [MAIN, ...rest])
         record(`tui start ${rest.join(" ")}`)

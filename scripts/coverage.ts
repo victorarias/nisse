@@ -30,6 +30,7 @@ const STEPS = new Set([
   "wire-complete",
   "cli-kernel",
   "tui-views",
+  "tui-images",
   "switch-delete",
   "surface-conversations",
   "zero-pending",
