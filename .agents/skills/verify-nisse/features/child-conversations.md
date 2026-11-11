@@ -41,6 +41,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - subagent-limits, child-tools: a follow-up task does not wake an idle subagent while maxThreads subagents work
 - server-idle-exit, child-tools: a subagent's work keeps the server up after its client leaves, past the idle grace
 - child-tools: a follow-up task reaches a working subagent at its next step, in the same run
+- server-stop, child-tools: stopping the server lets a working subagent finish and report first
 
 ## Gotchas
 

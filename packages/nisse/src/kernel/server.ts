@@ -260,7 +260,7 @@ const Handlers = KernelRpcs.toLayer(
           return { accepted: answered === "accepted" }
         }),
       // Stops once the runs in flight settle, as the shipping server does; a run is never cut off by a stop.
-      "server/stop": () => Effect.andThen(Effect.ignore(harness.waitForIdle), afterReply(lifetime.stop)),
+      "server/stop": () => Effect.andThen(Effect.ignore(quiet), afterReply(lifetime.stop)),
     })
   }),
 )

@@ -23,9 +23,11 @@ written on Effect" plan that made it.
 - **Approvals (D13).** A tool registration may set `asks: true`. Its call, after `beforeTool` and validation and before
   intent (section 8.5), adds a request keyed by its tool task ID to the conversation's `nisse.approvals` document,
   unless that document sets `auto`, and waits for an answer there. `answerApproval()` sets the answer only on a
-  request without one, so the first answer counts, and appends a `nisse.approval` entry naming who answered. A denied
-  call settles with an error result, diagnostic code `denied`, without running. The commit that settles the tool task,
-  however it ends, removes its request. The conversation view (section 9.3) mounts `nisse.approvals`.
+  request without one, so the first answer counts, and appends a `nisse.approval` entry naming who answered. A rerun of
+  the call after a restart keeps its request, and any answer, only when it computes the same arguments; otherwise it
+  replaces the request and waits for a new answer. A denied call settles with an error result, diagnostic code
+  `denied`, without running. The commit that settles the tool task, however it ends, removes its request. The
+  conversation view (section 9.3) mounts `nisse.approvals`.
 
 ---
 

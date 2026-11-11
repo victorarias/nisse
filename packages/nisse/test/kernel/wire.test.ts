@@ -222,6 +222,37 @@ test("server-idle-exit, child-tools: a subagent's work keeps the server up after
   rmSync(home.dir, { recursive: true, force: true })
 })
 
+test("server-stop, child-tools: stopping the server lets a working subagent finish and report first", async () => {
+  const home = tempHome()
+  const served = await deadline(
+    servingKernelUntilIdle(home, "1 hour", [
+      call("spawn_agent", { task_name: "writer", message: "count", fork_turns: "none" }),
+      { text: "spawned" },
+      { text: "one two three four", delayMs: 100, agent: "/root/writer" },
+      { text: "heard it" },
+    ]),
+    5000,
+    "server listening",
+  )
+  let client = await RawClient.connect(home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate")
+  await view.until(settled(1))
+  expect(await client.call("server/stop", null)).toMatchObject({ result: null })
+  client.close()
+  await deadline(served.exited, 5000, "server exit")
+
+  // A stop that cut the subagent off would have mailed nothing back to the parent.
+  await using again = await runningKernelServer([], { home })
+  client = await RawClient.connect(again.home.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(mails(after)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
+}, 30_000)
+
 test("server-stop: stopping the server answers the caller, then the server exits", async () => {
   const home = tempHome()
   const served = await deadline(servingKernelUntilIdle(home, "1 hour"), 5000, "server listening")

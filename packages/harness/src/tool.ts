@@ -385,7 +385,8 @@ export const ToolTask: Task<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, T
 
 /**
  * Asks for a person's answer to the call and waits for it; `undefined` when the conversation approves automatically.
- * The request is keyed by this task, so a rerun after a restart finds it, answered or still waiting.
+ * The request is keyed by this task, so a rerun after a restart finds it, answered or still waiting, unless the rerun
+ * computed other arguments.
  */
 const awaitApproval = (
   ctx: Ctx,
@@ -399,10 +400,14 @@ const awaitApproval = (
       const id = String(runtime.taskId)
       const committed = yield* runtime.snapshot(ApprovalsDoc, conversationId)
       if (committed?.auto === true) return undefined
-      if (committed?.requests[id] === undefined) {
+      // An answer holds for the arguments it was given: a rerun that computes others asks again.
+      const asked = (request: { readonly arguments: JsonObject } | undefined) =>
+        request !== undefined && JSON.stringify(request.arguments) === JSON.stringify(args)
+      if (!asked(committed?.requests[id])) {
         yield* runtime.commit((tx) =>
           Effect.map(tx.doc(ApprovalsDoc, conversationId), (doc) => {
-            doc.requests[id] ??= { callId: call.id, tool: call.name, arguments: args, at: runtime.now() }
+            if (!asked(doc.requests[id]))
+              doc.requests[id] = { callId: call.id, tool: call.name, arguments: args, at: runtime.now() }
             return undefined
           }),
         )
