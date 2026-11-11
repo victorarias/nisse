@@ -379,6 +379,34 @@ test("image-tool-result: an image an extension tool returns reaches Claude Code 
   expect(JSON.stringify(reply)).toContain(JSON.stringify([{ type: "text", text: "noon in CET" }, picture]))
 })
 
+test("claude-resume: an edit to the context starts a fresh session told the edited conversation", async () => {
+  const claude = fake("text", "text")
+  await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [])
+      const conversation = yield* start(harness, cwd)
+      yield* ask(conversation, "a secret to forget")
+      const first = (yield* entries(conversation)).find((entry) => entry.kind === UserEntry.kind)!
+      yield* conversation.submit({
+        type: "write",
+        entry: { kind: "test.forget", edits: [{ target: first.id, action: "omit" }] },
+      })
+      yield* ask(conversation, "Reply with exactly: fixture text ok")
+    }),
+  )
+  const [before, after] = spawns(claude)
+  expect(after!.some((arg) => arg.startsWith("--resume"))).toBe(false)
+  expect(after!.find((arg) => arg.startsWith("--session-id"))).not.toBe(
+    before!.find((arg) => arg.startsWith("--session-id")),
+  )
+  const told = claude
+    .log()
+    .filter((entry) => entry.received?.type === "user" && entry.spawn === 1)
+    .flatMap((entry) => entry.received.message.content.map((part: { text: string }) => part.text))
+  expect(told.join("\n")).not.toContain("a secret to forget")
+  expect(told.at(-1)).toBe("Reply with exactly: fixture text ok")
+})
+
 test("claude-read: parallel calls of one response are each committed with the result Claude Code returned", async () => {
   const claude = fake("parallel_reads_hooked")
   const all = await run(

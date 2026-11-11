@@ -113,10 +113,13 @@ const entriesAfter = (runtime: Runtime, seen: number) =>
     return found
   })
 
-/** Whether a session can go on past `entries`: nothing in them started a new context or came from another model. */
+/**
+ * Whether a session can go on past `entries`: nothing in them changed the context before them, as a reset, a
+ * compaction or an edit does, and nothing came from another model.
+ */
 const continuable = (entries: readonly EntryRecord[], provider: string) =>
   entries.every((entry) => {
-    if (entry.kind === "pi.reset" || entry.kind === "pi.compaction") return false
+    if (entry.head !== undefined || (entry.edits?.length ?? 0) > 0) return false
     return (entry.model ?? []).every((message) => {
       const said = message as { role?: string; provider?: string }
       return said.role !== "assistant" || said.provider === provider
