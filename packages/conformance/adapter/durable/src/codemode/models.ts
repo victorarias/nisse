@@ -1,11 +1,18 @@
-import { unimplemented } from "../../../../unimplemented.ts";
+// The constants are the package's; `catalogCall` and the model tools take upstream's Promise forms.
+import * as C from "../../../../../codemode/src/index.ts";
+import { toSeam } from "../../../ai/index.ts";
+import { run } from "../session/session.ts";
+import { upstreamTool } from "../tools/bridge.ts";
 
-export const CATALOG_GLOBALS = unimplemented("CATALOG_GLOBALS", "codemode-package");
-export const CLASSIFY_TOOL = unimplemented("CLASSIFY_TOOL", "codemode-package");
-export const CODEMODE_INTERNAL_PREFIX = unimplemented("CODEMODE_INTERNAL_PREFIX", "codemode-package");
-export const GENERATE_IMAGES_TOOL = unimplemented("GENERATE_IMAGES_TOOL", "codemode-package");
-export const MAX_CONCURRENT_MODEL_CALLS = unimplemented("MAX_CONCURRENT_MODEL_CALLS", "codemode-package");
-export const MODELS_DESCRIPTION = unimplemented("MODELS_DESCRIPTION", "codemode-package");
-export const MODEL_CALLS = unimplemented("MODEL_CALLS", "codemode-package");
-export const catalogCall = unimplemented("catalogCall", "codemode-package");
-export const createModelTools = unimplemented("createModelTools", "codemode-package");
+type Any = any;
+
+export const CATALOG_GLOBALS = C.CATALOG_GLOBALS;
+export const CLASSIFY_TOOL = C.CLASSIFY_TOOL;
+export const CODEMODE_INTERNAL_PREFIX = C.CODEMODE_INTERNAL_PREFIX;
+export const GENERATE_IMAGES_TOOL = C.GENERATE_IMAGES_TOOL;
+export const MAX_CONCURRENT_MODEL_CALLS = C.MAX_CONCURRENT_MODEL_CALLS;
+export const MODELS_DESCRIPTION = C.MODELS_DESCRIPTION;
+export const MODEL_CALLS = C.MODEL_CALLS;
+export const catalogCall = (name: string, args: unknown, models: Any, context: Any) =>
+	run(C.catalogCall(name, args, toSeam(models)), context);
+export const createModelTools = () => C.createModelTools().map(upstreamTool);

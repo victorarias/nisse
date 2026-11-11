@@ -1,4 +1,2 @@
-import { unimplemented } from "../../../../unimplemented.ts";
-
-export const isHostToWorkerMessage = unimplemented("isHostToWorkerMessage", "codemode-package");
-export const isWorkerToHostMessage = unimplemented("isWorkerToHostMessage", "codemode-package");
+// Re-exports @nisse/codemode's copy of this module.
+export * from "../../../../../codemode/src/sandbox/runtime/protocol.ts";

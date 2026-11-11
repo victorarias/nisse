@@ -209,3 +209,88 @@ test("reload: a server on the kernel refuses to start on a config.toml that does
   expect(await deadline(server.exited, 10_000, "server exit")).toBe(1)
   expect(await new Response(server.stderr).text()).toContain(`${nisseHome.dir}/config.toml`)
 })
+
+/** A conversation on the script's code-mode model, whose calls run without asking. */
+const codeModeConversation = async (client: RawClient, cwd: string) =>
+  (await client.call("conversation/start", { cwd, approvals: "auto", model: "script-code-mode" })).result
+    .conversation as string
+
+/** The text of the conversation's `codemode` result. */
+const codemodeResult = (entries: ReadonlyArray<{ kind: string; model?: ReadonlyArray<unknown> }>) =>
+  entries.flatMap((entry) => {
+    const message = entry.model?.[0] as { role?: string; toolName?: string; content?: Array<any> } | undefined
+    return message?.role === "toolResult" && message.toolName === "codemode"
+      ? [message.content!.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n")]
+      : []
+  })
+
+test("codemode-replay: a script whose server is killed during a nested call resumes in a new server without running its finished calls again", async () => {
+  const nisseHome = home()
+  const fifo = join(nisseHome.dir, "started.fifo")
+  const release = join(nisseHome.dir, "release.fifo")
+  const log = join(nisseHome.dir, "calls.log")
+  expect(Bun.spawnSync(["mkfifo", fifo, release]).exitCode).toBe(0)
+  // Opened at the end, so the call the kill orphaned exits with the test.
+  await using _released = { [Symbol.asyncDispose]: async () => closeSync(openSync(release, "r+")) }
+  const code = [
+    `await tools.bash({ command: "echo first >> ${log}" })`,
+    `try { await tools.bash({ command: "echo ran > ${fifo}; cat ${release}" }) } catch (error) { text("second: " + error.message) }`,
+    `await tools.bash({ command: "echo third >> ${log}" })`,
+  ].join("\n")
+  const first = await servingKernel(await kernelEnv(nisseHome, [{ tool: { name: "codemode", input: { code } } }]))
+  let client = await RawClient.connect(nisseHome.socket)
+  const conversation = await codeModeConversation(client, nisseHome.dir)
+  await submit(client, conversation, "go")
+  expect(await deadline(readFile(fifo, "utf8"), 10_000, "the second call started")).toBe("ran\n")
+  first.kill("SIGKILL")
+  await first.exited
+  client.close()
+
+  // A script's steps start over in a new process: the restarted model answers the script's result.
+  await servingKernel(await kernelEnv(nisseHome, [{ text: "done" }]))
+  client = await RawClient.connect(nisseHome.socket)
+  const view = watchView(client, conversation)
+  await view.until(settled(1), 20_000)
+  // The first call ran once, before the kill; the cut-off call is not run again, and the script went on after it.
+  expect(readFileSync(log, "utf8")).toBe("first\nthird\n")
+  const [result] = codemodeResult(view.seen())
+  expect(result).toStartWith("Script completed")
+  expect(result).toContain("second: ")
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: done", "run_end: answered"])
+  client.close()
+}, 40_000)
+
+test("codemode-stop: a script stuck in a long built-in stops when its run is interrupted, and the server then exits at once", async () => {
+  const nisseHome = home()
+  const fifo = join(nisseHome.dir, "started.fifo")
+  expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0)
+  // A naive search QuickJS runs without checking for an interrupt: about 40 s on an M-series Mac (receipt: half the
+  // string took 19 s after its abort). A worker in it survives `terminate()` (F19).
+  const code = [
+    `await tools.bash({ command: "echo ran > ${fifo}" })`,
+    `const haystack = "a".repeat(1 << 23)`,
+    `text(haystack.indexOf("a".repeat(1 << 12) + "b"))`,
+  ].join("\n")
+  const server = await servingKernel(await kernelEnv(nisseHome, [{ tool: { name: "codemode", input: { code } } }]))
+  const client = await RawClient.connect(nisseHome.socket)
+  const conversation = await codeModeConversation(client, nisseHome.dir)
+  await submit(client, conversation, "go")
+  expect(await deadline(readFile(fifo, "utf8"), 10_000, "the script's call ran")).toBe("ran\n")
+  // The server burns CPU only once the script searches: a second of it means the worker is inside the search.
+  const before = cpuSeconds(server.pid)
+  await deadline(
+    (async () => {
+      while (cpuSeconds(server.pid) - before < 1) await Bun.sleep(100)
+    })(),
+    10_000,
+    "the script searching",
+  )
+  // Interrupting the run stops the script without waiting for its worker, which goes on searching.
+  const view = watchView(client, conversation)
+  await client.call("conversation/interrupt", { conversation })
+  await view.until(settled(1), 5000)
+  // With the run ended the server stops, and its process ends though the worker still searches.
+  expect(await client.call("server/stop", null)).toMatchObject({ result: null })
+  expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
+  client.close()
+}, 30_000)

@@ -414,6 +414,30 @@ test("approval-wire: a denied call is reported to the model as denied and does n
   client.close()
 })
 
+test("codemode-nested-policy: a script's call that changes things asks first, and a denied one fails in the script without running", async () => {
+  const code = 'try { await tools.bash({ command: "touch made" }) } catch (error) { text("refused: " + error.message) }'
+  await using server = await runningKernelServer([
+    { tool: { name: "codemode", input: { code } } },
+    { text: "all done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: server.home.dir, model: "script-code-mode" }))
+    .result.conversation as string
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "make it")
+  const approval = await waitingApproval(view)
+  expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "bash" })
+  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: false })
+  await view.until(settled(1))
+  const result = toolResults(view).at(-1)
+  expect(result!.text).toStartWith("Script completed")
+  expect(result!.text).toContain("refused: ")
+  expect(result!.text).toContain("denied by bo: the person did not allow this call")
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+  expect(transcript(view.view().entries).slice(-2)).toEqual(["assistant: all done", "run_end: answered"])
+  client.close()
+})
+
 test("tool-read-only, approval-auto: reading calls and conversations started with auto approvals run without asking", async () => {
   await using server = await runningKernelServer([
     { tool: { name: "read", input: { path: "notes.txt" } } },

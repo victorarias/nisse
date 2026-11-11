@@ -1,3 +1,2 @@
-import { unimplemented } from "../../../unimplemented.ts";
-
-export const toCodemodeIdentifier = unimplemented("toCodemodeIdentifier", "codemode-package");
+// Re-exports @nisse/codemode's copy of this module.
+export * from "../../../../codemode/src/sandbox/identifier.ts";

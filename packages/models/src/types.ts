@@ -752,6 +752,11 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
   samplingParams?: SamplingParams
   /** Sampling parameter overrides selected by the effective pi thinking level. */
   samplingParamsByThinkingLevel?: SamplingParamsByThinkingLevel
+  /**
+   * `code_mode_only`: the model takes only a code mode tool, which runs scripts that call the other tools, as ChatGPT's
+   * catalog says of most of its models.
+   */
+  toolMode?: "code_mode_only"
 }
 
 /** Image-generation model: usable with `generateImages()` only. */
