@@ -29,7 +29,13 @@ const EXEC: Tool = {
   constrainedSampling: { type: "grammar", variants: { openai_lark: "start: /[\\s\\S]+/" } },
 }
 
-test("openai-grammar-tools: a grammar tool is offered as a custom tool, its raw input arrives as its one argument and goes back raw", async () => {
+/** `exec` with its raw input in another parameter. */
+const RENAMED: Tool = {
+  ...EXEC,
+  parameters: { type: "object", properties: { source: { type: "string" } }, required: ["source"] },
+}
+
+test("openai-grammar-tools: a grammar tool is offered as a custom tool, its raw input arrives as its one argument and goes back raw, even after the tool changes", async () => {
   const { events, next } = recorded()
   const bodies: Array<any> = []
   const server = Bun.serve({
@@ -102,6 +108,8 @@ test("openai-grammar-tools: a grammar tool is offered as a custom tool, its raw 
               isError: false,
               timestamp: 0,
             },
+            // The tool is redefined after the call: the call still goes back as it was made.
+            { role: "system", content: "", toolsRemoved: [{ name: "exec" }], toolsAdded: [RENAMED], timestamp: 0 },
           ],
         }),
       ),
@@ -111,6 +119,7 @@ test("openai-grammar-tools: a grammar tool is offered as a custom tool, its raw 
       next.input[1],
       { type: "custom_tool_call_output", call_id: "call_1", output: "hi\n" },
     ])
+    expect(bodies[1].tools).toEqual([expect.objectContaining({ type: "custom", name: "exec" })])
   } finally {
     await server.stop(true)
     rmSync(home, { recursive: true, force: true })

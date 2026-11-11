@@ -231,7 +231,7 @@ Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NIS
 
 Package, `packages/models/test/chatgpt.test.ts`:
 
-- openai-grammar-tools: a grammar tool is offered as a custom tool, its raw input arrives as its one argument and goes back raw
+- openai-grammar-tools: a grammar tool is offered as a custom tool, its raw input arrives as its one argument and goes back raw, even after the tool changes
 
 ## Gotchas
 

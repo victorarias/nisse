@@ -106,7 +106,8 @@ const answered = (messages: ReadonlyArray<Message>): ReadonlyArray<Message> => {
   return result
 }
 
-const assistantItems = (message: AssistantMessage, grammarInputs: ReadonlyMap<string, string>) =>
+// By call id: the parameter a call's raw input fills, for a call to a grammar tool.
+const assistantItems = (message: AssistantMessage, calls: ReadonlyMap<string, string>) =>
   message.content.flatMap((block): Array<unknown> => {
     if (block.type === "text") {
       return block.text === ""
@@ -114,7 +115,7 @@ const assistantItems = (message: AssistantMessage, grammarInputs: ReadonlyMap<st
         : [{ type: "message", role: "assistant", content: [{ type: "output_text", text: block.text }] }]
     }
     if (block.type !== "toolCall") return []
-    const property = grammarInputs.get(block.name)
+    const property = calls.get(block.id)
     return property === undefined
       ? [{ type: "function_call", call_id: block.id, name: block.name, arguments: JSON.stringify(block.arguments) }]
       : [
@@ -136,20 +137,52 @@ export const grammarInputs = (tools: ReadonlyArray<Tool>): ReadonlyMap<string, s
     }),
   )
 
+/**
+ * By call id, the parameter each grammar tool call's raw input fills, as the tool was declared when the model made the
+ * call: a tool redefined later, or no longer offered, leaves its earlier calls as they were made.
+ */
+const grammarCalls = (messages: ReadonlyArray<Message>): ReadonlyMap<string, string> => {
+  const calls = new Map<string, string>()
+  const declared = new Map<string, Tool>()
+  for (const message of messages) {
+    if (message.role === "system") {
+      for (const tool of message.toolsRemoved ?? []) declared.delete(tool.name)
+      for (const tool of message.toolsAdded ?? []) declared.set(tool.name, tool)
+    } else if (message.role === "assistant") {
+      for (const block of message.content) {
+        if (block.type !== "toolCall") continue
+        const tool = declared.get(block.name)
+        // A malformed grammar was never offered, so no call was made against it.
+        const property = tool === undefined ? undefined : tryGrammar(tool)?.inputProperty
+        if (property !== undefined) calls.set(block.id, property)
+      }
+    }
+  }
+  return calls
+}
+
+const tryGrammar = (tool: Tool) => {
+  try {
+    return grammarOf(tool)
+  } catch {
+    return undefined
+  }
+}
+
 /** Throws for a tool whose grammar is malformed: a mistake in the tool, which the request reports. */
 export function requestBody(request: Request, context: TranscriptContext): RequestBody {
   const tools = getCurrentTools(context.messages)
-  const inputs = grammarInputs(tools)
+  const calls = grammarCalls(context.messages)
   const input = answered(context.messages).flatMap((message): Array<unknown> => {
     if (message.role === "user") {
       const content = inputContent(message.content)
       return content.length === 0 ? [] : [{ type: "message", role: "user", content }]
     }
-    if (message.role === "assistant") return assistantItems(message, inputs)
+    if (message.role === "assistant") return assistantItems(message, calls)
     if (message.role === "toolResult") {
       return [
         {
-          type: inputs.has(message.toolName) ? "custom_tool_call_output" : "function_call_output",
+          type: calls.has(message.toolCallId) ? "custom_tool_call_output" : "function_call_output",
           call_id: message.toolCallId,
           output: resultOutput(message.content),
         },
