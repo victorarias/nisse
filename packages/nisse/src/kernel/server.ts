@@ -155,7 +155,8 @@ const Handlers = KernelRpcs.toLayer(
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),
       "conversation/interrupt": ({ conversation: id }) =>
         Effect.flatMap(find(id), (conversation) => Effect.orDie(conversation.abort())),
-      "server/stop": () => afterReply(lifetime.stop),
+      // Stops once the runs in flight settle, as the shipping server does; a run is never cut off by a stop.
+      "server/stop": () => Effect.andThen(Effect.ignore(harness.waitForIdle), afterReply(lifetime.stop)),
     })
   }),
 )

@@ -1,5 +1,6 @@
 // The kernel wire (NISSE_KERNEL=1): a real server in process, driven as a raw JSON-RPC client over its socket.
 import { expect, test } from "bun:test"
+import { rmSync } from "node:fs"
 import { deadline, errorTag, RawClient } from "../support/raw.ts"
 import {
   runEnds,
@@ -217,4 +218,34 @@ test("watch-rpc: a window that is not one is refused by name, and the connection
   await view.until(settled(1))
   expect(transcript(view.view().entries)).toEqual(["user: hi", "assistant: still here", "run_end: answered"])
   client.close()
+})
+
+test("server-stop: stopping the server while nisse answers lets the answer finish first", async () => {
+  const home = tempHome()
+  const served = await deadline(
+    servingKernelUntilIdle(home, "1 hour", [{ text: "one two three four", delayMs: 100 }]),
+    5000,
+    "server listening",
+  )
+  let client = await RawClient.connect(home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "count")
+  await view.until(speaking)
+  expect(await client.call("server/stop", null)).toMatchObject({ result: null })
+  await deadline(served.exited, 5000, "server exit")
+  client.close()
+
+  // What the stopped server committed, as a fresh server shows it: the whole answer, and its run's end.
+  await using again = await runningKernelServer([], { home })
+  client = await RawClient.connect(again.home.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(transcript(after.view().entries)).toEqual([
+    "user: count",
+    "assistant: one two three four",
+    "run_end: answered",
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
 })

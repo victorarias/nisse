@@ -92,6 +92,7 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 
 - server-idle-exit: the server exits once no client is connected and nothing is running
 - server-stop: stopping the server answers the caller, then the server exits
+- server-stop: stopping the server while nisse answers lets the answer finish first
 
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 

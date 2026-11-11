@@ -28,14 +28,18 @@ export const runningKernelServer = async (script: ReadonlyArray<ScriptStep> = []
 }
 
 /** A kernel server serving `home` until its lifetime ends; `exited` resolves when it has. */
-export const servingKernelUntilIdle = async (home: Home, idleGrace: Duration.Input) => {
+export const servingKernelUntilIdle = async (
+  home: Home,
+  idleGrace: Duration.Input,
+  script: ReadonlyArray<ScriptStep> = [],
+) => {
   const listening = Promise.withResolvers<void>()
   const exited = Effect.runPromise(
     Effect.gen(function* () {
       const lifetime = yield* Lifetime
       listening.resolve()
       yield* lifetime.ended
-    }).pipe(Effect.provide(kernelServerLayer(home, { idleGrace, script: [] })), Effect.scoped),
+    }).pipe(Effect.provide(kernelServerLayer(home, { idleGrace, script })), Effect.scoped),
   )
   await Promise.race([listening.promise, exited])
   return { exited }
