@@ -19,7 +19,7 @@ export const workspaceInstructions = (home: Home, instances: ReadonlyMap<string,
             const provider = agent.model?.provider
             if (provider === undefined || instances.get(provider)?.kind !== "openai") return undefined
             const cwd = agent.cwd ?? home.dir
-            const text = `The working directory is ${cwd}.\n${agentsMdInstructions(cwd, home.dir)}${skillsInstructions(cwd, home.dir)}`
+            const text = `The working directory is ${cwd}.\n${agentsMdInstructions(cwd, home.dir)}${skillsInstructions(cwd, home.dir, "read")}`
             return text.trimEnd()
           }),
       },

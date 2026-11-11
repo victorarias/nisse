@@ -7,6 +7,7 @@ import { Effect, Layer, type Scope } from "effect"
 import { expandHome, type HomeConfig, type Instance } from "../config.ts"
 import type { Home } from "../home.ts"
 import instructions from "../instructions.md" with { type: "text" }
+import kernelInstructions from "../kernel/instructions.md" with { type: "text" }
 import { defaultLimits } from "../agents.ts"
 import { Providers, type Driver } from "../provider.ts"
 import { claudeDriver, type ClaudeOptions } from "./claude/index.ts"
@@ -67,9 +68,10 @@ export const claudeKind = (base: ClaudeOptions): ProviderKind<Instance> => ({
   open: (id, settings) => Effect.succeed(accountOf(id, claudeDriver(claudeInstance(base, settings)))),
 })
 
+/** ChatGPT on the kernel, told the kernel's instructions: they name the kernel's tools, not the shipping server's. */
 export const openAiKind = (options: (id: string) => OpenAiOptions): ProviderKind<Instance> => ({
   kind: "openai",
-  open: (id) => chatGptInstance(id, options(id)),
+  open: (id) => chatGptInstance(id, { ...options(id), instructions: kernelInstructions.trimEnd() }),
 })
 
 /** How each Claude Code instance of a home is started, by instance id. */

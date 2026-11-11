@@ -115,9 +115,9 @@ export const skillsFor = (cwd: string, home: string): Array<Skill> => {
   return [...skills.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
-const SKILLS = `# Skills
+const skillsHeading = (read: string) => `# Skills
 
-A skill is a folder of instructions for one kind of task, in a \`SKILL.md\` file. When a task matches a skill's description, \`Read\` its \`SKILL.md\` before you start, and follow it. When a message names a skill with \`/name\` or \`$name\`, the skill's \`SKILL.md\` comes with the message; follow it. Relative paths in a skill are relative to its folder.
+A skill is a folder of instructions for one kind of task, in a \`SKILL.md\` file. When a task matches a skill's description, \`${read}\` its \`SKILL.md\` before you start, and follow it. When a message names a skill with \`/name\` or \`$name\`, the skill's \`SKILL.md\` comes with the message; follow it. Relative paths in a skill are relative to its folder.
 
 `
 
@@ -127,12 +127,15 @@ export const agentsMdInstructions = (cwd: string, home: string) =>
     .map((file) => `\n# AGENTS.md instructions from ${file.path}\n\n${file.text.trimEnd()}\n`)
     .join("")
 
-/** What ChatGPT is told of the skills a conversation in `cwd` can use, or `""` when it has none. */
-export const skillsInstructions = (cwd: string, home: string) => {
+/**
+ * What ChatGPT is told of the skills a conversation in `cwd` can use, or `""` when it has none. `read` names the tool
+ * that reads a file, as the server offers it.
+ */
+export const skillsInstructions = (cwd: string, home: string, read: string) => {
   const skills = skillsFor(cwd, home)
   return skills.length === 0
     ? ""
-    : `\n${SKILLS}${skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.path})\n`).join("")}`
+    : `\n${skillsHeading(read)}${skills.map((skill) => `- ${skill.name}: ${skill.description} (file: ${skill.path})\n`).join("")}`
 }
 
 const skillName = (text: string) => (text.match(/^[\p{L}\p{N}\-_.:]*/u)?.[0] ?? "").replace(/[.:]+$/, "")

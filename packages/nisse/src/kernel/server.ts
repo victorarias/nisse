@@ -44,7 +44,7 @@ import { countStops, restartLimitMessage } from "./restarts.ts"
 import { writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
 import { NisseTools } from "./tools.ts"
-import { AGENTS_EXTENSION, agentTools } from "./agents.ts"
+import { AGENTS_EXTENSION, agentTools, interruptTree } from "./agents.ts"
 import { type KernelExtensions, openKernelExtensions, StatusLinesDoc } from "./extensions.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
 import { workspaceInstructions } from "./workspace.ts"
@@ -299,7 +299,7 @@ const Handlers = KernelRpcs.toLayer(
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),
       "conversation/interrupt": ({ conversation: id }) =>
-        Effect.flatMap(find(id), (conversation) => Effect.orDie(conversation.abort())),
+        Effect.flatMap(find(id), (conversation) => Effect.orDie(interruptTree(harness, conversation.id))),
       "approval/resolve": ({ conversation: id, approval, author, allow }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
