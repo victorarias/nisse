@@ -1,6 +1,5 @@
-import type { AuthMethod } from "@nisse/protocol"
+import { ProviderError, type SignInFlow, type SignInMethod } from "../kind.ts"
 import { Deferred, Effect } from "effect"
-import { ProviderError, type SignInFlow } from "../../provider.ts"
 import { CLIENT_ID, errorReason, fromTokens, requestTokens } from "./credentials.ts"
 
 export const CALLBACK_PORT = 1455
@@ -197,7 +196,7 @@ const deviceCode = (server: SignInServer, flow: SignInFlow) =>
     return yield* failure("the device code expired before anyone entered it")
   })
 
-export const signIn = (server: SignInServer, method: AuthMethod, flow: SignInFlow) =>
+export const signIn = (server: SignInServer, method: SignInMethod, flow: SignInFlow) =>
   Effect.gen(function* () {
     const tokens =
       method === "browser"

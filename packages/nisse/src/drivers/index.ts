@@ -1,4 +1,5 @@
 import { type ProviderInstance, type ProviderKind, scriptInstance, type TranscriptContext } from "@nisse/models"
+import { chatGptInstance } from "@nisse/models/chatgpt"
 import type { ModelSelection } from "@nisse/protocol"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -68,7 +69,7 @@ export const claudeKind = (base: ClaudeOptions): ProviderKind<Instance> => ({
 
 export const openAiKind = (options: (id: string) => OpenAiOptions): ProviderKind<Instance> => ({
   kind: "openai",
-  open: (id) => Effect.map(openAiDriver(options(id)), (driver) => accountOf(id, driver)),
+  open: (id) => chatGptInstance(id, options(id)),
 })
 
 /**
