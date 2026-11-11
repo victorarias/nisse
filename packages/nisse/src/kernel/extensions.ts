@@ -15,6 +15,7 @@ import {
   ToolTask,
 } from "@nisse/harness"
 import { type ConversationId, defineDoc, type JsonObject, type Tx } from "@nisse/kernel"
+import { rootConversation } from "@nisse/tools"
 import { Cause, Effect, Exit, Scope, Semaphore } from "effect"
 import type { ModelSelection } from "@nisse/protocol"
 import { STATUS_LINES_KIND, TOAST_KIND } from "@nisse/wire"
@@ -105,18 +106,19 @@ const fromExtensionTool = (tool: ExtensionTool): ToolRegistration => ({
   parameters: tool.spec.parameters as object,
   ...(tool.readOnly ? {} : { asks: true as const }),
   execute: (args: unknown, api: ToolExecutionApi) =>
-    Effect.map(
-      tool.run(args, {
+    Effect.gen(function* () {
+      const root = yield* Effect.orDie(rootConversation(api))
+      const outcome = yield* tool.run(args, {
         call: api.callId as never,
         cwd: api.env?.cwd ?? process.cwd(),
-        env: { NISSE_ROOT_CONVERSATION: String(api.conversationId) },
+        env: { NISSE_ROOT_CONVERSATION: String(root) },
         output: (text) => Effect.sync(() => api.output(text)),
-      }),
-      (outcome): ToolExecutionResult => ({
+      })
+      return {
         output: outcome.output === "" ? [] : [{ type: "text", text: outcome.output }],
         isError: outcome.error,
-      }),
-    ),
+      } satisfies ToolExecutionResult
+    }),
 })
 
 /**

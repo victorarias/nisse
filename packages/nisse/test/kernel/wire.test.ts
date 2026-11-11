@@ -882,6 +882,46 @@ test("execute-before, execute-after, toast, status-line: an extension can refuse
   rmSync(home.dir, { recursive: true })
 })
 
+test("subagent-root-env, tool-root-env: an extension's tool run by a subagent knows the conversation people started", async () => {
+  const home = homeWithExtensions({
+    "rooted.ts": `import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    tools.add(
+      Tool.make({
+        name: "Root",
+        description: "Says which conversation people started",
+        input: Schema.Struct({}),
+        readOnly: true,
+        run: (_, context) => Effect.succeed(Tool.ok("root=" + context.env.NISSE_ROOT_CONVERSATION)),
+      }),
+    )
+  }),
+)`,
+  })
+  await using server = await runningKernelServer(
+    [
+      { tool: { name: "spawn_agent", input: { task_name: "envy", message: "show your root", fork_turns: "none" } } },
+      { tool: { name: "wait_agent", input: { timeout_ms: 600000 } } },
+      { text: "envy answered" },
+      { agent: "/root/envy", tool: { name: "Root", input: {} } },
+      { agent: "/root/envy", text: "shown" },
+    ],
+    { home },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate")
+  await view.until(settled(1), 20_000)
+  const child = watchView(client, spawned(view, "/root/envy"))
+  await child.until(() => toolResults(child).length > 0)
+  expect(toolResults(child).map((result) => result.text)).toEqual([`root=${conversation}`])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+}, 30_000)
+
 test("extensions-failed, hook-failure: an extension that fails to load is listed with why, while the others load and run", async () => {
   const home = homeWithExtensions(
     {
