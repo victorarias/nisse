@@ -127,8 +127,13 @@ test("answer-failed: a model failure is recorded after what was said and the con
 })
 
 test("wire-dropped: a client that stops reading is dropped while the others keep up", async () => {
-  const prompts = 1500
-  await using server = await runningKernelServer(Array.from({ length: prompts }, () => ({ text: "ok" })))
+  // A client that reads holds at most 34 changes with 100 prompts submitted at once; 200 prompts make about 600.
+  const connectionQueue = 128
+  const prompts = 200
+  await using server = await runningKernelServer(
+    Array.from({ length: prompts }, () => ({ text: "ok" })),
+    { connectionQueue },
+  )
   const reader = await RawClient.connect(server.home.socket)
   const stalled = await RawClient.connect(server.home.socket, { ack: false })
   const conversation = await start(reader)
@@ -139,14 +144,14 @@ test("wire-dropped: a client that stops reading is dropped while the others keep
     await Promise.all(Array.from({ length: 100 }, (_, i) => submit(reader, conversation, `prompt ${batch}-${i}`)))
   }
   // Every run ends while the stalled client holds the server's queue full: its commits never waited for it.
-  await live.until(settled(prompts), 30_000)
+  await live.until(settled(prompts))
   stalled.resumeAcks(behind.id)
   const dropped = await deadline(behind.ended, 5000, "stalled client told it fell behind")
   expect(errorTag(dropped)).toBe("FellBehind")
   expect(behind.items).toHaveLength(1)
   reader.close()
   stalled.close()
-}, 60_000)
+})
 
 test("wire-hangup: a client that hangs up while the server still writes to it is not logged as an error", async () => {
   await using server = await runningKernelServer([{ text: "long ".repeat(5000) }])
