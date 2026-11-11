@@ -79,8 +79,10 @@ export class Setup extends Context.Service<
       const scope = yield* Effect.scope
       const flows = new Map<string, Flow>()
       // Every change to `flows` happens under this lock and only after the log recorded it: what any connection reads
-      // from memory is recorded, and the log holds states in the order they happened.
-      const recording = yield* Semaphore.make(1)
+      // from memory is recorded, and the log holds states in the order they happened. Once the lock is held the change
+      // runs to its end: a recorded state is always installed, even when the caller that asked for it goes away.
+      const lock = yield* Semaphore.make(1)
+      const recording = <A, E, R>(change: Effect.Effect<A, E, R>) => lock.withPermits(1)(Effect.uninterruptible(change))
 
       const driverOf = (provider: string) =>
         Effect.suspend(() => {
@@ -100,7 +102,7 @@ export class Setup extends Context.Service<
         )
 
       const update = (provider: string, flow: string, change: Partial<AuthState>) =>
-        recording.withPermits(1)(
+        recording(
           Effect.suspend(() => {
             const running = flows.get(provider)
             if (!running || running.state.flow !== flow || authEnded(running.state.phase)) return Effect.succeed(false)
@@ -115,7 +117,7 @@ export class Setup extends Context.Service<
 
       /** Records `state` as the provider's sign-in and installs it, with no flow of its own to run. */
       const settle = (state: AuthState) =>
-        recording.withPermits(1)(
+        recording(
           Effect.gen(function* () {
             const responses = yield* Queue.unbounded<AuthResponse>()
             yield* log.record(state)
@@ -186,7 +188,7 @@ export class Setup extends Context.Service<
               })
             }
             // A second start while one runs gets that one: the check and the install share the lock.
-            return yield* recording.withPermits(1)(
+            return yield* recording(
               Effect.gen(function* () {
                 const running = flows.get(provider)
                 if (running && !authEnded(running.state.phase)) return running.state
