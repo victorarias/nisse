@@ -7,7 +7,7 @@ resubscribes from the last commit it saw and misses nothing.
 ## Sub-features
 
 - `reopen-hint` prints `resume with: nisse --conversation <id>` on `^C`.
-- `reopen-tui` [pending tui-views] reopens the conversation with its transcript.
+- `reopen-tui` reopens the conversation with its transcript.
 - `reopen-continue` continues a reopened conversation with a new prompt.
 - `resume-since` resubscribes with `sinceSeq` and gets only later commits.
 - `chosen-id` [pending cli-kernel] opens the TUI on an id that names no conversation yet, starting
@@ -58,8 +58,13 @@ Preconditions:
 ## Contexts
 
 - **Server restart.** A reopened conversation shows the same committed transcript.
+- **On the kernel.** In a run made with `drive.ts r up --kernel`, the TUI speaks the kernel wire and every TUI step above drives the same way; a script names the kernel's tools in lower case, such as `bash` and `read`, so a call shows as `▸ bash(<command>)`.
 
 ## Tests
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- reopen-hint, reopen-tui: quitting prints the command that reopens the conversation, and it opens with its transcript
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

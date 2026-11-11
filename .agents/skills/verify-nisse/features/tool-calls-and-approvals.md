@@ -11,10 +11,10 @@ conversation was started with `--auto`, which runs every call without asking.
 
 - `tool-grep-lines` `Grep` reports only the lines a file has, whatever its line endings.
 - `tool-read-only` runs a read-only call without asking and shows its output.
-- `approval-ask` [pending tui-views] shows `allow this call?` and `◆ WAITING` while a call waits.
+- `approval-ask` shows `allow this call?` and `◆ WAITING` while a call waits.
 - `approval-allow-tui` allows with `^Y`: `✓ allowed by ada`, then the call's
   output.
-- `approval-deny-tui` [pending tui-views] denies with `^N`: `✗ denied by ada` and the denial as
+- `approval-deny-tui` denies with `^N`: `✗ denied by ada` and the denial as
   the call's result; the run goes on.
 - `approval-wire` answers with `approval/resolve`; a second answer is not
   accepted.
@@ -146,6 +146,11 @@ Preconditions:
 - **Provider.** On Claude, Nisse asks before the calls Claude Code would ask about.
 
 ## Tests
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- approval-ask, approval-allow-tui: nisse asks before a command runs, ctrl+y allows it and its output shows under the call
+- approval-deny-tui: ctrl+n denies a call, the denial shows as its result and the run goes on
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

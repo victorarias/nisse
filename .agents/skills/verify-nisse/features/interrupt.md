@@ -63,6 +63,10 @@ Preconditions:
 
 ## Tests
 
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- interrupt-tui: escape stops nisse mid-answer and the answer shows it was interrupted
+
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted

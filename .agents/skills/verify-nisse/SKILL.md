@@ -95,8 +95,10 @@ and Claude, as the `claude.run` task (see [Claude](features/claude.md)).
 `rpc`, `watch`, `watch-auth`, `watch-status`, `serve`, `kill-server`, `idle`, `doctor` and
 `down` work in such a run; `watch` follows the conversation's view (see
 [Watches and views](features/views.md)) and `--until run_end` waits for a
-`nisse.run_end` entry. The TUI and `nisse exec` refuse,
-naming the step that brings them.
+`nisse.run_end` entry. The TUI runs on the kernel too, drawing the
+conversation's view: every `tui` step drives it, and a script names the
+kernel's tools in lower case (`bash`, `read`). `nisse exec` refuses, naming
+the step that brings it.
 
 Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its
@@ -130,8 +132,8 @@ to settle and stops it, and the next client starts one on the new code.
 ## Drive
 
 - **TUI.** `tui type <text>` types literally; `tui key <keys>` presses tmux
-  keys: `Enter` sends, `S-Enter` or `M-Enter` adds a line (`C-j` sends today, a
-  known bug), `Escape` stops the run, `Tab`
+  keys: `Enter` sends, `M-Enter` adds a line (`S-Enter` reaches the TUI as a
+  plain Enter through tmux, and `C-j` sends today, a known bug), `Escape` stops the run, `Tab`
   switches between queueing and steering while Nisse works, `C-y` allows the
   call Nisse asks about and `C-n` denies it, `C-l` signs in to a signed-out
   provider and `Escape` cancels it, `C-c` quits. Typing `/model` and `Enter`

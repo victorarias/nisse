@@ -5,9 +5,9 @@ and its server, use no CPU.
 
 ## Sub-features
 
-- `idle-tui` [pending tui-views] keeps the TUI's CPU time flat while nothing changes.
+- `idle-tui` keeps the TUI's CPU time flat while nothing changes.
 - `idle-server` keeps the server's CPU time flat while no run works.
-- `idle-closed` [pending tui-views] ends the TUI when its terminal closes, so nothing keeps the
+- `idle-closed` ends the TUI when its terminal closes, so nothing keeps the
   server from its idle exit.
 
 ## How to get to it
@@ -54,6 +54,11 @@ Preconditions:
   The TUI does not run on the kernel yet.
 
 ## Tests
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- tui-hangup, idle-closed: closing the terminal ends nisse instead of leaving it running unseen
+- idle-tui: the TUI draws nothing and uses no CPU while nothing changes
 
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 

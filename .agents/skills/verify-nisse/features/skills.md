@@ -32,7 +32,7 @@ scripted conversations list none and carry none.
   is not part of the name, and a name nisse does not know carries nothing.
 - `skills-snapshot` keeps the `SKILL.md` text as it was when the message was
   placed; editing the file later changes later messages only.
-- `skills-tui` [pending tui-views] shows `with <name>, <name>` under the message in every TUI and
+- `skills-tui` shows `with <name>, <name>` under the message in every TUI and
   after a reopen.
 - `start-instructions` keeps the instructions a conversation started with
   (`--instructions`, or `instructions` on `conversation/start`) on the
@@ -184,6 +184,10 @@ Preconditions:
   the override instead of `AGENTS.md`.
 
 ## Tests
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- skills-tui: a message that names a skill shows which skills came with it, also after a reopen
 
 Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
 

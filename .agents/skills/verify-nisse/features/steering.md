@@ -9,7 +9,7 @@ run, instead of waiting for the run to end.
 
 - `steer-toggle` switches the prompt panel between `QUEUE · tab` and
   `STEER · tab` with `Tab` while Nisse works.
-- `steer-show` [pending tui-views] shows a waiting steer as `steering · <text>`, to every client.
+- `steer-show` shows a waiting steer as `steering · <text>`, to every client.
 - `steer-place` places the steer after the step that was running and goes on
   in the same run.
 - `steer-wire` steers with `conversation/submit` and `"steer": true`.
@@ -152,8 +152,13 @@ Preconditions:
 ## Contexts
 
 - **Provider.** With calls running, a steer reaches the model after all of them, before its next answer.
+- **On the kernel.** In a run made with `drive.ts r up --kernel`, the TUI speaks the kernel wire and every TUI step above drives the same way; a script names the kernel's tools in lower case, such as `bash` and `read`, so a call shows as `▸ bash(<command>)`.
 
 ## Tests
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- steer-toggle, steer-show: tab switches a prompt sent mid-run from queueing to steering, and the steer shows until it lands
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

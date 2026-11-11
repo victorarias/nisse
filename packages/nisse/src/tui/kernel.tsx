@@ -116,8 +116,9 @@ interface Followed {
   readonly items: Accessor<ReadonlyArray<TranscriptItem>>
   readonly docs: Accessor<Docs>
   readonly loaded: Accessor<boolean>
-  readonly loadEarlier: () => void
-  readonly fillGap: (gap: TranscriptGap) => void
+  /** Loads the page before the oldest entry held; `inserting` runs just before a page that adds entries shows. */
+  readonly loadEarlier: (inserting: () => void) => void
+  readonly fillGap: (gap: TranscriptGap, inserting: () => void) => void
 }
 
 /** What a conversation's entries say about its calls, rebuilt when its items change. */
@@ -206,10 +207,17 @@ const follow = (
       Effect.catchTag("NoSuchConversation", () => Effect.asVoid(Deferred.fail(done, `no conversation ${id}`))),
     )
     yield* Effect.forkIn(rewatch, scope)
-    const load = (effect: Effect.Effect<TranscriptView, unknown>) =>
+    // A load that fails leaves its marker, and scrolling to it again loads again.
+    const load = (effect: Effect.Effect<TranscriptView, unknown>, inserting: () => void) =>
       Effect.runFork(
         effect.pipe(
-          Effect.tap((next) => Effect.sync(() => show(next))),
+          Effect.tap((next) =>
+            Effect.sync(() => {
+              if (next === untrack(view)) return
+              inserting()
+              show(next)
+            }),
+          ),
           Effect.ignore,
         ),
       )
@@ -223,8 +231,8 @@ const follow = (
       items,
       docs,
       loaded: () => view() !== undefined,
-      loadEarlier: () => load(transcript.loadEarlier),
-      fillGap: (gap) => load(transcript.fillGap(gap)),
+      loadEarlier: (inserting) => load(transcript.loadEarlier, inserting),
+      fillGap: (gap, inserting) => load(transcript.fillGap(gap), inserting),
     }
     return followed
   })
@@ -538,7 +546,7 @@ const Marker = (props: { text: string; register: (renderable: Renderable | undef
 
 const Transcript = (props: { followed: Followed; tree: Tree }) => {
   let box: ScrollBoxRenderable | undefined
-  const markers = new Map<TranscriptItem, { renderable: Renderable; load: () => void }>()
+  const markers = new Map<TranscriptItem, { renderable: Renderable; load: (inserting: () => void) => void }>()
   /** The distance from the bottom to keep while a load inserts entries above the rows in view. */
   let anchor: number | undefined
   // Measured inside the content, which a scroll moves as a whole, against where the scroll has it now.
@@ -550,8 +558,9 @@ const Transcript = (props: { followed: Followed; tree: Tree }) => {
   const check = () => {
     for (const marker of markers.values()) {
       if (!visible(marker.renderable)) continue
-      if (box) anchor = box.scrollHeight - box.scrollTop
-      marker.load()
+      marker.load(() => {
+        if (box) anchor = box.scrollHeight - box.scrollTop
+      })
     }
   }
   const resized = () => {
@@ -569,10 +578,11 @@ const Transcript = (props: { followed: Followed; tree: Tree }) => {
       resized()
     }
   }
-  const register = (item: TranscriptItem, load: () => void) => (renderable: Renderable | undefined) => {
-    if (renderable) markers.set(item, { renderable, load })
-    else markers.delete(item)
-  }
+  const register =
+    (item: TranscriptItem, load: (inserting: () => void) => void) => (renderable: Renderable | undefined) => {
+      if (renderable) markers.set(item, { renderable, load })
+      else markers.delete(item)
+    }
   const rows = createMemo(() => props.followed.items().filter(drawn))
   const index = createMemo(() => indexOf(props.followed.items()))
   const live = () => textOf(props.followed.docs()["pi.live"]?.generation?.message?.content)
@@ -596,7 +606,10 @@ const Transcript = (props: { followed: Followed; tree: Tree }) => {
             </Match>
             <Match when={item.kind === "gap" && item}>
               {(gap) => (
-                <Marker text="… missing messages" register={register(item, () => props.followed.fillGap(gap()))} />
+                <Marker
+                  text="… missing messages"
+                  register={register(item, (inserting) => props.followed.fillGap(gap(), inserting))}
+                />
               )}
             </Match>
             <Match when={item.kind === "entry" && item.entry}>
