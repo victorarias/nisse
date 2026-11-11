@@ -11,6 +11,7 @@ import { readScript } from "./drivers/script.ts"
 import { readHomeConfig } from "./config.ts"
 import { login, logout } from "./login.ts"
 import { protocolSchema } from "./schema.ts"
+import { kernelClientLayer } from "./kernel/client.ts"
 import { serveKernel } from "./kernel/server.ts"
 import { serve } from "./server.ts"
 import { VERSION } from "./version.ts"
@@ -266,6 +267,21 @@ const nisse = Command.make(
   },
   Effect.fn(function* ({ prompt, conversation, ...flags }) {
     const home = defaultHome()
+    if (process.env.NISSE_KERNEL === "1") {
+      const { kernelTui } = yield* Effect.promise(async () => {
+        await import("@opentui/solid/preload")
+        return import("./tui/kernel.tsx")
+      })
+      return yield* kernelTui(Option.getOrUndefined(conversation), startWith(flags), Option.getOrUndefined(prompt)).pipe(
+        Effect.provide(kernelClientLayer(home)),
+        Effect.catchIf(
+          (error): error is ServerFailed => error instanceof ServerFailed,
+          (error) => refuse(error.output),
+        ),
+        Effect.scoped,
+        Effect.catchTag("UnknownProvider", unknownProvider),
+      )
+    }
     const { tui } = yield* Effect.promise(async () => {
       await import("@opentui/solid/preload")
       return import("./tui/main.tsx")

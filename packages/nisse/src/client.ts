@@ -120,18 +120,19 @@ const openSocket = (home: Home) =>
     ),
   )
 
-export const clientLayer = (home: Home) =>
-  Layer.effect(Client, RpcClient.make(NisseRpcs)).pipe(
-    Layer.provide(
-      RpcClient.layerProtocolSocket({
-        pingInterval: Duration.infinity,
-        retryPolicy: Schedule.spaced("50 millis"),
-      }),
-    ),
+/** JSON-RPC over the home's socket, starting its server when none runs, and reconnecting when the socket drops. */
+export const protocolLayer = (home: Home) =>
+  RpcClient.layerProtocolSocket({
+    pingInterval: Duration.infinity,
+    retryPolicy: Schedule.spaced("50 millis"),
+  }).pipe(
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
     Layer.provide(Layer.effect(Socket.Socket, BunSocket.fromDuplex(openSocket(home)))),
     Layer.provide(Layer.effectDiscard(serverReady(home))),
   )
+
+export const clientLayer = (home: Home) =>
+  Layer.effect(Client, RpcClient.make(NisseRpcs)).pipe(Layer.provide(protocolLayer(home)))
 
 export const follow = (
   client: Client["Service"],
