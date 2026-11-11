@@ -17,6 +17,7 @@ import type { Home } from "../../src/home.ts"
 import { openAiOptions, type ProviderOptions } from "../../src/drivers/index.ts"
 import { kernelServerLayer } from "../../src/kernel/server.ts"
 import { Lifetime } from "../../src/lifetime.ts"
+import { defaultClaude } from "./claude.ts"
 import { deadline, RawClient, type Reply } from "./raw.ts"
 import { type ServerOptions, tempHome } from "./server.ts"
 import { nisse, nisseEnv } from "./terminal.ts"
@@ -29,7 +30,7 @@ const testProviders = (
 ): ProviderOptions => ({
   script,
   openai: (options.openai ?? openAiOptions)(home),
-  claude: options.claude ?? {},
+  claude: options.claude ?? defaultClaude(home.dir),
   preferred: "script",
   config: options.config ?? {},
 })

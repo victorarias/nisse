@@ -4,6 +4,16 @@ import type { ClaudeOptions } from "../../src/drivers/claude/index.ts"
 import { deadline } from "./raw.ts"
 
 const FIXTURES = join(import.meta.dir, "../../../../fixtures/claude")
+const EXECUTABLE = join(import.meta.dir, "fake-claude")
+
+/**
+ * The Claude Code a test's server has unless the test brings its own: the fake `claude`, probing as signed in with its
+ * models. No test reaches a real Claude, whose start takes seconds.
+ */
+export const defaultClaude = (home: string): ClaudeOptions => ({
+  executable: EXECUTABLE,
+  env: { FAKE_CLAUDE_FIXTURE: join(FIXTURES, "models.ndjson"), FAKE_CLAUDE_DIR: join(home, "fake-claude") },
+})
 
 export class FakeClaude {
   readonly dir = mkdtempSync("/tmp/nisse-claude-")
@@ -31,7 +41,7 @@ export class FakeClaude {
 
   get options(): ClaudeOptions {
     return {
-      executable: join(import.meta.dir, "fake-claude"),
+      executable: EXECUTABLE,
       env: { FAKE_CLAUDE_FIXTURE: this.#fixture, FAKE_CLAUDE_DIR: this.dir },
     }
   }
