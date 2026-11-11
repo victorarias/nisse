@@ -504,6 +504,7 @@ Preconditions:
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - subagent-exec: nisse exec on the kernel without --auto denies the calls its subagents would ask about too
+- subagent-exec: nisse exec on the kernel continuing a subagent denies the calls of the subagents it starts
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 

@@ -479,6 +479,28 @@ test("subagent-exec: nisse exec on the kernel without --auto denies the calls it
   expect(result.stderr).toContain("denied bash(echo ran): exec cannot ask")
 }, 30_000)
 
+test("subagent-exec: nisse exec on the kernel continuing a subagent denies the calls of the subagents it starts", async () => {
+  const nisseHome = home()
+  // A subagent may start its own only past the default depth of 1.
+  await Bun.write(`${nisseHome.dir}/config.toml`, "[agents]\nmax_depth = 2\n")
+  const env = await kernelEnv(nisseHome, [
+    { tool: { name: "spawn_agent", input: { task_name: "kid", message: "get ready" } } },
+    { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
+    { text: "the kid is ready" },
+    { agent: "/root/kid", text: "ready" },
+    { agent: "/root/kid", tool: { name: "spawn_agent", input: { task_name: "grand", message: "go" } } },
+    { agent: "/root/kid", tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
+    { agent: "/root/kid", text: "the grandchild is done" },
+    { agent: "/root/kid/grand", tool: { name: "bash", input: { command: "echo ran" } } },
+    { agent: "/root/kid/grand", text: "could not run it" },
+  ])
+  expect(await finished(nisse(["exec", "delegate"], env))).toMatchObject({ code: 0, stdout: "the kid is ready\n" })
+  const kid = (await conversationsOf(nisseHome)).find((info) => (info as { lineage?: unknown }).lineage)!.id
+  const result = await finished(nisse(["exec", "-c", kid, "go on"], env))
+  expect(result).toMatchObject({ code: 0, stdout: "the grandchild is done\n" })
+  expect(result.stderr).toContain("denied bash(echo ran): exec cannot ask")
+}, 30_000)
+
 const DECLINE =
   "Run the bash command `touch declined.txt` with the Bash tool. If it is not allowed, reply with exactly: declined"
 const MAKE = "Run the bash command `touch made.txt` with the Bash tool, then reply with exactly: made"

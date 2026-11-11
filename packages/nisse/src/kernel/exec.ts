@@ -113,13 +113,18 @@ export const execOnKernel = Effect.fnUntraced(function* (
   const watching = <E, R>(effect: Effect.Effect<void, E, R>) =>
     Effect.forkScoped(Effect.catchCause(Effect.orDie(effect), (cause) => Deferred.failCause(failed, cause)))
 
-  // Subagents ask in their own conversations, so exec follows every conversation of the tree: it looks again when the
-  // tree's status changes, as when a subagent waits on a person, and when a followed conversation adds entries, as when
-  // it starts one. A subagent's watch ends when exec does.
+  // Subagents ask in their own conversations, so exec follows every conversation under its own, which may itself be a
+  // subagent: it looks again when the status of the tree it is in changes, as when a subagent waits on a person, and
+  // when a followed conversation adds entries, as when it starts one. A subagent's watch ends when exec does.
+  const listed = yield* client["conversation/list"]()
+  const root = listed.find((info) => info.id === conversation)?.lineage?.root ?? conversation
   const followed = new Set([conversation])
   const discover: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
-    for (const info of yield* Effect.orDie(client["conversation/list"]())) {
-      if (info.lineage?.root !== conversation || followed.has(info.id)) continue
+    const conversations = yield* Effect.orDie(client["conversation/list"]())
+    const parents = new Map(conversations.map((info) => [info.id, info.lineage?.parent]))
+    const under = (id: string | undefined): boolean => id !== undefined && (followed.has(id) || under(parents.get(id)))
+    for (const info of conversations) {
+      if (followed.has(info.id) || !under(info.lineage?.parent)) continue
       followed.add(info.id)
       yield* watching(
         following(client["conversation/watch"]({ conversation: info.id })).pipe(
@@ -132,7 +137,7 @@ export const execOnKernel = Effect.fnUntraced(function* (
   })
   yield* watching(
     client["status/watch"]().pipe(
-      Stream.filter((item) => item._tag === "trees" || item.conversation === conversation),
+      Stream.filter((item) => item._tag === "trees" || item.conversation === root),
       Stream.runForEach(() => discover),
     ),
   )
