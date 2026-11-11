@@ -15,7 +15,7 @@ export const compactionStatus = H.compactionStatus;
 export const cutOffCount = H.cutOffCount;
 export const cutOffTooOften = (task: Any, runtime: Any): boolean => H.cutOffTooOften(task, runtime.settings.restartLimit);
 export const salvageable = (task: Any, runtime: Any): boolean => H.salvageable(task, runtime.settings.restartLimit);
-export const endRun = (tx: Any, live: Any, taskId: Any, end: Any): Promise<void> => run(H.endRun(tx.kernel, live, taskId, end));
+export const endRun = (tx: Any, live: Any, taskId: Any, end: Any): Promise<void> => run(H.endRun(tx.kernel, live, taskId, end, undefined));
 export const failCompactionStatus = H.failCompactionStatus;
 export const finishSlot = H.finishSlot;
 export const removeCompactionStatus = H.removeCompactionStatus;

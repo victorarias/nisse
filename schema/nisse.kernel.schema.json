@@ -182,6 +182,48 @@
                         "type": "integer",
                         "minimum": -9007199254740991,
                         "maximum": 9007199254740991
+                      },
+                      "parent": {
+                        "type": "object",
+                        "properties": {
+                          "conversationId": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "at": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "conversationId",
+                          "at"
+                        ],
+                        "additionalProperties": true,
+                        "description": "The conversation this one was forked from, and the last entry it inherits."
+                      },
+                      "owner": {
+                        "type": "object",
+                        "properties": {
+                          "conversationId": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "taskId": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "conversationId",
+                          "taskId"
+                        ],
+                        "additionalProperties": true,
+                        "description": "The task that created this conversation, and that task's conversation."
                       }
                     },
                     "required": [
@@ -290,6 +332,9 @@
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
           {
+            "$ref": "#/$defs/InvalidWindowEncoded"
+          },
+          {
             "$ref": "#/$defs/FellBehindEncoded"
           }
         ]
@@ -348,6 +393,25 @@
       "required": [
         "_tag",
         "conversation"
+      ],
+      "additionalProperties": true
+    },
+    "InvalidWindowEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "InvalidWindow"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
       ],
       "additionalProperties": true
     },

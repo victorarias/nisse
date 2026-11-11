@@ -281,7 +281,8 @@ export const endRun = (
   live: Draft<LiveState>,
   taskId: TaskId,
   end: RunEnd,
-  owner: RunOwner,
+  /** The run's conversation and the host's hook; `undefined` for a host without one. */
+  owner: RunOwner | undefined,
 ): Effect.Effect<void, StorageError> =>
   Effect.gen(function* () {
     const run = live.run
@@ -308,7 +309,7 @@ export const endRun = (
         }
       }
       delete live.run
-      if (owner.runEnded !== undefined)
+      if (owner?.runEnded !== undefined)
         yield* owner.runEnded(tx, { conversationId: owner.conversationId, taskId, end, answered })
     }
     delete live.generation

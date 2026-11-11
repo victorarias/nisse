@@ -12,6 +12,7 @@ import { type ConversationId, type EntryId, idFromNumber, openSqliteStorage } fr
 import { fromProviders, type ScriptStep, scriptProvider, SCRIPT_MODEL } from "@nisse/models"
 import {
   FellBehind,
+  InvalidWindow,
   KERNEL_PROTOCOL_VERSION,
   KernelRpcs,
   NoSuchConversation,
@@ -28,9 +29,9 @@ import { VERSION } from "../version.ts"
 import { writeRunEnd } from "./run-end.ts"
 
 /**
- * The changes one watch may hold unread before its connection is dropped (D10). Receipt: in the wire test
+ * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
  * `wire-dropped`, 1,500 prompts submitted 100 at a time, a client that reads peaked at 34 queued changes. Past this the
- * client is told it fell behind and watches again from the position it holds.
+ * client is told it fell behind at its next read, and watches again from the position it holds.
  */
 export const CONNECTION_QUEUE = 4096
 
@@ -94,14 +95,17 @@ const Handlers = KernelRpcs.toLayer(
           yield* lifetime.hold
           const conversation = yield* find(id)
           const queue = yield* Queue.bounded<ViewItem, FellBehind | Cause.Done>(CONNECTION_QUEUE)
+          let behind = false
           const observation = yield* Effect.acquireRelease(
-            Effect.orDie(
-              harness.observeConversation(
+            harness
+              .observeConversation(
                 conversation.id,
                 {
-                  // On the Session line: only capture. A full queue drops the connection instead of holding the line.
+                  // On the Session line: only capture. A full queue ends the watch instead of holding the line; what it
+                  // held is dropped so the client hears FellBehind at its next read.
                   advance: (change) => {
-                    if (Queue.offerUnsafe(queue, { _tag: "change", ops: change.ops })) return
+                    if (behind || Queue.offerUnsafe(queue, { _tag: "change", ops: change.ops })) return
+                    behind = true
                     Effect.runSync(Queue.clear(queue))
                     Queue.failCauseUnsafe(queue, Cause.fail(new FellBehind({ limit: CONNECTION_QUEUE })))
                   },
@@ -111,8 +115,16 @@ const Handlers = KernelRpcs.toLayer(
                   },
                 },
                 toWindow(window),
+              )
+              .pipe(
+                Effect.orDie,
+                // The harness checks the window's bounds and names the one that is wrong.
+                Effect.catchDefect((defect) =>
+                  defect instanceof RangeError
+                    ? Effect.fail(new InvalidWindow({ message: defect.message }))
+                    : Effect.die(defect),
+                ),
               ),
-            ),
             (attached) => Effect.sync(() => attached.detach()),
           )
           const first: ViewItem = { _tag: "view", view: toView(observation.value) }
@@ -135,8 +147,9 @@ const Handlers = KernelRpcs.toLayer(
       "conversation/submit": ({ conversation: id, requestId, text }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
-          const submission = yield* Effect.orDie(conversation.submit({ type: "input", content: text, requestId }))
+          // Held before the submission commits, so no interruption between the two leaves its run without a hold.
           yield* holdUntilIdle
+          const submission = yield* Effect.orDie(conversation.submit({ type: "input", content: text, requestId }))
           return { submission: submission.id }
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),

@@ -203,3 +203,18 @@ test("watch-rpc: a watch through a window opens on the newest entries, and from 
   expect(resumed.view().entries.map((entry) => entry.id)).toEqual(entries.slice(3).map((entry) => entry.id))
   client.close()
 })
+
+test("watch-rpc: a window that is not one is refused by name, and the connection's other watches go on", async () => {
+  await using server = await runningKernelServer([{ text: "still here" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await opened(view)
+  const refused = await client.watch("conversation/watch", { conversation, window: { min: 10, max: 5 } }).ended
+  expect(errorTag(refused)).toBe("InvalidWindow")
+  expect(JSON.stringify(refused.error)).toContain("Window max must be an integer >= min (10), got 5")
+  await submit(client, conversation, "hi")
+  await view.until(settled(1))
+  expect(transcript(view.view().entries)).toEqual(["user: hi", "assistant: still here", "run_end: answered"])
+  client.close()
+})

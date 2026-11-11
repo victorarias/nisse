@@ -44,7 +44,19 @@ export const RunEnd = Schema.Struct({
 export type RunEnd = typeof RunEnd.Type
 
 export const View = Schema.Struct({
-  conversation: Schema.Struct({ id: Schema.Int }),
+  conversation: Schema.Struct({
+    id: Schema.Int,
+    parent: Schema.optionalKey(
+      Schema.Struct({ conversationId: Schema.Int, at: Schema.Int }).annotate({
+        description: "The conversation this one was forked from, and the last entry it inherits.",
+      }),
+    ),
+    owner: Schema.optionalKey(
+      Schema.Struct({ conversationId: Schema.Int, taskId: Schema.Int }).annotate({
+        description: "The task that created this conversation, and that task's conversation.",
+      }),
+    ),
+  }),
   entries: Schema.Array(EntryRecord).annotate({ description: "A window over the transcript, oldest first." }),
   before: Schema.optionalKey(
     Schema.Int.annotate({
@@ -82,6 +94,11 @@ export class NoSuchConversation extends Schema.TaggedError<NoSuchConversation>()
   conversation: Schema.String,
 }) {}
 
+/** The window asked for is not one: `message` names the bound, its value and the rule. */
+export class InvalidWindow extends Schema.TaggedError<InvalidWindow>()("InvalidWindow", {
+  message: Schema.String,
+}) {}
+
 /** The client stopped reading; it watches again from the position it holds. */
 export class FellBehind extends Schema.TaggedError<FellBehind>()("FellBehind", {
   limit: Schema.Int.annotate({
@@ -112,7 +129,7 @@ export const Submit = Rpc.make("conversation/submit", {
 export const Watch = Rpc.make("conversation/watch", {
   payload: { conversation: ConversationId, window: Schema.optionalKey(Window) },
   success: ViewItem.annotate({ description: "The view through the window, then each commit's changes to it." }),
-  error: Schema.Union([NoSuchConversation, FellBehind]),
+  error: Schema.Union([NoSuchConversation, InvalidWindow, FellBehind]),
   stream: true,
 })
 
