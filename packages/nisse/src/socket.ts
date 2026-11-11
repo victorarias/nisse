@@ -4,8 +4,8 @@ import { Effect, Layer } from "effect"
 import * as Socket from "effect/socket/Socket"
 import * as SocketServer from "effect/socket/SocketServer"
 
-// What Node reports when the client is already gone. A reply written after the client closed fails with EPIPE, and
-// Node reports a write failure on the socket's one 'error' event, which Effect's NodeSocket labels a read error.
+// What node:net reports when the client is already gone. A reply written after the client closed fails with EPIPE, and
+// node:net reports a write failure on the socket's one 'error' event, which Effect's NodeSocket labels a read error.
 const CLIENT_GONE = new Set(["EPIPE", "ECONNRESET"])
 
 const clientGone = (error: Socket.SocketError) =>
