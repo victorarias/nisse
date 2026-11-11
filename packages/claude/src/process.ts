@@ -235,10 +235,18 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           return { controller, stop }
         }),
         ({ controller, stop }) =>
-          Effect.sync(() => {
+          Effect.gen(function* () {
             runtime.signal.removeEventListener("abort", stop)
             inbox.close()
             controller.abort()
+            // A subagent lives in its process: one Claude Code did not say ended, such as one left in the background,
+            // ends with it.
+            for (const child of new Set(children.values())) {
+              yield* Deferred.succeed(ctx.links.link(child.task).ended, {
+                status: "stopped",
+                summary: "Claude Code ended before the subagent did",
+              })
+            }
           }),
       )
 
@@ -435,7 +443,8 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
               }
               const error = Cause.squash(decided.cause)
               api.report(error, { kind: "extension", extension })
-              return { block: `${extension}: ${error instanceof Error ? error.message : String(error)}` }
+              // A failing hook blocks the call, as in nisse's own tool task.
+              return { block: error instanceof Error ? error.message : String(error) }
             }
             if (decided.value?.block !== undefined) return { block: decided.value.block }
             if (decided.value?.arguments !== undefined) args = decided.value.arguments
