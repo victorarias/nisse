@@ -16,6 +16,7 @@ import {
   depthOf,
   InboxDoc,
   LiveDoc,
+  recordOrigin,
   refusedSpawn,
   refusedWork,
   ROOT_TASK,
@@ -382,6 +383,7 @@ const spawnAgent = (limits: AgentLimits) =>
               ...(depthOf(task) >= limits.maxDepth ? { modelTools: { remove: [{ name: "spawn_agent" }] } } : {}),
             })
             ;(yield* tx.doc(TaskPathDoc, child.id)).task = task
+            yield* recordOrigin(tx, child.id, { call: api.callId, title: name, task })
             if (auto) yield* approveAutomatically(tx, child.id)
             registry.agents[name] = { conversationId: Number(child.id), task, reported: [], assigned: true }
             const reporter: ReporterInput = {
