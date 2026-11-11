@@ -120,6 +120,12 @@ export class NoSuchConversation extends Schema.TaggedError<NoSuchConversation>()
   conversation: Schema.String,
 }) {}
 
+/** An attached image the server cannot decode or make fit the model's image limits; `message` says why. */
+export class UnreadableImage extends Schema.TaggedError<UnreadableImage>()("UnreadableImage", {
+  name: Schema.String,
+  message: Schema.String,
+}) {}
+
 /** The window asked for is not one: `message` names the bound, its value and the rule. */
 export class InvalidWindow extends Schema.TaggedError<InvalidWindow>()("InvalidWindow", {
   message: Schema.String,
@@ -202,6 +208,14 @@ export const StartConversation = Rpc.make("conversation/start", {
   error: Schema.Union([InvalidConversationId, UnknownProvider, UnknownEffort]),
 })
 
+/** An image a person attaches to their input. */
+export const Image = Schema.Struct({
+  name: Schema.String.annotate({ description: "What the transcript calls it, such as its file name." }),
+  data: Schema.String.annotate({ description: "The file's bytes, base64." }),
+  mimeType: Schema.String.annotate({ description: "image/png, image/jpeg, image/gif, image/webp or image/bmp." }),
+})
+export type Image = typeof Image.Type
+
 export const Submit = Rpc.make("conversation/submit", {
   payload: {
     conversation: ConversationId,
@@ -210,6 +224,12 @@ export const Submit = Rpc.make("conversation/submit", {
       description: `Who wrote it; the input is placed as a ${USER_KIND} entry naming them, and waits in pi.inbox with them.`,
     }),
     text: Schema.String,
+    images: Schema.optionalKey(
+      Schema.Array(Image).annotate({
+        description:
+          "Placed after the text, each prepared to fit the model's image limits (resized or converted); the entry's data names them.",
+      }),
+    ),
     steer: Schema.optionalKey(
       Schema.Boolean.annotate({
         description:
@@ -218,7 +238,7 @@ export const Submit = Rpc.make("conversation/submit", {
     ),
   },
   success: Schema.Struct({ submission: Schema.Int }),
-  error: Schema.Union([NoSuchConversation, TakesNoInput]),
+  error: Schema.Union([NoSuchConversation, TakesNoInput, UnreadableImage]),
 })
 
 export const Watch = Rpc.make("conversation/watch", {

@@ -47,6 +47,7 @@ const usage = `usage: drive.ts <run> <command> [args]
   idle [--seconds N]               measure the TUI's and server's CPU time over N seconds (10)
   tui start [nisse args...]        open the TUI in a ${COLS}x${ROWS} tmux pane
   tui type <text>                  type literal text into the TUI
+  tui paste <text>                 paste text into the TUI as a terminal does, as when a file is dropped on it
   tui key <key...>                 press tmux keys: Enter, Escape, Tab, C-y, C-n, C-c, C-j, C-l, Up, Down, Left, Right
   tui wait <text> [--gone] [--timeout MS]
                                    wait until the screen shows (or stops showing) text
@@ -670,6 +671,13 @@ const commands: Record<string, () => Promise<void> | void> = {
         tmux("send-keys", "-t", TUI, "-l", rest.join(" "))
         record(`tui type ${JSON.stringify(rest.join(" "))}`)
         return
+      case "paste": {
+        // As a terminal pastes, in bracketed paste mode: what it does with a file dropped on it.
+        tmux("set-buffer", "-b", "nisse-paste", rest.join(" "))
+        tmux("paste-buffer", "-p", "-d", "-b", "nisse-paste", "-t", TUI)
+        record(`tui paste ${JSON.stringify(rest.join(" "))}`)
+        return
+      }
       case "key":
         tmux("send-keys", "-t", TUI, ...rest)
         record(`tui key ${rest.join(" ")}`)

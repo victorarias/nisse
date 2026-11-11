@@ -11,23 +11,26 @@ import {
   createGrepTool,
   createReadTool,
   createWriteTool,
+  type ImageProcessor,
   rootConversationEnv,
 } from "@nisse/tools"
 
 const asking = <T extends ToolRegistration>(tool: T): T => ({ ...tool, asks: true })
 
-export const NisseTools = defineExtension({
-  name: "nisse-tools",
-  tools: [
-    createReadTool(),
-    createGrepTool(),
-    createGlobTool(),
-    asking(createWriteTool()),
-    asking(createEditTool()),
-    asking(createApplyPatchTool()),
-    asking(createBashTool({ prepare: rootConversationEnv })),
-  ],
-})
+/** Nisse's tools, where `read` prepares images with `images`, as attached ones are. */
+export const nisseTools = (images: ImageProcessor) =>
+  defineExtension({
+    name: "nisse-tools",
+    tools: [
+      createReadTool({ images }),
+      createGrepTool(),
+      createGlobTool(),
+      asking(createWriteTool()),
+      asking(createEditTool()),
+      asking(createApplyPatchTool()),
+      asking(createBashTool({ prepare: rootConversationEnv })),
+    ],
+  })
 
 /**
  * The `codemode` extension, whose `codemode` tool is offered to the models that take only code mode (F10) and to no

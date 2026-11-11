@@ -2,7 +2,7 @@
 // skills there, as a prompt section the harness renders before each request and commits when it changes. Claude Code
 // reads its own `CLAUDE.md` files and skills, and a script reads nothing, so their conversations get none.
 import { defineExtension } from "@nisse/harness"
-import type { ProviderInstance } from "@nisse/models"
+import type { ImageContent, ProviderInstance, TextContent } from "@nisse/models"
 import { Effect } from "effect"
 import type { Home } from "../home.ts"
 import type { Skill } from "@nisse/wire"
@@ -39,18 +39,19 @@ export const skillsOf = (
 }
 
 /**
- * What a person's `text` gives the model, with the `SKILL.md` of each skill it names read now, so a later edit of the
- * file changes later messages only; and the skills it carried, for the transcript.
+ * What a person's `text` and `images` give the model: the text, the `SKILL.md` of each skill it names, read now so a
+ * later edit of the file changes later messages only, then the images; and the skills it carried, for the transcript.
  */
-export const userInput = (text: string, skills: ReadonlyArray<Skill>) => {
+export const userInput = (text: string, skills: ReadonlyArray<Skill>, images: ReadonlyArray<ImageContent>) => {
   const attached = attachedSkills(text, skills)
-  if (attached.length === 0) return { content: text, attached }
-  const content = [
-    { type: "text" as const, text },
+  if (attached.length === 0 && images.length === 0) return { content: text, attached }
+  const content: Array<TextContent | ImageContent> = [
+    { type: "text", text },
     ...attached.map((skill) => ({
       type: "text" as const,
       text: `<skill>\n<name>${skill.name}</name>\n<path>${skill.path}</path>\n${skill.text.trimEnd()}\n</skill>`,
     })),
+    ...images,
   ]
   return { content, attached }
 }

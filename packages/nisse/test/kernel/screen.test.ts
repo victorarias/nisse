@@ -8,6 +8,7 @@ import type { AuthState } from "@nisse/wire"
 import { FakeOpenAi, signIn } from "../support/openai.ts"
 import { deadline, RawClient } from "../support/raw.ts"
 import { kernelEnv, runningKernelServer, servingKernel, settled, start, submit, watchView } from "../support/kernel.ts"
+import { png } from "../support/png.ts"
 import { tempHome } from "../support/server.ts"
 import { screenSession, stopServer } from "../support/terminal.ts"
 
@@ -476,6 +477,46 @@ test("skills-tui: a message that names a skill shows which skills came with it, 
   const reopened = await second.waitFor((screen) => screen.includes("Hello there"))
   expect(reopened).toContain("with ship")
   await quit(second)
+})
+
+test("image-attach: a dragged image's pasted path shows on the prompt as attached, and the model receives the image with the message", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  const nisseHome = home()
+  const path = join(nisseHome.dir, "Screen Shot.png")
+  await Bun.write(path, png(3, 2))
+  await using _server = await runningKernelServer([], { home: nisseHome, openai: fake.options() })
+  await signIn(nisseHome)
+  const session = await open([], ["--provider", "openai"], nisseHome)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("what is this? ")
+  // A terminal pastes a file dropped on it as its path, with spaces escaped.
+  session.type(`\x1b[200~${path.replaceAll(" ", "\\ ")}\x1b[201~`)
+  await session.waitFor((screen) => screen.includes("attaching Screen Shot.png"))
+  session.type("\r")
+  await session.waitFor((screen) => screen.includes("Hello there") && screen.includes("READY"))
+  const lines = session.screen().split("\n")
+  expect(lines[lines.findIndex((line) => line.includes("ADA")) + 2]).toContain("with Screen Shot.png")
+  expect(session.screen()).not.toContain("attaching")
+  const input = JSON.parse(fake.responses()[0]!.body).input as Array<{ role?: string; content?: Array<any> }>
+  const content = input.find((item) => item.role === "user")!.content!
+  expect(content.map((part) => part.type)).toEqual(["input_text", "input_image"])
+  expect(content[1].image_url).toBe(`data:image/png;base64,${Buffer.from(png(3, 2)).toString("base64")}`)
+  await quit(session)
+})
+
+test("image-attach: an image the server cannot decode is refused on screen by name, and nothing is sent", async () => {
+  const nisseHome = home()
+  // Its header says PNG, so the prompt attaches it; its pixels are cut off.
+  await Bun.write(join(nisseHome.dir, "cut.png"), png(4, 4).subarray(0, 40))
+  const session = await open([{ text: "never" }], [], nisseHome)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type(`look ${join(nisseHome.dir, "cut.png")}`)
+  await session.waitFor((screen) => screen.includes("attaching cut.png"))
+  session.type("\r")
+  const screen = await session.waitFor((screen) => screen.includes("✗ cut.png (image/png) cannot be decoded"))
+  expect(screen).not.toContain("ADA")
+  await quit(session)
 })
 
 test("crash-tui: the open TUI finishes the answer after the server is killed mid-answer", async () => {
