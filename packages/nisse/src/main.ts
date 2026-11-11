@@ -310,7 +310,17 @@ const nisse = Command.make(
   },
   Effect.fn(function* ({ prompt, conversation, ...flags }) {
     const home = defaultHome()
-    if (onKernel()) return yield* refuse("the TUI does not run on the kernel yet; tui-views brings it")
+    if (onKernel()) {
+      const { kernelTui } = yield* Effect.promise(async () => {
+        await import("@opentui/solid/preload")
+        return import("./tui/kernel.tsx")
+      })
+      return yield* kernelTui(
+        Option.getOrUndefined(conversation),
+        startWith(flags),
+        Option.getOrUndefined(prompt),
+      ).pipe(withKernelClient(home), Effect.scoped, Effect.catchTag("UnknownProvider", unknownProvider))
+    }
     const { tui } = yield* Effect.promise(async () => {
       await import("@opentui/solid/preload")
       return import("./tui/main.tsx")

@@ -24,7 +24,7 @@ const usage = `usage: drive.ts <run> <command> [args]
                                    SDK's bundled Claude Code with your own login. --openai-auth copies a real
                                    ChatGPT sign-in in, and down writes it back if a refresh rotated it.
                                    --kernel runs every server of the run with NISSE_KERNEL=1, and
-                                   every nisse command with it; the TUI waits for tui-views
+                                   every nisse command and the TUI with it
   doctor                           is this run's instance worth driving?
   nisse <args...>                  run the nisse CLI against the run's home
   serve                            start the run's server in the foreground of a tmux window
@@ -146,10 +146,6 @@ const requireUp = () => {
 }
 
 const onKernel = () => existsSync(kernelMarker)
-
-const notOnKernel = (what: string, step: string) => {
-  if (onKernel()) fail(`${what} does not run on the kernel yet; ${step} brings it. Drive it in a run without --kernel`)
-}
 
 const sh = (cmd: Array<string>, options: { env?: Record<string, string> } = {}) => {
   const result = Bun.spawnSync(cmd, { env: options.env ?? env(), stdout: "pipe", stderr: "pipe" })
@@ -664,7 +660,6 @@ const commands: Record<string, () => Promise<void> | void> = {
     args.splice(0, 1)
     switch (sub) {
       case "start": {
-        notOnKernel("The TUI", "tui-views")
         if (tuiOpen()) fail("a TUI is already open in this run: tui stop first")
         openWindow("tui", [MAIN, ...rest])
         record(`tui start ${rest.join(" ")}`)

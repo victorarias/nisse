@@ -8,7 +8,7 @@ People and tools attach images; large ones are prepared off the server's line, a
 - `image-tool-result` [kernel] Images in tool results (R279, §7.3): Tools show pictures to the model
 - `image-worker` [kernel] Image preparation in a worker, node variant (R245-305, `images/node`): Large photos get resized without blocking the server
 - `image-placeholder` [kernel] Placeholder for a model without image input (R245-305): Switching to such a model still works
-- `image-attach` [pending tui-views] The client path for Image attachments in the TUI and wire (R245-305): People send images from a client
+- `image-attach` [pending tui-images] The client path for Image attachments in the TUI and wire (R245-305): People send images from a client
 
 ## How to get to it
 
@@ -18,7 +18,7 @@ None yet.
 
 ### Agents
 
-- Not reachable yet: `image-attach` lands with `tui-views`, which adds its entry point and recipe.
+- Not reachable yet: `image-attach` lands with `tui-images`, which adds its entry point and recipe.
 
 ## Sources
 

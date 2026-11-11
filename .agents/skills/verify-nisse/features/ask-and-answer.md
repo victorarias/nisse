@@ -11,7 +11,7 @@ printing the answer and exiting 0, or 1 when the run fails.
 - `answer-failed` a model failure is recorded after what was said, and the conversation goes idle.
 - `answer-tui` sends a prompt from the TUI and shows it under `ADA` and the
   answer under `NISSE`.
-- `answer-newline` [pending tui-views] adds a line to the prompt with `⇧⏎` or `⌥⏎` and sends all
+- `answer-newline` adds a line to the prompt with `⇧⏎` or `⌥⏎` and sends all
   lines as one message with `⏎`.
 - `answer-exec` prints the answer on stdout and exits 0.
 - `answer-exec-fail` prints what was said, reports the failure on stderr and
@@ -22,9 +22,9 @@ printing the answer and exiting 0, or 1 when the run fails.
 - `submit-author` names who wrote each prompt: the `author` of
   `conversation/submit` is on the prompt while it waits in the queue and on its
   entry once it runs, for every client.
-- `answer-author` [pending tui-views] names the TUI's and `exec`'s messages after `USER`, or the
+- `answer-author` names the TUI's and `exec`'s messages after `USER`, or the
   system's user name when `USER` is not set.
-- `answer-scroll` [pending tui-views] scrolls the transcript with the mouse wheel.
+- `answer-scroll` scrolls the transcript with the mouse wheel.
 
 ## How to get to it
 
@@ -58,7 +58,7 @@ Preconditions:
   `READY`.
 - **New line.** In a fresh run, run `drive.ts r tui start`,
   `drive.ts r tui wait READY`, `drive.ts r tui type 'first line'`,
-  `drive.ts r tui key S-Enter`, `drive.ts r tui type 'second line'`,
+  `drive.ts r tui key M-Enter`, `drive.ts r tui type 'second line'`,
   `drive.ts r tui key M-Enter`, `drive.ts r tui type 'third line'`,
   `drive.ts r tui screen lines`: the `PROMPT` panel holds the three lines
   and nothing was sent. `drive.ts r tui key Enter`,
@@ -101,6 +101,7 @@ Preconditions:
 what waits`.
 - **Second client.** Every client sees the prompt and the same answer.
 - **Server restart.** A run the crash cut off finishes when the server returns, as [Crash recovery](./crash-recovery.md) says.
+- **On the kernel.** In a run made with `drive.ts r up --kernel`, the TUI speaks the kernel wire and every TUI step above drives the same way; a script names the kernel's tools in lower case, such as `bash` and `read`, so a call shows as `▸ bash(<command>)`.
 
 ## Tests
 
@@ -109,6 +110,14 @@ Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NIS
 - mode-print, answer-exec, server-on-demand: nisse exec on the kernel starts a server, prints the answer and exits 0
 - mode-print, answer-exec-fail: nisse exec on the kernel exits 1 and says why when the run fails
 - answer-exec-fail: nisse exec on the kernel exits 1 when an interrupt withdraws its queued prompt, instead of waiting for good
+
+Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+
+- answer-tui, answer-author: a person types a prompt, presses enter and reads the answer under their name
+- answer-author: without USER the TUI names a person's message after the system's user name
+- answer-newline: alt+enter adds a line to the prompt, and enter sends every line as one message
+- tui-hangup, idle-closed: closing the terminal ends nisse instead of leaving it running unseen
+- answer-scroll, tui-load-earlier: a conversation longer than the window scrolls back to its first message, loading earlier entries on the way, and a reconnect leaves no gap
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
@@ -130,12 +139,11 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - answer-exec-fail: nisse exec exits 1 and reports the failure when the run fails
 - answer-exec: nisse exec finishes when nisse answers with nothing
 
-No committed test covers scrolling with the mouse wheel.
-
 ## Gotchas
 
 - `drive.ts` sets `USER=ada`, which is why messages read `ADA`.
-- tmux sends `⇧⏎` as `S-Enter` and `⌥⏎` as `M-Enter`; both add a line.
+- tmux sends `⌥⏎` as `M-Enter`, which adds a line. It sends `S-Enter` as a plain Enter, so in `drive.ts` it sends
+  the message; a terminal that reports shifted keys, such as one speaking the kitty keyboard protocol, tells them apart.
 - `exec` starts a new conversation each time unless given
   `--conversation <id>`.
 - `watch --until run_end` only looks at commits after the snapshot. To see a
