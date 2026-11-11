@@ -773,6 +773,7 @@ test("subagent-interrupt: interrupting a conversation stops the runs of its suba
     { agent_name: "/root/slow", agent_status: "interrupted" },
   ])
   expect(transcript(slow.seen()).slice(-2)).toEqual(["assistant: made it this time", "run_end: answered"])
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/slow" }])
   expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: slow is done", "run_end: answered"])
   client.close()
 }, 30_000)

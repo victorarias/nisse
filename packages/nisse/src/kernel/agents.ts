@@ -4,6 +4,7 @@
 // answer back. Both are durable tasks, so a restart resumes them (spec 7.3, example 22).
 import {
   type AgentLimits,
+  type Harness,
   ApprovalsDoc,
   approveAutomatically,
   AssistantEntry,
@@ -30,7 +31,6 @@ import {
   idFromNumber,
   type JsonObject,
   type NextTaskState,
-  type TaskId,
 } from "@nisse/kernel"
 import type { AssistantMessage } from "@nisse/models"
 import { int, obj, oneOf, opt, str } from "@nisse/schema"
@@ -180,20 +180,27 @@ const Reporter = defineTask<ReporterInput, ReporterState, null, TaskServices>({
         if (report !== undefined) {
           const { task, sender } = reporter.input
           const parent = (yield* (yield* TaskServices).conversation(runtime.conversationId))!
+          const content = mailText("final_answer", sender, task, report)
+          const entry = mailEntry("final_answer", sender, task)
           const submission = yield* parent.submit({
             type: "input",
-            content: mailText("final_answer", sender, task, report),
+            content,
             // Into the parent's running turn at its next step, as other mail; an idle parent starts a turn.
             whenBusy: "steer",
-            entry: mailEntry("final_answer", sender, task),
-            requestId: reportRequest(reporter.id),
+            entry,
+            requestId: `agent-report:${reporter.id}`,
           })
           const settled = yield* submission.wait
-          // Withdrawn before it was placed, as when the parent alone is stopped: the answer still joins its transcript,
+          // Withdrawn before it was placed, as when the person stops the parent: the answer still joins its transcript,
           // once the stopped run has ended, so it lands then instead of waiting in the queue for the next prompt.
           if (settled.status === "unanswered" && settled.entry === undefined) {
             yield* parent.waitForIdle
-            yield* parent.submit(keptReport(reporter, report, yield* Clock.currentTimeMillis))
+            const timestamp = yield* Clock.currentTimeMillis
+            yield* parent.submit({
+              type: "write",
+              entry: { ...entry, model: [{ role: "user", content, timestamp }] as unknown as JsonObject[] },
+              requestId: `agent-report-kept:${reporter.id}`,
+            })
           }
         }
         yield* runtime.commit(() =>
@@ -201,52 +208,15 @@ const Reporter = defineTask<ReporterInput, ReporterState, null, TaskServices>({
         )
       }),
   },
-  // Aborted with the parent's whole tree, as when a person stops it: the subagent's run stopped in the same commit. An
-  // answer not yet placed in the parent still joins its transcript once the stopped run has ended, as in `report`.
   abort: (reporter, runtime) =>
-    Effect.gen(function* () {
-      const checkpoint = reporter.state.checkpoint
-      const report = checkpoint.phase === "report" ? checkpoint.report : undefined
-      const parent = (yield* (yield* TaskServices).conversation(runtime.conversationId))!
-      if (report !== undefined) yield* parent.waitForIdle
-      const timestamp = yield* Clock.currentTimeMillis
-      yield* runtime.commit((tx) =>
-        Effect.gen(function* () {
-          // An admission comes before the commit's other writes.
-          if (report !== undefined) {
-            const sent = yield* tx.submissionByRequest(runtime.conversationId, reportRequest(reporter.id))
-            if (sent?.entry === undefined) yield* parent.submit(tx, keptReport(reporter, report, timestamp))
-          }
-          const agent = (yield* tx.doc(AgentsDoc, runtime.conversationId)).agents[reporter.input.name]
-          if (agent !== undefined) {
-            delete agent.assigned
-            if (checkpoint.phase === "deliver") agent.status = "interrupted"
-          }
-          return { status: "terminal", outcome: { status: "aborted" } } as const
-        }),
-      )
-    }),
+    runtime.commit((tx) =>
+      Effect.gen(function* () {
+        const agent = (yield* tx.doc(AgentsDoc, runtime.conversationId)).agents[reporter.input.name]
+        if (agent !== undefined) delete agent.assigned
+        return { status: "terminal", outcome: { status: "aborted" } } as const
+      }),
+    ),
 })
-
-const reportRequest = (reporter: TaskId) => `agent-report:${reporter}`
-
-/** A subagent's answer as a write into its parent's transcript: it starts no run. */
-const keptReport = (
-  reporter: { readonly id: TaskId; readonly input: ReporterInput },
-  report: string,
-  timestamp: number,
-) => {
-  const { task, sender } = reporter.input
-  const content = mailText("final_answer", sender, task, report)
-  return {
-    type: "write",
-    entry: {
-      ...mailEntry("final_answer", sender, task),
-      model: [{ role: "user", content, timestamp }] as unknown as JsonObject[],
-    },
-    requestId: `agent-report-kept:${reporter.id}`,
-  } as const
-}
 
 const textOf = (message: AssistantMessage | undefined) =>
   (message?.content ?? []).flatMap((block) => (block.type === "text" ? [block.text] : [])).join("")
@@ -615,6 +585,38 @@ const interruptAgent = defineTool({
       return json({ previous_status: previous })
     }),
 })
+
+/**
+ * Stops a conversation's runs and every subagent's under it, as `conversation/interrupt` promises. Each conversation of
+ * the tree is aborted on its own, all at once, so the reporters that relay answers carry on as they do when one
+ * subagent is stopped, and background work such as compaction is left alone. A subagent its parent started before the
+ * parent stopped is found by the next pass.
+ */
+export const interruptTree = (harness: Harness, root: ConversationId) =>
+  Effect.gen(function* () {
+    const stopped = new Set<ConversationId>()
+    for (;;) {
+      const fresh = (yield* treeOf(harness, root)).filter((id) => !stopped.has(id))
+      if (fresh.length === 0) return
+      for (const id of fresh) stopped.add(id)
+      yield* Effect.forEach(
+        fresh,
+        (id) => Effect.flatMap(harness.conversation(id), (conversation) => conversation?.abort() ?? Effect.void),
+        { concurrency: "unbounded", discard: true },
+      )
+    }
+  })
+
+/** The conversation and its subagents', each parent before its subagents. */
+const treeOf = (harness: Harness, root: ConversationId) =>
+  Effect.gen(function* () {
+    const tree = [root]
+    for (let at = 0; at < tree.length; at++) {
+      const registry = yield* harness.session.snapshot(AgentsDoc, tree[at]!)
+      for (const child of Object.values(registry?.agents ?? {})) tree.push(idFromNumber(child.conversationId))
+    }
+    return tree
+  })
 
 /** The subagent tools, under `limits`; their tasks come with them, so a restart resumes pending reporters. */
 export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS) =>

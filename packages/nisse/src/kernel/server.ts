@@ -42,7 +42,7 @@ import { countStops, restartLimitMessage } from "./restarts.ts"
 import { writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
 import { NisseTools } from "./tools.ts"
-import { agentTools } from "./agents.ts"
+import { agentTools, interruptTree } from "./agents.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
@@ -266,9 +266,8 @@ const Handlers = KernelRpcs.toLayer(
           return { submission: submission.id }
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),
-      // Stops the conversation's runs and its subagents', in one commit: each subagent hangs off a background task.
       "conversation/interrupt": ({ conversation: id }) =>
-        Effect.flatMap(find(id), (conversation) => Effect.orDie(conversation.abort({ background: true }))),
+        Effect.flatMap(find(id), (conversation) => Effect.orDie(interruptTree(harness, conversation.id))),
       "approval/resolve": ({ conversation: id, approval, author, allow }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
