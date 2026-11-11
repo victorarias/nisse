@@ -203,12 +203,21 @@ Preconditions:
   `signed_out` and removes the file. The **Cannot** calls over `rpc` fail
   `CannotSignIn` for `script` and for `openai` by `terminal`, and
   `UnknownProvider` for `nope`.
+  The kernel commits every sign-in state to the `nisse.sign_ins` document
+  before any connection sees it. Start
+  `drive.ts r rpc auth/start '{"provider": "openai", "method": "device_code"}'`,
+  wait for `drive.ts r watch-auth --until waiting`, then
+  `drive.ts r kill-server` and `drive.ts r serve`:
+  `drive.ts r watch-auth --until failed` shows that flow `failed` with
+  `the server stopped before this sign-in finished`, and `auth/respond` to it
+  answers `{"accepted": false}`.
 
 ## Contexts
 
 - **SSH.** OpenAI's sign-in from the TUI and `nisse login` uses a device code, because a browser elsewhere cannot reach port 1455. Claude has only its terminal sign-in.
 - **Second client.** Any client can start, follow, answer or cancel a sign-in.
 - **Idle.** The server exits 30 s after its last client leaves, even while a sign-in waits.
+- **Restart, on the kernel.** A sign-in still running when the server stops ends `failed` for the next server's connections; today's server forgets it.
 
 ## Tests
 
@@ -238,6 +247,7 @@ Provider, `packages/nisse/test/claude.test.ts`:
 Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - signin-device-code, signout: one instance signs in and out on its own, and every connection sees it
+- signin-shared: a sign-in the server stopped during is failed for every connection of the next server
 - provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
 
 ## Gotchas

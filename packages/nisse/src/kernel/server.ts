@@ -26,9 +26,11 @@ import * as RpcServer from "effect/rpc/RpcServer"
 import type { ProviderOptions } from "../drivers/index.ts"
 import type { Home } from "../home.ts"
 import { Lifetime } from "../lifetime.ts"
+import { Setup } from "../setup.ts"
 import { VERSION } from "../version.ts"
 import { agentModel, KernelProviders, LastModelDoc } from "./providers.ts"
 import { writeRunEnd } from "./run-end.ts"
+import { committedSignIns } from "./sign-ins.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: in the wire test
@@ -74,7 +76,7 @@ const Handlers = KernelRpcs.toLayer(
   Effect.gen(function* () {
     const harness = yield* KernelHarness
     const providers = yield* KernelProviders
-    const { setup } = providers
+    const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
     const lifetime = yield* Lifetime
     // Keeps the server up while the harness has work, such as a run a submission started or a crash left.
     const scope = yield* Effect.scope

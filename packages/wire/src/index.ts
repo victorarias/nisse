@@ -233,6 +233,8 @@ export const AuthPhase = Schema.Literals([
 ])
 export type AuthPhase = typeof AuthPhase.Type
 
+export const authEnded = (phase: AuthPhase) => phase !== "starting" && phase !== "waiting" && phase !== "verifying"
+
 export const AuthInteraction = Schema.Union([
   Schema.TaggedStruct("browser", { url: Schema.String }).annotate({
     description:

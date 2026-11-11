@@ -29,13 +29,15 @@ const listed = async (client: RawClient) =>
 
 test("provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models", async () => {
   using claude = new FakeClaude("models")
+  // Its own fake, through the instance's env: each Claude provider probes its own Claude Code.
+  using alt = new FakeClaude("models")
   await using fake = new FakeOpenAi()
   await using server = await runningKernelServer([], {
     openai: fake.options(),
     claude: claude.options,
     config: {
       default_model: { provider: "openai-work", model: "gpt-5.5", effort: "high" },
-      providers: { "openai-work": { driver: "openai" }, "claude-alt": { driver: "claude" } },
+      providers: { "openai-work": { driver: "openai" }, "claude-alt": { driver: "claude", env: alt.options.env! } },
     },
   })
   await signIn(server.home)
@@ -52,9 +54,12 @@ test("provider-config, signin-status, model-list: two instances of one provider 
   const health = (id: string) => providers.find((provider) => provider.id === id)!.health
   expect(health("openai").account).toBe(`${EMAIL} · ChatGPT Plus`)
   expect(health("openai-work").message).toBe("not signed in to ChatGPT")
+  expect([health("claude").account, health("claude-alt").account]).toEqual([
+    "person@example.com · Claude Max",
+    "person@example.com · Claude Max",
+  ])
 
   const models = (await client.call("models/list", {})).result as ReadonlyArray<ProviderModels>
-  // The fake Claude Code answers one probe with its models; which of the two instances asked first varies.
   expect(models.map((list) => [list.provider, list.defaultModel])).toEqual([
     ["script", "script"],
     ["claude", undefined],
@@ -65,6 +70,8 @@ test("provider-config, signin-status, model-list: two instances of one provider 
   const modelIds = (provider: string) => models.find((list) => list.provider === provider)!.models.map((m) => m.id)
   expect(modelIds("openai-work")).toEqual(modelIds("openai"))
   expect(modelIds("openai")).toContain("gpt-5.5")
+  expect(modelIds("claude-alt")).toEqual(modelIds("claude"))
+  expect(modelIds("claude")).toEqual(["sonnet", "fable", "opus", "haiku"])
 
   // A conversation that names no provider takes the home's default_model, on the instance it names.
   const started = await startWith(client)
@@ -181,4 +188,33 @@ test("provider-binary: a Claude provider whose binary is missing is unavailable,
   expect(gone.status).toBe("unavailable")
   expect(gone.message).toContain(missing)
   expect(gone.message).toEndWith("; install Claude Code or set its binary")
+})
+
+test("signin-shared: a sign-in the server stopped during is failed for every connection of the next server", async () => {
+  await using fake = new FakeOpenAi()
+  const home = tempHome()
+  let flow: string
+  {
+    await using server = await runningKernelServer([], { home, openai: fake.options() })
+    const client = await RawClient.connect(server.home.socket)
+    const auth = client.watch<AuthState>("auth/watch")
+    flow = ((await client.call("auth/start", { provider: "openai" })).result as AuthState).flow
+    await auth.until((states) => states.some((state) => state.phase === "waiting"))
+    client.close()
+  }
+  await using server = await runningKernelServer([], { home, openai: fake.options() })
+  const client = await RawClient.connect(server.home.socket)
+  const auth = client.watch<AuthState>("auth/watch")
+  await auth.until((states) => states.length > 0)
+  expect(auth.items).toEqual([
+    { provider: "openai", flow, phase: "failed", message: "the server stopped before this sign-in finished" },
+  ])
+  const late = await client.call("auth/respond", {
+    provider: "openai",
+    flow,
+    response: { _tag: "callback", url: "http://localhost:1455/auth/callback?code=x" },
+  })
+  expect(late.result).toEqual({ accepted: false })
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
 })
