@@ -897,6 +897,8 @@ export default Extension.define((ctx) =>
 import { Effect } from "effect"
 export default Extension.define((ctx) =>
   Effect.gen(function* () {
+    // Its edits before the transform that throws are dropped with it, so read stays.
+    yield* ctx.tool.transform((tools) => tools.remove("read"))
     yield* ctx.tool.transform(() => { throw new Error("no such tool") })
     yield* ctx.tool.hook("execute.before", () => Effect.die(new Error("a failed extension never runs")))
   }),

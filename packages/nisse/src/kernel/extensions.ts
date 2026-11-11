@@ -285,7 +285,8 @@ export const openKernelExtensions = (
         origin.set(shown, tool)
         return shown
       }
-      let tools: ExtensionTool[] = base.flatMap((extension) => (extension.tools ?? []).map(view))
+      const baseTools = base.flatMap((extension) => (extension.tools ?? []).map(view))
+      let tools: ExtensionTool[] = baseTools
       const editor: ToolEditor = {
         list: () => tools,
         get: (name) => tools.find((tool) => tool.spec.name === name),
@@ -307,19 +308,27 @@ export const openKernelExtensions = (
           tools = tools.filter((tool) => tool.spec.name !== name)
         },
       }
+      // A transform that throws fails its extension, so none of that extension's edits may stay: run the others
+      // again from the base tools, until a pass runs without a new failure.
       const failed = new Set<string>()
-      for (const transform of transforms) {
-        const before = tools
-        try {
-          transform.value(editor)
-        } catch (error) {
-          tools = before
-          failed.add(transform.extension)
-          const at = infos.findIndex((info) => info.name === transform.extension)
-          infos[at] = {
-            ...infos[at]!,
-            state: "failed",
-            message: `its tool transform failed: ${error instanceof Error ? error.message : String(error)}`,
+      let again = true
+      while (again) {
+        again = false
+        tools = baseTools
+        for (const transform of transforms) {
+          if (failed.has(transform.extension)) continue
+          try {
+            transform.value(editor)
+          } catch (error) {
+            failed.add(transform.extension)
+            const at = infos.findIndex((info) => info.name === transform.extension)
+            infos[at] = {
+              ...infos[at]!,
+              state: "failed",
+              message: `its tool transform failed: ${error instanceof Error ? error.message : String(error)}`,
+            }
+            again = true
+            break
           }
         }
       }
