@@ -138,7 +138,8 @@ const Reporter = defineTask<ReporterInput, ReporterState, null, TaskServices>({
         const submission = yield* child.submit({
           type: "input",
           content: mailText("new_task", task, sender, message),
-          whenBusy: "followUp",
+          // A working subagent takes it at its next step, as other mail.
+          whenBusy: "steer",
           entry: mailEntry("new_task", task, sender),
           requestId: `agent:${reporter.id}`,
         })

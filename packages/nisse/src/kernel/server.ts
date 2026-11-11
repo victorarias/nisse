@@ -33,7 +33,7 @@ import * as RpcServer from "effect/rpc/RpcServer"
 import type { Home } from "../home.ts"
 import { Lifetime } from "../lifetime.ts"
 import { VERSION } from "../version.ts"
-import { ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
+import { chosenNumber, ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
 import { countStops, restartLimitMessage } from "./restarts.ts"
 import { writeRunEnd } from "./run-end.ts"
 import { NisseTools } from "./tools.ts"
@@ -143,7 +143,7 @@ const Handlers = KernelRpcs.toLayer(
     /** The kernel number of a wire id: a chosen id's mapping, or the number it is. */
     const resolve = (id: string) =>
       Effect.map(Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), (chosen) => {
-        const mapped = chosen?.ids[id]
+        const mapped = chosenNumber(chosen, id)
         return mapped === undefined ? kernelNumber(id) : idFromNumber<ConversationId>(mapped)
       })
 
@@ -232,7 +232,7 @@ const Handlers = KernelRpcs.toLayer(
           if (refused !== undefined) return yield* Effect.fail(new InvalidConversationId({ message: refused }))
           return yield* choosing.withPermits(1)(
             Effect.gen(function* () {
-              const existing = (yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)))?.ids[id]
+              const existing = chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id)
               return existing === undefined ? yield* startConversation(cwd, id, approvals) : { conversation: id }
             }),
           )

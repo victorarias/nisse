@@ -147,7 +147,7 @@ Preconditions:
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - approval-wire: two clients answer one approval at once and the first answer counts
-- approval-wire: a denied call is reported to the model as denied and does not run
+- approval-wire: a denied call is reported to the model as denied and does not run, and an unknown approval is refused by name
 - tool-read-only, approval-auto: reading calls and conversations started with auto approvals run without asking
 
 Wire, `packages/nisse/test/wire.test.ts`:

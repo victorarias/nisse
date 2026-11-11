@@ -76,7 +76,8 @@ Preconditions:
 
 Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
 
-- start-with-id: starting a conversation with an id it already has answers with that conversation
+- start-with-id: starting a conversation with an id it already has answers with that conversation, and an all-digit id is refused by name
+- start-with-id: a chosen id that names an object property, such as toString, opens its own conversation
 
 Wire, `packages/nisse/test/wire.test.ts`:
 

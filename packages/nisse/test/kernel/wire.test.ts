@@ -428,6 +428,20 @@ const mails = (watch: ViewWatch) =>
     .filter((entry) => entry.kind === "nisse.mail")
     .map((entry) => entry.data as { kind: string; task: string; sender: string })
 
+test("start-with-id: a chosen id that names an object property, such as toString, opens its own conversation", async () => {
+  await using server = await runningKernelServer([{ text: "hello" }])
+  const client = await RawClient.connect(server.home.socket)
+  await client.call("conversation/start", { id: "first", cwd: "/work" })
+  expect((await client.call("conversation/start", { id: "toString", cwd: "/work" })).result).toEqual({
+    conversation: "toString",
+  })
+  const view = watchView(client, "toString")
+  await submit(client, "toString", "hi")
+  await view.until(settled(1))
+  expect(transcript(view.view().entries)).toEqual(["user: hi", "assistant: hello", "run_end: answered"])
+  client.close()
+})
+
 test("child-tools: the model spawns a subagent, waits for it, and its final answer is mailed back", async () => {
   await using server = await runningKernelServer([
     call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
@@ -587,6 +601,32 @@ test("child-tools: a subagent's answer that waits in its parent's queue still re
   await view.until((current) => mails(current).length > 0, 10_000)
   expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
   expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
+  client.close()
+}, 30_000)
+
+test("child-tools: a follow-up task reaches a working subagent at its next step, in the same run", async () => {
+  await using server = await runningKernelServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("followup_task", { target: "writer", message: "sign it too" }),
+    { text: "asked" },
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+    { text: "written and signed", agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  await view.until((current) => toolResults(current).length > 0)
+  const child = spawned(view, "/root/writer")
+  const writer = watchView(client, child)
+  const approval = await waitingApproval(writer)
+  // The follow-up waits in the writer's queue while its call holds on the approval.
+  await writer.until((current) => ((current.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
+  await client.call("approval/resolve", { conversation: child, approval, author: "ada", allow: true })
+  await writer.until(settled(1), 20_000)
+  expect(mails(writer).map((mail) => mail.kind)).toEqual(["new_task", "new_task"])
+  expect(transcript(writer.seen()).slice(-2)).toEqual(["assistant: written and signed", "run_end: answered"])
+  expect(runEnds(writer.seen())).toHaveLength(1)
   client.close()
 }, 30_000)
 

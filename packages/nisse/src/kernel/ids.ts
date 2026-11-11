@@ -24,4 +24,10 @@ export const refusedChoice = (id: string): string | undefined =>
     ? "a chosen conversation id may not be empty"
     : /^[0-9]+$/.test(id)
       ? `a chosen conversation id may not be all digits, which name conversations by number: ${id}`
-      : undefined
+      : id === "__proto__"
+        ? "a chosen conversation id may not be __proto__"
+        : undefined
+
+/** The kernel number a chosen id maps to, reading only the map's own keys. */
+export const chosenNumber = (map: { readonly ids: Record<string, number> } | undefined, id: string) =>
+  map !== undefined && Object.hasOwn(map.ids, id) ? map.ids[id] : undefined
