@@ -6,6 +6,7 @@ import type { ClaudeOptions } from "../../src/drivers/claude/index.ts"
 import type { OpenAiOptions } from "../../src/drivers/openai/index.ts"
 import type { Script } from "../../src/drivers/script.ts"
 import type { HomeConfig } from "../../src/config.ts"
+import { defaultClaude } from "./claude.ts"
 import { Lifetime } from "../../src/lifetime.ts"
 import { serverLayer } from "../../src/server.ts"
 
@@ -26,7 +27,7 @@ export const runningServer = async (script: Script = [], options: ServerOptions 
   const providers = providersLayer({
     script,
     openai: (options.openai ?? openAiOptions)(home),
-    claude: options.claude ?? {},
+    claude: options.claude ?? defaultClaude(home.dir),
     preferred: "script",
     config: options.config ?? {},
   })
@@ -55,7 +56,13 @@ export const servingUntilIdle = async (home: ReturnType<typeof tempHome>, idleGr
       Effect.provide(
         serverLayer(home, { idleGrace }).pipe(
           Layer.provide(
-            providersLayer({ script: [], openai: openAiOptions(home), claude: {}, preferred: "script", config: {} }),
+            providersLayer({
+              script: [],
+              openai: openAiOptions(home),
+              claude: defaultClaude(home.dir),
+              preferred: "script",
+              config: {},
+            }),
           ),
         ),
       ),
