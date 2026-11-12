@@ -128,6 +128,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - server-old-home: a home an earlier nisse used still starts, and its old stores are left as they were
 - mode-print, answer-exec, server-on-demand: nisse exec starts a server, prints the answer and exits 0
 - server-restart: nisse serve --restart replaces the running server once its run settles
+- server-restart: nisse exec waiting on a run that serve --restart lets finish prints the answer and exits 0
 - server-shared: clients starting at the same moment share one server
 - server-refuse: a second server for the same home refuses to start, and says which home
 - server-cannot-start: nisse exec whose server cannot come back says why once, and finishes once a server starts
