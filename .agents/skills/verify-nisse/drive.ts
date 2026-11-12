@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import * as Net from "node:net"
@@ -21,7 +21,8 @@ const usage = `usage: drive.ts <run> <command> [args]
                                    signed in unless --openai-signed-out, granting N token refreshes.
                                    claude is a fake replaying fixtures/claude/<fixture>.ndjson, by
                                    default models (signed in, no turns); --real-claude runs the
-                                   SDK's bundled Claude Code with your own login. --openai-auth copies a real
+                                   SDK's bundled Claude Code with your own login and without your
+                                   ~/.claude/settings.json. --openai-auth copies a real
                                    ChatGPT sign-in in, and down writes it back if a refresh rotated it.
   doctor                           is this run's instance worth driving?
   nisse <args...>                  run the nisse CLI against the run's home
@@ -71,6 +72,7 @@ const lock = join(home, "nisse.lock")
 const tmuxServer = `nisse-verify-${run}`
 const openaiPort = join(dir, "fake-openai.port")
 const claudeFixture = join(dir, "fake-claude.ndjson")
+const realClaude = join(dir, "real-claude")
 const openaiAuth = join(home, "auth", "openai.json")
 const openaiAuthSource = join(dir, "openai-auth.source")
 const FIXTURES = join(REPO, "fixtures")
@@ -84,7 +86,23 @@ const fakes = (): Record<string, string> => ({
         FAKE_CLAUDE_DIR: join(evidence, "fake-claude"),
       }
     : {}),
+  ...(existsSync(realClaude) ? { NISSE_CLAUDE: realClaude } : {}),
 })
+
+/**
+ * A `claude` that runs the SDK's bundled Claude Code, as a person's nisse does, without the person's own settings: their
+ * `defaultMode` and allow rules would run calls a step waits to see asked about, and Claude Code withdraws a question
+ * one of them answers. The sign-in is not a setting, so it stays. Nisse's own `--setting-sources` comes first in the
+ * arguments, and the last one counts.
+ */
+const writeRealClaude = () => {
+  const bundled = Bun.resolveSync(
+    `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`,
+    join(REPO, "packages/claude/src"),
+  )
+  writeFileSync(realClaude, `#!/bin/sh\nexec '${bundled}' "$@" --setting-sources=project\n`)
+  chmodSync(realClaude, 0o755)
+}
 
 const env = (): Record<string, string> => ({
   ...(process.env as Record<string, string>),
@@ -348,7 +366,8 @@ const describeFakes = () => {
     )
   if (existsSync(claudeFixture))
     console.log(`claude   fake claude; what nisse sent it in ${join(evidence, "fake-claude", "log.ndjson")}`)
-  else if (existsSync(home)) console.log("claude   the SDK's bundled Claude Code, with your own login")
+  else if (existsSync(realClaude))
+    console.log("claude   the SDK's bundled Claude Code, with your own login and without your settings")
   if (existsSync(openaiAuthSource))
     console.log(`openai   real sign-in from ${readFileSync(openaiAuthSource, "utf8")}, written back by down`)
 }
@@ -429,10 +448,10 @@ const commands: Record<string, () => Promise<void> | void> = {
     const refreshes = flag("--openai-refreshes") ?? "0"
     const signedOut = switchOn("--openai-signed-out")
     const auth = flag("--openai-auth")
-    const realClaude = switchOn("--real-claude")
+    const real = switchOn("--real-claude")
     const fakeClaude = flag("--fake-claude")
-    if (realClaude && fakeClaude) fail("--real-claude and --fake-claude exclude each other")
-    const claude = realClaude ? undefined : (fakeClaude ?? "models")
+    if (real && fakeClaude) fail("--real-claude and --fake-claude exclude each other")
+    const claude = real ? undefined : (fakeClaude ?? "models")
     if (auth && openai) fail("--openai-auth is a real sign-in; --fake-openai needs none")
     if (!/^\d+$/.test(refreshes)) fail("--openai-refreshes takes a count")
     mkdirSync(home, { recursive: true, mode: 0o700 })
@@ -440,10 +459,15 @@ const commands: Record<string, () => Promise<void> | void> = {
     if (script) writeFileSync(scriptPath, readFileSync(script))
     record(`up home=${home}${script ? ` script=${script}` : ""}`)
     if (claude) {
+      rmSync(realClaude, { force: true })
       writeFileSync(claudeFixture, readFileSync(fixture("claude", claude)))
       rmSync(join(evidence, "fake-claude"), { recursive: true, force: true })
       record(`fake claude replays ${claude}`)
-    } else record("claude is the SDK's bundled Claude Code")
+    } else {
+      rmSync(claudeFixture, { force: true })
+      writeRealClaude()
+      record("claude is the SDK's bundled Claude Code, with your login and without your settings")
+    }
     if (auth) {
       if (resolve(auth).startsWith(resolve(homedir(), ".nisse") + "/"))
         fail("copy a sign-in kept for verification, not the production ~/.nisse's: a refresh here would rotate it")
@@ -668,6 +692,7 @@ const commands: Record<string, () => Promise<void> | void> = {
     rmSync(scriptPath, { force: true })
     rmSync(openaiPort, { force: true })
     rmSync(claudeFixture, { force: true })
+    rmSync(realClaude, { force: true })
     console.log(`stopped; evidence kept in ${evidence}`)
   },
 }

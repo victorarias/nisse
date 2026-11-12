@@ -232,7 +232,11 @@ holding the account drives it cold, like this.
 - **Claude.** `drive.ts r up --real-claude` runs the Claude Code bundled with
   the Claude Agent SDK, as a person's nisse does, not the `claude` on your
   PATH, whose version may differ. It uses your own login, and its sessions land
-  in your Claude Code configuration.
+  in your Claude Code configuration, but not your `~/.claude/settings.json`:
+  `drive.ts` makes the last `--setting-sources` read only the project's. A
+  `defaultMode` such as `auto`, or an allow rule, would run a call a step
+  waits on as `allow this call?`, and Claude Code withdraws a question it can
+  answer itself.
 - **First check.** Before any step, `drive.ts r serve` and
   `drive.ts r rpc providers/list '{}'`: the provider is `ready`. ChatGPT names
   your account; Claude shows its version and names no account, because
