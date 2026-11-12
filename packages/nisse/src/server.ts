@@ -62,7 +62,6 @@ import {
   type Window,
 } from "@nisse/protocol"
 import { Cause, Console, Context, type Duration, Effect, Exit, Layer, Queue, Scope, Semaphore, Stream } from "effect"
-import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as RpcServer from "effect/rpc/RpcServer"
 import type { ModelAsk } from "./config.ts"
 import type { ProviderOptions } from "./providers.ts"
@@ -83,6 +82,7 @@ import { type Extensions, openExtensions, StatusLinesDoc } from "./extensions/in
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
 import { skillsOf, userInput, workspaceInstructions } from "./workspace.ts"
 import { lineageOf, listConversations, wireId } from "./conversations.ts"
+import { readableNdJsonRpc } from "./wire-errors.ts"
 
 /**
  * The changes one watch may hold unread before it ends with `FellBehind` (D10); the connection stays open. Receipt: 1,500
@@ -681,7 +681,7 @@ export const serverLayer = (home: Home, options: ServerOptions) =>
     Layer.provide(Handlers),
     Layer.provide(Layer.succeed(ConnectionQueue, options.connectionQueue ?? CONNECTION_QUEUE)),
     Layer.provide(RpcServer.layerProtocolSocketServer),
-    Layer.provide(RpcSerialization.layerNdJsonRpc()),
+    Layer.provide(readableNdJsonRpc),
     Layer.provide(homeSocketServer(home.socket)),
     Layer.provideMerge(KernelHarness.layer(home, options.readOnly === true)),
     Layer.provideMerge(

@@ -2,7 +2,10 @@ import * as Net from "node:net"
 
 export interface Reply {
   readonly result?: any
-  readonly error?: { readonly message: string; readonly data: Array<{ _tag: string; error?: { _tag: string } }> }
+  readonly error?: {
+    readonly message: string
+    readonly data: Array<{ _tag: string; error?: { _tag: string }; defect?: unknown }>
+  }
 }
 
 export interface Watch<A> {

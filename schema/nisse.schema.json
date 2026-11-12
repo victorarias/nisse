@@ -161,6 +161,37 @@
               "type": "string",
               "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
             },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991,
+              "description": "The kernel's number for it, by which a view's parent and the task graph name it; the same as id when its client chose none."
+            },
+            "title": {
+              "type": "string",
+              "description": "What a person knows it by: a subagent's title, or else the first line of its first prompt. Absent before its first prompt."
+            },
+            "fork": {
+              "type": "object",
+              "properties": {
+                "of": {
+                  "type": "string",
+                  "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+                },
+                "at": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "The last entry it inherits."
+                }
+              },
+              "required": [
+                "of",
+                "at"
+              ],
+              "additionalProperties": true,
+              "description": "The conversation it was forked from."
+            },
             "cwd": {
               "type": "string"
             },
@@ -261,6 +292,7 @@
           },
           "required": [
             "id",
+            "number",
             "cwd",
             "model",
             "approvals"
@@ -2661,11 +2693,15 @@
         },
         "provider": {
           "type": "string"
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
-        "provider"
+        "provider",
+        "message"
       ],
       "additionalProperties": true
     },
@@ -2686,12 +2722,16 @@
           "items": {
             "type": "string"
           }
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
         "effort",
-        "efforts"
+        "efforts",
+        "message"
       ],
       "additionalProperties": true
     },
@@ -2706,11 +2746,15 @@
         },
         "conversation": {
           "type": "string"
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
-        "conversation"
+        "conversation",
+        "message"
       ],
       "additionalProperties": true
     },
@@ -2725,11 +2769,15 @@
         },
         "conversation": {
           "type": "string"
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
-        "conversation"
+        "conversation",
+        "message"
       ],
       "additionalProperties": true
     },
@@ -2789,11 +2837,15 @@
           "minimum": -9007199254740991,
           "maximum": 9007199254740991,
           "description": "The changes a watch may hold unread before it is dropped; watch again from the position you hold."
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
-        "limit"
+        "limit",
+        "message"
       ],
       "additionalProperties": true
     },
@@ -2810,11 +2862,15 @@
           "type": "integer",
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
-        "entry"
+        "entry",
+        "message"
       ],
       "additionalProperties": true
     },
@@ -2848,11 +2904,15 @@
         },
         "conversation": {
           "type": "string"
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
-        "conversation"
+        "conversation",
+        "message"
       ],
       "additionalProperties": true
     },
@@ -2888,11 +2948,15 @@
           "type": "integer",
           "minimum": -9007199254740991,
           "maximum": 9007199254740991
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
-        "submission"
+        "submission",
+        "message"
       ],
       "additionalProperties": true
     },
@@ -2907,11 +2971,15 @@
         },
         "approval": {
           "type": "string"
+        },
+        "message": {
+          "type": "string"
         }
       },
       "required": [
         "_tag",
-        "approval"
+        "approval",
+        "message"
       ],
       "additionalProperties": true
     },

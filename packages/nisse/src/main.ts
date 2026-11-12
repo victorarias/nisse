@@ -96,9 +96,6 @@ const refuse = (reason: string, exitCode = 1) =>
 
 const homeTaken = (home: Home) => refuse(`another server already serves ${home.dir}`, HOME_TAKEN_EXIT)
 
-const unknownProvider = (error: { readonly provider: string }) =>
-  refuse(`nisse has no provider named ${error.provider}`)
-
 /** Stops the home's server when one answers; it starts none, since a server started now would give way to this one. */
 const stopRunningServer = (home: Home) =>
   Effect.flatMap(serverAnswers(home), (answers) =>
@@ -179,9 +176,8 @@ const execCommand = Command.make(
       withClient(home),
       Effect.scoped,
       Effect.catchTags({
-        UnknownProvider: unknownProvider,
-        UnknownEffort: (error) =>
-          refuse(`nisse knows no effort named ${error.effort}; it knows ${error.efforts.join(", ")}`),
+        UnknownProvider: (error) => refuse(error.message),
+        UnknownEffort: (error) => refuse(error.message),
         InvalidConversationId: (error) => refuse(error.message),
         UnreadableImage: (error) => refuse(error.message),
         ReadOnlyServer: (error) => refuse(error.message),
@@ -283,7 +279,7 @@ const nisse = Command.make(
       withClient(home),
       Effect.scoped,
       Effect.catchTags({
-        UnknownProvider: unknownProvider,
+        UnknownProvider: (error) => refuse(error.message),
         UnreadableImage: (error) => refuse(error.message),
         ReadOnlyServer: (error) => refuse(error.message),
       }),

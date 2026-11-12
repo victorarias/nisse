@@ -5,7 +5,9 @@ or another conversation, and forked at any entry. `/fork` in the TUI forks the
 conversation from before the last prompt a person typed and moves the screen
 to the fork, a new conversation with the same model, settings and approvals
 as the conversation has now (not as they were at the fork's entry), so the
-prompt can be tried another way. `conversation/fork` forks at any
+prompt can be tried another way. The fork's header says what it forked,
+`⑂ fork of <id> · <that conversation's first prompt>`, and `conversation/list`
+gives each fork `fork: {of, at}`. `conversation/fork` forks at any
 entry, with a chosen id. The conversation it left is unchanged.
 
 ## Sub-features
@@ -14,6 +16,7 @@ entry, with a chosen id. The conversation it left is unchanged.
 - `conversation-owner` [kernel] Ownership kinds (§2, §3): A conversation is owned by a task or another conversation, and goes away with it
 - `fork-at-entry` [kernel] Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
 - `fork-rpc` The client path for Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
+- `fork-shown` The TUI's header marks a fork and names the conversation it forked, and `conversation/list` gives each fork the conversation and entry it goes on from
 - `fork-document-policy` [kernel] Fork document policies: asOf, current, initial (§3.7): Each kind of state chooses what a fork inherits
 - `fork-provider-identity` [kernel] Each fork has its own provider session identity (§3.7, R716): Forks don't collide in provider session or cache
 - `conversation-list` [kernel] Conversation list (§2.2): Find conversations
@@ -41,12 +44,16 @@ Preconditions:
   (`tui type`, `tui key Enter`, `tui wait 'You said: <prompt>'`,
   `tui wait READY`), and `drive.ts r tui screen before-fork`. Type `/fork`,
   press `Enter`, and `drive.ts r tui wait --gone 'prompt two'`: the title bar
-  now names a new conversation, such as `conversation 25`, and the transcript
+  now names a new conversation and what it forked, such as
+  `conversation 25  ⑂ fork of talk · prompt one`, and the transcript
   holds `prompt one` and `You said: prompt one` only. Send `prompt three`:
   `You said: prompt three` under them. `drive.ts r tui stop` ends with
   `resume with: nisse --conversation <the fork's id>`, and
   `drive.ts r tui start --conversation talk` still shows `prompt two` and its
   answer.
+- **The fork in the list.** `drive.ts r rpc conversation/list`: the fork's
+  entry has `"fork": {"of": "talk", "at": <the first run_end's id>}` and
+  `"title": "prompt one"`; `talk`'s has no `fork`.
 - **The fork's view.** `drive.ts r watch <fork id> --save fork-view`:
   `"conversation": {"id": <fork>, "parent": {"conversationId": <talk's number>, "at": <the first run_end's id>}}`,
   and the inherited entries keep `"conversationId"` of `talk`.
@@ -69,11 +76,11 @@ Feature ledger area C: spec §2, §2.2, §3.7; README More Conversations and For
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- fork-rpc: a fork goes on from an earlier entry with only what came before it and the settings as they are now, and the conversation it left is unchanged
+- fork-rpc, fork-shown: a fork goes on from an earlier entry with only what came before it and the settings as they are now, the list says what it forked, and the conversation it left is unchanged
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- fork-rpc: /fork moves the screen to a new conversation that goes on from before the last prompt
+- fork-rpc, fork-shown: /fork moves the screen to a new conversation that goes on from before the last prompt, and its header says what it forked
 
 Package, `packages/harness/test/harness.test.ts`:
 

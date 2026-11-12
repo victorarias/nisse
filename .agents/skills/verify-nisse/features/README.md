@@ -167,7 +167,8 @@ lists when a change touches them.
   demand, refusing a second, exiting 30 s after its last client leaves;
   `serve --restart` replaces it once runs settle.
 - [Wire protocol](./wire-protocol.md) (people, agents): the JSON Schema clients build from,
-  `initialize`, and how a watch that falls behind is ended.
+  `initialize`, how a watch that falls behind is ended, and errors whose
+  message says what went wrong.
 - [Crash recovery](./crash-recovery.md) (triggers): a run cut off by a killed server
   finishes when the server comes back, scripted or with a Claude Code subagent
   mid-run; the third crash in a row ends it.
