@@ -797,7 +797,8 @@ test("server-restart: a server that starts while serve --restart replaces the ol
   const nisseHome = home()
   const env = await scriptEnv(nisseHome)
   mkdirSync(nisseHome.dir, { recursive: true })
-  // The test holds the home as the old server does, and a client's server starts and waits for it.
+  // The test holds the home as the old server does, and later the next lock as a restart does: a real restart could not
+  // be made to land inside the starter's one-second wait for the home.
   const old = holdLock(homeAt(nisseHome.dir).lock)
   const starting = nisse(["serve"], env)
   const waitsOnHome = () =>
