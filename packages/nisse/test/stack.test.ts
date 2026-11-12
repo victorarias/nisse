@@ -712,6 +712,29 @@ test("server-restart: nisse serve --restart replaces the running server once its
   expect(second.exitCode).toBeNull()
 }, 30_000)
 
+test("server-restart: nisse exec waiting on a run that serve --restart lets finish prints the answer and exits 0", async () => {
+  const nisseHome = home()
+  // About 2.4 s of answer, so the restart arrives while the run works.
+  const env = await scriptEnv(nisseHome, [{ text: "one two three four five six seven eight", delayMs: 300 }])
+  await serving(env)
+  const exec = nisse(["exec", "count"], env)
+  const stdout = exec.stdout.getReader()
+  let printed = ""
+  while (!printed.includes("one")) {
+    const { value, done } = await deadline(stdout.read(), 10_000, "first words printed")
+    if (done) throw new Error(`exec ended before the restart: ${printed}`)
+    printed += new TextDecoder().decode(value)
+  }
+  await serving(env, undefined, ["serve", "--restart"])
+  for (let read = await stdout.read(); !read.done; read = await stdout.read())
+    printed += new TextDecoder().decode(read.value)
+  expect({
+    code: await deadline(exec.exited, 20_000, "exec exit"),
+    stderr: await new Response(exec.stderr).text(),
+    printed,
+  }).toEqual({ code: 0, stderr: "", printed: "one two three four five six seven eight\n" })
+}, 40_000)
+
 test("extensions-load: nisse extensions lists each extension by its full path", async () => {
   const nisseHome = home()
   mkdirSync(nisseHome.extensions, { recursive: true })
