@@ -843,6 +843,11 @@ export const tui = Effect.fnUntraced(function* (
   while (next !== undefined) next = yield* Effect.scoped(conversationScreen(next, options, undefined))
 })
 
+const READ_ONLY_NOTICE = {
+  text: "this server is read-only and sends nothing; stop it and run nisse serve to send",
+  warning: true,
+}
+
 /** Shows one conversation until the person quits it, or moves on to a fork of it: then the fork's id. */
 const conversationScreen = Effect.fnUntraced(function* (
   id: string | undefined,
@@ -850,7 +855,8 @@ const conversationScreen = Effect.fnUntraced(function* (
   prompt: string | undefined,
 ) {
   const client = yield* Client
-  const { readOnly } = yield* client.initialize({ client: "nisse", version: VERSION, protocol: PROTOCOL_VERSION })
+  const initialize = client.initialize({ client: "nisse", version: VERSION, protocol: PROTOCOL_VERSION })
+  const [readOnly, setReadOnly] = createSignal((yield* initialize).readOnly)
   // A number names a conversation the server numbered; any other id is one a client chose, and starting with it
   // opens that conversation or starts it.
   const numbered = id !== undefined && /^\d+$/.test(id)
@@ -909,8 +915,16 @@ const conversationScreen = Effect.fnUntraced(function* (
       }),
     ),
   )
-  const relist: Effect.Effect<void> = client["status/watch"]().pipe(
-    Stream.runForEach(() => listed),
+  // Watched again whenever the server goes away, and the server that answers may be another one: a `serve --restart`
+  // can replace a read-only server with one that writes, or the other way, so each watch asks what this server is.
+  const relist: Effect.Effect<void> = initialize.pipe(
+    Effect.tap(({ readOnly }) =>
+      Effect.sync(() => {
+        setReadOnly(readOnly)
+        if (!readOnly && untrack(notice) === READ_ONLY_NOTICE) setNotice(undefined)
+      }),
+    ),
+    Effect.andThen(Stream.runForEach(client["status/watch"](), () => listed)),
     Effect.ignore,
     Effect.andThen(Effect.sleep(REWATCH_DELAY)),
     Effect.andThen(Effect.suspend(() => relist)),
@@ -968,7 +982,7 @@ const conversationScreen = Effect.fnUntraced(function* (
       ),
     )
   // A read-only server runs nothing, so a run it shows in flight is not working.
-  const status = () => (readOnly ? "idle" : statusOf(root.docs()))
+  const status = () => (readOnly() ? "idle" : statusOf(root.docs()))
   const screen: Screen = {
     id: conversation,
     get cwd() {
@@ -984,7 +998,9 @@ const conversationScreen = Effect.fnUntraced(function* (
       return workingSince()
     },
     hosted: info?.lineage !== undefined && info.lineage.task === undefined,
-    readOnly,
+    get readOnly() {
+      return readOnly()
+    },
     get statusLines() {
       return root.docs()[STATUS_LINES_KIND]?.lines ?? {}
     },
@@ -1004,9 +1020,9 @@ const conversationScreen = Effect.fnUntraced(function* (
       const live = root.docs()["pi.live"]
       // A read-only server works on nothing, so it is neither compacting nor retrying.
       return {
-        compacting: !readOnly && (live?.compactions?.length ?? 0) > 0,
+        compacting: !readOnly() && (live?.compactions?.length ?? 0) > 0,
         compactionFailure: live?.compactionFailure?.error,
-        retry: readOnly ? undefined : live?.generation?.retry,
+        retry: readOnly() ? undefined : live?.generation?.retry,
       }
     },
     get usage() {
@@ -1027,11 +1043,7 @@ const conversationScreen = Effect.fnUntraced(function* (
   const actions: ConversationActions = {
     // While the server is away the prompt is sent again under the same request id, which the server answers once.
     submit: (text, steer) => {
-      if (readOnly)
-        return setNotice({
-          text: "this server is read-only and sends nothing; stop it and run nisse serve to send",
-          warning: true,
-        })
+      if (readOnly()) return setNotice(READ_ONLY_NOTICE)
       setNotice(undefined)
       const images = imagesIn(text, screen.cwd ?? process.cwd())
       const payload = {
@@ -1047,6 +1059,13 @@ const conversationScreen = Effect.fnUntraced(function* (
           Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
           Effect.catchTag("UnreadableImage", (error) =>
             Effect.sync(() => setNotice({ text: error.message, warning: true })),
+          ),
+          // The server that answered is another, read-only one, which a restart put in place after the prompt was typed.
+          Effect.catchTag("ReadOnlyServer", () =>
+            Effect.sync(() => {
+              setReadOnly(true)
+              setNotice(READ_ONLY_NOTICE)
+            }),
           ),
         ),
       )

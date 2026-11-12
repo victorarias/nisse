@@ -314,11 +314,13 @@ test("signin-shared: an open TUI shows a sign-in another connection finished", a
   const auth = other.watch<AuthState>("auth/watch")
   const started = (await other.call("auth/start", { provider: "claude" })).result as AuthState
   await auth.until((states) => states.some((state) => state.phase === "waiting"))
-  await other.call("auth/respond", {
+  // Answered the moment the waiting state shows, as a fast client does.
+  const answered = await other.call("auth/respond", {
     provider: "claude",
     flow: started.flow,
     response: { _tag: "terminal_exited", success: true },
   })
+  expect(answered.result).toEqual({ accepted: true })
   await auth.until((states) => states.at(-1)?.phase === "succeeded", 30_000)
   other.close()
   await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen))
@@ -533,6 +535,20 @@ test("crash-tui: the open TUI finishes the answer after the server is killed mid
     20_000,
   )
   expect(screen).not.toContain("missing messages")
+  await quit(session)
+}, 30_000)
+
+test("crash-tui: quitting while the server cannot come back ends nisse, though a typed prompt waits to be sent", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, [])
+  const server = await serving(env)
+  const session = screenSession([], env)
+  await session.waitFor((screen) => screen.includes("READY"))
+  // Every server the TUI starts now refuses this config, so the prompt is sent again and again while the TUI waits.
+  await Bun.write(join(nisseHome.dir, "config.toml"), "[extensions.guard\n")
+  server.kill("SIGKILL")
+  await server.exited
+  session.type("never sent\r")
   await quit(session)
 }, 30_000)
 
@@ -812,4 +828,30 @@ test("serve-read-only: under nisse serve --read-only the TUI shows a conversatio
   await quit(session)
   viewer.kill()
   await viewer.exited
+})
+
+test("server-restart, serve-read-only: an open TUI keeps drawing while nisse serve --restart replaces its server, read-only and back", async () => {
+  const nisseHome = home()
+  const session = await open([{ text: "answer one" }], ["--conversation", "talk"], nisseHome)
+  await session.waitFor((screen) => screen.includes("READY"))
+  await ask(session, "prompt one", "answer one")
+  // Replaces the server the TUI started; the TUI now shows a read-only home.
+  const env = await scriptEnv(nisseHome, [])
+  const viewer = await serving(env, undefined, ["serve", "--read-only", "--restart"])
+  await session.waitFor((screen) => screen.includes("READ ONLY"))
+  session.type("held back\r")
+  await session.waitFor((screen) => screen.includes("read-only and sends nothing"))
+  // And back to a server that writes: the TUI takes input again, with no read-only warning left, and draws what it
+  // sends.
+  const writer = await serving(env, undefined, ["serve", "--restart"])
+  await viewer.exited
+  await session.waitFor(
+    (screen) => !screen.includes("READ ONLY") && !screen.includes("sends nothing") && screen.includes("PROMPT"),
+  )
+  session.type("\x15")
+  await ask(session, "prompt two", "You said: prompt two")
+  expect(session.screen()).toContain("answer one")
+  await quit(session)
+  writer.kill()
+  await writer.exited
 })

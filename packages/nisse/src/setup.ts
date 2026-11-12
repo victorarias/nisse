@@ -188,12 +188,16 @@ export class Setup extends Context.Service<
               }),
             )
           }),
+        // Read under the lock: a state is shown to watchers by its commit before `update` installs it here, so a caller
+        // that answers a `waiting` it was just shown finds it once the update is done, not the `starting` before it.
         respond: (provider, flow, response) =>
-          Effect.sync(() => {
-            const running = flows.get(provider)
-            if (!running || running.state.flow !== flow || running.state.phase !== "waiting") return false
-            return Queue.offerUnsafe(running.responses, response)
-          }),
+          recording(
+            Effect.sync(() => {
+              const running = flows.get(provider)
+              if (!running || running.state.flow !== flow || running.state.phase !== "waiting") return false
+              return Queue.offerUnsafe(running.responses, response)
+            }),
+          ),
         cancel,
         logout: (provider) =>
           Effect.gen(function* () {
