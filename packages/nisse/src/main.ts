@@ -97,10 +97,15 @@ const refuse = (reason: string, exitCode = 1) =>
 
 const homeTaken = (home: Home) => refuse(`another server already serves ${home.dir}`, HOME_TAKEN_EXIT)
 
-/** Stops the home's server when one answers; it starts none, since a server started now would give way to this one. */
+/**
+ * Stops the home's server when one answers, and says whether one did; it starts none, since a server started now would
+ * give way to this one.
+ */
 const stopRunningServer = (home: Home) =>
   Effect.flatMap(serverAnswers(home), (answers) =>
-    answers ? Effect.ignore(withServer(home, (client) => client["server/stop"]())) : Effect.void,
+    answers
+      ? Effect.as(Effect.ignore(withServer(home, (client) => client["server/stop"]())), true)
+      : Effect.succeed(false),
   )
 
 const serveCommand = Command.make(

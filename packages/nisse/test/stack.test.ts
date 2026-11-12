@@ -3,8 +3,18 @@ import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { applyImmutable, type Op } from "@nisse/delta"
 import { PROTOCOL_VERSION, type View, type ViewItem } from "@nisse/protocol"
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs"
-import { readFile } from "node:fs/promises"
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  watch,
+  writeFileSync,
+} from "node:fs"
+import { open, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import { deadline, RawClient } from "./support/raw.ts"
@@ -735,6 +745,37 @@ test("server-restart: nisse exec waiting on a run that serve --restart lets fini
     printed,
   }).toEqual({ code: 0, stderr: "", printed: "one two three four five six seven eight\n" })
 }, 40_000)
+
+test("server-restart: nisse serve --restart replaces a server that took the home but answered only after the restart began", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, [])
+  // The first server reads its config.toml after it takes the home and before it listens; a FIFO holds it there.
+  const config = join(nisseHome.dir, "config.toml")
+  expect(Bun.spawnSync(["mkfifo", config]).exitCode).toBe(0)
+  const first = nisse(["serve"], env)
+  const held = await deadline(open(config, "w"), 10_000, "first server reading its config")
+  let released: Promise<void> | undefined
+  const release = () => (released ??= held.close())
+  await using _released = { [Symbol.asyncDispose]: release }
+  writeFileSync(`${config}.next`, "")
+  renameSync(`${config}.next`, config)
+  const restart = nisse(["serve", "--restart"], env)
+  const log = restart.stderr.getReader()
+  let printed = ""
+  const read = async (what: string) => {
+    while (!printed.includes(what)) {
+      const { value, done } = await deadline(log.read(), 10_000, what)
+      if (done) throw new Error(`serve --restart exited: ${printed}`)
+      printed += new TextDecoder().decode(value)
+    }
+  }
+  // The restart found no server answering and waits for the home; only now does the first server go on to listen.
+  await read(`waiting for the server that holds ${nisseHome.dir} to stop`)
+  await release()
+  await read(`serving ${nisseHome.dir}`)
+  expect(await deadline(first.exited, 5000, "first server exit")).toBe(0)
+  expect(restart.exitCode).toBeNull()
+}, 30_000)
 
 test("extensions-load: nisse extensions lists each extension by its full path", async () => {
   const nisseHome = home()

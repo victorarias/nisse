@@ -105,7 +105,7 @@ cannot start: .../config.toml: TOML Parse error ...`. Count
 ## Contexts
 
 - **Running work.** `serve --restart` and `server/stop` wait for runs to settle.
-- **Open clients.** A stop ends every open call and watch the way a lost connection does, so an open TUI watches the next server. A client that loses its server starts one, and while `serve --restart` replaces the server, the one the client started gives way (`another server already serves` in the home's `nisse.log`), so the restart always becomes the home's server.
+- **Open clients.** A stop ends every open call and watch the way a lost connection does, so an open TUI watches the next server. A client that loses its server starts one, and while `serve --restart` replaces the server, the one the client started gives way (`another server already serves` in the home's `nisse.log`), so the restart always becomes the home's server. A server that took the home just before the restart and does not answer yet is stopped once it answers: the restart prints `waiting for the server that holds <home> to stop`, stops again on each attempt at the home, and gives up with `another server already serves` 30 s after its last stop reached a server, or after its start when none answered.
 
 ## Tests
 
@@ -131,6 +131,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - server-restart: nisse serve --restart replaces the running server once its run settles
 - server-restart: nisse exec waiting on a run that serve --restart lets finish prints the answer and exits 0
 - server-restart: a server that starts while serve --restart replaces the old one gives way, though it waited on the old one's lock
+- server-restart: nisse serve --restart replaces a server that took the home but answered only after the restart began
 - server-shared: clients starting at the same moment share one server
 - server-refuse: a second server for the same home refuses to start, and says which home
 - server-cannot-start: nisse exec whose server cannot come back says why once, and finishes once a server starts
