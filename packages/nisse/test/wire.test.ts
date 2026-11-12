@@ -1754,7 +1754,14 @@ test("tool-output-live: a verbose command's live output stays a bounded tail", a
 
 test("tool-output-live: output a background process writes after its call ends never reaches the conversation", async () => {
   await using server = await runningServer([
-    { tool: { name: "bash", input: { command: `(${waitFor("go")}; echo late; touch wrote) & echo now` } } },
+    // The call's output pipe is closed once it ends, so the late echo fails (SIGPIPE, ignored here) and the process
+    // still marks that it tried.
+    {
+      tool: {
+        name: "bash",
+        input: { command: `(trap '' PIPE; ${waitFor("go")}; echo late; touch wrote) & echo now` },
+      },
+    },
     { tool: { name: "bash", input: { command: waitFor("wrote") } } },
     { text: "done" },
   ])
