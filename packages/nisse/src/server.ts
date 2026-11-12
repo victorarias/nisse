@@ -5,7 +5,11 @@ import { CodemodeSandbox } from "@nisse/codemode/sandbox"
 import { LocalExecutionEnv } from "@nisse/env/local"
 import {
   answerApproval,
+  ApprovalsDoc,
   approveAutomatically,
+  CompactionRefused,
+  configure,
+  ConversationBusy as BusyConversation,
   type Conversation,
   type ConversationView,
   type ConversationWindow,
@@ -13,14 +17,30 @@ import {
   type EndedRun,
   type WithdrawnInput,
   openHarness,
+  UsageDoc,
   type Harness,
 } from "@nisse/harness"
-import { type ConversationId, type Cursor, type EntryId, idFromNumber, openSqliteStorage, type Tx } from "@nisse/kernel"
+import {
+  type ConversationId,
+  type Cursor,
+  type DocumentObservation,
+  type DocumentObserver,
+  type EntryId,
+  idFromNumber,
+  openSqliteStorage,
+  type SubmissionId,
+  type Tx,
+} from "@nisse/kernel"
 import { fromProviders, type Models } from "@nisse/models"
 import type { ImageProcessor } from "@nisse/tools"
 import { createNodePhotonImages } from "@nisse/tools/images/node"
 import {
+  CannotCompact,
+  CONFIGURED_KIND,
+  ConversationBusy,
   FellBehind,
+  NoSuchSubmission,
+  type TaskGraphItem,
   InvalidConversationId,
   InvalidWindow,
   PROTOCOL_VERSION,
@@ -275,34 +295,89 @@ const Handlers = NisseRpcs.toLayer(
         return { conversation: id ?? String(started ?? conversation.id), model: selectionOf(model) }
       })
 
+    /**
+     * A watch's items: `first` of the value `attach` observes, then each commit's operations on it. A full queue ends
+     * the watch instead of holding the Session line; what it held is dropped so the client hears FellBehind at its next
+     * read.
+     */
+    const follow = <V, I, E>(
+      attach: (observer: DocumentObserver<V>) => Effect.Effect<DocumentObservation<V>, E>,
+      first: (value: V) => I,
+    ) =>
+      Effect.gen(function* () {
+        const queue = yield* Queue.bounded<
+          I | { readonly _tag: "change"; readonly ops: ReadonlyArray<unknown> },
+          FellBehind | Cause.Done
+        >(connectionQueue)
+        let behind = false
+        const observation = yield* Effect.acquireRelease(
+          attach({
+            // On the Session line: only capture.
+            advance: (change) => {
+              if (behind || Queue.offerUnsafe(queue, { _tag: "change" as const, ops: change.ops })) return
+              behind = true
+              Effect.runSync(Queue.clear(queue))
+              Queue.failCauseUnsafe(queue, Cause.fail(new FellBehind({ limit: connectionQueue })))
+            },
+            end: (end) => {
+              if (end.kind === "ended") Queue.endUnsafe(queue)
+              else Queue.failCauseUnsafe(queue, Cause.die(end.error))
+            },
+          }),
+          (attached) => Effect.sync(() => attached.detach()),
+        )
+        return Stream.concat(Stream.make(first(observation.value)), Stream.fromQueue(queue))
+      })
+
+    /** Refuses an id a client chose that cannot name a new conversation, or names one already. */
+    const freshChoice = (id: string) =>
+      Effect.gen(function* () {
+        const refused = refusedChoice(id)
+        if (refused !== undefined) return yield* new InvalidConversationId({ message: refused })
+        const taken = chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id)
+        const numbered = kernelNumber(id)
+        if (taken !== undefined || (numbered !== undefined && (yield* Effect.orDie(harness.conversation(numbered)))))
+          return yield* new InvalidConversationId({ message: `${id} already names a conversation` })
+      })
+
+    const fork = (id: string, at: number, chosen: string | undefined) =>
+      Effect.gen(function* () {
+        const conversation = yield* takingInput(id)
+        const entry = idFromNumber<EntryId>(at)
+        const visible = yield* Effect.orDie(harness.session.read((storage) => storage.entry(conversation.id, entry)))
+        if (visible === undefined) return yield* new NoSuchEntry({ entry: at })
+        const auto = (yield* Effect.orDie(harness.session.snapshot(ApprovalsDoc, conversation.id)))?.auto === true
+        const forked = yield* Effect.orDie(
+          conversation.fork(entry, {
+            ownership: { kind: "ownerless" },
+            init: (tx, created) =>
+              Effect.gen(function* () {
+                if (auto) yield* approveAutomatically(tx, created)
+                if (chosen !== undefined) (yield* tx.doc(ConversationIdsDoc)).ids[chosen] = Number(created)
+              }),
+          }),
+        )
+        return { conversation: chosen ?? String(forked.id) }
+      })
+
+    const watchTasks = Stream.unwrap(
+      Effect.gen(function* () {
+        yield* lifetime.hold
+        return yield* follow(
+          (observer) => Effect.orDie(harness.observeTaskGraph(observer)),
+          (graph): TaskGraphItem => ({ _tag: "graph", graph: graph as unknown as { tasks: Record<string, unknown> } }),
+        )
+      }),
+    )
+
     const watch = (id: string, window: Window | undefined) =>
       Stream.unwrap(
         Effect.gen(function* () {
           yield* lifetime.hold
           const conversation = yield* find(id)
-          const queue = yield* Queue.bounded<ViewItem, FellBehind | Cause.Done>(connectionQueue)
-          let behind = false
-          const observation = yield* Effect.acquireRelease(
-            harness
-              .observeConversation(
-                conversation.id,
-                {
-                  // On the Session line: only capture. A full queue ends the watch instead of holding the line; what it
-                  // held is dropped so the client hears FellBehind at its next read.
-                  advance: (change) => {
-                    if (behind || Queue.offerUnsafe(queue, { _tag: "change", ops: change.ops })) return
-                    behind = true
-                    Effect.runSync(Queue.clear(queue))
-                    Queue.failCauseUnsafe(queue, Cause.fail(new FellBehind({ limit: connectionQueue })))
-                  },
-                  end: (end) => {
-                    if (end.kind === "ended") Queue.endUnsafe(queue)
-                    else Queue.failCauseUnsafe(queue, Cause.die(end.error))
-                  },
-                },
-                toWindow(window),
-              )
-              .pipe(
+          return yield* follow(
+            (observer) =>
+              harness.observeConversation(conversation.id, observer, toWindow(window)).pipe(
                 Effect.orDie,
                 // The harness checks the window's bounds and names the one that is wrong.
                 Effect.catchDefect((defect) =>
@@ -311,10 +386,8 @@ const Handlers = NisseRpcs.toLayer(
                     : Effect.die(defect),
                 ),
               ),
-            (attached) => Effect.sync(() => attached.detach()),
+            (view: ConversationView): ViewItem => ({ _tag: "view", view: toView(view) }),
           )
-          const first: ViewItem = { _tag: "view", view: toView(observation.value) }
-          return Stream.concat(Stream.make(first), Stream.fromQueue(queue))
         }),
       )
 
@@ -431,6 +504,89 @@ const Handlers = NisseRpcs.toLayer(
           return { messages: context.messages, entries: context.entries.map((record) => Number(record.id)) }
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),
+      "conversation/fork": ({ conversation, at, id }) =>
+        id === undefined
+          ? fork(conversation, at, undefined)
+          : choosing.withPermits(1)(Effect.andThen(freshChoice(id), fork(conversation, at, id))),
+      "conversation/reset": ({ conversation: id, author, handoff }) =>
+        Effect.flatMap(takingInput(id), (conversation) =>
+          heldUntilIdle(Effect.orDie(conversation.reset(handoff, { author }))),
+        ),
+      "conversation/compact": ({ conversation: id, instructions }) =>
+        Effect.gen(function* () {
+          const conversation = yield* takingInput(id)
+          const task = yield* heldUntilIdle(
+            conversation.compact(instructions).pipe(
+              Effect.catchIf(
+                (error) => error instanceof CompactionRefused,
+                (error) => Effect.fail(new CannotCompact({ message: (error as CompactionRefused).message })),
+              ),
+              Effect.catchIf(
+                (error) => !(error instanceof CannotCompact),
+                (error) => Effect.die(error),
+              ),
+            ),
+          )
+          const outcome = (yield* Effect.orDie(harness.waitForTask(task))).state.outcome
+          if (outcome.status === "completed") {
+            // The summary is placed as a write; a compaction that found nothing to summarize places none.
+            const { entryId, submissionId } = outcome.result
+            return { outcome: entryId === undefined && submissionId === undefined ? "nothing_to_compact" : "compacted" }
+          }
+          if (outcome.status === "aborted") return { outcome: "stopped" as const }
+          return { outcome: "failed" as const, message: outcome.error?.message ?? outcome.reason ?? outcome.status }
+        }),
+      "conversation/continue": ({ conversation: id }) =>
+        Effect.gen(function* () {
+          const conversation = yield* takingInput(id)
+          const submission = yield* heldUntilIdle(
+            conversation.submit({ type: "continue" }).pipe(
+              Effect.catchIf(
+                (error) => error instanceof BusyConversation,
+                () => Effect.fail(new ConversationBusy({ conversation: id })),
+              ),
+              Effect.catchIf(
+                (error) => !(error instanceof ConversationBusy),
+                (error) => Effect.die(error),
+              ),
+            ),
+          )
+          return { submission: submission.id }
+        }),
+      "submission/withdraw": ({ conversation: id, submission }) =>
+        Effect.gen(function* () {
+          const conversation = yield* find(id)
+          const result = yield* Effect.orDie(
+            harness.abortSubmission(idFromNumber<SubmissionId>(submission), conversation.id),
+          )
+          if (result === "not_found") return yield* new NoSuchSubmission({ submission })
+          return { result: result === "aborted" ? ("withdrawn" as const) : result }
+        }),
+      "conversation/configure": ({ conversation: id, author, instructions, maxTurns }) =>
+        Effect.gen(function* () {
+          const conversation = yield* takingInput(id)
+          const change = {
+            ...(instructions === undefined ? {} : { instructions }),
+            ...(maxTurns === undefined ? {} : { maxTurns }),
+          }
+          yield* Effect.orDie(
+            conversation.commit((tx) =>
+              Effect.gen(function* () {
+                yield* configure(tx, conversation.id, change)
+                yield* tx.appendEntry(conversation.id, { kind: CONFIGURED_KIND, data: { author, ...change } })
+              }),
+            ),
+          )
+        }),
+      "usage/get": ({ conversation: id }) =>
+        id === undefined
+          ? Effect.orDie(harness.usage)
+          : Effect.gen(function* () {
+              const conversation = yield* find(id)
+              const usage = yield* Effect.orDie(harness.session.snapshot(UsageDoc, conversation.id))
+              return usage ?? { models: {}, tools: {} }
+            }),
+      "tasks/watch": () => watchTasks,
       "conversation/interrupt": ({ conversation: id }) =>
         Effect.flatMap(find(id), (conversation) => Effect.orDie(interruptTree(harness, conversation.id))),
       "approval/resolve": ({ conversation: id, approval, author, allow }) =>

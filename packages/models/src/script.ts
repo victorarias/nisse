@@ -17,6 +17,8 @@ export const ScriptStep = Schema.Struct({
   fail: Schema.optionalKey(Schema.String),
   delayMs: Schema.optionalKey(Schema.Int),
   agent: Schema.optionalKey(Schema.String),
+  /** The tokens the answer reports it used; none by default. */
+  usage: Schema.optionalKey(Schema.Struct({ input: Schema.Int, output: Schema.Int })),
 })
 export type ScriptStep = typeof ScriptStep.Type
 
@@ -71,7 +73,8 @@ const answer = (step: ScriptStep, model: Model<string>): AssistantMessage => {
     api: model.api,
     provider: model.provider,
     model: model.id,
-    usage: ZERO,
+    usage:
+      step.usage === undefined ? ZERO : { ...ZERO, ...step.usage, totalTokens: step.usage.input + step.usage.output },
     stopReason: "stop",
     timestamp: Date.now(),
   }

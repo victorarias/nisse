@@ -9,6 +9,7 @@ import {
   type ConversationOwnership,
   type ConversationRecord,
   type Cursor,
+  type JsonObject,
   type JsonValue,
   type DocAddressArgs,
   type DocumentObservation,
@@ -180,9 +181,9 @@ export interface Conversation {
   configure(change: AgentChange): Effect.Effect<void, CommitError>
   /**
    * Starts a new context, history kept; `handoff` is the first message of the new context (spec 7.1). Behind a live run
-   * the reset waits in the inbox, as every write does.
+   * the reset waits in the inbox, as every write does. `data` is the `pi.reset` entry's, such as who reset it.
    */
-  reset(handoff?: string): Effect.Effect<void, ReadError | CommitError>
+  reset(handoff?: string, data?: JsonObject): Effect.Effect<void, ReadError | CommitError>
   /**
    * Starts a manual compaction of the conversation, focused by `instructions` (spec 8.7). It never takes run control:
    * its summary is placed like a write. `Conversation.abort()` aborts it.
@@ -658,7 +659,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
         return host.resolveAgent(id)
       },
       configure: (change) => this.session.commit((tx) => configure(tx, id, change)) as Effect.Effect<void, CommitError>,
-      reset: (handoff) => this.#reset(id, handoff),
+      reset: (handoff, data) => this.#reset(id, handoff, data),
       compact: (instructions) => {
         const input = { reason: "manual" as const, ...(instructions === undefined ? {} : { instructions }) }
         return Effect.andThen(
@@ -696,9 +697,13 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
   }
 
   /** A reset is a write submission (spec 7.1): its `pi.reset` entry, `head: "self"`, carries the handoff. */
-  #reset(id: ConversationId, handoff: string | undefined): Effect.Effect<void, ReadError | CommitError> {
+  #reset(
+    id: ConversationId,
+    handoff: string | undefined,
+    data: JsonObject | undefined,
+  ): Effect.Effect<void, ReadError | CommitError> {
     const model = handoff === undefined ? {} : { model: [{ role: "user", content: handoff, timestamp: this.now() }] }
-    const entry = { kind: ResetEntry.kind, head: "self" as const, ...model }
+    const entry = { kind: ResetEntry.kind, head: "self" as const, ...model, ...(data === undefined ? {} : { data }) }
     return Effect.asVoid(
       this.submissions.submit(id, { type: "write", entry }) as Effect.Effect<Submission, ReadError | CommitError>,
     )

@@ -141,6 +141,7 @@ export class FellBehind extends Schema.TaggedError<FellBehind>()("FellBehind", {
   }),
 }) {}
 
+/** Starts a new, empty context, the transcript kept. Behind a working run it waits in pi.inbox and applies at the run's next step. */
 export const Initialize = Rpc.make("initialize", {
   payload: { client: Schema.String, version: Schema.String, protocol: Schema.Int },
   success: Schema.Struct({ version: Schema.String, protocol: Schema.Int }),
@@ -578,6 +579,170 @@ export const WatchAuth = Rpc.make("auth/watch", {
   stream: true,
 })
 
+/** The conversation is working, and the call takes an idle one. */
+export class ConversationBusy extends Schema.TaggedError<ConversationBusy>()("ConversationBusy", {
+  conversation: Schema.String,
+}) {}
+
+/** The conversation cannot compact now: `message` says why, such as a provider that compacts by itself. */
+export class CannotCompact extends Schema.TaggedError<CannotCompact>()("CannotCompact", {
+  message: Schema.String,
+}) {}
+
+export class NoSuchSubmission extends Schema.TaggedError<NoSuchSubmission>()("NoSuchSubmission", {
+  submission: Schema.Int,
+}) {}
+
+/** A person started a new context: an entry of this kind, `{ author }`, whose `model` carries the handoff, if any. */
+export const RESET_KIND = "pi.reset"
+
+/** A summary that replaced earlier context: an entry of this kind, whose `data.reason` says what started it. */
+export const COMPACTION_KIND = "pi.compaction"
+
+/** An entry `{ author, instructions?, maxTurns? }`: someone changed the conversation's settings; null clears one. */
+export const CONFIGURED_KIND = "nisse.configured"
+
+export const Fork = Rpc.make("conversation/fork", {
+  payload: {
+    conversation: ConversationId,
+    at: Schema.Int.annotate({ description: "The last entry the fork inherits; the fork goes on from it." }),
+    id: Schema.optionalKey(
+      Schema.String.annotate({ description: "The id to name the fork by, as conversation/start takes one." }),
+    ),
+  },
+  success: Schema.Struct({
+    conversation: ConversationId.annotate({
+      description: "The fork: a conversation of its own, on the same model, settings and approvals.",
+    }),
+  }),
+  error: Schema.Union([NoSuchConversation, NoSuchEntry, InvalidConversationId, TakesNoInput]),
+})
+
+export const Reset = Rpc.make("conversation/reset", {
+  payload: {
+    conversation: ConversationId,
+    author: Schema.String.annotate({ description: `Who reset it; its ${RESET_KIND} entry names them.` }),
+    handoff: Schema.optionalKey(
+      Schema.String.annotate({ description: "The first message of the new context, such as a brief of the work." }),
+    ),
+  },
+  error: Schema.Union([NoSuchConversation, TakesNoInput]),
+})
+
+/** Summarizes the context now. pi.live's `compactions` shows it running and `compactionFailure` why one failed; its pi.compaction entry replaces what it summarized. */
+export const Compact = Rpc.make("conversation/compact", {
+  payload: {
+    conversation: ConversationId,
+    instructions: Schema.optionalKey(
+      Schema.String.annotate({ description: "What the summary should keep, beside what it always keeps." }),
+    ),
+  },
+  success: Schema.Struct({
+    outcome: Schema.Literals(["compacted", "nothing_to_compact", "failed", "stopped"]).annotate({
+      description:
+        "compacted: its pi.compaction entry is placed, at once or, behind a run in flight, at the run's next step. nothing_to_compact: the context is no longer than what a summary keeps. stopped: interrupted before it ended.",
+    }),
+    message: Schema.optionalKey(Schema.String.annotate({ description: "Why it failed." })),
+  }).annotate({ description: "How the compaction ended; the call answers once it has." }),
+  error: Schema.Union([NoSuchConversation, TakesNoInput, CannotCompact]),
+})
+
+/** Starts a run with no new input, such as after one failed. */
+export const Continue = Rpc.make("conversation/continue", {
+  payload: { conversation: ConversationId },
+  success: Schema.Struct({ submission: Schema.Int }),
+  error: Schema.Union([NoSuchConversation, TakesNoInput, ConversationBusy]),
+})
+
+/** Changes the conversation's settings from its next model request on. */
+export const Withdraw = Rpc.make("submission/withdraw", {
+  payload: {
+    conversation: ConversationId,
+    submission: Schema.Int.annotate({ description: "An `id` of the view's pi.inbox `items`." }),
+  },
+  success: Schema.Struct({
+    result: Schema.Literals(["withdrawn", "already_placed", "settled"]).annotate({
+      description: "already_placed: the run took it in already; settled: its run ended.",
+    }),
+  }),
+  error: Schema.Union([NoSuchConversation, NoSuchSubmission]),
+})
+
+export const Configure = Rpc.make("conversation/configure", {
+  payload: {
+    conversation: ConversationId,
+    author: Schema.String.annotate({ description: `Who changed it; its ${CONFIGURED_KIND} entry names them.` }),
+    instructions: Schema.optionalKey(
+      Schema.NullOr(Schema.String).annotate({
+        description: "The model's instructions beside its own; null clears them.",
+      }),
+    ),
+    maxTurns: Schema.optionalKey(
+      Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))).annotate({
+        description:
+          "The tool rounds one run may take before it ends failed, naming the limit; null for no limit, the default.",
+      }),
+    ),
+  },
+  error: Schema.Union([NoSuchConversation, TakesNoInput]),
+})
+
+export const UsageTotals = Schema.Struct({
+  input: Schema.Number,
+  output: Schema.Number,
+  cacheRead: Schema.Number,
+  cacheWrite: Schema.Number,
+  totalTokens: Schema.Number,
+  cost: Schema.Struct({
+    input: Schema.Number,
+    output: Schema.Number,
+    cacheRead: Schema.Number,
+    cacheWrite: Schema.Number,
+    total: Schema.Number.annotate({ description: "An estimate in US dollars; 0 on a subscription." }),
+  }),
+}).annotate({ description: "Tokens spent, as the providers reported them." })
+
+export const Usage = Schema.Struct({
+  models: Schema.Record(Schema.String, UsageTotals).annotate({
+    description: "By `provider/model`: the answers and summaries each model made.",
+  }),
+  tools: Schema.Record(Schema.String, UsageTotals).annotate({
+    description: "By tool name: what tools that call models spent, such as a summary a tool asked for.",
+  }),
+}).annotate({ description: "The same ledger as the view's pi.usage document." })
+
+export const GetUsage = Rpc.make("usage/get", {
+  payload: {
+    conversation: Schema.optionalKey(
+      ConversationId.annotate({
+        description: "One conversation's own spend; absent for every conversation's, summed.",
+      }),
+    ),
+  },
+  success: Usage,
+  error: NoSuchConversation,
+})
+
+export const TaskGraphStart = Schema.TaggedStruct("graph", {
+  graph: Schema.Struct({
+    tasks: Schema.Record(Schema.String, Json).annotate({
+      description:
+        "Every live task by id: its kind, conversationId, owner task, state (status, phase, the tasks it waits on), blocked reason, and the conversations it owns.",
+    }),
+  }),
+})
+export const TaskGraphChange = Schema.TaggedStruct("change", {
+  ops: Schema.Array(Json).annotate({ description: "The operations one commit applied to the graph, as a view's." }),
+})
+export const TaskGraphItem = Schema.Union([TaskGraphStart, TaskGraphChange])
+export type TaskGraphItem = typeof TaskGraphItem.Type
+
+export const WatchTasks = Rpc.make("tasks/watch", {
+  success: TaskGraphItem.annotate({ description: "The graph of the home's live work, then each commit's changes." }),
+  error: FellBehind,
+  stream: true,
+})
+
 export const NisseRpcs = RpcGroup.make(
   Initialize,
   StartConversation,
@@ -589,6 +754,14 @@ export const NisseRpcs = RpcGroup.make(
   SelectModel,
   ListSkills,
   Interrupt,
+  Fork,
+  Reset,
+  Compact,
+  Continue,
+  Withdraw,
+  Configure,
+  GetUsage,
+  WatchTasks,
   ResolveApproval,
   ListExtensions,
   ReloadExtensions,
