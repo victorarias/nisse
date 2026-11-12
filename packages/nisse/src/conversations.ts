@@ -71,6 +71,12 @@ export const saidBefore = (harness: Harness, id: ConversationId, end: EntryId) =
     return undefined
   })
 
+/**
+ * How many entries a read for the first prompt takes at a time. The first prompt is a conversation's first entry
+ * (measured: `nisse.user`, then `pi.system`), so one page holds it and a list does not parse a page of tool results.
+ */
+const FIRST_PROMPT_PAGE = 16
+
 /** The first line of the conversation's first prompt, inherited ones included; `undefined` before one. */
 const firstPrompt = (harness: Harness, id: ConversationId) =>
   Effect.gen(function* () {
@@ -78,9 +84,10 @@ const firstPrompt = (harness: Harness, id: ConversationId) =>
     if (conversation === undefined) return undefined
     let cursor: Cursor | undefined
     do {
-      const page = yield* Effect.orDie(conversation.entries({ order: "ascending" }, SCAN_PAGE, cursor))
+      const page = yield* Effect.orDie(conversation.entries({ order: "ascending" }, FIRST_PROMPT_PAGE, cursor))
       for (const entry of page.items) {
-        if (entry.kind !== USER_KIND) continue
+        // A person's prompt is a nisse.user; a subagent's, which a fork of it inherits, a pi.user.
+        if (entry.kind !== USER_KIND && entry.kind !== "pi.user") continue
         // What the person typed is the first text; the skills it named follow as text of their own.
         const content = (entry.model?.[0] as { content?: string | Array<{ type: string; text?: string }> } | undefined)
           ?.content

@@ -1691,7 +1691,9 @@ test("wire-malformed: a call missing a field is answered with an error that name
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
   const missing = await client.call("conversation/submit", { conversation, requestId: "r", author: "ada" })
+  // It names the field in words, not in the cause encoded as JSON.
   expect(missing.error?.message).toContain("text")
+  expect(missing.error?.message).not.toContain('"_tag"')
   const view = watchView(client, conversation)
   await submit(client, conversation, "hi")
   await view.until(settled(1))
@@ -1714,9 +1716,11 @@ test("wire-errors: every error a call answers says what went wrong in its messag
     noConversation: "no conversation nope",
     noSubmission: "the conversation has no submission 9999",
     noEntry: "the conversation's transcript has no entry 9999",
-    badParams: 'Expected a value greater than or equal to 1\n  at ["maxTurns"]',
-    noMethod: "Unknown request tag: conversation/frobnicate",
+    // The fault's own words, which Effect writes: what nisse promises is that they name the thing, not their wording.
+    badParams: expect.stringContaining("maxTurns"),
+    noMethod: expect.stringContaining("conversation/frobnicate"),
   })
+  for (const reply of [replies.badParams, replies.noMethod]) expect(reply.error?.message).not.toContain('"_tag"')
   expect(errorTag(replies.noConversation)).toBe("NoSuchConversation")
   expect(replies.badParams.error?.data).toEqual([{ _tag: "Die", defect: expect.stringContaining("maxTurns") }])
   client.close()

@@ -35,16 +35,19 @@ const reword = (reply: JsonRpcReply) => {
   error.message = readable(error.data as EncodedCause)
 }
 
+// Only a frame that holds such an error is parsed again; every other frame goes out as it was encoded.
 const rewordLines = (encoded: string) =>
-  encoded
-    .split("\n")
-    .map((line) => {
-      if (!line.includes('"_tag":"Cause"')) return line
-      const parsed = JSON.parse(line) as JsonRpcReply | Array<JsonRpcReply>
-      for (const reply of Array.isArray(parsed) ? parsed : [parsed]) reword(reply)
-      return JSON.stringify(parsed)
-    })
-    .join("\n")
+  !encoded.includes('"_tag":"Cause"')
+    ? encoded
+    : encoded
+        .split("\n")
+        .map((line) => {
+          if (!line.includes('"_tag":"Cause"')) return line
+          const parsed = JSON.parse(line) as JsonRpcReply | Array<JsonRpcReply>
+          for (const reply of Array.isArray(parsed) ? parsed : [parsed]) reword(reply)
+          return JSON.stringify(parsed)
+        })
+        .join("\n")
 
 /** Newline-delimited JSON-RPC, as `RpcSerialization.layerNdJsonRpc`, whose errors all say what went wrong. */
 export const readableNdJsonRpc = Layer.succeed(RpcSerialization.RpcSerialization)(
