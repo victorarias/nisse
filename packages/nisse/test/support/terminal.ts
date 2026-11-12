@@ -51,7 +51,9 @@ export const screenSession = (args: Array<string>, env: Record<string, string | 
     const buffer = terminal.buffer.active
     return Array.from({ length: ROWS }, (_, row) => buffer.getLine(row)?.translateToString(true) ?? "").join("\n")
   }
-  const waitFor = (predicate: (screen: string) => boolean, ms = 10_000) =>
+  // A tripwire for a TUI that stopped drawing: at load ~50 on 10 cores the slowest of 317 waits took 5.2 s. The suite's
+  // 30 s test timeout stays the larger, so a hang shows its screen.
+  const waitFor = (predicate: (screen: string) => boolean, ms = 20_000) =>
     deadline(
       new Promise<string>((resolve) => {
         const check = () => {

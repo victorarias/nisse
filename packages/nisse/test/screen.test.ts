@@ -911,4 +911,5 @@ test("server-restart, serve-read-only: an open TUI keeps drawing while nisse ser
   await quit(session)
   writer.kill()
   await writer.exited
-})
+  // Two restarts and two runs took at most 17.3 s at load ~105 on 10 cores.
+}, 60_000)
