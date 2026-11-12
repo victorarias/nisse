@@ -109,6 +109,9 @@
   "amended/session-checkpoints-migrations.test.ts :: Session document migrations > writes the required base on the first successful transaction, then writes deltas": [
     "doc-migration"
   ],
+  "amended/session-document-retention.test.ts :: document cache retention > gives the same views with documents evicted right after use as with documents kept": [
+    "doc-eviction"
+  ],
   "amended/session-watches.test.ts :: Session document watches > continues after the tracker cache unloads": [
     "doc-watch"
   ],
