@@ -536,6 +536,20 @@ test("crash-tui: the open TUI finishes the answer after the server is killed mid
   await quit(session)
 }, 30_000)
 
+test("crash-tui: quitting while the server cannot come back ends nisse, though a typed prompt waits to be sent", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, [])
+  const server = await serving(env)
+  const session = screenSession([], env)
+  await session.waitFor((screen) => screen.includes("READY"))
+  // Every server the TUI starts now refuses this config, so the prompt is sent again and again while the TUI waits.
+  await Bun.write(join(nisseHome.dir, "config.toml"), "[extensions.guard\n")
+  server.kill("SIGKILL")
+  await server.exited
+  session.type("never sent\r")
+  await quit(session)
+}, 30_000)
+
 test("idle-tui: the TUI draws nothing and uses no CPU while nothing changes", async () => {
   const session = await open([{ text: "done" }])
   await session.waitFor((screen) => screen.includes("READY"))
@@ -823,10 +837,16 @@ test("server-restart, serve-read-only: an open TUI keeps drawing while nisse ser
   const env = await scriptEnv(nisseHome, [])
   const viewer = await serving(env, undefined, ["serve", "--read-only", "--restart"])
   await session.waitFor((screen) => screen.includes("READ ONLY"))
-  // And back to a server that writes: the TUI takes input again and draws what it sends.
+  session.type("held back\r")
+  await session.waitFor((screen) => screen.includes("read-only and sends nothing"))
+  // And back to a server that writes: the TUI takes input again, with no read-only warning left, and draws what it
+  // sends.
   const writer = await serving(env, undefined, ["serve", "--restart"])
   await viewer.exited
-  await session.waitFor((screen) => !screen.includes("READ ONLY") && screen.includes("PROMPT"))
+  await session.waitFor(
+    (screen) => !screen.includes("READ ONLY") && !screen.includes("sends nothing") && screen.includes("PROMPT"),
+  )
+  session.type("\x15")
   await ask(session, "prompt two", "You said: prompt two")
   expect(session.screen()).toContain("answer one")
   await quit(session)

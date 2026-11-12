@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { mkdirSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import { Effect, Schema } from "effect"
+import { Effect, Schedule, Schema } from "effect"
 
 export interface Home {
   readonly dir: string
@@ -10,6 +10,8 @@ export interface Home {
   readonly database: string
   readonly socket: string
   readonly lock: string
+  /** Held by `nisse serve --restart` while it replaces the running server; see `replaceServer`. */
+  readonly nextLock: string
   readonly log: string
   readonly extensions: string
 }
@@ -19,6 +21,7 @@ export const homeAt = (dir: string): Home => ({
   database: join(dir, "kernel.sqlite"),
   socket: join(dir, "nisse.sock"),
   lock: join(dir, "nisse.lock"),
+  nextLock: join(dir, "nisse.next.lock"),
   log: join(dir, "nisse.log"),
   extensions: join(dir, "extensions"),
 })
@@ -37,11 +40,11 @@ const LOCK_WAIT_MS = 1000
 /** The exit code of a server that refuses its home because another server holds it. */
 export const HOME_TAKEN_EXIT = 75
 
-const tryLock = (home: Home) => {
-  mkdirSync(home.dir, { recursive: true, mode: 0o700 })
-  const lock = new Database(home.lock, { create: true })
+const tryLock = (dir: string, path: string, waitMs: number) => {
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const lock = new Database(path, { create: true })
   try {
-    lock.run(`PRAGMA busy_timeout = ${LOCK_WAIT_MS}`)
+    lock.run(`PRAGMA busy_timeout = ${waitMs}`)
     lock.run("PRAGMA locking_mode = EXCLUSIVE")
     lock.run("BEGIN EXCLUSIVE")
     return lock
@@ -51,10 +54,10 @@ const tryLock = (home: Home) => {
   }
 }
 
-export const claimHome = (home: Home) =>
+const lockHome = (home: Home) =>
   Effect.acquireRelease(
     Effect.suspend(() => {
-      const lock = tryLock(home)
+      const lock = tryLock(home.dir, home.lock, LOCK_WAIT_MS)
       if (!lock) return Effect.fail(new HomeTaken({ dir: home.dir }))
       rmSync(home.socket, { force: true })
       return Effect.succeed(lock)
@@ -64,4 +67,43 @@ export const claimHome = (home: Home) =>
         rmSync(home.socket, { force: true })
         lock.close()
       }),
+  )
+
+/** Whether a `nisse serve --restart` is replacing the home's server now. */
+const replacing = (home: Home) => {
+  const next = tryLock(home.dir, home.nextLock, 0)
+  next?.close()
+  return next === undefined
+}
+
+/** The home, for this process to serve; a server is taken to hold it while a restart replaces the server. */
+export const claimHome = (home: Home) =>
+  Effect.suspend(() => (replacing(home) ? Effect.fail(new HomeTaken({ dir: home.dir })) : lockHome(home)))
+
+/**
+ * How long a restart waits for the server it stopped to let go of the home: past the time its runs take to settle,
+ * which `stop` already waited for, and its close.
+ */
+const REPLACE_WAIT = "30 seconds"
+
+/**
+ * The home, taken over from the server that holds it: `stop` stops that server, then this process claims the home once
+ * it is let go. A client that loses the stopped server starts a server of its own, and that server would race this one
+ * for the home, so the restart holds the home's next lock from before the stop until it holds the home, and a server
+ * started meanwhile gives way to it (`claimHome`).
+ */
+export const replaceServer = <R>(home: Home, stop: Effect.Effect<void, never, R>) =>
+  Effect.acquireUseRelease(
+    Effect.suspend(() => {
+      const next = tryLock(home.dir, home.nextLock, LOCK_WAIT_MS)
+      return next ? Effect.succeed(next) : Effect.fail(new HomeTaken({ dir: home.dir }))
+    }).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: REPLACE_WAIT })) })),
+    () =>
+      Effect.andThen(
+        stop,
+        lockHome(home).pipe(
+          Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: REPLACE_WAIT })) }),
+        ),
+      ),
+    (next) => Effect.sync(() => next.close()),
   )

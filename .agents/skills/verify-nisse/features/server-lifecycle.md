@@ -75,7 +75,9 @@ Preconditions:
   `drive.ts r tui wait READY`, send `one` and wait for `You said: one`. Run
   `drive.ts r serve --restart`, then type `two` and `Enter`:
   `drive.ts r tui wait 'You said: two'`. The TUI watches the new server and
-  draws what it answers.
+  draws what it answers. Repeat `drive.ts r serve --restart`, adding
+  `--read-only` every other time: each prints `serving` and the TUI shows
+  `READ ONLY` or `PROMPT` to match.
 - **Restart waits for runs.** In a run whose script is
   `[{"text": "one two three four five six seven eight", "delayMs": 300}]`,
   run `drive.ts r serve`, then `drive.ts r nisse exec count &` and, a second
@@ -87,7 +89,7 @@ Preconditions:
 ## Contexts
 
 - **Running work.** `serve --restart` and `server/stop` wait for runs to settle.
-- **Open clients.** A stop ends every open call and watch the way a lost connection does, so an open TUI watches the next server.
+- **Open clients.** A stop ends every open call and watch the way a lost connection does, so an open TUI watches the next server. A client that loses its server starts one, and while `serve --restart` replaces the server, the one the client started gives way (`another server already serves` in the home's `nisse.log`), so the restart always becomes the home's server.
 
 ## Tests
 
