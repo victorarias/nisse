@@ -147,6 +147,8 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
               inputWithdrawn,
               viewDocs: [StatusLinesDoc],
               runTasks: claudeRuns.runTasks,
+              // A prompt queued behind a run that fails runs next, as one queued behind an answer does.
+              settings: { afterFailedRun: "continue" },
             }),
           ),
           (harness) => Effect.ignore(harness.close),

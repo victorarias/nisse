@@ -93,6 +93,30 @@ test("queue-run: prompts sent while nisse is working wait and run in order, each
   client.close()
 })
 
+test("queue-run: a prompt sent while nisse works runs after the run fails, instead of waiting for another prompt", async () => {
+  await using server = await runningServer([
+    { text: "half an answer", delayMs: 100, fail: "provider went away" },
+    { text: "second answer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "one")
+  await view.until(speaking)
+  await submit(client, conversation, "two")
+  await view.until(settled(2))
+  expect(transcript(view.view().entries)).toEqual([
+    "user: one",
+    "assistant: half an answer [error]",
+    "run_end: failed (provider went away)",
+    "user: two",
+    "assistant: second answer",
+    "run_end: answered",
+  ])
+  expect(view.view().docs["pi.inbox"]).toEqual({ items: [] })
+  client.close()
+})
+
 test("interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted", async () => {
   await using server = await runningServer([{ text: "one two three four five six seven eight", delayMs: 100 }])
   const client = await RawClient.connect(server.home.socket)

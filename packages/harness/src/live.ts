@@ -24,7 +24,8 @@ import type { TaskServices } from "./services.ts"
 import { Effect } from "effect"
 import { removeApproval } from "./approvals.ts"
 import { AssistantEntry, stored } from "./entries.ts"
-import type { CompactionReason, ModelRef, ToolDiagnostic } from "./types.ts"
+import { type InputWithdrawnHook, withdrawQueuedInputs } from "./inbox.ts"
+import type { AfterFailedRun, CompactionReason, ModelRef, ToolDiagnostic } from "./types.ts"
 import { recordUsage } from "./usage.ts"
 
 /** A typed value as a document stores it: plain JSON with mutable containers. */
@@ -444,9 +445,11 @@ export const convertPartial = (
 
 /**
  * Harness cleanup for a terminal outcome the scheduler writes itself (`faulted` or `orphaned`), staged in the commit
- * that makes it terminal (spec 5.4). A run task ends its run, keeping a committed partial as an aborted entry; a tool
- * task's slot is marked done without an entry, and context derivation synthesizes the missing result; a compaction
- * task's status is removed and its failure recorded. Other kinds are left alone, so no `pi.live` is created elsewhere.
+ * that makes it terminal (spec 5.4). A run task ends its run, keeping a committed partial as an aborted entry, and
+ * withdraws the inputs queued behind it unless `afterFailedRun` keeps them: that commit has written already, so it cannot
+ * read what a boundary placing them needs (spec 6). A tool task's slot is marked done without an entry, and context
+ * derivation synthesizes the missing result; a compaction task's status is removed and its failure recorded. Other
+ * kinds are left alone, so no `pi.live` is created elsewhere.
  */
 export const settleSchedulerOutcome = (
   tx: Tx,
@@ -454,6 +457,8 @@ export const settleSchedulerOutcome = (
   outcome: SchedulerOutcome,
   runTasks: RunTasks,
   runEnded?: RunEndedHook,
+  afterFailedRun: AfterFailedRun = "keep",
+  inputWithdrawn?: InputWithdrawnHook,
 ): Effect.Effect<void, StorageError | DocError> =>
   Effect.gen(function* () {
     if (record.kind === TOOL_TASK_KIND) {
@@ -494,4 +499,5 @@ export const settleSchedulerOutcome = (
           },
       { conversationId: record.conversationId, runEnded },
     )
+    if (afterFailedRun !== "keep") yield* withdrawQueuedInputs(tx, record.conversationId, "run_failed", inputWithdrawn)
   })
