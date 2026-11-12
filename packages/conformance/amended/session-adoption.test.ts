@@ -7,13 +7,13 @@
 // - "fails the Session without discarding when Storage rejects after adoption" (spec 10.1): the commit rejects with
 //   Storage's error and the Session fails with it.
 // - "discards the staged changes when Storage rejects before adoption" (spec 10.1): the same, for a call that rejects
-//   before any receipt. Once the Session failed no read can see whether memory kept the staged change, so the rejection
-//   and the failed Session are what a caller observes.
+//   before any receipt. Once the Session failed no read can see whether memory kept the staged change; what a caller
+//   observes is the rejection, the failed Session, and that no observer was shown the change.
 import type { Context } from "@earendil-works/chord/context";
 import { type CommitResult, defineDoc, MemoryStorage, type Seq, type StorageWrite } from "@earendil-works/pi-durable";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionImpl } from "../upstream/src/session/session.ts";
-import { ControlledStorage, context } from "../upstream/test/session-support.ts";
+import { ControlledStorage, context, followCommits } from "../upstream/test/session-support.ts";
 
 const CounterDoc = defineDoc<{ count: number }>({
 	checkpointWhen: () => false,
@@ -86,8 +86,11 @@ describe("Session adoption after Storage stored a commit", () => {
 		const storage = new MemoryStorage();
 		const session = new SessionImpl(storage);
 		await bump(session);
+		let shown = 0;
+		followCommits(session, () => shown++);
 		vi.spyOn(storage, "commit").mockRejectedValueOnce(new Error("disk full"));
 		await expect(bump(session)).rejects.toThrow("disk full");
 		expect(await session.closed).toMatchObject({ kind: "failed" });
+		expect(shown).toBe(0);
 	});
 });

@@ -632,29 +632,35 @@ class SessionImpl implements Session, SessionInternals {
     beside: (value: A, page: PageReader) => Effect.Effect<B, E2>,
   ): Effect.Effect<B, E | E2 | SessionFailed | SessionClosed> {
     return Effect.suspend(() => {
-      let queuedAtSeal = false
+      // Taken on the line by a read that ran after the seal: it was queued when close began, so it completes, and the
+      // close waits for it. Released once, by whichever comes first: the caller's exit, however it ends, or the line
+      // finding the caller gone.
+      let lease: { released: boolean } | undefined
+      const release = (): void => {
+        if (lease === undefined || lease.released) return
+        lease.released = true
+        Effect.runSync(this.#leaveOffLine)
+      }
       const started = Effect.map(
         Effect.suspend(() => onLine(this.#reads)),
         (value) => {
-          // Run after the seal: the read was queued when close began, so it completes, and the close waits for it.
-          queuedAtSeal = this.#sealed
-          if (queuedAtSeal) this.#offLine++
+          if (this.#sealed) {
+            this.#offLine++
+            lease = { released: false }
+          }
           return value
         },
       )
-      return Effect.flatMap(
-        this.#onLine(started, () => {
-          if (queuedAtSeal) Effect.runSync(this.#leaveOffLine)
-        }),
-        (value) => {
-          if (!queuedAtSeal) return beside(value, (body) => this.#readOffLine(body))
-          const page: PageReader = (body) =>
-            Effect.flatMap(
-              Effect.suspend(() => body(this.#reads)),
-              (read) => (this.#failure === undefined ? Effect.succeed(read) : Effect.fail(this.#sessionFailed())),
-            )
-          return Effect.ensuring(beside(value, page), this.#leaveOffLine)
-        },
+      const leased: PageReader = (body) =>
+        Effect.flatMap(
+          Effect.suspend(() => body(this.#reads)),
+          (read) => (this.#failure === undefined ? Effect.succeed(read) : Effect.fail(this.#sessionFailed())),
+        )
+      return Effect.ensuring(
+        Effect.flatMap(this.#onLine(started, release), (value) =>
+          beside(value, lease === undefined ? (body) => this.#readOffLine(body) : leased),
+        ),
+        Effect.sync(release),
       )
     })
   }

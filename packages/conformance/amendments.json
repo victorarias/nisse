@@ -1272,5 +1272,19 @@
   "spec": "10.1",
   "rewrite": "Drop the onWake and setTimer reports; keep the extension, listener and storage_failed reports.",
   "private": "onWake and host setTimer (D5)"
+ },
+ {
+  "test": "upstream/test/harness-view-run.test.ts :: streamed partials > commits a growing text and tool call at a cost that follows the new text, not the string lengths",
+  "owner": "zero-pending",
+  "spec": "8.2",
+  "rewrite": "Count the bytes of each commit's pi.live operations: streaming ten times the text in ten times the commits keeps them flat per commit (ratio 1.00 measured; writing the whole partial each commit measures 8.9).",
+  "private": "allocation accounting through node:v8 GCProfiler, which under JavaScriptCore gave ratios from 2 to over 1,000 across runs; the reference copy fails it on every run"
+ },
+ {
+  "test": "upstream/test/harness-blocked.test.ts :: tasks that cannot run > tells the graph and the host when a migration fails",
+  "owner": "zero-pending",
+  "spec": "9.4",
+  "rewrite": "Drop the onWake half; keep the task graph showing the task blocked with migration_failed, waited on through the watch.",
+  "private": "onWake (D5)"
  }
 ]

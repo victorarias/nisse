@@ -12,6 +12,9 @@
   "amended/harness-after-run.test.ts :: endRun > leaves a run it does not own alone, and ends an answered run without a failure": [
     "hook-after-run"
   ],
+  "amended/harness-blocked.test.ts :: tasks that cannot run > tells the graph and the host when a migration fails": [
+    "task-blocked"
+  ],
   "amended/harness-idle-scopes.test.ts :: kept context ranges > applies a longer retention to idle ranges at an unrelated commit": [
     "settings-context-retention"
   ],
@@ -117,6 +120,9 @@
   ],
   "amended/harness-tools-recovery.test.ts :: tool recovery > reruns a safe tool whose running slot a crash after its intent lost, or a sibling stored, and shows it running": [
     "tool-replay-policy"
+  ],
+  "amended/harness-view-run.test.ts :: streamed partials > commits a growing text and tool call at a cost that follows the new text, not the string lengths": [
+    "view-reasoning"
   ],
   "amended/harness-view.test.ts :: conversation view > publishes one frame per touching commit, whose operations rebuild every revision": [
     "view-documents"
@@ -964,6 +970,9 @@
   "upstream/test/harness-blocked.test.ts :: tasks that cannot run > starts the count over when the task makes progress": [
     "task-restart-count",
     "run-crash-count-resets"
+  ],
+  "upstream/test/harness-blocked.test.ts :: tasks that cannot run > tells the graph and the host when a migration fails": [
+    "task-blocked"
   ],
   "upstream/test/harness-callers.test.ts :: who may call a tool > answers a model-issued call of a tool it was not offered as unavailable": [
     "tool-unavailable"
