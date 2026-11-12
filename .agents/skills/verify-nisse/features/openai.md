@@ -13,7 +13,7 @@ A provider `config.toml` names with
 
 ## Sub-features
 
-- `openai-answer` streams ChatGPT's answer and commits it as a `message`.
+- `openai-answer` streams ChatGPT's answer and commits it as a `pi.assistant` entry.
 - `openai-tools` runs nisse's tools for ChatGPT, asking before calls that
   change things.
 - `openai-refresh` refreshes an expired or turned-down token once and saves
@@ -78,30 +78,33 @@ Preconditions:
   `drive.ts r tui wait 'Hello there'`, `drive.ts r tui screen answered`:
   `ADA` over `hello`, `NISSE` over `Hello there`, `openai` at the right of
   the status bar. Take the id from the header's `conversation <id>`;
-  `drive.ts r watch <id> --save answer` shows the `user`, the `message`
-  `Hello there` and a `run_end` with `"outcome": "answered"`.
+  `drive.ts r watch <id> --save answer` shows the `nisse.user` `hello`, a
+  `pi.assistant` `Hello there` with `"api": "openai-codex-responses"` and
+  `"provider": "openai"`, and a `nisse.run_end` with `"outcome": "answered"`.
   `evidence/fake-openai.ndjson` holds one request, `as recorded`, with
-  `"model": "gpt-5.5"`.
+  `"model": "gpt-5.5"`, whose `instructions` name only tools its `tools`
+  offers, by the same name.
 - **Tools.** `drive.ts r up --fake-openai tool_call,tool_denied`,
   `drive.ts r tui start --provider openai`, `drive.ts r tui wait READY`, take
-  the id from the header, then in the background
-  `drive.ts r watch <id> --until run_end --timeout 60000 --save tools`. Type
-  `what does echo say?`, press `Enter`,
+  the id from the header. Type `what does echo say?`, press `Enter`,
   `drive.ts r tui wait 'allow this call?'`: `Let me look.` over
-  `▸ Bash(echo hi)` asking, status `WAITING`. `drive.ts r tui key C-y`,
+  `▸ bash(echo hi)` asking, status `WAITING`. `drive.ts r tui key C-y`,
   `drive.ts r tui wait 'It printed hi.'`: `✓ allowed by ada`, `hi`, then the
-  answer. `tools.ndjson` shows commits carrying `live` text, then the
-  `tool_call`, `approval`, `approval_answer`, `tool_result` `hi\n`, the
-  `message` and `run_end`. For the denial, `drive.ts r tui stop`, start a new
-  TUI the same way, send the same and press `C-n`: `✗ denied by ada`,
-  `denied: the person did not allow this call`, `I was not allowed to run it.`
-  All four requests are `as recorded`.
+  answer. `drive.ts r watch <id> --save tools` shows a `pi.assistant`
+  calling `bash`, a `nisse.approval`, the `pi.tool-result` `hi`, the answer
+  and a `nisse.run_end` `answered`. For the denial, `drive.ts r tui stop`,
+  start a new TUI the same way, send the same and press `C-n`:
+  `✗ denied by ada` and `I was not allowed to run it.` The fake plays the
+  recordings with their `Bash` renamed to nisse's `bash`; the denial's request
+  `differs` only in its result's wording, which the harness wraps:
+  `<harness>\n[error] denied by ada: the person did not allow this call\n</harness>`.
 - **Exec.** `drive.ts r up --fake-openai tool_denied,tool_call`,
   `drive.ts r nisse exec --provider openai 'what does echo say?'`: exit 0,
   stdout `Let me look.` and `I was not allowed to run it.`, stderr
-  `denied Bash(echo hi): exec cannot ask, pass --auto to allow calls`. Then
+  `› bash(echo hi)` then
+  `denied bash(echo hi): exec cannot ask, pass --auto to allow calls`. Then
   `drive.ts r nisse exec --provider openai --auto 'what does echo say?'`:
-  exit 0, stdout ends `It printed hi.`. All four requests are `as recorded`.
+  exit 0, stdout ends `It printed hi.`, stderr `› bash(echo hi)`.
 - **Model.** `drive.ts r up --fake-openai text_answer,text_answer`,
   `drive.ts r nisse exec --provider openai --model gpt-5.5 --effort low hello`:
   exit 0, `Hello there`. Take the id from `drive.ts r rpc conversation/list`,
@@ -111,19 +114,20 @@ Preconditions:
   `fake-openai.ndjson` shows request 1 with `"reasoning": {"effort": "low"}`
   and request 2 with `"effort": "high"` and the first exchange in its
   `input`. Both are `differs`: the recording sent no effort, and the second
-  recording held one prompt with no history. `watch <id>` shows the `model`
-  entry between the two runs.
+  recording held one prompt with no history. `watch <id>` shows the
+  `nisse.model` entry between the two runs.
 - **Models, signed in.** In a fake-signed-in run, `drive.ts r serve` and
   `drive.ts r rpc models/list '{}'`: `openai` has `"defaultModel": "gpt-5.5"`
   and the list nisse ships, `gpt-6.1-sol` first and `gpt-5.5` last, each
   with `efforts` and a `defaultEffort`. The fake ChatGPT has no model list,
   so `home/cache/openai-models.json` is not written.
-- **Failures.** `drive.ts r up --fake-openai usage_limit,response_failed,stream_cut`,
-  then `drive.ts r nisse exec --provider openai hello` three times: each
+- **Failures.** `drive.ts r up --fake-openai usage_limit,stream_cut`,
+  then `drive.ts r nisse exec --provider openai hello` twice: each
   exits 1, with stderr
-  `You have hit your ChatGPT usage limit (plus plan).`, then
-  `the response failed (server_error): The model crashed.`, then stdout
+  `You have hit your ChatGPT usage limit (plus plan).`, then stdout
   `Hel` and stderr `the response stream ended before the response finished`.
+  A response ChatGPT failed on its side (`server_error`) is tried again after
+  a backoff of 2 s, then 4 s and 8 s, not ended at once.
 - **Refresh, faked.** `drive.ts r up --fake-openai refresh --openai-refreshes 1`,
   then `cat /tmp/nisse-verify/r/home/auth/openai.json`: `"refresh_token": "first-refresh"`.
   `drive.ts r nisse exec --provider openai hello`: the fake turns the token
@@ -162,98 +166,39 @@ Preconditions:
   run the same: ChatGPT turns the token down, Nisse refreshes once, and the
   run fails with the same message.
 
-- **On the kernel.** `drive.ts r up --kernel --fake-openai text_answer`,
-  `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "openai", "approvals": "auto"}'`
-  and take `conversation` from the result.
-  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "r1", "author": "ada", "text": "hello"}'`,
-  then `drive.ts r watch <id> --timeout 2000 --save answer`: the view holds the
-  `pi.user` `hello`, a `pi.assistant` `Hello there` with
-  `"api": "openai-codex-responses"` and `"provider": "openai"`, and a
-  `nisse.run_end` `answered`. `fake-openai.ndjson` holds one request,
-  `as recorded`, whose `instructions` start with the kernel's own; every
-  tool they name in backticks is in the request's `tools`, by the same name.
-  The recordings
-  that call tools name the shipping server's `Bash`; the kernel's tools are
-  lower case, so on the kernel such a call ends `Tool Bash is not available`
-  (the kernel tests rename the recording's tools instead).
-
-## On the kernel
-
-ChatGPT runs behind the `Models` seam (`@nisse/models/chatgpt`), with the
-harness running the loop. What differs from today's server:
-
-- A prompt sent while a run works waits for the run to end, unless it is
-  sent with `steer`, which reaches the run at its next step.
-- A response ChatGPT failed on its side (`server_error`) is tried again after
-  the harness's backoff (2 s, then 4 s, 8 s), not ended at once.
-- A denied call reaches the model as the harness words it:
-  `[error] denied by <author>: the person did not allow this call`.
-- ChatGPT's context-window error compacts the conversation and the request
-  goes again (`compaction-overflow`). The error is recorded from gpt-6-luna:
-  an SSE `error` event with `code: "context_length_exceeded"`, then
-  `response.failed`.
-- A tool with a grammar (`constrainedSampling`) is offered as a custom tool,
-  and its call's raw input fills the tool's one string parameter
-  (`openai-grammar-tools`).
-- `instructions` are the kernel's own, which name its tools as it offers
-  them (`read`, `grep`, `glob`, `write`, `edit`, `apply_patch`, `bash`, and
-  the skill list says to `read` a `SKILL.md`), then the transcript's system
-  prompt: the
-  `workspace` section (the working directory, the `AGENTS.md` files and the
-  skill list, read again before each request), then the instructions the
-  conversation started with, wrapped in `<instructions>` tags. The skill list
-  comes before those instructions, where today's server puts it after them.
-  Both are committed as a `pi.system` entry, so every client sees what ChatGPT
-  was told, and a changed `AGENTS.md` shows as a new one. A skill a message
-  names is attached as on today's server: its `SKILL.md`, read when the message
-  is placed, follows the message's text in `<skill>` tags, and the
-  `nisse.user` entry's data holds `skills`.
-
 ## Contexts
 
 - **SSH.** Sign-in uses a device code.
 
 ## Tests
 
-Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- openai-invalid: a sign-in file that is not one fails the run, naming the file
-- openai-expired: a sign-in whose refresh is turned down fails the run and lists ChatGPT signed out, saying why
-
 Provider, `packages/nisse/test/openai.test.ts`:
-
-- openai-answer: a recorded ChatGPT exchange replays into the same answer
-- openai-tools: nisse offers its tools, runs the call the model asks for and sends back the result
-- openai-tools: a call the person denies reaches the model as denied
-- openai-refresh: an expired token is refreshed once, saved, and used from then on
-- openai-failed: a failed response, a cut stream and a reached usage limit each end the run with the reason
-- interrupt-wire: an answer streams live, and interrupting it closes the request and keeps what was said
-- openai-answer: an answer whose CRLF event separators arrive split across reads is read whole
-
-Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - openai-answer, telemetry-identity: a ChatGPT answer is committed, asked for with the sign-in's headers and nisse as the originator
 - openai-answer: a recorded ChatGPT exchange replays into the same answer
 - openai-tools: nisse offers its tools, runs the call the model asks for and sends back the result
 - openai-tools, telemetry-identity: a call the person denies reaches the model as denied, and the answer names who gave it
 - openai-refresh: a turned-down token is refreshed once, saved, and used from then on
-- openai-failed: a cut stream and a reached usage limit each end the run with the reason
+- openai-failed: a cut stream, a reached usage limit and an empty error each end the run with the reason
 - openai-failed, run-error-classes: a response that failed on ChatGPT's side is tried again, and the next answer is the run's
-- openai-signed-out: a conversation with ChatGPT before signing in says how to fix it
-- interrupt-wire: a ChatGPT answer streams live, and interrupting it closes the request and keeps what was said
+- openai-signed-out, provider-signed-out: a conversation with ChatGPT before signing in says how to fix it
 - openai-answer: an answer whose CRLF event separators arrive split across reads is read whole
 - openai-model: the conversation's model and effort reach ChatGPT
-- subagent-fork: a spawned agent's requests carry its own conversation, and its last answer reaches the parent
-- compaction-overflow, models-overflow: ChatGPT's context-window error compacts the conversation, and the request goes again
 - openai-instructions, agents-md, skills-found, skills-nearest, skills-frontmatter: ChatGPT is told its working directory, the AGENTS.md files from home down to it, and the skills it can use
 - openai-instructions: every tool ChatGPT's instructions name is one its request offers, by the same name
-- skills-found: a conversation outside any repository is told only its own folder's skills and the home's
-- start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files, and a subagent is not
+- code-mode-models, openai-code-mode, codemode-grammar, codemode-tool: a model ChatGPT marks code-mode-only is offered codemode alone, writes raw JavaScript for it, and gets the script's result
+- openai-invalid: a sign-in file that is not one fails the run, naming the file
+- openai-expired: a sign-in whose refresh is turned down fails the run and lists ChatGPT signed out, saying why
+
+Provider, `packages/nisse/test/providers.test.ts`:
+
+- signin-browser, openai-sign-in: signing in through a browser saves the tokens for this user only and names the account
+- openai-models: OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't
 
 Package, `packages/models/test/chatgpt.test.ts`:
 
 - openai-grammar-tools: a grammar tool is offered as a custom tool, its raw input arrives as its one argument and goes back raw, even after the tool changes
+- openai-grammar-tools: a grammar call's input streams as JSON argument text, as a function call's does, so its arguments show while the model writes them
 
 ## Gotchas
 
@@ -270,6 +215,26 @@ Package, `packages/models/test/chatgpt.test.ts`:
 - The fake ChatGPT proves what nisse does with a 401 and a refresh answer,
   not that ChatGPT's token service accepts nisse's refresh, nor ChatGPT's
   own model list; those are in the next section.
+- A prompt sent while a run works waits for the run to end, unless it is
+  sent with `steer`, which reaches the run at its next step.
+- ChatGPT's context-window error compacts the conversation and the request
+  goes again (`compaction-overflow`). The error is recorded from gpt-6-luna:
+  an SSE `error` event with `code: "context_length_exceeded"`, then
+  `response.failed`.
+- A tool with a grammar (`constrainedSampling`) is offered as a custom tool,
+  and its call's raw input fills the tool's one string parameter
+  (`openai-grammar-tools`).
+- `instructions` are nisse's own, which name its tools as it offers them
+  (`read`, `grep`, `glob`, `write`, `edit`, `apply_patch`, `bash`, and the
+  skill list says to `read` a `SKILL.md`), then the transcript's system
+  prompt: the `workspace` section (the working directory, the `AGENTS.md`
+  files and the skill list, read again before each request), then the
+  instructions the conversation started with, wrapped in `<instructions>`
+  tags. Both are committed as a `pi.system` entry, so every client sees what
+  ChatGPT was told, and a changed `AGENTS.md` shows as a new one. A skill a
+  message names is attached: its `SKILL.md`, read when the message is placed,
+  follows the message's text in `<skill>` tags, and the `nisse.user` entry's
+  data holds `skills`.
 
 ## With a real account
 
@@ -289,14 +254,14 @@ steps' screens.
   `conversation <id>`. Send `Say hello in five words.`,
   `drive.ts r tui wait --timeout 120000 READY`,
   `drive.ts r tui screen answered`: `NISSE` over ChatGPT's answer. Then send
-  `Use the Bash tool to run exactly: echo approved  Then reply with its output.`,
+  `Use the bash tool to run exactly: echo approved  Then reply with its output.`,
   `drive.ts r tui wait --timeout 120000 'allow this call?'`,
   `drive.ts r tui key C-y`, `drive.ts r tui wait --timeout 120000 READY`,
   `drive.ts r tui screen tools`: `✓ allowed by ada` and `approved`.
-  `drive.ts r watch <id> --save real` keeps the commits. `drive.ts r tui stop`.
-- **Exec.** `drive.ts r nisse exec --provider openai 'Use the Bash tool to run exactly: echo approved  Then reply with its output.'`:
-  exit 0, stderr `› Bash(echo approved)` and
-  `denied Bash(echo approved): exec cannot ask, pass --auto to allow calls`,
+  `drive.ts r watch <id> --save real` keeps the view. `drive.ts r tui stop`.
+- **Exec.** `drive.ts r nisse exec --provider openai 'Use the bash tool to run exactly: echo approved  Then reply with its output.'`:
+  exit 0, stderr `› bash(echo approved)` and
+  `denied bash(echo approved): exec cannot ask, pass --auto to allow calls`,
   and the answer says the call was not allowed. The same with `--auto`
   after `exec`: exit 0, no denial, and the answer holds `approved`.
 - **Models.** `drive.ts r rpc models/list '{}'`: `openai`'s models as
@@ -305,12 +270,12 @@ steps' screens.
   slugs. Copy that file into `evidence/`.
 - **Model.** Pick an `openai` model other than `gpt-5.5` from that list,
   and one of its `efforts`. If `cache/openai-models.json` gives it
-  `"tool_mode":"code_mode_only"`, install the host first with
-  `NISSE_HOME=/tmp/nisse-verify/r/home scripts/code-mode-host.sh`. Run
+  `"tool_mode":"code_mode_only"`, it answers through the `codemode` tool, as
+  [Code mode](./code-mode.md) says. Run
   `drive.ts r nisse exec --provider openai --model <model> --effort <effort> 'Say hello in five words.'`:
   exit 0 and an answer. `drive.ts r rpc conversation/list` holds a
   conversation whose `model` is `openai`, that model and that effort;
-  `drive.ts r watch <its id> --save model` keeps its commits.
+  `drive.ts r watch <its id> --save model` keeps its view.
 - **Refresh.** Set `expires_at_ms` in
   `/tmp/nisse-verify/r/home/auth/openai.json` to `0`, then
   `drive.ts r nisse exec --provider openai hi`: exit 0, and the file holds a

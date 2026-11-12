@@ -29,7 +29,7 @@ Clients and extensions follow conversations and documents through windowed views
 
 ### People
 
-- In the TUI on the kernel, scroll the transcript up with the mouse wheel. Above the oldest entry the TUI holds it
+- In the TUI, scroll the transcript up with the mouse wheel. Above the oldest entry the TUI holds it
   shows `↑ earlier messages`, and scrolling it into view loads the page before it, keeping the rows in view where
   they were; the marker is gone once the first entry is loaded.
 - A TUI that fell behind, and watched again from the newest entry it held, shows `… missing messages` where entries
@@ -37,12 +37,21 @@ Clients and extensions follow conversations and documents through windowed views
 
 ### Agents
 
-- Call `conversation/watch` on a server under `NISSE_KERNEL=1`, with an optional `window` of `from`, `min` and `max`.
+- Call `conversation/watch`, with an optional `window` of `from`, `min` and `max`.
 
 ## Driving it with drive.ts
 
-Preconditions: a run made with `drive.ts r up --kernel`, so Nisse echoes `You said: <prompt>`.
+Preconditions: a run made with `drive.ts r up`, so Nisse echoes `You said: <prompt>`.
 
+- **Watch.** Run `drive.ts r serve`, take the id from
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`, and run
+  `drive.ts r watch <id> --submit hi --until run_end --save answer`: the first
+  line is `{"_tag": "view", ...}` with `entries` and `docs`, then one
+  `{"_tag": "change", "ops": [...]}` per commit, live words as `"a"` ops on
+  `docs.pi.live.generation.message`, and the entries `nisse.user`,
+  `pi.assistant` and `nisse.run_end` spliced into `entries`. A fresh
+  `drive.ts r watch <id> --save fresh` shows the same entries in its first
+  view, and `--from <entry id>` starts the window at that entry.
 - **Load earlier.** Run `drive.ts r serve`, then
   `drive.ts r rpc conversation/start '{"cwd": "/tmp", "id": "long"}'`, then forty times
   `drive.ts r watch long --submit 'prompt <n>' --until run_end` for `<n>` from 1 to 40: 120 entries, more than
@@ -53,7 +62,7 @@ Preconditions: a run made with `drive.ts r up --kernel`, so Nisse echoes `You sa
   `drive.ts r tui key Enter`: the TUI brings a server back and the prompt reaches it. Scroll down to
   `You said: prompt 41`, then back up to `prompt 1`: no `… missing messages` on the way.
 - **Missing messages.** Not drivable by hand: a TUI falls behind only when it leaves 4,096 changes unread, which takes
-  hundreds of prompts while it is frozen. The kernel screen test `tui-fill-gap` freezes the TUI against a server with
+  hundreds of prompts while it is frozen. The screen test `tui-fill-gap` freezes the TUI against a server with
   a small queue.
 
 ## Sources
@@ -62,29 +71,41 @@ Feature ledger area P: spec §4, §8.2, §9; README Watching a Conversation; exa
 
 ## Contexts
 
-- **On the kernel.** In a run made with `drive.ts r up --kernel --script s.json`,
-  `drive.ts r serve`, take the id from
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`, and run
-  `drive.ts r watch <id> --submit hi --until run_end --save answer`: the first
-  line is `{"_tag": "view", ...}` with `entries` and `docs`, then one
-  `{"_tag": "change", "ops": [...]}` per commit, live words as `"a"` ops on
-  `docs.pi.live.generation.message`, and the entries `pi.user`,
-  `pi.assistant` and `nisse.run_end` spliced into `entries`. A fresh
-  `drive.ts r watch <id> --save fresh` shows the same entries in its first
-  view, and `--from <entry id>` starts the window at that entry.
+None.
 
 ## Tests
 
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
-
-- tui-fill-gap: a TUI that fell behind marks where entries are missing, and loads them once scrolled to
-- answer-scroll, tui-load-earlier: a conversation longer than the window scrolls back to its first message, loading earlier entries on the way, and a reconnect leaves no gap
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+Wire, `packages/nisse/test/wire.test.ts`:
 
 - watch-rpc: a watch through a window opens on the newest entries, and from a position gets only what followed
+- watch-rpc: a window that is not one is refused by name, and the connection's other watches go on
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- answer-scroll, tui-load-earlier: a conversation longer than the window scrolls back to its first message, loading earlier entries on the way, and a reconnect leaves no gap
+- tui-fill-gap: a TUI that fell behind marks where entries are missing, and loads them once scrolled to
+
+Package, `packages/harness/test/partial-changes.test.ts`:
+
+- view-partial-arguments: a call that ends between a partial's capture and its commit keeps the arguments streamed so far
+- view-partial-arguments: a call already committed that ends before its next commit keeps the newer arguments
+- view-live: a partial copied ahead of the text events seen commits the copied text, never the deltas twice
+
+Package, `packages/harness/test/view.test.ts`:
+
+- view-resume, view-gap, view-fill-gap: a client reconnecting from its position gets what it missed, or a gap it fills
+- view-load-earlier: a loader that throws building its load fails that call, and the next call loads
+
+Package, `packages/harness/test/harness.test.ts`:
+
+- doc-watch: a document watch a task keeps past its handler ends with the invocation
+
+Package, `packages/kernel/test/documents.test.ts`:
+
+- doc-watch: a watch gets each commit's change while it keeps up, a retirement, then the next incarnation whole
+- doc-watch: closing the Session ends the watch's stream
+- doc-watch: a watch whose scope ends completes its stream, also for a consumer outside the scope
+- view-slow-folding: a stalled watch neither slows commits nor grows, and resumes with one root replacement
 
 ## Gotchas
 

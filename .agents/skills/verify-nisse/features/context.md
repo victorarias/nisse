@@ -23,16 +23,16 @@ None yet.
 
 ### Agents
 
-- On a server under `NISSE_KERNEL=1`, call `conversation/context` with `conversation` and an optional entry `at`:
+- Call `conversation/context` with `conversation` and an optional entry `at`:
   the `messages` the model is sent, and the `entries` they come from.
-- On a server under `NISSE_KERNEL=1`, call `conversation/entries` with `conversation`, `limit`, and optionally
+- Call `conversation/entries` with `conversation`, `limit`, and optionally
   `from`, `to`, `order` and the `cursor` a page answered as `next`.
 
 ## Driving it with drive.ts
 
 Preconditions:
 
-- `drive.ts r up --kernel --script <file>` with the script
+- `drive.ts r up --script <file>` with the script
   `[{"text": "a"}, {"text": "b"}, {"text": "c"}]`, then `drive.ts r serve`.
 
 - **Fill a transcript.** Run `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`, then
@@ -54,12 +54,14 @@ Feature ledger area B: spec §2.1, §2.2, §6; examples 08-context, 13-chat, 20-
 
 ## Tests
 
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`:
+Wire, `packages/nisse/test/wire.test.ts`:
 
 - entries-rpc: a client reads a long transcript a page at a time, newest first or in order from an entry
 - context-rpc: a client reads the exact context the model is sent, now or as it was at an entry
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Package, `packages/harness/test/context.test.ts`:
+
+- context-synthesized-results: ${name}
 
 ## Gotchas
 

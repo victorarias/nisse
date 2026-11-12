@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import type { ClaudeOptions } from "../../src/drivers/claude/index.ts"
+import type { ClaudeProcessSettings as ClaudeOptions } from "@nisse/claude"
 import { deadline } from "./raw.ts"
 
 const FIXTURES = join(import.meta.dir, "../../../../fixtures/claude")

@@ -187,10 +187,11 @@ Preconditions:
   `drive.ts r nisse logout nope`: `no provider named nope`.
   `drive.ts r nisse logout script`: `there is nothing to sign out of`.
   `drive.ts r rpc auth/start '{"provider": "openai", "method": "terminal"}'`:
-  an error, `openai can't sign in by terminal`.
+  a `CannotSignIn` error, `openai can't sign in by terminal`; `script` also
+  fails `CannotSignIn`, and `nope` fails `UnknownProvider`.
 
-- **On the kernel.** In a fresh run made with
-  `drive.ts r up --kernel --fake-openai text_answer --openai-signed-out --openai-refreshes 1`,
+- **Second account.** In a fresh run made with
+  `drive.ts r up --fake-openai text_answer --openai-signed-out --openai-refreshes 1`,
   write `[providers.openai-work]` with `driver = "openai"` to the home's
   `config.toml`, run `drive.ts r serve`, start
   `drive.ts r watch-auth --until succeeded --save device-code-work &` and run
@@ -200,50 +201,25 @@ Preconditions:
   `openai-work.json` alone, and `providers/list` shows `openai-work` `ready`
   while `openai` stays `signed_out`.
   `drive.ts r rpc auth/logout '{"provider": "openai-work"}'` answers it
-  `signed_out` and removes the file. The **Cannot** calls over `rpc` fail
-  `CannotSignIn` for `script` and for `openai` by `terminal`, and
-  `UnknownProvider` for `nope`.
-  The kernel commits every sign-in state to the `nisse.sign_ins` document
-  before any connection sees it. Start
+  `signed_out` and removes the file.
+- **Restart.** Every sign-in state is committed to the `nisse.sign_ins`
+  document before any connection sees it. In a run made as for **Second
+  account**, start
   `drive.ts r rpc auth/start '{"provider": "openai", "method": "device_code"}'`,
   wait for `drive.ts r watch-auth --until waiting`, then
   `drive.ts r kill-server` and `drive.ts r serve`:
   `drive.ts r watch-auth --until failed` shows that flow `failed` with
   `the server stopped before this sign-in finished`, and `auth/respond` to it
   answers `{"accepted": false}`.
-  The commands work on the kernel too. In a fresh run made the same way,
-  `drive.ts r nisse login openai --device-code` prints
-  `Open http://127.0.0.1:<port>/codex/device on any device and enter the code ABCD-1234`,
-  then `signed in to openai as ada@example.com · ChatGPT Plus`, exit 0;
-  `drive.ts r nisse exec --provider openai hello` prints `Hello there`; and
-  `drive.ts r nisse logout openai` prints `signed out of openai: signed out`.
-  `drive.ts r nisse login nope` exits 1 with
-  `no provider named nope; there are script, claude, openai`.
 
 ## Contexts
 
 - **SSH.** OpenAI's sign-in from the TUI and `nisse login` uses a device code, because a browser elsewhere cannot reach port 1455. Claude has only its terminal sign-in.
 - **Second client.** Any client can start, follow, answer or cancel a sign-in.
 - **Idle.** The server exits 30 s after its last client leaves, even while a sign-in waits.
-- **Restart, on the kernel.** A sign-in still running when the server stops ends `failed` for the next server's connections; today's server forgets it.
+- **Server restart.** A sign-in still running when the server stops ends `failed` for the next server's connections.
 
 ## Tests
-
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
-
-- signin-status: the splash lists every provider and how it is signed in
-- signin-terminal: ^L signs in to a signed-out Claude by running its own sign-in in the terminal
-- signin-cancel: a sign-in cancelled from another connection stops Claude's sign-in in the terminal
-- signin-shared: an open TUI shows a sign-in another connection finished
-
-Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- signin-refused: an answer for another sign-in is turned away, and a sign-in the browser refused fails saying why
-- signin-cannot: nisse refuses to sign in to a provider it does not have, one with nothing to sign in to, and a way the provider does not offer
-
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- signout, signin-cannot: nisse logout and login on the kernel sign out of a provider and refuse one nisse does not have
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
@@ -251,28 +227,20 @@ Screen, `packages/nisse/test/screen.test.ts`:
 - signin-terminal: ^L signs in to a signed-out Claude by running its own sign-in in the terminal
 - signin-cancel: a sign-in cancelled from another connection stops Claude's sign-in in the terminal
 - signin-shared: an open TUI shows a sign-in another connection finished
-- signin-terminal: nisse login hands what the person types to Claude's own sign-in
 
-Provider, `packages/nisse/test/openai.test.ts`:
+Stack, `packages/nisse/test/stack.test.ts`:
 
-- openai-answer: a ChatGPT answer is committed as nisse's message, asked for with the sign-in's headers
-- openai-signed-out: a conversation with ChatGPT before signing in says how to fix it
-- signin-browser, openai-sign-in: signing in through a browser saves the tokens for this user only and names the account
-- signin-paste: the address a browser on another machine ends on, pasted back, finishes the sign-in
-- signin-device-code: a device code sign-in shows the code to enter, then finishes once someone enters it
-- signin-cancel: a cancelled sign-in ends for every connection and frees the callback port
-- signin-shared: a connection that starts watching after a sign-in ended still learns how it ended
-- signout: signing out leaves the provider signed out and tells every connection
+- signout, signin-cannot: nisse logout and login sign out of a provider and refuse one nisse does not have
 
-Provider, `packages/nisse/test/claude.test.ts`:
+Provider, `packages/nisse/test/providers.test.ts`:
 
-- claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account
-
-Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
-
+- provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
 - signin-device-code, signout: one instance signs in and out on its own, and every connection sees it
 - signin-shared: a sign-in the server stopped during is failed for every connection of the next server
-- provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
+- signin-browser, openai-sign-in: signing in through a browser saves the tokens for this user only and names the account
+- signin-paste: the address a browser on another machine ends on, pasted back, finishes the sign-in
+- signin-refused: an answer for another sign-in is turned away, and a sign-in the browser refused fails saying why
+- signin-cannot: nisse refuses to sign in to a provider it does not have, one with nothing to sign in to, and a way the provider does not offer
 
 ## Gotchas
 

@@ -49,24 +49,18 @@ Preconditions:
 
 ## Contexts
 
-- **On the kernel.** In a run made with `drive.ts r up --kernel`, after a run
-  settles, `drive.ts r idle` reports only the server, `0.00s` or `0.01s`.
-  The TUI does not run on the kernel yet.
+None.
 
 ## Tests
 
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
+Screen, `packages/nisse/test/screen.test.ts`:
 
 - tui-hangup, idle-closed: closing the terminal ends nisse instead of leaving it running unseen
 - idle-tui: the TUI draws nothing and uses no CPU while nothing changes
 
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+Stack, `packages/nisse/test/stack.test.ts`:
 
-- idle-server: a server on the kernel with no run in flight uses no CPU
-
-Screen, `packages/nisse/test/screen.test.ts`:
-
-- tui-hangup: closing the terminal ends nisse instead of leaving it running unseen
+- idle-server: a server with no run in flight uses no CPU
 
 ## Gotchas
 

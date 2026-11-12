@@ -10,7 +10,7 @@ import type {
   ModelSelection,
   ProviderModels,
   ProviderSnapshot,
-  Status,
+  TreeStatus,
 } from "@nisse/protocol"
 import { Deferred, Effect, Fiber, type Scope, Stream } from "effect"
 import type { Accessor, JSX } from "solid-js"
@@ -55,7 +55,7 @@ export interface Screen {
   readonly id: string
   readonly cwd: string | undefined
   readonly model: ModelSelection | undefined
-  readonly status: Status
+  readonly status: TreeStatus["status"]
   readonly workingSince: number | undefined
   /** Its parent's provider runs it, so it takes input only through its parent. */
   readonly hosted: boolean

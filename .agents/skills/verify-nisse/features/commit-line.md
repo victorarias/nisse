@@ -42,7 +42,39 @@ Feature ledger area A: spec §1, §2, §2.2, §4, §10.1; README Persist and Res
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Package, `packages/harness/test/harness.test.ts`:
+
+- session-init: the host's init seeds the root once, in the commit that creates it, and never again after a restart
+
+Package, `packages/kernel/test/tasks.test.ts`:
+
+- session-clock, task-lifecycle-times: a TestClock drives a durable sleep, and the receipt stores when the task started and ended
+- session-failed: a close whose write-back of a stopped task fails reports the failure instead of a clean close
+- session-failed: a reservation whose commit fails fails the Session, and it still closes
+
+Package, `packages/kernel/test/session.test.ts`:
+
+- commit-atomic, commit-published-after-store: commits from many fibers form one ordered line, each published only after it is stored
+- commit-atomic: a waiter's code after its commit runs only once the next commit on the line is published
+- commit-read-after-write: a commit admitted while another is in storage starts only once that one is stored, and reads it
+- commit-tx-api: a conversation, an entry and a submission commit as one change, and a failing callback stores none of them
+- commit-tx-api: a table read after the commit's first table write is a ReadAfterWrite defect, and nothing is stored
+- commit-tx-api: a Tx call that dies after its checks fails the commit even when the callback caught it, and nothing is stored
+- commit-tx-api: a refusal a Tx call raises before touching the transaction, once caught, still commits
+- commit-tx-read: a commit finds a placed input's entry through Tx.submission and answers it
+- entry-immutable: an appended entry is a frozen copy of its draft, and storage keeps it as committed
+- entry-custom: a defineEntry token sets the kind, and reading with it finds only that kind
+- session-failed: a storage error fails the commit that hit it, every later commit with SessionFailed, and closes the Session
+- session-failed: a commit whose callback caught a failed read fails with SessionFailed
+- session-read-only: a read-only Session refuses a commit with writes before storage, and keeps answering reads
+- commit-atomic: close lets admitted commits finish, then refuses new ones and ends observers
+- commit-tx-api: a caller that stops waiting before its commit reaches storage abandons it, also while its writes are assembled
+- commit-atomic: an observer whose async advance rejects is detached and ended listener_error, and commits go on
+- commit-tx-api: a conversation cannot be owned by a task that is finishing, finished or abort-marked
+- session-failed: a close listener or observer end that returns a rejecting promise has the rejection contained
+- commit-atomic: an observer attached while close drains admitted commits gets them, then ends; one attached after close ends at once
+- session-failed: a storage read that dies on a corrupt record fails the Session like a storage error
+- commit-atomic: an observer that another observer's end detached during close gets no end
 
 ## Gotchas
 

@@ -11,7 +11,7 @@ import { createInterface } from "node:readline"
 import { Deferred, Effect, Fiber, Stream } from "effect"
 import type { RpcClientError } from "effect/rpc/RpcClientError"
 
-/** What signing in calls, which both wires serve alike: `@nisse/protocol` and the kernel's `@nisse/wire`. */
+/** What signing in calls, which both wires serve alike: `@nisse/protocol` and the kernel's `@nisse/protocol`. */
 export interface SignInClient {
   readonly "providers/list": (payload: {}) => Effect.Effect<ReadonlyArray<ProviderSnapshot>, RpcClientError>
   readonly "auth/start": (payload: {

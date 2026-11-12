@@ -42,7 +42,7 @@ failed with a message saying why, in every client.
 
 - Run `nisse exec --provider <name> '<prompt>'`.
 - Call `conversation/start` with `"provider": "<name>"`.
-- Call `providers/list`. `conversation/list` and each snapshot's `conversation` show the provider in its `model`.
+- Call `providers/list`. `conversation/list` shows the provider in each conversation's `model`, and a view's `pi.agent` in its `model`.
 - Write `NISSE_HOME/config.toml` with `[providers.<id>]` tables; the next server reads it. Set `NISSE_CLAUDE` in the environment of the command that starts the server.
 
 ## Driving it with drive.ts
@@ -57,10 +57,11 @@ Preconditions:
 
 - **Choose over the wire.** Run `drive.ts r serve`, then
   `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`:
-  `"model": {"provider": "script"}`. Then
+  `"model": {"provider": "script", "model": "script"}`. Then
   `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "openai"}'`:
-  `"model": {"provider": "openai"}`. Run the first again: it now starts with
-  `openai`, the provider chosen last.
+  `"model": {"provider": "openai", "model": "gpt-5.5"}`, the provider's
+  default model filled in. Run the first again: it now starts with `openai`,
+  the provider chosen last.
 - **Unknown over the wire.** Run
   `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "nope"}'`.
   It exits 1 with an `error` whose data holds
@@ -75,7 +76,7 @@ Preconditions:
   Exit 1, empty stdout, stderr
   `not signed in to ChatGPT: could not read /tmp/nisse-verify/r/home/auth/openai.json: ...`.
   `rpc conversation/list` shows the conversation with
-  `"model": {"provider": "openai"}`.
+  `"model": {"provider": "openai", "model": "gpt-5.5"}`.
 - **Signed out, TUI.** Run `drive.ts r tui start --provider openai`,
   `drive.ts r tui wait READY`, `drive.ts r tui type hi`,
   `drive.ts r tui key Enter`, `drive.ts r tui wait 'not signed in to ChatGPT'`,
@@ -112,7 +113,10 @@ Preconditions:
   Run `drive.ts r tui start`, `drive.ts r tui wait openai-work`,
   `drive.ts r tui screen splash`: `○ openai-work signed out` and
   `● claude-alt` in the list, and the status bar ends with `openai-work`,
-  the provider chosen last.
+  the provider chosen last. With
+  `default_model = { provider = "openai-work", model = "gpt-5.5", effort = "high" }`
+  at the file's top, `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`
+  answers `"model": {"provider": "openai-work", "model": "gpt-5.5", "effort": "high"}`.
 
 - **Binary, env and args.** In a fresh run made with
   `drive.ts r up --fake-claude text`, before anything starts the server,
@@ -130,10 +134,8 @@ Preconditions:
   ```
 
   Run `drive.ts r serve` and `drive.ts r rpc providers/list '{}'`:
-  `claude-alt` is `ready`, and `claude-gone` is `unavailable` with a message
-  that says Claude Code's binary was not found at
-  `/tmp/nisse-verify/r/no-claude` and ends
-  `install Claude Code or set its binary`.
+  `claude-alt` is `ready`, and `claude-gone` is `unavailable` with
+  `Claude Code native binary not found at /tmp/nisse-verify/r/no-claude. ...; install Claude Code or set its binary`.
   Run
   `drive.ts r nisse exec --provider claude-alt 'Reply with exactly: fixture text ok'`:
   stdout `fixture text ok`, exit 0. `evidence/claude-alt/log.ndjson`, where
@@ -153,58 +155,29 @@ Preconditions:
   and `at ["providers"]["gem"]["driver"]`. Run `drive.ts r nisse exec hi`:
   exit 1, empty stdout, and the same stderr from the server it tried to start.
 
-- **On the kernel.** In a fresh run made with `drive.ts r up --kernel`, write
-  the **Config** file above, plus
-  `default_model = { provider = "openai-work", model = "gpt-5.5", effort = "high" }`
-  at its top. Run `drive.ts r serve` and `drive.ts r rpc providers/list '{}'`:
-  the same five providers, `openai` and `openai-work` both `signed_out`.
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` answers a
-  `conversation` and
-  `"model": {"provider": "openai-work", "model": "gpt-5.5", "effort": "high"}`;
-  with `"provider": "nope"` it fails `UnknownProvider`. Submitting to that
-  conversation ends its run `failed` with
-  `Model openai-work/gpt-5.5 is not available`: ChatGPT's run comes to the
-  kernel with its own step. Write the **Binary, env and args** file instead
-  and serve again: `claude-gone` is `unavailable` with
-  `Claude Code native binary not found at /tmp/nisse-verify/r/no-claude. ...; install Claude Code or set its binary`.
-  The **Invalid config** file makes `NISSE_KERNEL=1 nisse serve` exit 1 with
-  the same stderr, and `drive.ts r nisse exec hi` exit 1 with it from the
-  server it tried to start. `exec` takes its flags on the kernel too: in a
-  fresh `--kernel` run, `drive.ts r nisse exec --provider nope hi` exits 1
-  with `nisse has no provider named nope`, and in one made with
-  `--kernel --fake-claude text` the **Binary, env and args** step's
-  `drive.ts r nisse exec --provider claude-alt 'Reply with exactly: fixture text ok'`
-  prints `fixture text ok`, and `evidence/claude-alt/log.ndjson` holds the
-  spawn with `"--add-dir","/tmp"`.
-
 ## Contexts
 
 - **Server restart.** The server reads `config.toml` and its environment when it starts.
 
 ## Tests
 
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
+Stack, `packages/nisse/test/stack.test.ts`:
 
 - provider-default: a conversation that names no provider and has no default model starts on Claude, or on the scripted provider when NISSE_MODEL_SCRIPT is set
-- provider-choose, model-flags: nisse exec on the kernel starts on the provider, model and effort it names
-- provider-unknown, model-flags: nisse exec on the kernel refuses a provider or an effort nisse does not have
-- provider-config-invalid: nisse exec on the kernel says why the server it started refused the home's config.toml
-- provider-binary: nisse exec on the kernel runs a Claude provider's binary from config.toml, with its env and args
+- provider-choose, model-flags: nisse exec starts on the provider, model and effort it names
+- provider-unknown, model-flags: nisse exec refuses a provider or an effort nisse does not have
+- provider-config-invalid: nisse exec says why the server it started refused the home's config.toml
+- provider-binary: nisse exec runs a Claude provider's binary from config.toml, with its env and args
 
-Kernel wire, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
+Provider, `packages/nisse/test/openai.test.ts`:
 
 - openai-signed-out, provider-signed-out: a conversation with ChatGPT before signing in says how to fix it
 
-Kernel wire, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
+Provider, `packages/nisse/test/claude.test.ts`:
 
 - claude-answer, provider-claude: Claude's answer through Claude Code is committed as nisse's message
 
-Wire, `packages/nisse/test/wire.test.ts`:
-
-- provider-unknown: starting a conversation with a provider nisse does not have says so
-- provider-config: the providers config.toml names can start conversations beside the built-in ones
-
-Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
+Provider, `packages/nisse/test/providers.test.ts`:
 
 - provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
 - provider-unknown, model-flags: a conversation starts on the model and effort it names, and nisse refuses a provider or effort it does not have

@@ -1,4 +1,3 @@
-import type { Delivery } from "@nisse/protocol"
 import * as Net from "node:net"
 
 export interface Reply {
@@ -11,10 +10,6 @@ export interface Watch<A> {
   readonly items: Array<A>
   readonly ended: Promise<Reply>
   readonly until: (predicate: (items: ReadonlyArray<A>) => boolean, ms?: number) => Promise<void>
-}
-
-export interface Subscription extends Omit<Watch<Delivery>, "items"> {
-  readonly deliveries: Array<Delivery>
 }
 
 const DEADLINE = 5000
@@ -107,11 +102,6 @@ export class RawClient {
     return { id, items, ended, until }
   }
 
-  subscribe(params: unknown): Subscription {
-    const { items, ...watch } = this.watch<Delivery>("conversation/subscribe", params)
-    return { ...watch, deliveries: items }
-  }
-
   resumeAcks(requestId: number) {
     this.ack = true
     this.send({ jsonrpc: "2.0", method: "@effect/rpc/Ack", params: { requestId } })
@@ -121,13 +111,6 @@ export class RawClient {
     this.socket.destroy()
   }
 }
-
-export const entriesOf = (deliveries: ReadonlyArray<Delivery>) => deliveries.flatMap((delivery) => delivery.entries)
-
-export const bodies = (deliveries: ReadonlyArray<Delivery>) => entriesOf(deliveries).map((entry) => entry.body)
-
-export const statusOf = (deliveries: ReadonlyArray<Delivery>) =>
-  deliveries.findLast((delivery) => delivery.status)?.status
 
 /**
  * Connects, asks `requests` times for `method`, far more answer than the socket buffers, and hangs up on the first

@@ -14,7 +14,7 @@ People and tools attach images; large ones are prepared off the server's line, a
 
 ### People
 
-- In the TUI on the kernel, drop an image file on the terminal, which pastes
+- In the TUI, drop an image file on the terminal, which pastes
   its path, or type the path, anywhere in the prompt. PNG, JPEG, GIF, WebP
   and BMP files attach, by absolute path, a path relative to the
   conversation's folder, `~/`, a quoted or backslash-escaped path, or a
@@ -22,7 +22,7 @@ People and tools attach images; large ones are prepared off the server's line, a
   Enter, and the message shows `with <names>` under it after. The text is
   sent as written, path included.
 - `nisse "<prompt naming an image file>"` and `nisse exec "<prompt naming an
-image file>"` on the kernel attach the same way, relative paths read from
+image file>"` attach the same way, relative paths read from
   the current folder; an image the server refuses exits 1 with its reason.
 
 ### Agents
@@ -36,7 +36,7 @@ image file>"` on the kernel attach the same way, relative paths read from
 
 ## Driving it with drive.ts
 
-Preconditions: a run made with `drive.ts r up --kernel --fake-openai text_answer`,
+Preconditions: a run made with `drive.ts r up --fake-openai text_answer`,
 and a PNG at `/tmp/nisse-verify/r/Screen Shot.png` (any screenshot; a space in
 the name checks the escaping).
 
@@ -56,7 +56,8 @@ the name checks the escaping).
   `images: ["Screen Shot.png"]` and its message an `image` block.
 - **Refused.** `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "bad-1", "author": "ada", "text": "look", "images": [{"name": "broken.png", "data": "bm9wZQ==", "mimeType": "image/png"}]}'`
   answers `UnreadableImage` naming `broken.png`, and nothing is added.
-- **Exec.** `drive.ts r nisse exec "describe /tmp/nisse-verify/r/Screen\ Shot.png"`
+- **Exec.** In a fresh run made with `drive.ts r up --fake-openai text_answer`
+  (the TUI's run has played its one reply), `drive.ts r nisse exec "describe /tmp/nisse-verify/r/Screen\ Shot.png"`
   exits 0, and the newest conversation's `nisse.user` entry names
   `Screen Shot.png`.
 
@@ -69,12 +70,31 @@ Feature ledger area O: spec §7.3; README Tools.
 - **Provider.** ChatGPT gets each image as an `input_image`; Claude Code as an
   `image` block beside the text (`image-input`); a model without image input
   sees a placeholder (`image-placeholder`).
-- **On the kernel only.** The shipping wire's `conversation/submit` takes no
-  images, so the TUI without `--kernel` shows no `attaching` line.
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- image-attach: a dragged image's pasted path shows on the prompt as attached, and the model receives the image with the message
+- image-attach: an image the server cannot decode is refused on screen by name, and nothing is sent
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- image-attach: nisse exec sends an image file its prompt names, resized to fit, and refuses one it cannot decode
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- image-attach: images sent with a prompt reach the model after its text, one past its limits resized, and every client sees their names
+- image-attach: an image the server cannot decode is refused by name, and nothing is submitted
+
+Package, `packages/tools/test/images.test.ts`:
+
+- image-input, image-tool-result: an attached image and an image read from a file reach the model as images
+
+Package, `packages/claude/test/claude.test.ts`:
+
+- image-input: an image in a prompt reaches Claude Code beside its text
+- image-tool-result: an image an extension tool returns reaches Claude Code beside its text
 
 ## Gotchas
 

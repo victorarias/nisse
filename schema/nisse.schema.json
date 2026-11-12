@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nisse protocol",
-  "protocol": 8,
+  "protocol": 1,
   "methods": {
     "initialize": {
       "params": {
@@ -53,28 +53,32 @@
       "params": {
         "type": "object",
         "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "The directory the conversation works in."
+          },
           "id": {
             "type": "string",
-            "description": "Start it with this id. When a conversation has it already, that conversation is the answer."
-          },
-          "cwd": {
-            "type": "string"
-          },
-          "provider": {
-            "type": "string"
-          },
-          "model": {
-            "type": "string"
-          },
-          "effort": {
-            "type": "string"
+            "description": "The id to name it by, chosen by the client; not all digits. Starting with an id that names a conversation, a chosen one or its number, answers with that one by the id other calls name it by, and changes nothing."
           },
           "approvals": {
             "type": "string",
             "enum": [
               "ask",
               "auto"
-            ]
+            ],
+            "description": "Default ask."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Absent for the default: the project's default_model, the home's, the model chosen last, else the preferred provider."
+          },
+          "model": {
+            "type": "string",
+            "description": "Without a provider, it goes to the default model's provider."
+          },
+          "effort": {
+            "type": "string"
           },
           "instructions": {
             "type": "string",
@@ -89,16 +93,9 @@
       "result": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string"
-          },
-          "cwd": {
-            "type": "string"
-          },
-          "createdAt": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "model": {
             "type": "object",
@@ -118,98 +115,28 @@
             "required": [
               "provider"
             ],
-            "additionalProperties": true
-          },
-          "approvals": {
-            "type": "string",
-            "enum": [
-              "ask",
-              "auto"
-            ]
-          },
-          "lineage": {
-            "type": "object",
-            "properties": {
-              "parent": {
-                "type": "string"
-              },
-              "root": {
-                "type": "string",
-                "description": "The conversation people started, at the top of the tree."
-              },
-              "call": {
-                "type": "string",
-                "description": "The parent's call that started it."
-              },
-              "task": {
-                "type": "string",
-                "description": "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does."
-              },
-              "title": {
-                "type": "string"
-              },
-              "agentType": {
-                "type": "string"
-              },
-              "forkedAt": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991,
-                "description": "It starts from its parent's transcript before this seq."
-              }
-            },
-            "required": [
-              "parent",
-              "root",
-              "call",
-              "title"
-            ],
             "additionalProperties": true,
-            "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
-          },
-          "instructions": {
-            "type": "string",
-            "description": "What the client that started it asked the model to follow, beside its own."
-          },
-          "ended": {
-            "type": "object",
-            "properties": {
-              "outcome": {
-                "type": "string",
-                "enum": [
-                  "answered",
-                  "interrupted",
-                  "failed",
-                  "restart_limit"
-                ]
-              },
-              "message": {
-                "type": "string",
-                "description": "The run_end's message, such as why it failed."
-              },
-              "said": {
-                "type": "string",
-                "description": "The last message the model wrote in the conversation."
-              }
-            },
-            "required": [
-              "outcome"
-            ],
-            "additionalProperties": true,
-            "description": "How the conversation's last run ended."
+            "description": "The model it runs, defaults applied, with the provider's default model when none was named; for an id that names one, that conversation's."
           }
         },
         "required": [
-          "id",
-          "cwd",
-          "createdAt",
-          "model",
-          "approvals"
+          "conversation",
+          "model"
         ],
         "additionalProperties": true
       },
       "error": {
-        "$ref": "#/$defs/UnknownProviderEncoded"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/InvalidConversationIdEncoded"
+          },
+          {
+            "$ref": "#/$defs/UnknownProviderEncoded"
+          },
+          {
+            "$ref": "#/$defs/UnknownEffortEncoded"
+          }
+        ]
       },
       "stream": false
     },
@@ -223,15 +150,11 @@
           "type": "object",
           "properties": {
             "id": {
-              "type": "string"
+              "type": "string",
+              "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
             },
             "cwd": {
               "type": "string"
-            },
-            "createdAt": {
-              "type": "integer",
-              "minimum": -9007199254740991,
-              "maximum": 9007199254740991
             },
             "model": {
               "type": "object",
@@ -258,13 +181,15 @@
               "enum": [
                 "ask",
                 "auto"
-              ]
+              ],
+              "description": "`ask`: calls that change things wait for approval/resolve; `auto`: every call runs without asking."
             },
             "lineage": {
               "type": "object",
               "properties": {
                 "parent": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
                 },
                 "root": {
                   "type": "string",
@@ -274,21 +199,15 @@
                   "type": "string",
                   "description": "The parent's call that started it."
                 },
+                "title": {
+                  "type": "string"
+                },
                 "task": {
                   "type": "string",
                   "description": "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does."
                 },
-                "title": {
-                  "type": "string"
-                },
                 "agentType": {
                   "type": "string"
-                },
-                "forkedAt": {
-                  "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991,
-                  "description": "It starts from its parent's transcript before this seq."
                 }
               },
               "required": [
@@ -318,7 +237,7 @@
                 },
                 "message": {
                   "type": "string",
-                  "description": "The run_end's message, such as why it failed."
+                  "description": "Why the run ended without an answer."
                 },
                 "said": {
                   "type": "string",
@@ -335,1446 +254,67 @@
           "required": [
             "id",
             "cwd",
-            "createdAt",
             "model",
             "approvals"
           ],
           "additionalProperties": true
-        }
+        },
+        "description": "Every conversation, subagents included, oldest first."
       },
       "error": {
         "not": {}
       },
       "stream": false
     },
-    "conversation/subscribe": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "conversation": {
-            "type": "string"
-          },
-          "sinceSeq": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "conversation"
-        ],
-        "additionalProperties": true
-      },
-      "result": {
-        "anyOf": [
-          {
-            "type": "object",
-            "properties": {
-              "_tag": {
-                "type": "string",
-                "enum": [
-                  "snapshot"
-                ]
-              },
-              "conversation": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  },
-                  "cwd": {
-                    "type": "string"
-                  },
-                  "createdAt": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  },
-                  "model": {
-                    "type": "object",
-                    "properties": {
-                      "provider": {
-                        "type": "string"
-                      },
-                      "model": {
-                        "type": "string",
-                        "description": "Absent for the provider's own choice, as Claude Code makes it."
-                      },
-                      "effort": {
-                        "type": "string",
-                        "description": "Absent for the model's own default."
-                      }
-                    },
-                    "required": [
-                      "provider"
-                    ],
-                    "additionalProperties": true
-                  },
-                  "approvals": {
-                    "type": "string",
-                    "enum": [
-                      "ask",
-                      "auto"
-                    ]
-                  },
-                  "lineage": {
-                    "type": "object",
-                    "properties": {
-                      "parent": {
-                        "type": "string"
-                      },
-                      "root": {
-                        "type": "string",
-                        "description": "The conversation people started, at the top of the tree."
-                      },
-                      "call": {
-                        "type": "string",
-                        "description": "The parent's call that started it."
-                      },
-                      "task": {
-                        "type": "string",
-                        "description": "Its task name, such as /root/explore, which agents address it by. Absent when its parent's provider runs it, as Claude Code runs its own subagents: then it takes input only through its parent, and stops when its parent's run does."
-                      },
-                      "title": {
-                        "type": "string"
-                      },
-                      "agentType": {
-                        "type": "string"
-                      },
-                      "forkedAt": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991,
-                        "description": "It starts from its parent's transcript before this seq."
-                      }
-                    },
-                    "required": [
-                      "parent",
-                      "root",
-                      "call",
-                      "title"
-                    ],
-                    "additionalProperties": true,
-                    "description": "Where a subagent comes from. It runs on its parent's provider, in its directory."
-                  },
-                  "instructions": {
-                    "type": "string",
-                    "description": "What the client that started it asked the model to follow, beside its own."
-                  },
-                  "ended": {
-                    "type": "object",
-                    "properties": {
-                      "outcome": {
-                        "type": "string",
-                        "enum": [
-                          "answered",
-                          "interrupted",
-                          "failed",
-                          "restart_limit"
-                        ]
-                      },
-                      "message": {
-                        "type": "string",
-                        "description": "The run_end's message, such as why it failed."
-                      },
-                      "said": {
-                        "type": "string",
-                        "description": "The last message the model wrote in the conversation."
-                      }
-                    },
-                    "required": [
-                      "outcome"
-                    ],
-                    "additionalProperties": true,
-                    "description": "How the conversation's last run ended."
-                  }
-                },
-                "required": [
-                  "id",
-                  "cwd",
-                  "createdAt",
-                  "model",
-                  "approvals"
-                ],
-                "additionalProperties": true
-              },
-              "seq": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              },
-              "entries": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "seq": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    },
-                    "at": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    },
-                    "author": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "person"
-                              ]
-                            },
-                            "name": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "name"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "nisse"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "_tag"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "agent"
-                              ]
-                            },
-                            "conversation": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "conversation"
-                          ],
-                          "additionalProperties": true,
-                          "description": "The model of another conversation in the same tree, such as a subagent's parent."
-                        }
-                      ]
-                    },
-                    "body": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "user"
-                              ]
-                            },
-                            "submission": {
-                              "type": "string"
-                            },
-                            "text": {
-                              "type": "string"
-                            },
-                            "skills": {
-                              "type": "array",
-                              "items": {
-                                "type": "object",
-                                "properties": {
-                                  "name": {
-                                    "type": "string"
-                                  },
-                                  "path": {
-                                    "type": "string"
-                                  },
-                                  "text": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "name",
-                                  "path",
-                                  "text"
-                                ],
-                                "additionalProperties": true,
-                                "description": "A skill's SKILL.md as it was when the input named it."
-                              }
-                            },
-                            "mail": {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": [
-                                    "new_task",
-                                    "message",
-                                    "final_answer"
-                                  ],
-                                  "description": "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent."
-                                },
-                                "task": {
-                                  "type": "string",
-                                  "description": "The recipient's task name, such as /root/explore."
-                                },
-                                "sender": {
-                                  "type": "string",
-                                  "description": "The sender's task name."
-                                }
-                              },
-                              "required": [
-                                "kind",
-                                "task",
-                                "sender"
-                              ],
-                              "additionalProperties": true,
-                              "description": "What one agent sent another."
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "submission",
-                            "text"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "message"
-                              ]
-                            },
-                            "text": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "text"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "tool_call"
-                              ]
-                            },
-                            "call": {
-                              "type": "string"
-                            },
-                            "tool": {
-                              "type": "string"
-                            },
-                            "input": {},
-                            "parent": {
-                              "type": "string",
-                              "description": "The call that made this one, such as the script that ran it in code mode."
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "call",
-                            "tool",
-                            "input"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "tool_result"
-                              ]
-                            },
-                            "call": {
-                              "type": "string"
-                            },
-                            "output": {
-                              "type": "string"
-                            },
-                            "error": {
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "call",
-                            "output",
-                            "error"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "approval"
-                              ]
-                            },
-                            "approval": {
-                              "type": "string"
-                            },
-                            "call": {
-                              "type": "string"
-                            },
-                            "tool": {
-                              "type": "string"
-                            },
-                            "input": {}
-                          },
-                          "required": [
-                            "_tag",
-                            "approval",
-                            "call",
-                            "tool",
-                            "input"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "approval_answer"
-                              ]
-                            },
-                            "approval": {
-                              "type": "string"
-                            },
-                            "allow": {
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "approval",
-                            "allow"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "run_end"
-                              ]
-                            },
-                            "outcome": {
-                              "type": "string",
-                              "enum": [
-                                "answered",
-                                "interrupted",
-                                "failed",
-                                "restart_limit"
-                              ]
-                            },
-                            "message": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "outcome"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "model"
-                              ]
-                            },
-                            "selection": {
-                              "type": "object",
-                              "properties": {
-                                "provider": {
-                                  "type": "string"
-                                },
-                                "model": {
-                                  "type": "string",
-                                  "description": "Absent for the provider's own choice, as Claude Code makes it."
-                                },
-                                "effort": {
-                                  "type": "string",
-                                  "description": "Absent for the model's own default."
-                                }
-                              },
-                              "required": [
-                                "provider"
-                              ],
-                              "additionalProperties": true
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "selection"
-                          ],
-                          "additionalProperties": true,
-                          "description": "Someone switched the conversation's model; it answers with it from the next run on."
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "subagent"
-                              ]
-                            },
-                            "call": {
-                              "type": "string"
-                            },
-                            "conversation": {
-                              "type": "string"
-                            },
-                            "title": {
-                              "type": "string"
-                            },
-                            "agentType": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "call",
-                            "conversation",
-                            "title"
-                          ],
-                          "additionalProperties": true,
-                          "description": "The call started a subagent, which works in a conversation of its own."
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "toast"
-                              ]
-                            },
-                            "extension": {
-                              "type": "string"
-                            },
-                            "text": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "extension",
-                            "text"
-                          ],
-                          "additionalProperties": true,
-                          "description": "An extension told the people in this conversation something. Providers never show it to the model."
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "seq",
-                    "at",
-                    "author",
-                    "body"
-                  ],
-                  "additionalProperties": true
-                }
-              },
-              "live": {
-                "type": "object",
-                "properties": {
-                  "text": {
-                    "type": "string"
-                  },
-                  "output": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "required": [
-                  "text",
-                  "output"
-                ],
-                "additionalProperties": true
-              },
-              "queued": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "submission": {
-                      "type": "string"
-                    },
-                    "author": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "person"
-                              ]
-                            },
-                            "name": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "name"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "nisse"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "_tag"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "agent"
-                              ]
-                            },
-                            "conversation": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "conversation"
-                          ],
-                          "additionalProperties": true,
-                          "description": "The model of another conversation in the same tree, such as a subagent's parent."
-                        }
-                      ]
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "steer": {
-                      "type": "boolean"
-                    },
-                    "mail": {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "new_task",
-                            "message",
-                            "final_answer"
-                          ],
-                          "description": "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent."
-                        },
-                        "task": {
-                          "type": "string",
-                          "description": "The recipient's task name, such as /root/explore."
-                        },
-                        "sender": {
-                          "type": "string",
-                          "description": "The sender's task name."
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "task",
-                        "sender"
-                      ],
-                      "additionalProperties": true,
-                      "description": "What one agent sent another."
-                    }
-                  },
-                  "required": [
-                    "submission",
-                    "author",
-                    "text",
-                    "steer"
-                  ],
-                  "additionalProperties": true
-                }
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "idle",
-                  "working",
-                  "waiting"
-                ]
-              },
-              "extensionStatus": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "description": "Each extension's status line in this conversation, by extension name."
-              }
-            },
-            "required": [
-              "_tag",
-              "conversation",
-              "seq",
-              "entries",
-              "live",
-              "queued",
-              "status",
-              "extensionStatus"
-            ],
-            "additionalProperties": true
-          },
-          {
-            "type": "object",
-            "properties": {
-              "_tag": {
-                "type": "string",
-                "enum": [
-                  "commit"
-                ]
-              },
-              "seq": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              },
-              "at": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              },
-              "conversation": {
-                "type": "string"
-              },
-              "entries": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "seq": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    },
-                    "at": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    },
-                    "author": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "person"
-                              ]
-                            },
-                            "name": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "name"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "nisse"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "_tag"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "agent"
-                              ]
-                            },
-                            "conversation": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "conversation"
-                          ],
-                          "additionalProperties": true,
-                          "description": "The model of another conversation in the same tree, such as a subagent's parent."
-                        }
-                      ]
-                    },
-                    "body": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "user"
-                              ]
-                            },
-                            "submission": {
-                              "type": "string"
-                            },
-                            "text": {
-                              "type": "string"
-                            },
-                            "skills": {
-                              "type": "array",
-                              "items": {
-                                "type": "object",
-                                "properties": {
-                                  "name": {
-                                    "type": "string"
-                                  },
-                                  "path": {
-                                    "type": "string"
-                                  },
-                                  "text": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "name",
-                                  "path",
-                                  "text"
-                                ],
-                                "additionalProperties": true,
-                                "description": "A skill's SKILL.md as it was when the input named it."
-                              }
-                            },
-                            "mail": {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string",
-                                  "enum": [
-                                    "new_task",
-                                    "message",
-                                    "final_answer"
-                                  ],
-                                  "description": "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent."
-                                },
-                                "task": {
-                                  "type": "string",
-                                  "description": "The recipient's task name, such as /root/explore."
-                                },
-                                "sender": {
-                                  "type": "string",
-                                  "description": "The sender's task name."
-                                }
-                              },
-                              "required": [
-                                "kind",
-                                "task",
-                                "sender"
-                              ],
-                              "additionalProperties": true,
-                              "description": "What one agent sent another."
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "submission",
-                            "text"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "message"
-                              ]
-                            },
-                            "text": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "text"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "tool_call"
-                              ]
-                            },
-                            "call": {
-                              "type": "string"
-                            },
-                            "tool": {
-                              "type": "string"
-                            },
-                            "input": {},
-                            "parent": {
-                              "type": "string",
-                              "description": "The call that made this one, such as the script that ran it in code mode."
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "call",
-                            "tool",
-                            "input"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "tool_result"
-                              ]
-                            },
-                            "call": {
-                              "type": "string"
-                            },
-                            "output": {
-                              "type": "string"
-                            },
-                            "error": {
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "call",
-                            "output",
-                            "error"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "approval"
-                              ]
-                            },
-                            "approval": {
-                              "type": "string"
-                            },
-                            "call": {
-                              "type": "string"
-                            },
-                            "tool": {
-                              "type": "string"
-                            },
-                            "input": {}
-                          },
-                          "required": [
-                            "_tag",
-                            "approval",
-                            "call",
-                            "tool",
-                            "input"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "approval_answer"
-                              ]
-                            },
-                            "approval": {
-                              "type": "string"
-                            },
-                            "allow": {
-                              "type": "boolean"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "approval",
-                            "allow"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "run_end"
-                              ]
-                            },
-                            "outcome": {
-                              "type": "string",
-                              "enum": [
-                                "answered",
-                                "interrupted",
-                                "failed",
-                                "restart_limit"
-                              ]
-                            },
-                            "message": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "outcome"
-                          ],
-                          "additionalProperties": true
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "model"
-                              ]
-                            },
-                            "selection": {
-                              "type": "object",
-                              "properties": {
-                                "provider": {
-                                  "type": "string"
-                                },
-                                "model": {
-                                  "type": "string",
-                                  "description": "Absent for the provider's own choice, as Claude Code makes it."
-                                },
-                                "effort": {
-                                  "type": "string",
-                                  "description": "Absent for the model's own default."
-                                }
-                              },
-                              "required": [
-                                "provider"
-                              ],
-                              "additionalProperties": true
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "selection"
-                          ],
-                          "additionalProperties": true,
-                          "description": "Someone switched the conversation's model; it answers with it from the next run on."
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "subagent"
-                              ]
-                            },
-                            "call": {
-                              "type": "string"
-                            },
-                            "conversation": {
-                              "type": "string"
-                            },
-                            "title": {
-                              "type": "string"
-                            },
-                            "agentType": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "call",
-                            "conversation",
-                            "title"
-                          ],
-                          "additionalProperties": true,
-                          "description": "The call started a subagent, which works in a conversation of its own."
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "_tag": {
-                              "type": "string",
-                              "enum": [
-                                "toast"
-                              ]
-                            },
-                            "extension": {
-                              "type": "string"
-                            },
-                            "text": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "_tag",
-                            "extension",
-                            "text"
-                          ],
-                          "additionalProperties": true,
-                          "description": "An extension told the people in this conversation something. Providers never show it to the model."
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "seq",
-                    "at",
-                    "author",
-                    "body"
-                  ],
-                  "additionalProperties": true
-                }
-              },
-              "live": {
-                "type": "array",
-                "items": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "_tag": {
-                          "type": "string",
-                          "enum": [
-                            "text"
-                          ]
-                        },
-                        "append": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "_tag",
-                        "append"
-                      ],
-                      "additionalProperties": true
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "_tag": {
-                          "type": "string",
-                          "enum": [
-                            "text_end"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "_tag"
-                      ],
-                      "additionalProperties": true
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "_tag": {
-                          "type": "string",
-                          "enum": [
-                            "output"
-                          ]
-                        },
-                        "call": {
-                          "type": "string"
-                        },
-                        "append": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "_tag",
-                        "call",
-                        "append"
-                      ],
-                      "additionalProperties": true,
-                      "description": "Output appended to a running call. Live output keeps only the last 4096 characters of each call; the tool_result holds what the call returned."
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "_tag": {
-                          "type": "string",
-                          "enum": [
-                            "output_end"
-                          ]
-                        },
-                        "call": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "_tag",
-                        "call"
-                      ],
-                      "additionalProperties": true
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "_tag": {
-                          "type": "string",
-                          "enum": [
-                            "clear"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "_tag"
-                      ],
-                      "additionalProperties": true
-                    }
-                  ]
-                }
-              },
-              "enqueued": {
-                "type": "object",
-                "properties": {
-                  "submission": {
-                    "type": "string"
-                  },
-                  "author": {
-                    "anyOf": [
-                      {
-                        "type": "object",
-                        "properties": {
-                          "_tag": {
-                            "type": "string",
-                            "enum": [
-                              "person"
-                            ]
-                          },
-                          "name": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "_tag",
-                          "name"
-                        ],
-                        "additionalProperties": true
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "_tag": {
-                            "type": "string",
-                            "enum": [
-                              "nisse"
-                            ]
-                          }
-                        },
-                        "required": [
-                          "_tag"
-                        ],
-                        "additionalProperties": true
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "_tag": {
-                            "type": "string",
-                            "enum": [
-                              "agent"
-                            ]
-                          },
-                          "conversation": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "_tag",
-                          "conversation"
-                        ],
-                        "additionalProperties": true,
-                        "description": "The model of another conversation in the same tree, such as a subagent's parent."
-                      }
-                    ]
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "steer": {
-                    "type": "boolean"
-                  },
-                  "mail": {
-                    "type": "object",
-                    "properties": {
-                      "kind": {
-                        "type": "string",
-                        "enum": [
-                          "new_task",
-                          "message",
-                          "final_answer"
-                        ],
-                        "description": "new_task: work to do, which starts a run when the recipient has none. message: taken in at the recipient's next step, without starting a run. final_answer: a subagent's last message of a run, for its parent."
-                      },
-                      "task": {
-                        "type": "string",
-                        "description": "The recipient's task name, such as /root/explore."
-                      },
-                      "sender": {
-                        "type": "string",
-                        "description": "The sender's task name."
-                      }
-                    },
-                    "required": [
-                      "kind",
-                      "task",
-                      "sender"
-                    ],
-                    "additionalProperties": true,
-                    "description": "What one agent sent another."
-                  }
-                },
-                "required": [
-                  "submission",
-                  "author",
-                  "text",
-                  "steer"
-                ],
-                "additionalProperties": true
-              },
-              "status": {
-                "type": "string",
-                "enum": [
-                  "idle",
-                  "working",
-                  "waiting"
-                ]
-              },
-              "extensionStatus": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "description": "The whole map, when it changed."
-              }
-            },
-            "required": [
-              "_tag",
-              "seq",
-              "at",
-              "conversation",
-              "entries"
-            ],
-            "additionalProperties": true
-          }
-        ]
-      },
-      "error": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/NoSuchConversationEncoded"
-          },
-          {
-            "$ref": "#/$defs/FellBehindEncoded"
-          }
-        ]
-      },
-      "stream": true
-    },
     "conversation/submit": {
       "params": {
         "type": "object",
         "properties": {
           "conversation": {
-            "type": "string"
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "requestId": {
-            "type": "string"
+            "type": "string",
+            "description": "Submitting again with the same id is answered once. The input's nisse.user entry keeps it in its data."
           },
           "author": {
-            "type": "string"
+            "type": "string",
+            "description": "Who wrote it; the input is placed as a nisse.user entry naming them, and waits in pi.inbox with them."
           },
           "text": {
             "type": "string"
           },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "What the transcript calls it, such as its file name."
+                },
+                "data": {
+                  "type": "string",
+                  "description": "The file's bytes, base64."
+                },
+                "mimeType": {
+                  "type": "string",
+                  "description": "image/png, image/jpeg, image/gif, image/webp or image/bmp."
+                }
+              },
+              "required": [
+                "name",
+                "data",
+                "mimeType"
+              ],
+              "additionalProperties": true
+            },
+            "description": "Placed after the text, each prepared to fit the model's image limits (resized or converted); the entry's data names them."
+          },
           "steer": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Reach the run in flight at its next step instead of waiting for it to end; idle, it starts a run."
           }
         },
         "required": [
@@ -1789,7 +329,9 @@
         "type": "object",
         "properties": {
           "submission": {
-            "type": "string"
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
@@ -1804,18 +346,45 @@
           },
           {
             "$ref": "#/$defs/TakesNoInputEncoded"
+          },
+          {
+            "$ref": "#/$defs/UnreadableImageEncoded"
           }
         ]
       },
       "stream": false
     },
-    "conversation/interrupt": {
+    "conversation/watch": {
       "params": {
         "type": "object",
         "properties": {
           "conversation": {
             "type": "string",
-            "description": "Stops its run and the runs of every subagent under it."
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "window": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Start the window at this entry, such as the one after the last you hold."
+              },
+              "min": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "The newest entries the window holds at least; 50."
+              },
+              "max": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Past this many, the oldest leave the window down to min; twice min."
+              }
+            },
+            "additionalProperties": true
           }
         },
         "required": [
@@ -1824,47 +393,329 @@
         "additionalProperties": true
       },
       "result": {
-        "type": "null"
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "view"
+                ]
+              },
+              "view": {
+                "type": "object",
+                "properties": {
+                  "conversation": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "parent": {
+                        "type": "object",
+                        "properties": {
+                          "conversationId": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "at": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "conversationId",
+                          "at"
+                        ],
+                        "additionalProperties": true,
+                        "description": "The conversation this one was forked from, and the last entry it inherits."
+                      },
+                      "owner": {
+                        "type": "object",
+                        "properties": {
+                          "conversationId": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "taskId": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "conversationId",
+                          "taskId"
+                        ],
+                        "additionalProperties": true,
+                        "description": "The task that created this conversation, and that task's conversation."
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "additionalProperties": true
+                  },
+                  "entries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "conversationId": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "kind": {
+                          "type": "string",
+                          "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call."
+                        },
+                        "model": {
+                          "type": "array"
+                        },
+                        "data": {},
+                        "head": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "edits": {
+                          "type": "array"
+                        },
+                        "byTaskId": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "conversationId",
+                        "kind"
+                      ],
+                      "additionalProperties": true,
+                      "description": "One immutable transcript record."
+                    },
+                    "description": "A window over the transcript, oldest first."
+                  },
+                  "before": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991,
+                    "description": "The entry just before the window; absent when the window starts the transcript."
+                  },
+                  "docs": {
+                    "type": "object",
+                    "description": "pi.agent, pi.live, pi.inbox, pi.provider, pi.usage and nisse.approvals, by kind; pi.live holds the run in flight, nisse.approvals the calls waiting for a person."
+                  }
+                },
+                "required": [
+                  "conversation",
+                  "entries",
+                  "docs"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "_tag",
+              "view"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "change"
+                ]
+              },
+              "ops": {
+                "type": "array",
+                "description": "The operations one commit applied to the view, in order: [\"r\", value] replaces it, [\"s\", path, value] sets, [\"d\", path] deletes, [\"a\", path, text] appends text, [\"t\", path, length] truncates text, [\"p\", path, at, deleteCount, items] splices an array, [\"m\", path, permutation] reorders one."
+              }
+            },
+            "required": [
+              "_tag",
+              "ops"
+            ],
+            "additionalProperties": true
+          }
+        ],
+        "description": "The view through the window, then each commit's changes to it."
       },
       "error": {
-        "$ref": "#/$defs/NoSuchConversationEncoded"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/InvalidWindowEncoded"
+          },
+          {
+            "$ref": "#/$defs/FellBehindEncoded"
+          }
+        ]
       },
-      "stream": false
+      "stream": true
     },
-    "approval/resolve": {
+    "conversation/entries": {
       "params": {
         "type": "object",
         "properties": {
           "conversation": {
-            "type": "string"
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
-          "approval": {
-            "type": "string"
+          "from": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The oldest entry to include."
           },
-          "author": {
-            "type": "string"
+          "to": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The newest entry to include."
           },
-          "allow": {
-            "type": "boolean"
-          }
+          "order": {
+            "type": "string",
+            "enum": [
+              "ascending",
+              "descending"
+            ],
+            "description": "Default descending: newest first."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "The most entries one page holds."
+          },
+          "cursor": {}
         },
         "required": [
           "conversation",
-          "approval",
-          "author",
-          "allow"
+          "limit"
         ],
         "additionalProperties": true
       },
       "result": {
         "type": "object",
         "properties": {
-          "accepted": {
-            "type": "boolean"
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "conversationId": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call."
+                },
+                "model": {
+                  "type": "array"
+                },
+                "data": {},
+                "head": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "edits": {
+                  "type": "array"
+                },
+                "byTaskId": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "conversationId",
+                "kind"
+              ],
+              "additionalProperties": true,
+              "description": "One immutable transcript record."
+            },
+            "description": "Every entry of the transcript in the range, forks' inherited ones included."
+          },
+          "next": {}
+        },
+        "required": [
+          "entries"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
+    },
+    "conversation/context": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "at": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Cut the context off after this entry; absent for the context now."
           }
         },
         "required": [
-          "accepted"
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "description": "What the model is sent: the messages of its next request."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "description": "The entries the context is made of, oldest first: since the last reset or compaction."
+          }
+        },
+        "required": [
+          "messages",
+          "entries"
         ],
         "additionalProperties": true
       },
@@ -1874,7 +725,7 @@
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
           {
-            "$ref": "#/$defs/NoSuchApprovalEncoded"
+            "$ref": "#/$defs/NoSuchEntryEncoded"
           }
         ]
       },
@@ -1885,10 +736,12 @@
         "type": "object",
         "properties": {
           "conversation": {
-            "type": "string"
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "author": {
-            "type": "string"
+            "type": "string",
+            "description": "Who switched it; the transcript names them."
           },
           "selection": {
             "type": "object",
@@ -1930,9 +783,214 @@
             "$ref": "#/$defs/UnknownProviderEncoded"
           },
           {
+            "$ref": "#/$defs/UnknownEffortEncoded"
+          },
+          {
             "$ref": "#/$defs/TakesNoInputEncoded"
           }
         ]
+      },
+      "stream": false
+    },
+    "skills/list": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "description",
+            "path"
+          ],
+          "additionalProperties": true
+        },
+        "description": "The skills input to this conversation can name with /name or $name, which then carries them as `skills` in its nisse.user entry's data. Empty when its provider expands skills itself."
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
+    },
+    "conversation/interrupt": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "Stops its run; what was said stays."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "$ref": "#/$defs/NoSuchConversationEncoded"
+      },
+      "stream": false
+    },
+    "approval/resolve": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "approval": {
+            "type": "string",
+            "description": "A key of the view's nisse.approvals `requests`: the call's tool task."
+          },
+          "author": {
+            "type": "string",
+            "description": "Who answers; the transcript names them."
+          },
+          "allow": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "conversation",
+          "approval",
+          "author",
+          "allow"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "description": "False when another answer came first, or the call is no longer waiting: the first answer counts."
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchApprovalEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "extensions/list": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "loaded",
+                "failed",
+                "disabled"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Why it failed to load."
+            }
+          },
+          "required": [
+            "name",
+            "path",
+            "state"
+          ],
+          "additionalProperties": true
+        },
+        "description": "Every extension in the home, in the order they load."
+      },
+      "error": {
+        "not": {}
+      },
+      "stream": false
+    },
+    "extensions/reload": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "loaded",
+                "failed",
+                "disabled"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Why it failed to load."
+            }
+          },
+          "required": [
+            "name",
+            "path",
+            "state"
+          ],
+          "additionalProperties": true
+        },
+        "description": "Loads every extension again from disk, with its options from config.toml, then swaps them in, clears every status line and unloads the old ones."
+      },
+      "error": {
+        "not": {}
       },
       "stream": false
     },
@@ -1954,7 +1012,8 @@
               "seq": {
                 "type": "integer",
                 "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "maximum": 9007199254740991,
+                "description": "The last commit this server published before the watch began; 0 when it has published none since it started. Every later item has a greater seq."
               },
               "trees": {
                 "type": "array",
@@ -1974,7 +1033,8 @@
                     "seq": {
                       "type": "integer",
                       "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
+                      "maximum": 9007199254740991,
+                      "description": "The commit the tree's status changed at; 0 for a tree that was already busy when the server started, before any change."
                     },
                     "status": {
                       "type": "string",
@@ -1999,7 +1059,7 @@
                         },
                         "message": {
                           "type": "string",
-                          "description": "The run_end's message, such as why it failed."
+                          "description": "Why the run ended without an answer."
                         },
                         "said": {
                           "type": "string",
@@ -2047,7 +1107,8 @@
               "seq": {
                 "type": "integer",
                 "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "maximum": 9007199254740991,
+                "description": "The commit the tree's status changed at; 0 for a tree that was already busy when the server started, before any change."
               },
               "status": {
                 "type": "string",
@@ -2072,7 +1133,7 @@
                   },
                   "message": {
                     "type": "string",
-                    "description": "The run_end's message, such as why it failed."
+                    "description": "Why the run ended without an answer."
                   },
                   "said": {
                     "type": "string",
@@ -2114,48 +1175,6 @@
       },
       "stream": false
     },
-    "skills/list": {
-      "params": {
-        "type": "object",
-        "properties": {
-          "conversation": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "conversation"
-        ],
-        "additionalProperties": true
-      },
-      "result": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "description": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "name",
-            "description",
-            "path"
-          ],
-          "additionalProperties": true
-        },
-        "description": "The skills input to this conversation can name with /name or $name. Empty when its provider expands skills itself."
-      },
-      "error": {
-        "$ref": "#/$defs/NoSuchConversationEncoded"
-      },
-      "stream": false
-    },
     "providers/list": {
       "params": {
         "type": "object",
@@ -2175,7 +1194,8 @@
               "type": "string"
             },
             "driver": {
-              "type": "string"
+              "type": "string",
+              "description": "Its kind: claude, openai or script."
             },
             "signIn": {
               "type": "array",
@@ -2445,7 +1465,7 @@
           "phase"
         ],
         "additionalProperties": true,
-        "description": "One sign-in, or a sign-out, as every connection sees it. A provider has at most one sign-in at a time."
+        "description": "The sign-in; the one already running for this provider, if any."
       },
       "error": {
         "anyOf": [
@@ -2590,7 +1610,8 @@
             "type": "string"
           },
           "driver": {
-            "type": "string"
+            "type": "string",
+            "description": "Its kind: claude, openai or script."
           },
           "signIn": {
             "type": "array",
@@ -2774,99 +1795,34 @@
           "phase"
         ],
         "additionalProperties": true,
-        "description": "One sign-in, or a sign-out, as every connection sees it. A provider has at most one sign-in at a time."
+        "description": "The last state of each provider's sign-in, then every change."
       },
       "error": {
         "not": {}
       },
       "stream": true
-    },
-    "extensions/list": {
-      "params": {
-        "type": "null"
-      },
-      "result": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "state": {
-              "type": "string",
-              "enum": [
-                "loaded",
-                "failed",
-                "disabled"
-              ]
-            },
-            "message": {
-              "type": "string",
-              "description": "Why it failed to load."
-            }
-          },
-          "required": [
-            "name",
-            "path",
-            "state"
-          ],
-          "additionalProperties": true
-        },
-        "description": "Every extension in the home, in the order they load."
-      },
-      "error": {
-        "not": {}
-      },
-      "stream": false
-    },
-    "extensions/reload": {
-      "params": {
-        "type": "null"
-      },
-      "result": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "state": {
-              "type": "string",
-              "enum": [
-                "loaded",
-                "failed",
-                "disabled"
-              ]
-            },
-            "message": {
-              "type": "string",
-              "description": "Why it failed to load."
-            }
-          },
-          "required": [
-            "name",
-            "path",
-            "state"
-          ],
-          "additionalProperties": true
-        },
-        "description": "Unloads every extension and loads them again from disk, with their options from config.toml."
-      },
-      "error": {
-        "not": {}
-      },
-      "stream": false
     }
   },
   "$defs": {
+    "InvalidConversationIdEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "InvalidConversationId"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": true
+    },
     "UnknownProviderEncoded": {
       "type": "object",
       "properties": {
@@ -2883,6 +1839,32 @@
       "required": [
         "_tag",
         "provider"
+      ],
+      "additionalProperties": true
+    },
+    "UnknownEffortEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "UnknownEffort"
+          ]
+        },
+        "effort": {
+          "type": "string"
+        },
+        "efforts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "_tag",
+        "effort",
+        "efforts"
       ],
       "additionalProperties": true
     },
@@ -2905,27 +1887,6 @@
       ],
       "additionalProperties": true
     },
-    "FellBehindEncoded": {
-      "type": "object",
-      "properties": {
-        "_tag": {
-          "type": "string",
-          "enum": [
-            "FellBehind"
-          ]
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        }
-      },
-      "required": [
-        "_tag",
-        "seq"
-      ],
-      "additionalProperties": true
-    },
     "TakesNoInputEncoded": {
       "type": "object",
       "properties": {
@@ -2942,6 +1903,91 @@
       "required": [
         "_tag",
         "conversation"
+      ],
+      "additionalProperties": true
+    },
+    "UnreadableImageEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "UnreadableImage"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "name",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "InvalidWindowEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "InvalidWindow"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "FellBehindEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "FellBehind"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "The changes a watch may hold unread before it is dropped; watch again from the position you hold."
+        }
+      },
+      "required": [
+        "_tag",
+        "limit"
+      ],
+      "additionalProperties": true
+    },
+    "NoSuchEntryEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "NoSuchEntry"
+          ]
+        },
+        "entry": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "_tag",
+        "entry"
       ],
       "additionalProperties": true
     },

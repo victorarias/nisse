@@ -38,7 +38,9 @@ Feature ledger area E: spec §8.1, §8.2, §8.7, §7.2; README Compaction; examp
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- compaction-overflow, models-overflow: ChatGPT's context-window error compacts the conversation, and the request goes again
 
 ## Gotchas
 

@@ -29,4 +29,4 @@ harness with, which choose `claude.run` for a model whose provider `options.sett
 - `src/links.ts`: how a hosted subagent ended and how to stop it, shared in memory by the run and its subagent tasks.
 
 The tests in `test/` drive `claude.run` through a Harness with nisse's fake `claude` replaying `fixtures/claude`;
-`packages/nisse/test/kernel/claude.test.ts` drives it over the kernel wire.
+`packages/nisse/test/claude.test.ts` drives it over the wire.

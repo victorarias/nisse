@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import type { OpenAiOptions } from "../../src/drivers/openai/index.ts"
+import type { OpenAiOptions } from "../../src/providers.ts"
 import type { Home } from "../../src/home.ts"
 
 const FIXTURES = join(import.meta.dir, "../../../../fixtures/openai")
@@ -71,7 +71,7 @@ export class FakeOpenAi {
     return `http://127.0.0.1:${this.server.port}`
   }
 
-  options(instructions = "You are a test.", codeModeHost?: string) {
+  options() {
     return (home: Home) =>
       (id: string): OpenAiOptions => ({
         authPath: join(home.dir, "auth", `${id}.json`),
@@ -79,10 +79,7 @@ export class FakeOpenAi {
         authBase: this.base,
         baseUrl: this.base,
         callbackPort: 0,
-        instructions,
-        home: home.dir,
         claudeConfig: join(home.dir, "claude"),
-        ...(codeModeHost === undefined ? {} : { codeModeHost }),
       })
   }
 

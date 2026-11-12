@@ -4,7 +4,7 @@ A conversation's model is a provider, a model and a reasoning effort. A new
 conversation takes `--provider`, `--model` and `--effort`, else the
 `default_model` of the nearest `.nisse/config.toml` above its directory, then
 of `NISSE_HOME/config.toml`, then the model chosen last. `/model` in the TUI
-lists every provider's models and their efforts; switching is a `model` entry
+lists every provider's models and their efforts; switching is a `nisse.model` entry
 every client sees, the status bar follows it, and it takes effect from the
 next run. Switching providers keeps the conversation.
 
@@ -19,7 +19,7 @@ next run. Switching providers keeps the conversation.
 - `model-default` takes the project's `default_model`, then the home's, then
   the model chosen last, by a start or a switch.
 - `model-switch` switches with `/model` (`↑↓` model, `←→` effort, `⏎`
-  switch, `Esc` close) or `conversation/select_model`, commits a `model`
+  switch, `Esc` close) or `conversation/select_model`, commits a `nisse.model`
   entry shown as `◆ <name> switched to <provider> · <model> · <effort>`, and
   refuses a provider nisse does not have.
 - `model-status` shows the conversation's model at the right of the status
@@ -57,7 +57,7 @@ Preconditions:
   `openai` has `"defaultModel": "gpt-5.5"` and the list nisse ships, from
   `gpt-6.1-sol` to `gpt-5.5`, with `efforts` and a `defaultEffort`.
 - **Pick.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`: the
-  status bar ends `script  nisse <version>`. Type `/model`, press `Enter`,
+  status bar ends `script · script  nisse <version>`. Type `/model`, press `Enter`,
   `drive.ts r tui wait ' MODEL '`, `drive.ts r tui screen models`: the
   `MODEL` panel lists `script · Script`, `claude · its own choice`,
   `claude · Sonnet`, `claude · Fable`, `claude · Opus`, `claude · Haiku`,
@@ -67,16 +67,18 @@ Preconditions:
   `drive.ts r tui wait 'claude · Sonnet ‹ low ›'`. Press `Enter` and
   `drive.ts r tui wait 'switched to'`: `◆ ada switched to claude · sonnet · low`
   in the transcript and `claude · sonnet · low` in the status bar.
-  `drive.ts r watch <id> --save switched` shows one `model` entry by
-  `{"_tag": "person", "name": "ada"}` with
-  `"selection": {"provider": "claude", "model": "sonnet", "effort": "low"}`,
-  and the snapshot's `conversation.model` is the same.
+  `drive.ts r watch <id> --save switched` shows one `nisse.model` entry
+  `{"author": "ada", "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}`,
+  and the view's `pi.agent` holds that model as
+  `"model": {"provider": "claude", "modelId": "sonnet"}` with the effort as
+  `thinkingLevel`. `drive.ts r rpc conversation/list` shows the same
+  selection.
 - **Effort.** Open `/model` again: it opens on `claude · Sonnet ‹ low ›`.
   `drive.ts r tui key Right Right Right Right` shows `‹ max ›`, and one more
   `Right` wraps to `‹ default ›`, which switches without an effort.
 - **Close.** With the picker open, press `Escape` and
   `drive.ts r tui wait --gone ' MODEL '`: `watch <id>` still shows one
-  `model` entry.
+  `nisse.model` entry.
 - **Switch over the wire.** With a TUI open on a conversation, run
   `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "bo", "selection": {"provider": "claude", "model": "opus", "effort": "max"}}'`:
   `"result": null`, and the TUI shows `◆ bo switched to claude · opus · max`
@@ -89,14 +91,22 @@ Preconditions:
   `drive.ts r tui wait READY`: the status bar shows `claude · haiku · high`,
   and `/model` opens on `claude · Haiku ‹ high ›`.
   `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "openai", "effort": "low"}'`
-  answers `"model": {"provider": "openai", "effort": "low"}`.
+  answers `"model": {"provider": "openai", "model": "gpt-5.5", "effort": "low"}`,
+  the provider's default model filled in. `'{"cwd": "/tmp", "effort": "loud"}'`
+  fails `UnknownEffort` with the efforts nisse knows, `minimal` to `max`.
+  `drive.ts r nisse exec --effort lots hi` exits 1 with
+  `nisse knows no effort named lots; it knows minimal, low, medium, high, xhigh, max`.
 - **Chosen last.** In a fresh run, `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` answers
-  `{"provider": "script"}`. After a start or a switch to
-  `{"provider": "openai", "effort": "low"}`, the same call answers that, and
-  `'{"cwd": "/tmp", "effort": "high"}'` answers
-  `{"provider": "openai", "effort": "high"}`. A new TUI's status bar then
-  ends `openai · high`.
+  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` answers a
+  `conversation` and `"model": {"provider": "script", "model": "script"}`.
+  After a start or a switch to `{"provider": "openai", "effort": "low"}`, the
+  same call answers `{"provider": "openai", "model": "gpt-5.5", "effort": "low"}`,
+  and `'{"cwd": "/tmp", "effort": "high"}'` answers
+  `{"provider": "openai", "model": "gpt-5.5", "effort": "high"}`. A new TUI's
+  status bar then ends `openai · gpt-5.5 · high`. The choice outlives the
+  server: start one with `"provider": "claude", "model": "opus"`, run
+  `drive.ts r kill-server` and `drive.ts r serve`, and
+  `'{"cwd": "/tmp"}'` answers `{"provider": "claude", "model": "opus"}`.
 - **Defaults from config.** In a fresh run, before the server starts, write
   `default_model = { provider = "openai", model = "gpt-5.5", effort = "high" }`
   to `/tmp/nisse-verify/r/home/config.toml`, and
@@ -106,7 +116,7 @@ Preconditions:
   `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`:
   `{"provider": "openai", "model": "gpt-5.5", "effort": "high"}`;
   `'{"cwd": "/tmp/nisse-verify/r/project/src"}'`:
-  `{"provider": "script", "effort": "low"}`;
+  `{"provider": "script", "model": "script", "effort": "low"}`;
   `'{"cwd": "/tmp", "model": "gpt-other"}'`:
   `{"provider": "openai", "model": "gpt-other"}`. A TUI opened in the
   checkout shows `openai · gpt-5.5 · high` in its status bar.
@@ -134,30 +144,6 @@ Preconditions:
   `The code word is pelican.` and `You said: The code word is pelican.`,
   before `hello`.
 
-- **On the kernel.** In a fresh run made with `drive.ts r up --kernel`, write
-  the **Defaults from config** files and run the same three
-  `conversation/start` calls: each answers a `conversation` and the same
-  `model`, with the provider's default model filled in when none is named
-  (`{"provider": "script", "model": "script", "effort": "low"}`), and `drive.ts r watch <id>` shows it in the view's `pi.agent` as
-  `"model": {"provider": ..., "modelId": ...}` with the effort as
-  `thinkingLevel`. Start one with `"provider": "claude", "model": "opus"`, run
-  `drive.ts r kill-server` and `drive.ts r serve`, then remove both files'
-  `default_model` and start with `'{"cwd": "/tmp"}'`: it answers
-  `{"provider": "claude", "model": "opus"}`, chosen last before the kill.
-  `'{"cwd": "/tmp", "effort": "loud"}'` fails `UnknownEffort` with the
-  efforts nisse knows, `minimal` to `max`. `drive.ts r rpc models/list '{}'`
-  lists every provider as above. Then
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "bo", "selection": {"provider": "script", "model": "script-code-mode", "effort": "low"}}'`
-  and `drive.ts r watch <id> --submit hi --until run_end --save switched`: a
-  `nisse.model` entry `{"author": "bo", "selection": ...}`, then an answer
-  whose message names `script-code-mode`, and `drive.ts r rpc conversation/list`
-  shows that model. A provider nisse does not have answers `UnknownProvider`.
-  `drive.ts r nisse exec --provider script --model script --effort low hi`
-  prints `You said: hi`, and `conversation/list` shows that conversation's
-  `"model": {"provider": "script", "model": "script", "effort": "low"}`;
-  `drive.ts r nisse exec --effort lots hi` exits 1 with
-  `nisse knows no effort named lots; it knows minimal, low, medium, high, xhigh, max`.
-
 ## Contexts
 
 - **Provider.** A switch to OpenAI sends the whole transcript. A switch to Claude tells a new Claude Code session the first prompt and as much of the newest history as fits in about 64,000 characters.
@@ -165,52 +151,32 @@ Preconditions:
 
 ## Tests
 
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- provider-choose, model-flags: nisse exec on the kernel starts on the provider, model and effort it names
-- provider-unknown, model-flags: nisse exec on the kernel refuses a provider or an effort nisse does not have
-
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
-
-- model-list, model-status: /model lists every provider's models, enter switches the conversation's model, and the status bar names it
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+Wire, `packages/nisse/test/wire.test.ts`:
 
 - model-switch, model-switch-provider: switching a conversation's model is recorded with who switched it, and the next run answers on it
 - model-switch: a switch made while a run works is recorded at once and answers from the next run, not mid-run
 
-Wire, `packages/nisse/test/wire.test.ts`:
-
-- model-default: a new conversation takes the project's default model, else the home's, else the one chosen last
-- model-switch, model-switch-provider: switching models is an entry everyone sees, and a provider nisse does not have is refused
-
-Kernel wire, `packages/nisse/test/kernel/providers.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- model-default: a new conversation takes the project's default model, else the home's, else the one chosen last, across a restart
-- provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
-- provider-unknown, model-flags: a conversation starts on the model and effort it names, and nisse refuses a provider or effort it does not have
-
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- model-list: /model lists every provider's models, and enter switches the conversation's model for everyone
+- model-list, model-status: /model lists every provider's models, enter switches the conversation's model, and the status bar names it
 
-Provider, `packages/nisse/test/openai.test.ts`:
+Stack, `packages/nisse/test/stack.test.ts`:
 
-- openai-models: OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't
-- openai-model: a switched model and effort reach ChatGPT from the next run on
+- provider-choose, model-flags: nisse exec starts on the provider, model and effort it names
+- provider-unknown, model-flags: nisse exec refuses a provider or an effort nisse does not have
 
-Provider, `packages/nisse/test/claude.test.ts`:
+Provider, `packages/nisse/test/providers.test.ts`:
 
-- claude-model: the conversation's model and effort reach Claude Code
-- claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session
-- claude-switch: retelling a long conversation to Claude keeps its first prompt and the one being answered
+- provider-config, signin-status, model-list: two instances of one provider each list, report their health and their models
+- model-default: a new conversation takes the project's default model, else the home's, else the one chosen last, across a restart
+- provider-unknown, model-flags: a conversation starts on the model and effort it names, and nisse refuses a provider or effort it does not have
 
 ## Gotchas
 
 - Nisse does not check a model or effort against the list when a
   conversation starts or switches; `--model haiku` with no provider goes to
-  the default model's provider, whatever it is. On the kernel an effort must
-  still be one nisse knows, `minimal` to `max`.
+  the default model's provider, whatever it is. An effort must still be one
+  nisse knows, `minimal` to `max`.
 - The model chosen last is per home, so one journey's choice is the next
   one's default; start from a fresh run or name `--provider`.
 - The picker's chosen row shows `‹ <effort> ›` only for a model with efforts.

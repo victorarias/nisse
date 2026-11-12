@@ -3,16 +3,13 @@ import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option, Schedule } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import type { ExtensionInfo } from "@nisse/protocol"
-import { Client, clientLayer, KernelClient, kernelClientLayer, ServerFailed, type StartOptions } from "./client.ts"
+import { Client, clientLayer, ServerFailed, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, HOME_TAKEN_EXIT, type Home, type HomeTaken } from "./home.ts"
-import { openAiOptions, type ProviderOptions, providersLayer } from "./drivers/index.ts"
-import { readScript } from "./drivers/script.ts"
+import { openAiOptions, type ProviderOptions, readScript } from "./providers.ts"
 import { readHomeConfig } from "./config.ts"
 import { login, logout } from "./login.ts"
 import { protocolSchema } from "./schema.ts"
-import { execOnKernel } from "./kernel/exec.ts"
-import { serveKernel } from "./kernel/server.ts"
 import { serve } from "./server.ts"
 import { VERSION } from "./version.ts"
 
@@ -71,9 +68,6 @@ const startWith = (flags: {
   ...Option.match(flags.instructions, { onNone: () => ({}), onSome: (instructions) => ({ instructions }) }),
 })
 
-/** Whether this command's server runs the kernel and speaks its wire: `NISSE_KERNEL=1`. */
-const onKernel = () => process.env.NISSE_KERNEL === "1"
-
 const refuseFailedServer = <A, E, R>(effect: Effect.Effect<A, E | ServerFailed, R>) =>
   Effect.catchIf(
     effect,
@@ -86,23 +80,11 @@ const withClient =
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     refuseFailedServer(Effect.provide(effect, clientLayer(home)))
 
-const withKernelClient =
-  (home: Home) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    refuseFailedServer(Effect.provide(effect, kernelClientLayer(home)))
-
-/** The client of whichever wire the home's server speaks, for what both serve alike. */
-const withEitherClient = <A, E, R>(
-  home: Home,
-  use: (client: Client["Service"] | KernelClient["Service"]) => Effect.Effect<A, E, R>,
-) =>
-  onKernel()
-    ? Effect.gen(function* () {
-        return yield* use(yield* KernelClient)
-      }).pipe(withKernelClient(home), Effect.scoped)
-    : Effect.gen(function* () {
-        return yield* use(yield* Client)
-      }).pipe(withClient(home), Effect.scoped)
+/** Uses the home's server, starting it when none runs. */
+const withServer = <A, E, R>(home: Home, use: (client: Client["Service"]) => Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    return yield* use(yield* Client)
+  }).pipe(withClient(home), Effect.scoped)
 
 const refuse = (reason: string, exitCode = 1) =>
   Effect.andThen(
@@ -117,7 +99,7 @@ const homeTaken = (home: Home) => refuse(`another server already serves ${home.d
 const unknownProvider = (error: { readonly provider: string }) =>
   refuse(`nisse has no provider named ${error.provider}`)
 
-const stopRunningServer = (home: Home) => Effect.ignore(withEitherClient(home, (client) => client["server/stop"]()))
+const stopRunningServer = (home: Home) => Effect.ignore(withServer(home, (client) => client["server/stop"]()))
 
 const serveCommand = Command.make(
   "serve",
@@ -136,14 +118,7 @@ const serveCommand = Command.make(
           Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "30 seconds" })) }),
         )
       : claim
-    if (onKernel()) return yield* serveKernelHome(home, claimed)
-    const providers = Layer.unwrap(Effect.map(providerOptions(home), providersLayer))
-    yield* Effect.scoped(
-      Effect.andThen(claimed, serve(home, { idleGrace: IDLE_GRACE }).pipe(Effect.provide(providers))),
-    ).pipe(
-      Effect.catchTag("HomeTaken", () => homeTaken(home)),
-      Effect.catchTag("ConfigError", (error) => refuse(`${error.path}: ${error.message}`)),
-    )
+    yield* serveHome(home, claimed)
   }),
 ).pipe(Command.withDescription("Run this home's server in the foreground"))
 
@@ -166,12 +141,12 @@ const providerOptions = (home: Home) =>
 
 // A stuck code-mode worker survives terminate() and keeps the process alive (F19), so the end of the server's lifetime
 // ends the process.
-const serveKernelHome = <A, R>(home: Home, claimed: Effect.Effect<A, HomeTaken, R>) =>
+const serveHome = <A, R>(home: Home, claimed: Effect.Effect<A, HomeTaken, R>) =>
   Effect.gen(function* () {
     const served = yield* Effect.scoped(
       Effect.andThen(
         claimed,
-        Effect.flatMap(providerOptions(home), (providers) => serveKernel(home, { idleGrace: IDLE_GRACE, providers })),
+        Effect.flatMap(providerOptions(home), (providers) => serve(home, { idleGrace: IDLE_GRACE, providers })),
       ),
     ).pipe(
       Effect.as(true),
@@ -188,7 +163,7 @@ const execCommand = Command.make(
     conversation: conversationFlag,
     json: Flag.Boolean("json").pipe(
       Flag.withDescription(
-        "Print the conversation's view as JSON lines instead of the answer: the view, then each commit's changes to it, until the run ends (on the kernel)",
+        "Print the conversation's view as JSON lines instead of the answer: the view, then each commit's changes to it, until the run ends",
       ),
       Flag.withDefault(false),
     ),
@@ -197,18 +172,8 @@ const execCommand = Command.make(
   Effect.fn(function* ({ prompt, conversation, json, ...flags }) {
     const home = defaultHome()
     const id = Option.getOrUndefined(conversation)
-    if (!onKernel()) {
-      if (json) return yield* refuse("nisse exec --json prints the kernel wire's view: run it with NISSE_KERNEL=1")
-      const ok = yield* exec(prompt, id, startWith(flags)).pipe(
-        withClient(home),
-        Effect.scoped,
-        Effect.catchTag("UnknownProvider", unknownProvider),
-      )
-      if (ok === false) process.exitCode = 1
-      return
-    }
-    const ok = yield* execOnKernel(prompt, id, startWith(flags), json).pipe(
-      withKernelClient(home),
+    const ok = yield* exec(prompt, id, startWith(flags), json).pipe(
+      withClient(home),
       Effect.scoped,
       Effect.catchTags({
         UnknownProvider: unknownProvider,
@@ -236,7 +201,7 @@ const loginCommand = Command.make(
     ),
   },
   Effect.fn(function* ({ provider, deviceCode }) {
-    const ok = yield* withEitherClient(defaultHome(), (client) => login(client, provider, deviceCode))
+    const ok = yield* withServer(defaultHome(), (client) => login(client, provider, deviceCode))
     if (!ok) process.exitCode = 1
   }),
 ).pipe(Command.withDescription("Sign in to a provider"))
@@ -245,7 +210,7 @@ const logoutCommand = Command.make(
   "logout",
   { provider: providerArgument },
   Effect.fn(function* ({ provider }) {
-    const ok = yield* withEitherClient(defaultHome(), (client) => logout(client, provider))
+    const ok = yield* withServer(defaultHome(), (client) => logout(client, provider))
     if (!ok) process.exitCode = 1
   }),
 ).pipe(Command.withDescription("Sign out of a provider"))
@@ -266,7 +231,7 @@ const reloadExtensionsCommand = Command.make(
   {},
   Effect.fn(function* () {
     const home = defaultHome()
-    yield* withEitherClient(home, (client) =>
+    yield* withServer(home, (client) =>
       Effect.flatMap(client["extensions/reload"](), (extensions) => showExtensions(home, extensions)),
     )
   }),
@@ -277,7 +242,7 @@ const extensionsCommand = Command.make(
   {},
   Effect.fn(function* () {
     const home = defaultHome()
-    yield* withEitherClient(home, (client) =>
+    yield* withServer(home, (client) =>
       Effect.flatMap(client["extensions/list"](), (extensions) => showExtensions(home, extensions)),
     )
   }),
@@ -288,14 +253,9 @@ const extensionsCommand = Command.make(
 
 const schemaCommand = Command.make(
   "schema",
-  {
-    kernel: Flag.Boolean("kernel").pipe(
-      Flag.withDescription("Print the schema of the wire a server under NISSE_KERNEL=1 speaks"),
-      Flag.withDefault(false),
-    ),
-  },
-  Effect.fn(function* ({ kernel }) {
-    yield* Console.log(JSON.stringify(protocolSchema(kernel), null, 2))
+  {},
+  Effect.fn(function* () {
+    yield* Console.log(JSON.stringify(protocolSchema(), null, 2))
   }),
 ).pipe(Command.withDescription("Print the protocol's JSON Schema"))
 
@@ -311,24 +271,6 @@ const nisse = Command.make(
   },
   Effect.fn(function* ({ prompt, conversation, ...flags }) {
     const home = defaultHome()
-    if (onKernel()) {
-      const { kernelTui } = yield* Effect.promise(async () => {
-        await import("@opentui/solid/preload")
-        return import("./tui/kernel.tsx")
-      })
-      return yield* kernelTui(
-        Option.getOrUndefined(conversation),
-        startWith(flags),
-        Option.getOrUndefined(prompt),
-      ).pipe(
-        withKernelClient(home),
-        Effect.scoped,
-        Effect.catchTags({
-          UnknownProvider: unknownProvider,
-          UnreadableImage: (error) => refuse(error.message),
-        }),
-      )
-    }
     const { tui } = yield* Effect.promise(async () => {
       await import("@opentui/solid/preload")
       return import("./tui/main.tsx")
@@ -336,7 +278,10 @@ const nisse = Command.make(
     yield* tui(Option.getOrUndefined(conversation), startWith(flags), Option.getOrUndefined(prompt)).pipe(
       withClient(home),
       Effect.scoped,
-      Effect.catchTag("UnknownProvider", unknownProvider),
+      Effect.catchTags({
+        UnknownProvider: unknownProvider,
+        UnreadableImage: (error) => refuse(error.message),
+      }),
     )
   }),
 ).pipe(

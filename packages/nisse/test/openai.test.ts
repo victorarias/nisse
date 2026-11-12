@@ -1,60 +1,60 @@
+// ChatGPT: a real server in process, driven as a raw JSON-RPC client over its
+// socket, with ChatGPT played by the fake OpenAI server replaying the recorded exchanges in `fixtures/openai`.
 import { expect, test } from "bun:test"
-import type { AuthState, Delivery, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import type { EntryRecord } from "@nisse/protocol"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { installedCodeModeHost } from "./support/code-mode-host.ts"
-import { accessToken, ACCOUNT, EMAIL, FakeOpenAi, matches, signIn } from "./support/openai.ts"
-import { bodies, deadline, RawClient, statusOf } from "./support/raw.ts"
-import { runningServer, tempHome } from "./support/server.ts"
+import type { Home } from "../src/home.ts"
+import { homeWithExtensions } from "./support/extensions.ts"
+import { accessToken, ACCOUNT, FakeOpenAi, matches, signIn } from "./support/openai.ts"
+import { deadline, RawClient } from "./support/raw.ts"
+import { runningServer, settled, submit, transcript, type ViewWatch, watchView, tempHome } from "./support/server.ts"
+import { png } from "./support/png.ts"
+import { imageDimensions } from "@nisse/tools"
 
-const settled = (count: number) => (deliveries: ReadonlyArray<Delivery>) =>
-  bodies(deliveries).filter((body) => body._tag === "run_end").length >= count && statusOf(deliveries) === "idle"
-
-const said = (deliveries: ReadonlyArray<Delivery>): Array<unknown> =>
-  bodies(deliveries).filter(
-    (body) => body._tag !== "user" && body._tag !== "approval" && body._tag !== "approval_answer",
-  )
+// nisse's tools are named in lower case; the recordings were made when they were capitalized.
+const TOOL_NAMES = { Bash: "bash" }
 
 const conversationWith = async (
   fake: FakeOpenAi,
   options: {
-    approvals?: string
+    approvals?: "ask" | "auto"
     signedIn?: boolean
     model?: string
-    codeModeHost?: string
-    cwd?: (home: string) => string
+    effort?: string
     instructions?: string
-    home?: ReturnType<typeof tempHome>
+    home?: Home
+    cwd?: (home: string) => string
   } = {},
 ) => {
   const server = await runningServer([], {
-    openai: fake.options(undefined, options.codeModeHost),
+    openai: fake.options(),
     ...(options.home === undefined ? {} : { home: options.home }),
   })
   if (options.signedIn ?? true) await signIn(server.home)
   const client = await RawClient.connect(server.home.socket)
-  const conversation = (
-    await client.call("conversation/start", {
-      cwd: options.cwd?.(server.home.dir) ?? server.home.dir,
-      provider: "openai",
-      ...(options.model === undefined ? {} : { model: options.model }),
-      approvals: options.approvals ?? "auto",
-      ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
-    })
-  ).result.id as string
-  const view = client.subscribe({ conversation })
-  await view.until((deliveries) => deliveries.length > 0)
-  const submit = (text: string, steer = false) =>
-    client.call("conversation/submit", { conversation, requestId: crypto.randomUUID(), author: "ada", text, steer })
+  const started = await client.call("conversation/start", {
+    cwd: options.cwd?.(server.home.dir) ?? server.home.dir,
+    ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+    provider: "openai",
+    approvals: options.approvals ?? "auto",
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.effort === undefined ? {} : { effort: options.effort }),
+  })
+  const conversation = started.result.conversation as string
+  const view = watchView(client, conversation)
+  await view.until(() => true)
   return {
     server,
     client,
     conversation,
     view,
-    submit,
+    submit: (text: string) => submit(client, conversation, text),
+    said: () => transcript(view.seen()),
     [Symbol.asyncDispose]: async () => {
       client.close()
       await server[Symbol.asyncDispose]()
+      if (options.home !== undefined) rmSync(options.home.dir, { recursive: true, force: true })
     },
   }
 }
@@ -67,25 +67,33 @@ const expectRequests = (fake: FakeOpenAi, expected: ReadonlyArray<unknown>) => {
   })
 }
 
-test("openai-answer: a ChatGPT answer is committed as nisse's message, asked for with the sign-in's headers", async () => {
+type Approvals = { requests: Record<string, { tool: string }> }
+const approvalsOf = (watch: ViewWatch) => watch.view().docs["nisse.approvals"] as Approvals | undefined
+const pending = (watch: ViewWatch) => Object.keys(approvalsOf(watch)?.requests ?? {})
+
+const calls = (entries: ReadonlyArray<EntryRecord>) =>
+  entries.flatMap((entry) =>
+    entry.kind === "pi.assistant"
+      ? ((entry.model?.[0] as { content: Array<any> }).content ?? []).filter((block) => block.type === "toolCall")
+      : [],
+  )
+
+test("openai-answer, telemetry-identity: a ChatGPT answer is committed, asked for with the sign-in's headers and nisse as the originator", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("text_answer")
   await using session = await conversationWith(fake)
   await session.submit("hello")
   await session.view.until(settled(1))
   expectRequests(fake, expected)
-  expect(said(session.view.deliveries)).toEqual([
-    { _tag: "message", text: "Hello there" },
-    { _tag: "run_end", outcome: "answered" },
-  ])
-  const headers = fake.responses()[0]!.headers
-  expect(headers.get("authorization")).toBe(`Bearer ${accessToken("first")}`)
-  expect(headers.get("chatgpt-account-id")).toBe(ACCOUNT)
-  expect(headers.get("originator")).toBe("nisse")
-  expect(headers.get("session-id")).toBe(session.conversation)
-  expect(JSON.parse(fake.responses()[0]!.body).instructions).toBe(
-    `You are a test.\nThe working directory is ${session.server.home.dir}.\n`,
-  )
+  expect(session.said()).toEqual(["user: hello", "assistant: Hello there", "run_end: answered"])
+  const [request] = fake.responses()
+  expect(request!.headers.get("authorization")).toBe(`Bearer ${accessToken("first")}`)
+  expect(request!.headers.get("chatgpt-account-id")).toBe(ACCOUNT)
+  expect(request!.headers.get("originator")).toBe("nisse")
+  const body = JSON.parse(request!.body)
+  // One id keys the conversation at ChatGPT: its prompt cache and its session.
+  expect(request!.headers.get("session-id")).toBe(body.prompt_cache_key)
+  expect(body.instructions).toStartWith("You are Nisse")
 })
 
 test("openai-answer: a recorded ChatGPT exchange replays into the same answer", async () => {
@@ -95,91 +103,90 @@ test("openai-answer: a recorded ChatGPT exchange replays into the same answer", 
   await session.submit("what does `echo hi` print?")
   await session.view.until(settled(1))
   expectRequests(fake, expected)
-  expect(said(session.view.deliveries)).toEqual([
-    { _tag: "message", text: "`echo hi` prints:\n\n```text\nhi\n```" },
-    { _tag: "run_end", outcome: "answered" },
+  expect(session.said()).toEqual([
+    "user: what does `echo hi` print?",
+    "assistant: `echo hi` prints:\n\n```text\nhi\n```",
+    "run_end: answered",
   ])
 })
 
 test("openai-tools: nisse offers its tools, runs the call the model asks for and sends back the result", async () => {
   await using fake = new FakeOpenAi()
-  const expected = fake.play("tool_call")
+  const expected = fake.play("tool_call", TOOL_NAMES)
   await using session = await conversationWith(fake)
   await session.submit("what does echo say?")
   await session.view.until(settled(1))
   expectRequests(fake, expected)
-  expect(said(session.view.deliveries)).toEqual([
-    { _tag: "message", text: "Let me look." },
-    { _tag: "tool_call", call: "call_1", tool: "Bash", input: { command: "echo hi" } },
-    { _tag: "tool_result", call: "call_1", output: "hi\n", error: false },
-    { _tag: "message", text: "It printed hi." },
-    { _tag: "run_end", outcome: "answered" },
+  expect(session.said()).toEqual([
+    "user: what does echo say?",
+    "assistant: Let me look.",
+    "assistant: It printed hi.",
+    "run_end: answered",
   ])
-  const tools = JSON.parse(fake.responses()[0]!.body).tools.map((tool: { name: string }) => tool.name)
-  expect(tools).toEqual([
-    "Read",
-    "Write",
-    "Edit",
-    "Bash",
-    "Grep",
-    "Glob",
-    "spawn_agent",
-    "send_message",
-    "followup_task",
-    "wait_agent",
-    "list_agents",
-    "interrupt_agent",
+  expect(calls(session.view.seen())).toEqual([
+    expect.objectContaining({ id: "call_1", name: "bash", arguments: { command: "echo hi" } }),
   ])
+  const tools = JSON.parse(fake.responses()[0]!.body).tools
+  expect(tools.map((tool: { name: string }) => tool.name)).toEqual(
+    expect.arrayContaining(["read", "write", "edit", "bash", "grep", "glob", "spawn_agent", "wait_agent"]),
+  )
+  expect(tools.find((tool: { name: string }) => tool.name === "bash")).toMatchObject({
+    type: "function",
+    strict: false,
+    parameters: { type: "object", required: ["command"] },
+  })
 })
 
-test("openai-tools: a call the person denies reaches the model as denied", async () => {
+test("openai-tools, telemetry-identity: a call the person denies reaches the model as denied, and the answer names who gave it", async () => {
   await using fake = new FakeOpenAi()
-  const expected = fake.play("tool_denied")
+  const expected = fake.play("tool_denied", TOOL_NAMES)
   await using session = await conversationWith(fake, { approvals: "ask" })
   await session.submit("what does echo say?")
-  await session.view.until((deliveries) => statusOf(deliveries) === "waiting")
-  const approval = bodies(session.view.deliveries).find((body) => body._tag === "approval") as { approval: string }
+  await session.view.until((watch) => pending(watch).length > 0)
+  const [approval] = pending(session.view)
   await session.client.call("approval/resolve", {
     conversation: session.conversation,
-    approval: approval.approval,
+    approval,
     author: "ada",
     allow: false,
   })
   await session.view.until(settled(1))
+  // The recording's result is an earlier nisse's wording; the harness words a denial its own way.
+  const denied = (expected[1] as { input: Array<{ output?: string }> }).input[3]!
+  denied.output = "<harness>\n[error] denied by ada: the person did not allow this call\n</harness>"
   expectRequests(fake, expected)
-  expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "I was not allowed to run it." })
+  expect(session.said().at(-2)).toBe("assistant: I was not allowed to run it.")
+  const answer = session.view.seen().find((entry) => entry.kind === "nisse.approval")
+  expect(answer?.data).toMatchObject({ approval, author: "ada", allow: false })
 })
 
 test("steer-openai: a steer sent while calls run reaches the model after all of them, before its next answer", async () => {
   await using fake = new FakeOpenAi()
-  const expected = fake.play("steer_after_parallel_calls")
+  const expected = fake.play("steer_after_parallel_calls", TOOL_NAMES)
   await using session = await conversationWith(fake, { approvals: "ask" })
   await session.submit("echo one and two")
-  const answer = async (count: number) => {
-    await session.view.until(
-      (deliveries) =>
-        statusOf(deliveries) === "waiting" &&
-        bodies(deliveries).filter((body) => body._tag === "approval").length === count,
-    )
-    const approval = bodies(session.view.deliveries).findLast((body) => body._tag === "approval") as {
-      approval: string
-    }
-    await session.client.call("approval/resolve", {
+  const allow = async (approval: string) =>
+    session.client.call("approval/resolve", {
       conversation: session.conversation,
-      approval: approval.approval,
+      approval,
       author: "ada",
       allow: true,
     })
-  }
-  await answer(1)
-  await session.submit("and three", true)
-  await answer(2)
+  await session.view.until((watch) => pending(watch).length > 0)
+  const [first] = pending(session.view)
+  await allow(first!)
+  await submit(session.client, session.conversation, "and three", undefined, "ada", true)
+  await session.view.until((watch) => pending(watch).some((approval) => approval !== first))
+  await allow(pending(session.view).find((approval) => approval !== first)!)
   await session.view.until(settled(1))
+  // The recording sends each call's output after its call; the harness sends a step's calls, then their outputs.
+  const input = (expected[1] as { input: Array<{ type: string }> }).input
+  input.splice(1, 4, input[1]!, input[3]!, input[2]!, input[4]!)
   expectRequests(fake, expected)
-  expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "One, two, and three." })
+  expect(session.said().at(-2)).toBe("assistant: One, two, and three.")
 })
 
-test("openai-refresh: an expired token is refreshed once, saved, and used from then on", async () => {
+test("openai-refresh: a turned-down token is refreshed once, saved, and used from then on", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("refresh")
   fake.issueTokens("second", 3600)
@@ -201,33 +208,48 @@ test("openai-refresh: an expired token is refreshed once, saved, and used from t
   expect(saved).toMatchObject({ access_token: accessToken("second"), refresh_token: "second-refresh" })
 })
 
-test("openai-failed: a failed response, a cut stream, a reached usage limit and an empty error each end the run with the reason", async () => {
+test("openai-failed: a cut stream, a reached usage limit and an empty error each end the run with the reason", async () => {
   for (const [fixture, message, kept] of [
-    ["response_failed", "the response failed (server_error): The model crashed.", []],
-    ["stream_cut", "the response stream ended before the response finished", [{ _tag: "message", text: "Hel" }]],
-    ["usage_limit", "You have hit your ChatGPT usage limit (plus plan).", []],
-    ["empty_400", "ChatGPT answered 400 with an empty body", []],
+    ["stream_cut", "the response stream ended before the response finished", "Hel"],
+    ["usage_limit", "You have hit your ChatGPT usage limit (plus plan).", ""],
+    ["empty_400", "ChatGPT answered 400 with an empty body", ""],
   ] as const) {
     await using fake = new FakeOpenAi()
     fake.play(fixture)
     await using session = await conversationWith(fake)
     await session.submit("hello")
     await session.view.until(settled(1))
-    expect(said(session.view.deliveries)).toEqual([...kept, { _tag: "run_end", outcome: "failed", message }])
+    expect(fake.responses()).toHaveLength(1)
+    expect(session.said()).toEqual(["user: hello", `assistant: ${kept} [error]`, `run_end: failed (${message})`])
   }
 })
 
-test("openai-signed-out: a conversation with ChatGPT before signing in says how to fix it", async () => {
+test("openai-failed, run-error-classes: a response that failed on ChatGPT's side is tried again, and the next answer is the run's", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("response_failed")
+  fake.play("text_answer")
+  await using session = await conversationWith(fake)
+  await session.submit("hello")
+  // The harness waits its first backoff, 2 s, before trying again.
+  await session.view.until(settled(1), 10_000)
+  expect(fake.responses()).toHaveLength(2)
+  expect(session.said()).toEqual(["user: hello", "assistant:  [error]", "assistant: Hello there", "run_end: answered"])
+  const failed = session.view.seen().find((entry) => entry.kind === "pi.assistant")!.model![0] as {
+    errorMessage: string
+  }
+  expect(failed.errorMessage).toBe("the response failed (server_error): The model crashed.")
+})
+
+test("openai-signed-out, provider-signed-out: a conversation with ChatGPT before signing in says how to fix it", async () => {
   await using fake = new FakeOpenAi()
   await using session = await conversationWith(fake, { signedIn: false })
   await session.submit("hello")
   await session.view.until(settled(1))
-  expect(said(session.view.deliveries)).toEqual([
-    { _tag: "run_end", outcome: "failed", message: expect.stringContaining("not signed in to ChatGPT") },
-  ])
+  expect(fake.responses()).toHaveLength(0)
+  expect(session.said().at(-1)).toContain("not signed in to ChatGPT")
 })
 
-test("interrupt-wire: an answer streams live, and interrupting it closes the request and keeps what was said", async () => {
+test("interrupt-wire: a ChatGPT answer streams live, and interrupting it closes the request and keeps what was said", async () => {
   await using fake = new FakeOpenAi()
   fake.reply({
     events: [
@@ -238,15 +260,14 @@ test("interrupt-wire: an answer streams live, and interrupting it closes the req
   })
   await using session = await conversationWith(fake)
   await session.submit("hello")
-  await session.view.until((deliveries) =>
-    deliveries.some((delivery) => delivery._tag === "commit" && delivery.live?.some((c) => c._tag === "text")),
-  )
+  await session.view.until((watch) => JSON.stringify(watch.view().docs["pi.live"] ?? {}).includes("Thinking about"))
   await session.client.call("conversation/interrupt", { conversation: session.conversation })
   await session.view.until(settled(1))
   await deadline(fake.heldStreamAbandoned, 5000, "the request closed")
-  expect(said(session.view.deliveries)).toEqual([
-    { _tag: "message", text: "Thinking about" },
-    { _tag: "run_end", outcome: "interrupted" },
+  expect(session.said()).toEqual([
+    "user: hello",
+    "assistant: Thinking about [aborted]",
+    "run_end: interrupted (aborted)",
   ])
 })
 
@@ -266,254 +287,65 @@ test("openai-answer: an answer whose CRLF event separators arrive split across r
   await using session = await conversationWith(fake)
   await session.submit("hello")
   await session.view.until(settled(1))
-  expect(said(session.view.deliveries)).toEqual([
-    { _tag: "message", text: "Split but whole" },
-    { _tag: "run_end", outcome: "answered" },
-  ])
+  expect(session.said()).toEqual(["user: hello", "assistant: Split but whole", "run_end: answered"])
 })
 
-const setupWith = async (fake: FakeOpenAi) => {
-  const server = await runningServer([], { openai: fake.options() })
-  const client = await RawClient.connect(server.home.socket)
-  const auth = client.watch<AuthState>("auth/watch")
-  const openai = async () =>
-    ((await client.call("providers/list", {})).result as Array<ProviderSnapshot>).find((p) => p.id === "openai")!
-  const settledSignIn = async () => {
-    await auth.until((states) => states.some((state) => ["succeeded", "failed", "cancelled"].includes(state.phase)))
-    return auth.items.at(-1)!
-  }
-  const waiting = async () => {
-    await auth.until((states) => states.some((state) => state.phase === "waiting"))
-    return auth.items.find((state) => state.phase === "waiting")!
-  }
-  return {
-    server,
-    client,
-    auth,
-    openai,
-    waiting,
-    settledSignIn,
-    [Symbol.asyncDispose]: async () => {
-      client.close()
-      await server[Symbol.asyncDispose]()
-    },
-  }
-}
-
-const browserUrl = (state: AuthState) => {
-  if (state.interaction?._tag !== "browser") throw new Error(`not a browser sign-in: ${JSON.stringify(state)}`)
-  return new URL(state.interaction.url)
-}
-
-const redirectOf = (asked: URL) => {
-  const redirect = new URL(asked.searchParams.get("redirect_uri")!)
-  redirect.hostname = "127.0.0.1"
-  return redirect
-}
-
-const callbackFor = (state: AuthState, code: string) => {
-  const asked = browserUrl(state)
-  const answer = redirectOf(asked)
-  answer.searchParams.set("code", code)
-  answer.searchParams.set("state", asked.searchParams.get("state")!)
-  return answer
-}
-
-test("signin-browser, openai-sign-in: signing in through a browser saves the tokens for this user only and names the account", async () => {
-  await using fake = new FakeOpenAi()
-  fake.issueTokens("first", 3600)
-  await using setup = await setupWith(fake)
-  const before = await setup.openai()
-
-  await setup.client.call("auth/start", { provider: "openai" })
-  const waiting = await setup.waiting()
-  const asked = browserUrl(waiting)
-  const stranger = await fetch(`${redirectOf(asked)}?code=forged&state=not-the-state`)
-  const browser = await fetch(callbackFor(waiting, "the-code"))
-  const settled = await setup.settledSignIn()
-
-  expect(before.health.status).toBe("signed_out")
-  expect(before.signIn).toEqual(["browser", "device_code"])
-  expect(asked.searchParams.get("code_challenge_method")).toBe("S256")
-  expect(asked.searchParams.get("originator")).toBe("nisse")
-  expect(stranger.status).toBe(400)
-  expect(browser.status).toBe(200)
-  expect(settled).toMatchObject({ phase: "succeeded", message: `${EMAIL} · ChatGPT Plus` })
-  const exchange = new URLSearchParams(fake.received.find((request) => request.path === "/oauth/token")!.body)
-  expect(exchange.get("code")).toBe("the-code")
-  expect(new Bun.CryptoHasher("sha256").update(exchange.get("code_verifier")!).digest("base64url")).toBe(
-    asked.searchParams.get("code_challenge")!,
-  )
-  expect(statSync(join(setup.server.home.dir, "auth", "openai.json")).mode & 0o777).toBe(0o600)
-  expect((await setup.openai()).health).toMatchObject({ status: "ready", account: `${EMAIL} · ChatGPT Plus` })
-})
-
-test("signin-paste: the address a browser on another machine ends on, pasted back, finishes the sign-in", async () => {
-  await using fake = new FakeOpenAi()
-  fake.issueTokens("first", 3600)
-  await using setup = await setupWith(fake)
-  const started = (await setup.client.call("auth/start", { provider: "openai", method: "browser" })).result as AuthState
-  const waiting = await setup.waiting()
-
-  const answered = await setup.client.call("auth/respond", {
-    provider: "openai",
-    flow: started.flow,
-    response: { _tag: "callback", url: callbackFor(waiting, "pasted-code").toString() },
-  })
-
-  expect(answered.result).toEqual({ accepted: true })
-  expect(await setup.settledSignIn()).toMatchObject({ phase: "succeeded" })
-  const exchange = new URLSearchParams(fake.received.find((request) => request.path === "/oauth/token")!.body)
-  expect(exchange.get("code")).toBe("pasted-code")
-})
-
-const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-
-test("signin-device-code: a device code sign-in shows the code to enter, then finishes once someone enters it", async () => {
-  await using fake = new FakeOpenAi()
-  fake.issueTokens("first", 3600)
-  await using setup = await setupWith(fake)
-  await setup.client.call("auth/start", { provider: "openai", method: "device_code" })
-
-  const waiting = await setup.waiting()
-  const settled = await setup.settledSignIn()
-
-  expect(waiting.interaction).toEqual({ _tag: "device_code", url: `${fake.base}/codex/device`, code: "ABCD-1234" })
-  expect(settled).toMatchObject({ phase: "succeeded", message: `${EMAIL} · ChatGPT Plus` })
-  const sent = (path: string) => fake.received.filter((request) => request.path === path).map((request) => request.body)
-  expect(sent("/api/accounts/deviceauth/usercode").map((body) => JSON.parse(body))).toEqual([
-    { client_id: CODEX_CLIENT_ID },
-  ])
-  expect(new Set(sent("/api/accounts/deviceauth/token"))).toEqual(
-    new Set([JSON.stringify({ device_auth_id: "device-1", user_code: "ABCD-1234" })]),
-  )
-  const exchange = new URLSearchParams(sent("/oauth/token")[0])
-  expect(exchange.get("client_id")).toBe(CODEX_CLIENT_ID)
-  expect(exchange.get("redirect_uri")).toBe(`${fake.base}/deviceauth/callback`)
-  expect(exchange.get("code")).toBe("device-code")
-  expect(exchange.get("code_verifier")).toBe("device-verifier")
-}, 10_000)
-
-test("signin-cancel: a cancelled sign-in ends for every connection and frees the callback port", async () => {
-  await using fake = new FakeOpenAi()
-  await using setup = await setupWith(fake)
-  const started = (await setup.client.call("auth/start", { provider: "openai" })).result as AuthState
-  const waiting = await setup.waiting()
-
-  const cancelled = await setup.client.call("auth/cancel", { provider: "openai", flow: started.flow })
-  const settled = await setup.settledSignIn()
-
-  expect(cancelled.result).toEqual({ accepted: true })
-  expect(settled).toMatchObject({ phase: "cancelled" })
-  expect(await fetch(callbackFor(waiting, "late")).catch(() => "refused")).toBe("refused")
-})
-
-test("signin-shared: a connection that starts watching after a sign-in ended still learns how it ended", async () => {
-  await using fake = new FakeOpenAi()
-  await using setup = await setupWith(fake)
-  const started = (await setup.client.call("auth/start", { provider: "openai", method: "device_code" }))
-    .result as AuthState
-  expect(await setup.settledSignIn()).toMatchObject({ phase: "failed" })
-
-  const late = await RawClient.connect(setup.server.home.socket)
-  const auth = late.watch<AuthState>("auth/watch")
-  await auth.until((states) => states.length > 0)
-  late.close()
-
-  expect(auth.items[0]).toMatchObject({ provider: "openai", flow: started.flow, phase: "failed" })
-})
-
-test("signout: signing out leaves the provider signed out and tells every connection", async () => {
-  await using fake = new FakeOpenAi()
-  await using setup = await setupWith(fake)
-  await signIn(setup.server.home)
-  expect((await setup.openai()).health.status).toBe("ready")
-
-  const other = await RawClient.connect(setup.server.home.socket)
-  const after = (await other.call("auth/logout", { provider: "openai" })).result as ProviderSnapshot
-  other.close()
-  await setup.auth.until((states) => states.some((state) => state.phase === "signed_out"))
-
-  expect(after.health.status).toBe("signed_out")
-  expect((await setup.openai()).health.status).toBe("signed_out")
-  expect(setup.auth.items.at(-1)).toMatchObject({ provider: "openai", phase: "signed_out" })
-})
-
-const modelList = (slug: string) => ({
-  models: [
-    {
-      slug,
-      display_name: slug.toUpperCase(),
-      visibility: "list",
-      priority: 1,
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }],
-      context_window: 272000,
-    },
-    { slug: "hidden", visibility: "hide", priority: 0 },
-  ],
-})
-
-const openAiModels = async (client: RawClient) =>
-  ((await client.call("models/list", {})).result as Array<ProviderModels>).find((list) => list.provider === "openai")!
-
-test("openai-models: OpenAI's models come from ChatGPT, and the saved list answers when ChatGPT can't", async () => {
-  await using fake = new FakeOpenAi()
-  fake.modelList = modelList("gpt-test")
-  const home = tempHome()
-  try {
-    {
-      await using server = await runningServer([], { home, openai: fake.options() })
-      await signIn(server.home)
-      const client = await RawClient.connect(server.home.socket)
-      const listed = await openAiModels(client)
-      client.close()
-      expect(listed).toEqual({
-        provider: "openai",
-        defaultModel: "gpt-5.5",
-        models: [
-          {
-            id: "gpt-test",
-            name: "GPT-TEST",
-            efforts: ["low", "medium", "high"],
-            defaultEffort: "medium",
-            contextWindow: 272000,
-          },
-        ],
-      })
-    }
-    fake.modelList = undefined
-    await using server = await runningServer([], { home, openai: fake.options() })
-    const client = await RawClient.connect(server.home.socket)
-    expect((await openAiModels(client)).models.map((model) => model.id)).toEqual(["gpt-test"])
-    client.close()
-  } finally {
-    rmSync(home.dir, { recursive: true, force: true })
-  }
-})
-
-test("openai-model: a switched model and effort reach ChatGPT from the next run on", async () => {
+test("openai-model: the conversation's model and effort reach ChatGPT", async () => {
   await using fake = new FakeOpenAi()
   fake.play("text_answer")
-  fake.play("text_answer")
-  await using session = await conversationWith(fake)
+  await using session = await conversationWith(fake, { model: "gpt-6-luna", effort: "high" })
   await session.submit("hello")
   await session.view.until(settled(1))
+  expect(JSON.parse(fake.responses()[0]!.body)).toMatchObject({ model: "gpt-6-luna", reasoning: { effort: "high" } })
+})
 
-  const switched = await session.client.call("conversation/select_model", {
-    conversation: session.conversation,
-    author: "ada",
-    selection: { provider: "openai", model: "gpt-test", effort: "high" },
-  })
-  await session.submit("again")
+test("subagent-fork: a spawned agent's requests carry its own conversation, and its last answer reaches the parent", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("subagent")
+  await using session = await conversationWith(fake)
+  await session.submit("Ask a scout where the gnome lives.")
+  await session.view.until(settled(1), 20_000)
+  expectRequests(fake, expected)
+  const [parent, child, parentAgain] = fake.responses().map((request) => JSON.parse(request.body))
+  expect(child.prompt_cache_key).not.toBe(parent.prompt_cache_key)
+  expect(parentAgain.prompt_cache_key).toBe(parent.prompt_cache_key)
+  expect(JSON.stringify(parentAgain.input)).toContain("Under the floor.")
+  expect(session.said().at(-2)).toBe("assistant: The scout says: under the floor.")
+})
+
+test("compaction-overflow, models-overflow: ChatGPT's context-window error compacts the conversation, and the request goes again", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("context_overflow")
+  await using session = await conversationWith(fake, { model: "gpt-6-luna" })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  // Past the 20,000 tokens a compaction keeps, so the first exchange is what a summary replaces.
+  const long = "the quick brown fox jumps over the lazy dog\n".repeat(2500)
+  await session.submit(long)
   await session.view.until(settled(2))
+  await session.submit("again")
+  await session.view.until(settled(3))
+  expectRequests(fake, expected)
 
-  expect(switched.error).toBeUndefined()
-  expect(fake.responses()).toHaveLength(2)
-  const [first, second] = fake.responses().map((request) => JSON.parse(request.body))
-  expect(first.model).toBe("gpt-5.5")
-  expect(first.reasoning).toBeUndefined()
-  expect(second).toMatchObject({ model: "gpt-test", reasoning: { effort: "high" } })
+  const said = session.said()
+  expect(said.slice(-3)).toEqual(["assistant:  [error]", "assistant: Again, hello.", "run_end: answered"])
+  const failed = session.view
+    .seen()
+    .flatMap((entry) => (entry.kind === "pi.assistant" ? [entry.model![0] as { errorMessage?: string }] : []))
+    .find((message) => message.errorMessage !== undefined)
+  expect(failed?.errorMessage).toBe(
+    "the response failed (context_length_exceeded): Your input exceeds the context window of this model. Please adjust your input and try again.",
+  )
+  const [, , , summary, retried] = fake.responses().map((request) => JSON.parse(request.body))
+  expect(JSON.stringify(summary.input)).toContain("hello")
+  const retriedText = JSON.stringify(retried.input)
+  expect(retriedText).toContain("The person said hello and was greeted.")
+  expect(retriedText).not.toContain("Hello there")
+  expect(retried.input.at(-1)).toEqual({
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "again" }],
+  })
 })
 
 const write = (path: string, text: string) => {
@@ -521,6 +353,7 @@ const write = (path: string, text: string) => {
   writeFileSync(path, text)
 }
 
+/** A repository under `home` with AGENTS.md files and skills at several levels; answers the folder to work in. */
 const project = (home: string) => {
   const repo = join(home, "repo")
   mkdirSync(join(repo, ".git"), { recursive: true })
@@ -536,169 +369,139 @@ const project = (home: string) => {
     join(repo, "app", ".claude", "skills", "review", "SKILL.md"),
     "---\nname: review\ndescription: Nearer review\n---\nLook nearer.",
   )
+  write(join(repo, ".claude", "skills", "plain", "SKILL.md"), "No frontmatter.")
   write(join(home, "skills", "ship", "SKILL.md"), "---\nname: ship\ndescription: >\n  Ship it\n  carefully\n---\nShip.")
   return join(repo, "app")
 }
 
-test("agents-md: ChatGPT is told the AGENTS.md files from home to the working directory, and the skills it can use", async () => {
+const instructionsOf = (fake: FakeOpenAi, request: number): string =>
+  JSON.parse(fake.responses()[request]!.body).instructions
+
+test("openai-instructions, agents-md, skills-found, skills-nearest, skills-frontmatter: ChatGPT is told its working directory, the AGENTS.md files from home down to it, and the skills it can use", async () => {
   await using fake = new FakeOpenAi()
+  fake.play("text_answer")
   fake.play("text_answer")
   await using session = await conversationWith(fake, { cwd: project })
   await session.submit("hello")
   await session.view.until(settled(1))
 
-  const app = join(session.server.home.dir, "repo", "app")
-  const { instructions } = JSON.parse(fake.responses()[0]!.body)
-  const order = ["Home rules.", "Repo rules.", "App override rules."].map((rule) => instructions.indexOf(rule))
-  expect(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]!))).toBe(true)
-  expect(instructions).not.toContain("App rules.")
-  expect(instructions).toContain(
-    `- review: Nearer review (file: ${join(app, ".claude", "skills", "review", "SKILL.md")})`,
+  const home = session.server.home.dir
+  const app = join(home, "repo", "app")
+  const skills = (review: string) =>
+    [
+      "# Skills",
+      "",
+      "A skill is a folder of instructions for one kind of task, in a `SKILL.md` file. When a task matches a skill's description, `read` its `SKILL.md` before you start, and follow it. When a message names a skill with `/name` or `$name`, the skill's `SKILL.md` comes with the message; follow it. Relative paths in a skill are relative to its folder.",
+      "",
+      `- plain:  (file: ${join(home, "repo", ".claude", "skills", "plain", "SKILL.md")})`,
+      review,
+      `- ship: Ship it carefully (file: ${join(home, "skills", "ship", "SKILL.md")})`,
+    ].join("\n")
+  expect(instructionsOf(fake, 0)).toEndWith(
+    [
+      "",
+      `The working directory is ${app}.`,
+      `# AGENTS.md instructions from ${join(home, "AGENTS.md")}\n\nHome rules.`,
+      `# AGENTS.md instructions from ${join(home, "repo", "AGENTS.md")}\n\nRepo rules.`,
+      `# AGENTS.md instructions from ${join(app, "AGENTS.override.md")}\n\nApp override rules.`,
+      skills(`- review: Nearer review (file: ${join(app, ".claude", "skills", "review", "SKILL.md")})`),
+    ].join("\n\n"),
   )
+
+  // What the folders hold is read again for each request.
+  rmSync(join(app, ".claude"), { recursive: true })
+  write(join(home, "repo", "AGENTS.md"), "New repo rules.")
+  await session.submit("again")
+  await session.view.until(settled(2))
+  const again = instructionsOf(fake, 1)
+  expect(again).toContain("\n\nNew repo rules.\n")
+  expect(again).not.toContain("\n\nRepo rules.\n")
+  expect(again).toEndWith(
+    skills(`- review: Review a diff (file: ${join(home, "repo", ".agents", "skills", "review", "SKILL.md")})`),
+  )
+})
+
+test("openai-instructions: every tool ChatGPT's instructions name is one its request offers, by the same name", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, { cwd: project })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const { instructions, tools } = JSON.parse(fake.responses()[0]!.body)
+  const offered: Array<string> = tools.map((tool: { name: string }) => tool.name)
+  const named = [...(instructions as string).matchAll(/`([^`]+)`/g)].map((match) => match[1]!)
+  // A name that differs from an offered tool's only in case is a tool the model is told of but not offered.
+  const toolLike = named.filter((name) => offered.some((tool) => tool.toLowerCase() === name.toLowerCase()))
+  expect(toolLike).toEqual(expect.arrayContaining(["read", "grep", "glob", "write", "edit", "apply_patch", "bash"]))
+  expect(toolLike.filter((name) => !offered.includes(name))).toEqual([])
+})
+
+test("skills-found: a conversation outside any repository is told only its own folder's skills and the home's", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  await using session = await conversationWith(fake, {
+    cwd: (home) => {
+      project(home)
+      write(join(home, "loose", ".agents", "skills", "near", "SKILL.md"), "---\ndescription: Here\n---\n")
+      return join(home, "loose")
+    },
+  })
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const instructions = instructionsOf(fake, 0)
+  expect(instructions).toContain("- near: Here")
   expect(instructions).toContain("- ship: Ship it carefully")
+  expect(instructions).not.toContain("- review:")
+  expect(instructions).not.toContain("Repo rules.")
+  expect(instructions).toContain("Home rules.")
 })
 
-test("start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files", async () => {
+test("start-instructions: ChatGPT is told the instructions its conversation started with, after the AGENTS.md files, and a subagent is not", async () => {
   await using fake = new FakeOpenAi()
-  fake.play("text_answer")
+  const expected = fake.play("subagent")
   await using session = await conversationWith(fake, { cwd: project, instructions: "Report with attn when done." })
-  await session.submit("hello")
-  await session.view.until(settled(1))
+  await session.submit("Ask a scout where the gnome lives.")
+  await session.view.until(settled(1), 20_000)
+  expectRequests(fake, expected)
+  const [parent, child] = [instructionsOf(fake, 0), instructionsOf(fake, 1)]
+  expect(parent).toEndWith("\n\n<instructions>\nReport with attn when done.\n</instructions>")
+  expect(parent.indexOf("Report with attn when done.")).toBeGreaterThan(parent.indexOf("App override rules."))
+  expect(child).toContain("App override rules.")
+  expect(child).not.toContain("Report with attn when done.")
+})
 
-  const { instructions } = JSON.parse(fake.responses()[0]!.body)
-  expect(instructions.indexOf("Report with attn when done.")).toBeGreaterThan(
-    instructions.indexOf("App override rules."),
+test("subagent-types: an agent of a type gets its instructions and its model, and fork_turns none leaves the parent's history out", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("subagent_of_a_type")
+  await using session = await conversationWith(fake, {
+    cwd: (home) => {
+      // The fake's Claude Code config directory is the home's `claude` folder.
+      write(
+        join(home, "claude", "agents", "reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews diffs\nmodel: gpt-6-luna\n---\nBe strict about tests.",
+      )
+      return home
+    },
+  })
+  await session.submit("Get the diff reviewed.")
+  await session.view.until(settled(1), 20_000)
+  // The type names a model ChatGPT lists, so the reviewer runs on it.
+  expectRequests(fake, expected.with(1, { ...(expected[1] as object), model: "gpt-6-luna" }))
+
+  const [parent, child] = [instructionsOf(fake, 0), instructionsOf(fake, 1)]
+  expect(parent).toContain(
+    "# Agent types\n\nThe agent types `spawn_agent` takes as `agent_type`:\n- reviewer: Reviews diffs",
   )
-})
-
-test("skills-attach: a skill named in a message comes with it, for the model and for everyone watching", async () => {
-  await using fake = new FakeOpenAi()
-  fake.play("text_answer")
-  await using session = await conversationWith(fake, { cwd: project })
-  await session.submit("/review this, then $ship and $nothing")
-  await session.view.until(settled(1))
-
-  const user = bodies(session.view.deliveries).find((body) => body._tag === "user")
-  expect(user).toMatchObject({
-    skills: [{ name: "review", text: expect.stringContaining("Look nearer.") }, { name: "ship" }],
-  })
-  const { input } = JSON.parse(fake.responses()[0]!.body)
-  const sent = JSON.stringify(input)
-  expect(sent).toContain("<name>review</name>")
-  expect(sent).toContain("Look nearer.")
-  expect(sent).toContain("<name>ship</name>")
-})
-
-test("skills-attach: a skill named in a steer comes with it for the model the run is using, even after a switch", async () => {
-  await using fake = new FakeOpenAi()
-  fake.play("tool_denied")
-  await using session = await conversationWith(fake, { cwd: project, approvals: "ask" })
-  await session.submit("what does echo say?")
-  await session.view.until((deliveries) => statusOf(deliveries) === "waiting")
-  await session.client.call("conversation/select_model", {
-    conversation: session.conversation,
-    author: "ada",
-    selection: { provider: "claude" },
-  })
-  await session.submit("/review it", true)
-  const approval = bodies(session.view.deliveries).find((body) => body._tag === "approval") as { approval: string }
-  await session.client.call("approval/resolve", {
-    conversation: session.conversation,
-    approval: approval.approval,
-    author: "ada",
-    allow: false,
-  })
-  await session.view.until(settled(1))
-
-  const steer = bodies(session.view.deliveries).find((body) => body._tag === "user" && body.text === "/review it")
-  expect(steer).toMatchObject({ skills: [{ name: "review", text: expect.stringContaining("Look nearer.") }] })
-  expect(JSON.stringify(JSON.parse(fake.responses()[1]!.body).input)).toContain("<name>review</name>")
-})
-
-test("skills-list: every client can list the skills a conversation's model can use", async () => {
-  await using fake = new FakeOpenAi()
-  await using session = await conversationWith(fake, { cwd: project })
-  const listed = await session.client.call("skills/list", { conversation: session.conversation })
-  expect(listed.result.map((skill: { name: string; description: string }) => [skill.name, skill.description])).toEqual([
-    ["review", "Nearer review"],
-    ["ship", "Ship it carefully"],
+  expect(child).toContain("# You are a reviewer agent\n\nBe strict about tests.")
+  expect(child).not.toContain("# Agent types")
+  expect(JSON.parse(fake.responses()[1]!.body).input).toHaveLength(1)
+  const listed = (await session.client.call("conversation/list")).result as Array<{ lineage?: unknown }>
+  expect(listed.map((conversation) => conversation.lineage).filter(Boolean)).toEqual([
+    expect.objectContaining({ task: "/root/review", title: "review", agentType: "reviewer" }),
   ])
 })
 
-const CODE_MODE_MODEL = "gpt-6.1-sol"
-const codeModeHost = installedCodeModeHost()
-const withCodeModeHost = test.skipIf(codeModeHost === undefined)
-const inCodeMode = { model: CODE_MODE_MODEL, codeModeHost: codeModeHost ?? "" }
-
-const resultsOf = (deliveries: ReadonlyArray<Delivery>) =>
-  bodies(deliveries).flatMap((body) => (body._tag === "tool_result" ? [body] : []))
-
-const resultOf = (deliveries: ReadonlyArray<Delivery>, call: string) =>
-  resultsOf(deliveries).find((result) => result.call === call)!
-
-const sent = (fake: FakeOpenAi, request: number): Array<any> => JSON.parse(fake.responses()[request]!.body).input
-
-const notesIn = (input: Array<any>): Array<string> =>
-  input.flatMap((item) => (item.role === "developer" ? [item.content[0].text] : []))
-
-const allowEach = async (session: Awaited<ReturnType<typeof conversationWith>>, count: number) => {
-  for (let answered = 0; answered < count; answered++) {
-    await session.view.until(
-      (deliveries) => bodies(deliveries).filter((body) => body._tag === "approval").length > answered,
-    )
-    const approval = bodies(session.view.deliveries).filter((body) => body._tag === "approval")[answered] as {
-      approval: string
-    }
-    await session.client.call("approval/resolve", {
-      conversation: session.conversation,
-      approval: approval.approval,
-      author: "ada",
-      allow: true,
-    })
-  }
-}
-
-withCodeModeHost(
-  "code-mode-tools: a code-mode model is offered exec and wait, with nisse's tools declared inside exec",
-  async () => {
-    await using fake = new FakeOpenAi()
-    fake.play("code_mode_script")
-    await using session = await conversationWith(fake, inCodeMode)
-    await session.submit("what does echo say?")
-    await session.view.until(settled(1))
-    expect(fake.responses()).toHaveLength(2)
-    const tools = JSON.parse(fake.responses()[0]!.body).tools
-    expect(tools.map((tool: { type: string; name: string }) => [tool.type, tool.name])).toEqual([
-      ["custom", "exec"],
-      ["function", "wait"],
-    ])
-    for (const declared of [
-      "Read(args: {",
-      "Write(args: {",
-      "Edit(args: {",
-      "Bash(args: {",
-      "Grep(args: {",
-      "Glob(args: {",
-    ])
-      expect(tools[0].description).toContain(declared)
-    expect(tools[0].description).toContain("apply_patch(input: string)")
-    expect(tools[0].description).toContain("  // The shell command to run.\n  command: string;")
-  },
-)
-
-const withExtension = (name: string, source: string) => {
-  const home = tempHome()
-  mkdirSync(home.extensions, { recursive: true })
-  writeFileSync(join(home.extensions, `${name}.ts`), source)
-  return home
-}
-
-test("request-hook: an extension's request hook adds instructions and narrows the tools of each request to the model", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("tool_call")
-  const home = withExtension(
-    "focus",
-    `import { Extension } from "@nisse/extension"
+const focus = `import { Extension } from "@nisse/extension"
 import { Effect } from "effect"
 let asked = 0
 export default Extension.define((ctx) =>
@@ -706,538 +509,205 @@ export default Extension.define((ctx) =>
     Effect.sync(() => {
       asked += 1
       request.instructions.push("Request " + asked + " in " + request.conversation.cwd + ".")
-      request.tools = request.tools.filter((name) => name === "Bash" || name === "made_up")
+      request.tools = request.tools.filter((name) => name === "bash" || name === "made_up")
       request.tools.push("made_up")
     }),
   ),
-)`,
-  )
+)`
+
+test("request-hook: an extension's request hook adds instructions and narrows the tools of each request to the model", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("tool_call", TOOL_NAMES)
+  const home = homeWithExtensions({ "focus.ts": focus })
   await using session = await conversationWith(fake, { home })
   await session.submit("what does echo say?")
   await session.view.until(settled(1))
   expectRequests(fake, expected)
+  expect(session.said().at(-2)).toBe("assistant: It printed hi.")
   const requests = fake.responses().map((response) => JSON.parse(response.body))
-  expect(
-    requests.map((request) =>
-      request.instructions.endsWith(`\nRequest ${requests.indexOf(request) + 1} in ${home.dir}.\n`),
-    ),
-  ).toEqual([true, true])
-  expect(requests.map((request) => request.tools.map((tool: { name: string }) => tool.name))).toEqual([
-    ["Bash"],
-    ["Bash"],
+  expect(requests.map((request) => request.instructions)).toEqual([
+    expect.stringMatching(new RegExp(`^You are Nisse[^]*\\nRequest 1 in ${home.dir}\\.\\n$`)),
+    expect.stringMatching(new RegExp(`^You are Nisse[^]*\\nRequest 2 in ${home.dir}\\.\\n$`)),
   ])
-  rmSync(home.dir, { recursive: true })
+  expect(requests.map((request) => request.tools.map((tool: { name: string }) => tool.name))).toEqual([
+    ["bash"],
+    ["bash"],
+  ])
 })
 
 test("hook-failure: a request hook that fails is skipped with a toast, and the model gets the request as it was", async () => {
   await using fake = new FakeOpenAi()
   fake.play("text_answer")
-  const home = withExtension(
-    "broken",
-    `import { Extension } from "@nisse/extension"
+  const home = homeWithExtensions({
+    "broken.ts": `import { Extension } from "@nisse/extension"
 import { Effect } from "effect"
 export default Extension.define((ctx) =>
   ctx.request.hook((request) => {
     request.tools = []
+    request.instructions.push("Never sent.")
     return Effect.fail("no network")
   }),
 )`,
-  )
+  })
   await using session = await conversationWith(fake, { home })
   await session.submit("hello")
   await session.view.until(settled(1))
-  expect(bodies(session.view.deliveries)).toContainEqual({
-    _tag: "toast",
-    extension: "broken",
-    text: "request failed: no network",
-  })
-  expect(JSON.parse(fake.responses()[0]!.body).tools.length).toBe(12)
-  rmSync(home.dir, { recursive: true })
-})
-
-withCodeModeHost(
-  "code-mode-tools: a tool a request hook withholds is missing from a code-mode script's ALL_TOOLS too",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_all_tools")
-    const home = withExtension(
-      "focus",
-      `import { Extension } from "@nisse/extension"
-import { Effect } from "effect"
-export default Extension.define((ctx) =>
-  ctx.request.hook((request) => Effect.sync(() => { request.tools = ["Read", "Bash"] })),
-)`,
-    )
-    await using session = await conversationWith(fake, { ...inCodeMode, home })
-    await session.submit("which tools can you call?")
-    await session.view.until(settled(1))
-    expectRequests(fake, expected)
-    expect(resultOf(session.view.deliveries, "call_1").output).toEndWith("Output:\nRead Bash")
-    rmSync(home.dir, { recursive: true })
-  },
-)
-
-withCodeModeHost("code-mode-tools: a tool an extension removes is gone from a code-mode model's exec too", async () => {
-  await using fake = new FakeOpenAi()
-  fake.play("code_mode_script")
-  const home = tempHome()
-  mkdirSync(home.extensions, { recursive: true })
-  writeFileSync(
-    join(home.extensions, "no-patches.ts"),
-    `import { Extension } from "@nisse/extension"
-export default Extension.define((ctx) => ctx.tool.transform((tools) => tools.remove("apply_patch")))`,
+  const toasts = session.view.seen().filter((entry) => entry.kind === "nisse.toast")
+  expect(toasts.map((entry) => entry.data)).toEqual([{ extension: "broken", text: "request failed: no network" }])
+  const { instructions, tools } = JSON.parse(fake.responses()[0]!.body)
+  expect(instructions).not.toContain("Never sent.")
+  expect(tools.map((tool: { name: string }) => tool.name)).toEqual(
+    expect.arrayContaining(["read", "write", "edit", "bash", "grep", "glob", "spawn_agent", "wait_agent"]),
   )
-  await using session = await conversationWith(fake, { ...inCodeMode, home })
-  await session.submit("what does echo say?")
+})
+
+test("code-mode-models, openai-code-mode, codemode-grammar, codemode-tool: a model ChatGPT marks code-mode-only is offered codemode alone, writes raw JavaScript for it, and gets the script's result", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("codemode_script")
+  await using session = await conversationWith(fake, { model: "gpt-6.1-sol" })
+  await session.submit("compute 2 + 2")
   await session.view.until(settled(1))
-  const exec = JSON.parse(fake.responses()[0]!.body).tools[0]
-  expect(exec.description).toContain("Bash(args: {")
-  expect(exec.description).not.toContain("apply_patch")
-  rmSync(home.dir, { recursive: true })
+  expectRequests(fake, expected)
+  // F10's recorded call is `text(2 + 2);`, which the sandbox ran.
+  const input = JSON.parse(fake.responses()[1]!.body).input as Array<{ type: string; output?: unknown }>
+  const output = input.find((item) => item.type === "custom_tool_call_output")?.output
+  expect(output).toMatch(/^Script completed\nWall time \d+\.\d seconds\nOutput:\n\n4$/)
+  expect(session.said()).toEqual(["user: compute 2 + 2", "assistant: ", "assistant: Hello there", "run_end: answered"])
 })
 
-withCodeModeHost(
-  "code-mode-calls: a script's nested call is committed under its script and asks first, and the model sees only the script",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_script")
-    await using session = await conversationWith(fake, { ...inCodeMode, approvals: "ask" })
-    await session.submit("what does echo say?")
-    await allowEach(session, 1)
-    await session.view.until(settled(1))
-    const entries = bodies(session.view.deliveries)
-    const calls = entries.flatMap((body) => (body._tag === "tool_call" ? [body] : []))
-    expect(calls[0]).toMatchObject({ call: "call_1", tool: "exec" })
-    expect(calls[1]).toMatchObject({ tool: "Bash", input: { command: "echo hi" }, parent: "call_1" })
-    const approvals = entries.filter((body) => body._tag === "approval")
-    expect(approvals).toEqual([expect.objectContaining({ call: calls[1]!.call, tool: "Bash" })])
-    const [nested, script] = resultsOf(session.view.deliveries)
-    expect(nested).toMatchObject({ call: calls[1]!.call, output: "hi\n", error: false })
-    expect(script!.output).toStartWith("Script completed\n")
-    expect(script!.output).toEndWith("Output:\nhi\n")
-    expectRequests(fake, expected)
-    expect(said(session.view.deliveries).at(-2)).toEqual({ _tag: "message", text: "It says hi." })
-  },
-)
-
-withCodeModeHost(
-  "code-mode-cells: a script that yields is resumed by wait, and its cell ends when it does",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_wait")
-    await using session = await conversationWith(fake, inCodeMode)
-    await session.submit("count slowly")
-    await session.view.until(settled(1))
-    const [yielded, finished] = ["call_1", "call_2"].map((call) => resultOf(session.view.deliveries, call).output)
-    expect(yielded).toStartWith("Script running with cell ID call_1\n")
-    expect(yielded).toEndWith("started")
-    expect(finished).toStartWith("Script completed\n")
-    expect(finished).toEndWith("finished")
-    const cell = bodies(session.view.deliveries).find((body) => body._tag === "tool_call" && body.tool === "cell")
-    expect(cell).toMatchObject({ parent: "call_1", input: { cell_id: "call_1" } })
-    expect(resultOf(session.view.deliveries, (cell as { call: string }).call)).toMatchObject({
-      output: "Script completed",
-      error: false,
-    })
-    expectRequests(fake, expected)
-  },
-)
-
-withCodeModeHost(
-  "code-mode-script: terminating a script ends the call it was waiting on before the model hears it stopped",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_terminate")
-    await using session = await conversationWith(fake, { ...inCodeMode, approvals: "ask" })
-    await session.submit("run it, then stop it")
-    await session.view.until(settled(1))
-    const entries = bodies(session.view.deliveries)
-    const bash = entries.find((body) => body._tag === "tool_call" && body.tool === "Bash") as { call: string }
-    const ended = entries.findIndex((body) => body._tag === "tool_result" && body.call === bash.call)
-    const waited = entries.findIndex((body) => body._tag === "tool_result" && body.call === "call_2")
-    expect(entries[ended]).toMatchObject({ output: "interrupted; it may or may not have taken effect", error: true })
-    expect(ended).toBeLessThan(waited)
-    const approval = entries.find((body) => body._tag === "approval") as { approval: string }
-    const late = await session.client.call("approval/resolve", {
-      conversation: session.conversation,
-      approval: approval.approval,
-      author: "ada",
-      allow: true,
-    })
-    expect(late.result).toEqual({ accepted: false })
-    expect(existsSync(join(session.server.home.dir, "late.txt"))).toBe(false)
-    expectRequests(fake, expected)
-  },
-)
-
-withCodeModeHost(
-  "code-mode-tools: a patch that moves a file to another spelling of its own path keeps the file",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_patch_same_path")
-    await using session = await conversationWith(fake, { ...inCodeMode, approvals: "auto" })
-    const notes = join(session.server.home.dir, "notes.txt")
-    writeFileSync(notes, "draft\n")
-    await session.submit("finalize the notes")
-    await session.view.until(settled(1))
-    const patched = resultsOf(session.view.deliveries).find((result) => result.call !== "call_1")!
-    expect(patched).toMatchObject({ error: false })
-    expect(readFileSync(notes, "utf8")).toBe("final\n")
-    expectRequests(fake, expected)
-  },
-)
-
-withCodeModeHost(
-  "code-mode-host-life: a host that dies mid-script interrupts the script with the nested results so far",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_host_dies")
-    const launcher = mkdtempSync("/tmp/nisse-host-")
-    const pidFile = join(launcher, "host.pid")
-    const host = join(launcher, "host")
-    writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
-    chmodSync(host, 0o755)
-    try {
-      await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
-      writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-      await session.submit("read the manifest, then wait")
-      await session.view.until((deliveries) => resultsOf(deliveries).length > 0)
-      expect(resultsOf(session.view.deliveries)[0]!.output).toContain("[package]")
-      process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
-      await session.view.until(settled(1))
-      const script = sent(fake, 1).find((item) => item.type === "custom_tool_call_output")
-      expect(script.output).toStartWith("interrupted: the code-mode host stopped")
-      expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
-      expect(script.output).toContain("[package]")
-      expectRequests(fake, expected)
-    } finally {
-      rmSync(launcher, { recursive: true, force: true })
-    }
-  },
-)
-
-withCodeModeHost(
-  "code-mode-host-life: a host that dies while the model waits tells the wait what the script finished",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_host_dies_in_wait")
-    const launcher = mkdtempSync("/tmp/nisse-host-")
-    const pidFile = join(launcher, "host.pid")
-    const host = join(launcher, "host")
-    writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
-    chmodSync(host, 0o755)
-    try {
-      await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
-      writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-      await session.submit("read the manifest in the background")
-      await session.view.until((deliveries) =>
-        bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_2"),
-      )
-      process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
-      await session.view.until(settled(1))
-      expect(resultOf(session.view.deliveries, "call_2").output).toStartWith("interrupted: the code-mode host stopped")
-      const [note] = notesIn(sent(fake, 2))
-      expect(note).toStartWith("Cell call_1 stopped before its script finished.")
-      expect(note).toContain("The calls it made that finished:\n- Read (done):")
-      expect(note).toContain("[package]")
-      expectRequests(fake, expected)
-    } finally {
-      rmSync(launcher, { recursive: true, force: true })
-    }
-  },
-)
-
-withCodeModeHost(
-  "code-mode-script: a wait on a script whose host stopped never reaches a script the next host started",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_wait_after_host_restart")
-    const launcher = mkdtempSync("/tmp/nisse-host-")
-    const pidFile = join(launcher, "host.pid")
-    const host = join(launcher, "host")
-    writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
-    chmodSync(host, 0o755)
-    try {
-      await using session = await conversationWith(fake, { model: CODE_MODE_MODEL, codeModeHost: host })
-      await session.submit("start a slow script, then another once its host stops")
-      await session.view.until((deliveries) =>
-        bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_2"),
-      )
-      process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
-      await session.view.until(settled(1))
-      const [stopped, started, checked] = ["call_2", "call_3", "call_4"].map(
-        (call) => resultOf(session.view.deliveries, call).output,
-      )
-      expect(stopped).toStartWith("interrupted: the code-mode host stopped")
-      expect(started).toStartWith("Script running with cell ID call_3\n")
-      expect(checked).toStartWith("no running cell call_1")
-      expectRequests(fake, expected)
-    } finally {
-      rmSync(launcher, { recursive: true, force: true })
-    }
-  },
-)
-
-withCodeModeHost(
-  "code-mode-script: a yielded script cut off by the run's end still tells the model what its calls finished",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_yielded_run_stopped")
-    await using session = await conversationWith(fake, inCodeMode)
-    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-    await session.submit("read the manifest in the background")
-    await session.view.until((deliveries) =>
-      resultsOf(deliveries).some((result) => result.call.startsWith("call_1/") && result.output.includes("[package]")),
-    )
-    await deadline(fake.requested(2), 5000, "the model's answer to the yielded script")
-    await session.client.call("conversation/interrupt", { conversation: session.conversation })
-    await session.view.until(settled(1))
-    await session.submit("what did it read?")
-    await session.view.until(settled(2))
-    const [note] = notesIn(sent(fake, 2))
-    expect(note).toStartWith("Cell call_1 stopped before its script finished.")
-    expect(note).toContain("The calls it made that finished:\n- Read (done):")
-    expect(note).toContain("[package]")
-    expectRequests(fake, expected)
-  },
-)
-
-withCodeModeHost(
-  "code-mode-script: a yielded script cut off by a server stop still tells the resumed model what its calls finished",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_yielded_server_stopped")
-    const first = await conversationWith(fake, inCodeMode)
-    const home = first.server.home
-    try {
-      writeFileSync(join(home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-      await first.submit("read the manifest in the background")
-      await first.view.until((deliveries) =>
-        resultsOf(deliveries).some(
-          (result) => result.call.startsWith("call_1/") && result.output.includes("[package]"),
-        ),
-      )
-      await deadline(fake.requested(2), 5000, "the model's answer to the yielded script")
-      first.client.close()
-      await first.server.stop()
-
-      await using resumed = await runningServer([], { home, openai: fake.options(undefined, codeModeHost) })
-      const client = await RawClient.connect(resumed.home.socket)
-      const view = client.subscribe({ conversation: first.conversation })
-      await view.until(settled(1))
-      client.close()
-      const [note] = notesIn(sent(fake, 2))
-      expect(note).toStartWith("Cell call_1 stopped before its script finished.")
-      expect(note).toContain("The calls it made that finished:\n- Read (done):")
-      expect(note).toContain("[package]")
-      expectRequests(fake, expected)
-    } finally {
-      rmSync(home.dir, { recursive: true, force: true })
-    }
-  },
-)
-
-withCodeModeHost(
-  "code-mode-script: a script stopped mid-run still tells the model what its calls finished",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_interrupted")
-    await using session = await conversationWith(fake, inCodeMode)
-    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-    await session.submit("read the manifest slowly")
-    await session.view.until((deliveries) => resultsOf(deliveries).length > 0)
-    await session.client.call("conversation/interrupt", { conversation: session.conversation })
-    await session.view.until(settled(1))
-    await session.submit("what did it read?")
-    await session.view.until(settled(2))
-    const script = sent(fake, 1).find((item) => item.type === "custom_tool_call_output")
-    expect(script.output).toStartWith("interrupted; it may or may not have taken effect")
-    expect(script.output).toContain("The calls it made that finished:\n- Read (done):")
-    expect(script.output).toContain("[package]")
-    expectRequests(fake, expected)
-  },
-)
-
-withCodeModeHost("code-mode-host-life: a host that dies ends the calls its script was waiting on", async () => {
+test("code-mode-models: a model that takes nisse's tools directly is offered them, and not codemode", async () => {
   await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_host_dies_asking")
-  const launcher = mkdtempSync("/tmp/nisse-host-")
-  const pidFile = join(launcher, "host.pid")
-  const host = join(launcher, "host")
-  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
-  chmodSync(host, 0o755)
-  try {
-    await using session = await conversationWith(fake, {
-      model: CODE_MODE_MODEL,
-      codeModeHost: host,
-      approvals: "ask",
-    })
-    await session.submit("write it late")
-    await session.view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "approval"))
-    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
-    await session.view.until(settled(1))
-    const entries = bodies(session.view.deliveries)
-    const bash = entries.find((body) => body._tag === "tool_call" && body.tool === "Bash") as { call: string }
-    const ended = entries.findIndex((body) => body._tag === "tool_result" && body.call === bash.call)
-    const script = entries.findIndex((body) => body._tag === "tool_result" && body.call === "call_1")
-    expect(entries[ended]).toMatchObject({ output: "interrupted; it may or may not have taken effect", error: true })
-    expect(ended).toBeLessThan(script)
-    const approval = entries.find((body) => body._tag === "approval") as { approval: string }
-    const late = await session.client.call("approval/resolve", {
-      conversation: session.conversation,
-      approval: approval.approval,
-      author: "ada",
-      allow: true,
-    })
-    expect(late.result).toEqual({ accepted: false })
-    expect(existsSync(join(session.server.home.dir, "late.txt"))).toBe(false)
-    expectRequests(fake, expected)
-  } finally {
-    rmSync(launcher, { recursive: true, force: true })
-  }
-})
-
-withCodeModeHost(
-  "code-mode-script: a waited script stopped after another script finished still tells what its calls finished",
-  async () => {
-    await using fake = new FakeOpenAi()
-    const expected = fake.play("code_mode_two_scripts_interrupted")
-    await using session = await conversationWith(fake, inCodeMode)
-    writeFileSync(join(session.server.home.dir, "Cargo.toml"), '[package]\nname = "manifest"\n')
-    await session.submit("read slowly while doing something else")
-    await session.view.until((deliveries) =>
-      bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_3"),
-    )
-    await session.client.call("conversation/interrupt", { conversation: session.conversation })
-    await session.view.until(settled(1))
-    await session.submit("what did the first script read?")
-    await session.view.until(settled(2))
-    const waited = sent(fake, 3).find((item) => item.call_id === "call_3" && item.type === "function_call_output")
-    expect(waited.output).toBe("interrupted; it may or may not have taken effect")
-    const [note] = notesIn(sent(fake, 3))
-    expect(note).toStartWith("Cell call_1 stopped before its script finished.")
-    expect(note).toContain("The calls it made that finished:\n- Read (done):")
-    expect(note).toContain("[package]")
-    expectRequests(fake, expected)
-  },
-)
-
-withCodeModeHost("code-mode-host-life: a host that dies ends the calls of every script it ran", async () => {
-  await using fake = new FakeOpenAi()
-  const expected = fake.play("code_mode_host_dies_two_scripts")
-  const launcher = mkdtempSync("/tmp/nisse-host-")
-  const pidFile = join(launcher, "host.pid")
-  const host = join(launcher, "host")
-  writeFileSync(host, `#!/bin/sh\necho $$ > '${pidFile}'\nexec '${codeModeHost}' "$@"\n`)
-  chmodSync(host, 0o755)
-  try {
-    await using session = await conversationWith(fake, {
-      model: CODE_MODE_MODEL,
-      codeModeHost: host,
-      approvals: "ask",
-    })
-    await session.submit("start two scripts")
-    await session.view.until((deliveries) =>
-      bodies(deliveries).some((body) => body._tag === "tool_call" && body.call === "call_3"),
-    )
-    process.kill(Number(readFileSync(pidFile, "utf8").trim()), "SIGKILL")
-    await session.view.until(settled(1))
-    const entries = bodies(session.view.deliveries)
-    const bash = entries.find((body) => body._tag === "tool_call" && body.tool === "Bash") as { call: string }
-    const ended = entries.findIndex((body) => body._tag === "tool_result" && body.call === bash.call)
-    const waited = entries.findIndex((body) => body._tag === "tool_result" && body.call === "call_3")
-    expect(entries[ended]).toMatchObject({ output: "interrupted; it may or may not have taken effect", error: true })
-    expect(ended).toBeLessThan(waited)
-    const approval = entries.find((body) => body._tag === "approval") as { approval: string }
-    const late = await session.client.call("approval/resolve", {
-      conversation: session.conversation,
-      approval: approval.approval,
-      author: "ada",
-      allow: true,
-    })
-    expect(late.result).toEqual({ accepted: false })
-    expect(existsSync(join(session.server.home.dir, "late.txt"))).toBe(false)
-    expectRequests(fake, expected)
-  } finally {
-    rmSync(launcher, { recursive: true, force: true })
-  }
-})
-
-test("code-mode-missing: a code-mode model without the code-mode host says how to install it", async () => {
-  await using fake = new FakeOpenAi()
-  await using session = await conversationWith(fake, {
-    model: CODE_MODE_MODEL,
-    codeModeHost: "/nowhere/codex-code-mode-host",
-  })
+  fake.play("text_answer")
+  await using session = await conversationWith(fake)
   await session.submit("hello")
   await session.view.until(settled(1))
-  expect(fake.responses()).toHaveLength(0)
-  expect(said(session.view.deliveries)).toEqual([
-    { _tag: "run_end", outcome: "failed", message: expect.stringContaining("scripts/code-mode-host.sh") },
+  const { tools } = JSON.parse(fake.responses()[0]!.body) as { tools: Array<{ name: string }> }
+  expect(tools.map((tool) => tool.name)).toContain("bash")
+  expect(tools.map((tool) => tool.name)).not.toContain("codemode")
+})
+
+const userEntries = (watch: ViewWatch) => watch.seen().filter((entry) => entry.kind === "nisse.user")
+
+test("skills-list, skills-attach, skills-snapshot: a skill named in a message comes with it as SKILL.md read then, for the model and every client", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  fake.play("text_answer")
+  const home = tempHome()
+  const cwd = project(home.dir)
+  await using session = await conversationWith(fake, { home, cwd: () => cwd })
+  const listed = await session.client.call("skills/list", { conversation: session.conversation })
+  expect(listed.result.map((skill: { name: string; description: string }) => [skill.name, skill.description])).toEqual([
+    ["plain", ""],
+    ["review", "Nearer review"],
+    ["ship", "Ship it carefully"],
   ])
+  await session.submit("/review this, then $ship and $nothing.")
+  await session.view.until(settled(1))
+  const nearer = join(home.dir, "repo", "app", ".claude", "skills", "review", "SKILL.md")
+  writeFileSync(nearer, "---\nname: review\ndescription: Nearer review\n---\nLook again.")
+  await session.submit("$review once more")
+  await session.view.until(settled(2))
+  const [first, second] = userEntries(session.view).map((entry) => entry.data as { skills?: Array<any> })
+  expect(first!.skills).toEqual([
+    { name: "review", path: nearer, text: expect.stringContaining("Look nearer.") },
+    { name: "ship", path: join(home.dir, "skills", "ship", "SKILL.md"), text: expect.stringContaining("Ship.") },
+  ])
+  expect(second!.skills).toEqual([{ name: "review", path: nearer, text: expect.stringContaining("Look again.") }])
+  const sent = fake.responses().map((request) => JSON.stringify(JSON.parse(request.body).input))
+  expect(sent[0]).toContain("<name>review</name>")
+  expect(sent[0]).toContain("Look nearer.")
+  expect(sent[0]).toContain("<name>ship</name>")
+  // The second request carries the first message as it was placed, and the second with the file as it is now.
+  expect(sent[1]).toContain("Look nearer.")
+  expect(sent[1]).toContain("Look again.")
 })
 
-const childOf = async (session: Awaited<ReturnType<typeof conversationWith>>) => {
-  const listed = (await session.client.call("conversation/list")).result as Array<{
-    id: string
-    lineage?: { parent: string; task: string; title: string; agentType?: string; forkedAt?: number }
-  }>
-  return listed.find((conversation) => conversation.lineage?.parent === session.conversation)!
-}
-
-test("subagent-fork: a spawned agent starts from its parent's history, and its last answer reaches the parent", async () => {
+test("image-attach: images sent with a prompt reach the model after its text, one past its limits resized, and every client sees their names", async () => {
   await using fake = new FakeOpenAi()
-  fake.play("subagent")
+  fake.play("text_answer")
   await using session = await conversationWith(fake)
-  await session.submit("Ask a scout where the gnome lives.")
-  await session.view.until(settled(1))
-
-  const [, child, parentAgain] = fake.responses().map((request) => JSON.parse(request.body))
-  expect(child.input[0].content[0].text).toBe("Ask a scout where the gnome lives.")
-  expect(child.input.at(-1)).toEqual({
-    type: "message",
-    role: "assistant",
-    content: [
-      {
-        type: "output_text",
-        text: "Message Type: NEW_TASK\nTask name: /root/scout\nSender: /root\nPayload:\nFind the gnome.",
-      },
-    ],
+  const image = (name: string, bytes: Uint8Array) => ({
+    name,
+    data: Buffer.from(bytes).toString("base64"),
+    mimeType: "image/png",
   })
-  expect(child.tools.map((tool: { name: string }) => tool.name)).not.toContain("spawn_agent")
-  expect(JSON.stringify(parentAgain.input)).toContain(
-    "Message Type: FINAL_ANSWER\\nTask name: /root\\nSender: /root/scout\\nPayload:\\nUnder the floor.",
-  )
-
-  const scout = await childOf(session)
-  expect(scout.lineage).toMatchObject({ task: "/root/scout", title: "scout" })
-  expect(scout.lineage!.forkedAt).toBeNumber()
-  const parentSaw: Array<unknown> = bodies(session.view.deliveries)
-  expect(parentSaw).toContainEqual({ _tag: "subagent", call: "call_1", conversation: scout.id, title: "scout" })
-  expect(parentSaw.at(-2)).toEqual({ _tag: "message", text: "The scout says: under the floor." })
+  const sent = await session.client.call("conversation/submit", {
+    conversation: session.conversation,
+    requestId: crypto.randomUUID(),
+    author: "ada",
+    text: "what differs?",
+    images: [image("small.png", png(4, 4)), image("wide.png", png(3000, 40))],
+  })
+  expect(sent.error).toBeUndefined()
+  await session.view.until(settled(1))
+  expect(userEntries(session.view).map((entry) => (entry.data as { images?: Array<string> }).images)).toEqual([
+    ["small.png", "wide.png"],
+  ])
+  const input = JSON.parse(fake.responses()[0]!.body).input as Array<{ role?: string; content?: Array<any> }>
+  const content = input.find((item) => item.role === "user")!.content!
+  expect(content.map((part) => part.type)).toEqual(["input_text", "input_image", "input_image"])
+  expect(content[0].text).toBe("what differs?")
+  const [small, wide] = content.slice(1).map((part) => {
+    const [, mimeType, data] = /^data:(.+);base64,(.+)$/.exec(part.image_url)!
+    return imageDimensions(Buffer.from(data!, "base64"), mimeType!)
+  })
+  expect(small).toEqual({ width: 4, height: 4 })
+  expect(wide!.width).toBeLessThanOrEqual(2000)
 })
 
-test("subagent-types: an agent of a type gets its instructions, and fork_turns none leaves the parent's history out", async () => {
+test("image-attach: an image the server cannot decode is refused by name, and nothing is submitted", async () => {
   await using fake = new FakeOpenAi()
-  fake.play("subagent_of_a_type")
-  await using session = await conversationWith(fake, {
-    cwd: (home) => {
-      write(
-        join(home, "claude", "agents", "reviewer.md"),
-        "---\nname: reviewer\ndescription: Reviews diffs\n---\nBe strict about tests.",
-      )
-      return home
-    },
+  await using session = await conversationWith(fake)
+  const refused = await session.client.call("conversation/submit", {
+    conversation: session.conversation,
+    requestId: crypto.randomUUID(),
+    author: "ada",
+    text: "look",
+    images: [{ name: "broken.png", data: Buffer.from("not a picture").toString("base64"), mimeType: "image/png" }],
   })
-  await session.submit("Get the diff reviewed.")
-  await session.view.until(settled(1))
+  expect(refused.error?.data[0]?.error).toMatchObject({
+    _tag: "UnreadableImage",
+    name: "broken.png",
+    message: expect.stringContaining("broken.png (image/png) cannot be decoded"),
+  })
+  expect(userEntries(session.view)).toEqual([])
+  expect(fake.responses()).toHaveLength(0)
+})
 
-  const [parent, child] = fake.responses().map((request) => JSON.parse(request.body))
-  const spawn = parent.tools.find((tool: { name: string }) => tool.name === "spawn_agent")
-  expect(spawn.parameters.properties.agent_type.description).toContain("- reviewer: Reviews diffs")
-  expect(child.instructions).toContain("# You are a reviewer agent\n\nBe strict about tests.")
-  expect(child.input).toHaveLength(1)
-  const reviewer = await childOf(session)
-  expect(reviewer.lineage).toMatchObject({ task: "/root/review", agentType: "reviewer" })
-  expect(reviewer.lineage!.forkedAt).toBeUndefined()
+test("skills-list: a conversation on a provider that finds its own skills lists none, and an unknown one is refused", async () => {
+  await using server = await runningServer([])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: project(server.home.dir) })).result
+    .conversation as string
+  expect((await client.call("skills/list", { conversation })).result).toEqual([])
+  const unknown = await client.call("skills/list", { conversation: "nowhere" })
+  expect(unknown.error?.data[0]?.error?._tag).toBe("NoSuchConversation")
+  client.close()
+})
+
+test("openai-invalid: a sign-in file that is not one fails the run, naming the file", async () => {
+  await using fake = new FakeOpenAi()
+  await using session = await conversationWith(fake, { signedIn: false })
+  const path = join(session.server.home.dir, "auth", "openai.json")
+  mkdirSync(join(path, ".."), { recursive: true })
+  writeFileSync(path, JSON.stringify({ hello: "there" }))
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  expect(session.said().at(-1)).toBe(`run_end: failed (${path} is not valid)`)
+  expect(fake.responses()).toHaveLength(0)
+})
+
+test("openai-expired: a sign-in whose refresh is turned down fails the run and lists ChatGPT signed out, saying why", async () => {
+  await using fake = new FakeOpenAi()
+  await using session = await conversationWith(fake, { signedIn: false })
+  await signIn(session.server.home, "first", Date.now() - 1000)
+  await session.submit("hello")
+  await session.view.until(settled(1))
+  const expired = "the ChatGPT sign-in expired; sign in again (token refresh failed (400: invalid_grant))"
+  expect(session.said().at(-1)).toBe(`run_end: failed (${expired})`)
+  const providers = (await session.client.call("providers/list", { refresh: true })).result as Array<any>
+  expect(providers.find((provider) => provider.id === "openai").health).toMatchObject({
+    status: "signed_out",
+    message: expired,
+  })
 })

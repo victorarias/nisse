@@ -30,7 +30,11 @@ Feature ledger area C: spec §2, §2.2, §3.7; README More Conversations and For
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Package, `packages/harness/test/harness.test.ts`:
+
+- fork-provider-identity: the root and each of its forks have their own provider session id
+- conversation-list, conversation-reopen: conversations are found again after a restart, with their agent and history
+- reset-context, reset-handoff, fork-at-entry: a fork that resets starts a new context with its handoff, and the original and the fork's earlier entries keep theirs
 
 ## Gotchas
 

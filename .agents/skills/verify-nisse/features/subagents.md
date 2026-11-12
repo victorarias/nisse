@@ -18,7 +18,7 @@ and nisse commits each into a conversation of its own the same way.
   gains a conversation whose `lineage` names its `parent`, `root`, `call`,
   `task` and `title`.
 - `subagent-fork` gives a subagent its parent's history up to the spawn
-  (`lineage.forkedAt`), or none with `"fork_turns": "none"`.
+  (its view's `conversation.parent`), or none with `"fork_turns": "none"`.
 - `subagent-model` runs a subagent on its parent's model, or on the `model`
   its `spawn_agent` names when the parent's provider lists it; an unlisted
   model fails the call.
@@ -29,7 +29,7 @@ and nisse commits each into a conversation of its own the same way.
   parent's TUI, or `approval/resolve` on the subagent's conversation. A call
   asked deeper in the tree shows on the card of the subagent above it.
 - `subagent-message` delivers a parent's `send_message` to a running subagent
-  at its next step, as a `user` entry with `"mail": {"kind": "message", ...}`
+  at its next step, as a `nisse.mail` entry of kind `message`
   inside the same run; it starts no run.
 - `subagent-agents` shows the tree with `list_agents` (each agent's name and
   `running`, `interrupted`, `completed` or `errored`), and stops one
@@ -39,17 +39,17 @@ and nisse commits each into a conversation of its own the same way.
   `NISSE_ROOT_CONVERSATION` set to the conversation people started.
 - `subagent-answer` hands a subagent's last message to its parent: a waiting
   `wait_agent` returns `Wait completed.`, and the message shows under a
-  `/root/<name>` author in the parent's transcript; an idle parent gets it in
-  its transcript without starting a run.
+  `/root/<name>` author in the parent's transcript; an idle parent gets it as
+  input that starts a run.
 - `subagent-followup` wakes an idle subagent with `followup_task`, and each of
   its answers reaches the parent.
 - `subagent-interrupt` stops the parent's run and every run under it with
   `Esc` or `conversation/interrupt`; the card shows `interrupted`. Stopping
-  just a subagent, from its own conversation, tells its parent: a waiting
-  `wait_agent` returns `Wait completed.` and the parent hears
-  `A person interrupted this agent.`
+  just a subagent, from its own conversation, stops it and the subagents
+  under it, not its parent.
 - `subagent-exec` makes `nisse exec` without `--auto` deny the calls its
-  subagents would ask about, as it does its own.
+  subagents would ask about, as it does its own; `exec` follows every
+  conversation of its tree.
 - `subagent-limits` takes `[agents] max_depth` (default 1) and `max_threads`
   (default 6) from `NISSE_HOME/config.toml`: at the depth limit
   `spawn_agent` is not offered, and a tree runs at most `max_threads`
@@ -105,20 +105,20 @@ Preconditions:
     { "tool": { "name": "spawn_agent", "input": { "task_name": "scribe", "message": "write it down" } } },
     { "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
     { "text": "the scribe is done" },
-    { "agent": "/root/scribe", "tool": { "name": "Bash", "input": { "command": "echo scribbled" } } },
+    { "agent": "/root/scribe", "tool": { "name": "bash", "input": { "command": "echo scribbled" } } },
     { "agent": "/root/scribe", "text": "wrote it" }
   ]
   ```
 
   `drive.ts r tui start`, wait for `READY`, type `delegate` and `Enter`. Wait
-  for `allow Bash(echo scribbled)?`: the screen shows `▸ spawn_agent(scribe)`,
-  `⧉ scribe waiting on you`, `Bash(echo scribbled)` and `◆ WAITING`. Press
+  for `allow bash(echo scribbled)?`: the screen shows `▸ spawn_agent(scribe)`,
+  `⧉ scribe waiting on you`, `bash(echo scribbled)` and `◆ WAITING`. Press
   `C-y` and wait for `the scribe is done`: the card reads `⧉ scribe done` over
   `wrote it`, `▸ wait_agent` shows
   `{"message":"Wait completed.","timed_out":false}`, then `/root/scribe` says
   `wrote it` and `NISSE` says `the scribe is done`, `■ READY`.
   `drive.ts r rpc conversation/list` lists the subagent with
-  `"lineage": {"parent": <the TUI's conversation>, "task": "/root/scribe", "title": "scribe", "forkedAt": <seq>, ...}`.
+  `"lineage": {"parent": <the TUI's conversation>, "task": "/root/scribe", "title": "scribe", ...}`.
 
 - **Message, list and interrupt.** With this script:
 
@@ -138,7 +138,7 @@ Preconditions:
       "agent": "/root/reader",
       "text": "reading it now slowly",
       "delayMs": 600,
-      "tool": { "name": "Read", "input": { "file_path": "/etc/hostname" } }
+      "tool": { "name": "read", "input": { "path": "/etc/hostname" } }
     },
     { "agent": "/root/reader", "text": "read it" }
   ]
@@ -152,10 +152,10 @@ Preconditions:
   `{"agents":[{"agent_name":"/root","agent_status":"running"},{"agent_name":"/root/reader","agent_status":"running"}]}`,
   `send_message` returns an empty result, `wait_agent` returns
   `Wait completed.`, and `reader reported` ends the run.
-  `drive.ts r watch <reader id> --save reader` shows the `new_task`, the
-  `Read` call and its result, then a `user` entry `also say it twice` with
-  `"mail": {"kind": "message", ...}`, then `read it` and a `run_end`
-  `answered`: the message joined the run after its call finished.
+  `drive.ts r watch <reader id> --save reader` shows a `nisse.mail`
+  `new_task`, the `read` call and its result, then a `nisse.mail` `message`
+  `also say it twice`, then `read it` and a `nisse.run_end` `answered`: the
+  message joined the run after its call finished.
 
 - **Interrupt one subagent from the parent.** In a fresh run, with this
   script:
@@ -179,50 +179,19 @@ Preconditions:
   `drive.ts r watch <id> --submit 'stop the slowpoke' --until run_end --save interrupt-agent`:
   `interrupt_agent` returns `{"previous_status":"running"}`, `list_agents`
   then lists `/root/slowpoke` as `interrupted`, and the run ends
-  `stopped it`. `drive.ts r watch <slowpoke id>` shows the `new_task` and a
-  `run_end` `interrupted`.
-
-- **Stopped from its own conversation.** With the script
-
-  ```json
-  [
-    {
-      "tool": {
-        "name": "spawn_agent",
-        "input": { "task_name": "slowpoke", "message": "count slowly", "fork_turns": "none" }
-      }
-    },
-    { "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
-    { "text": "heard back" },
-    { "agent": "/root/slowpoke", "text": "one two three four five six seven eight nine ten", "delayMs": 1500 }
-  ]
-  ```
-
-  run `drive.ts r serve`, start a `script` conversation as above, and
-  `drive.ts r watch <id> --submit count --until subagent --save own-start`.
-  Take the `conversation` of its `subagent` entry (the subagent's id) and the
-  `seq` of its last line. Open the parent with
-  `drive.ts r tui start --conversation <id>` and run
-  `drive.ts r rpc conversation/interrupt '{"conversation": "<subagent id>", "author": "ada"}'`
-  (result `null`), then
-  `drive.ts r watch <id> --since <seq> --until run_end --timeout 30000 --save own`:
-  `wait_agent` returns `Wait completed.`, a `user` entry from `/root/slowpoke`
-  with `"mail": {"kind": "final_answer", ...}` says
-  `A person interrupted this agent. If you still need it, use the available collaboration tools to give it another task.`,
-  and the parent ends `heard back`, `answered`. `drive.ts r tui wait READY`,
-  `drive.ts r tui screen own`
-  shows `⧉ slowpoke interrupted` and `READY`, and
-  `drive.ts r watch <subagent id>` ends with a `run_end` `interrupted`.
+  `stopped it`. `drive.ts r watch <slowpoke id>` shows the `nisse.mail`
+  `new_task` and a `nisse.run_end` `interrupted`.
 
 - **Answered over the wire.** With the `Spawn, approve, answer` script, run
   `drive.ts r serve`, start a `script` conversation, and
-  `drive.ts r watch <id> --submit delegate --until subagent`; take the
-  subagent's id from its `subagent` entry. Run `drive.ts r watch <subagent id> --save scribe-asking`
-  and take the `approval` id of its `approval` entry. Run
+  `drive.ts r watch <id> --submit delegate --until pi.tool-result`; take the
+  subagent's id from `drive.ts r rpc conversation/list`. Run
+  `drive.ts r watch <subagent id> --save scribe-asking` and take the key of
+  the request in its `docs.nisse.approvals.requests`, the approval id. Run
   `drive.ts r rpc approval/resolve '{"conversation": "<subagent id>", "approval": "<approval>", "author": "bo", "allow": true}'`:
   `"accepted": true`; the same call with `"author": "cy"` and
   `"allow": false` answers `"accepted": false`. `drive.ts r watch <subagent id>`
-  shows the `approval_answer` by `bo`, the `tool_result` `scribbled`, then
+  shows the `nisse.approval` by `bo`, the `pi.tool-result` `scribbled`, then
   `wrote it`, and `drive.ts r watch <id>` ends `the scribe is done`.
 
 - **Asked two levels down.** After `up`, write the depth to the home's config
@@ -245,19 +214,19 @@ Preconditions:
     },
     { "agent": "/root/lead", "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
     { "agent": "/root/lead", "text": "the helper is done" },
-    { "agent": "/root/lead/helper", "tool": { "name": "Bash", "input": { "command": "echo deep" } } },
+    { "agent": "/root/lead/helper", "tool": { "name": "bash", "input": { "command": "echo deep" } } },
     { "agent": "/root/lead/helper", "text": "did it" }
   ]
   ```
 
   `drive.ts r tui start`, wait for `READY`, type `delegate` and `Enter`, and
-  wait for `allow Bash(echo deep)?`: on the parent's screen `⧉ lead waiting on you`
-  holds `allow Bash(echo deep)?  ^Y  allow  ^N  deny`, though the call is the
+  wait for `allow bash(echo deep)?`: on the parent's screen `⧉ lead waiting on you`
+  holds `allow bash(echo deep)?  ^Y  allow  ^N  deny`, though the call is the
   helper's. Press `C-y` and wait for `the lead is done` and `READY`: the card
   reads `⧉ lead done` over `the helper is done`.
   `drive.ts r rpc conversation/list` has `"task": "/root/lead/helper"`, and
-  `drive.ts r watch <helper id>` shows the `approval`, an `approval_answer` by
-  `ada`, and the `tool_result` `deep`.
+  `drive.ts r watch <helper id>` shows a `nisse.approval` by `ada` and the
+  `pi.tool-result` `deep`.
 
 - **Root conversation in a subagent.** With the script
 
@@ -266,7 +235,7 @@ Preconditions:
     { "tool": { "name": "spawn_agent", "input": { "task_name": "envy", "message": "show your root" } } },
     { "tool": { "name": "wait_agent", "input": { "timeout_ms": 600000 } } },
     { "text": "envy answered" },
-    { "agent": "/root/envy", "tool": { "name": "Bash", "input": { "command": "echo root=$NISSE_ROOT_CONVERSATION" } } },
+    { "agent": "/root/envy", "tool": { "name": "bash", "input": { "command": "echo root=$NISSE_ROOT_CONVERSATION" } } },
     { "agent": "/root/envy", "text": "shown", "delayMs": 1 }
   ]
   ```
@@ -274,15 +243,14 @@ Preconditions:
   run `drive.ts r nisse exec --auto delegate`: stdout `envy answered`. Take the
   ids from `drive.ts r rpc conversation/list`: the subagent's `lineage` names
   the parent as `root`. `drive.ts r watch <subagent id> --save root-env`
-  holds a `tool_result` `root=<the parent's id>`.
+  holds a `pi.tool-result` `root=<the parent's id>`.
 
 - **Exec denies a subagent's call.** With the `Spawn, approve, answer` script, in a fresh run,
   `drive.ts r nisse exec delegate`: exit 0, stdout `the scribe is done`,
   stderr `› spawn_agent(scribe)`, `› wait_agent` and
-  `denied Bash(echo scribbled): exec cannot ask, pass --auto to allow calls`.
-  `drive.ts r watch <subagent id>` shows the `approval`, then the
-  `tool_result` `denied: the person did not allow this call`, then
-  `wrote it`. In another fresh run, `drive.ts r nisse exec --auto delegate`
+  `denied bash(echo scribbled): exec cannot ask, pass --auto to allow calls`:
+  `exec` follows every conversation of its tree. `drive.ts r watch <subagent id>`
+  shows the denied call's `pi.tool-result`, then `wrote it`. In another fresh run, `drive.ts r nisse exec --auto delegate`
   prints no denial.
 
 - **Interrupt.** With the script
@@ -297,10 +265,9 @@ Preconditions:
 
   `drive.ts r tui start`, wait for `READY`, type `count`, `Enter`, wait for
   `slowpoke`, press `Escape` and wait for `READY`: the card reads
-  `⧉ slowpoke interrupted`, `▸ wait_agent` shows
-  `interrupted; it may or may not have taken effect`, then `◆ interrupted`.
+  `⧉ slowpoke interrupted`, then `◆ interrupted`.
 
-- **Interrupt on the kernel** (`up --kernel`). With the script
+- **Interrupt over the wire.** With the script
 
   ```json
   [
@@ -339,11 +306,12 @@ Preconditions:
   `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "script"}'`
   and
   `drive.ts r watch <id> --submit 'take notes' --until run_end --save followup`:
-  each `wait_agent` returns `Wait completed.`, each followed by a `user`
-  entry from the subagent with `"mail": {"kind": "final_answer", ...}`,
+  each `wait_agent` returns `Wait completed.`, each followed by a
+  `nisse.mail` `final_answer` from `/root/scribe`,
   `first note` then `second note`, then `both notes in`.
   `drive.ts r watch <subagent id> --save scribe` shows two runs, started by
-  `note one thing` and `note another`, each a `new_task` from `/root`.
+  `note one thing` and `note another`, each a `nisse.mail` `new_task` from
+  `/root`.
 
 - **Idle parent, no history, another model.** With the script
 
@@ -371,11 +339,11 @@ Preconditions:
   the second `spawn_agent` fails with
   `no model gpt-5.5 on script; leave model out to use yours`, and the run ends
   `sent off`. `conversation/list` holds one subagent, `/root/loner`, whose
-  `lineage` has no `forkedAt`. Run
+  view has no `conversation.parent`. Run
   `drive.ts r watch <loner id> --until run_end`, then
-  `drive.ts r watch <id> --save idle-parent`: after the parent's `run_end`
-  comes `back later` from `/root/loner` as a `user` entry, with no new run and
-  the status `idle`.
+  `drive.ts r watch <id> --save idle-parent`: after the parent's
+  `nisse.run_end` comes `back later` from `/root/loner` as a `nisse.mail`
+  `final_answer`, which starts a new run of the parent.
 
 - **Limits.** Thread limit: write `[agents]` and `max_threads = 1` to
   `/tmp/nisse-verify/r/home/config.toml` after `up` and before anything starts
@@ -393,18 +361,15 @@ Preconditions:
 
   `drive.ts r nisse exec spread`: stdout `one at a time`, and
   `drive.ts r watch <parent id> --save threads` shows the second
-  `spawn_agent`'s result
-  `this tree already runs 1 subagents, the most it may run at once; wait for one to finish`.
+  `spawn_agent`'s result starting
+  `at most 1 subagents work at once (maxThreads)`.
   Depth limit: in a fresh run, `drive.ts r up --fake-openai subagent`, write
   `[agents]` and `max_depth = 0` to the same file, and run
   `drive.ts r nisse exec --provider openai 'Send a scout to find the gnome.'`:
   in `evidence/fake-openai.ndjson` the first request's `tools` has no
-  `spawn_agent`. The recording calls it anyway, so the second request, the
-  parent's own, holds the result `no tool named spawn_agent` and a
-  `wait_agent` that timed out after 30 s; the recording's subagent answer,
-  `Under the floor.`, is what the parent says. `conversation/list` holds no
-  subagent. Both requests are `as recorded`, since the recording matches any
-  input, and its third reply goes unused.
+  `spawn_agent`. The recording calls it anyway, and the call's result is
+  `Tool spawn_agent is not available`. `conversation/list` holds no
+  subagent.
 
 - **OpenAI subagent** (`--fake-openai subagent`). `drive.ts r tui start --provider openai`,
   wait for `READY`, type `Send a scout to find the gnome.` and `Enter`, then
@@ -427,21 +392,18 @@ Preconditions:
   printf -- '---\nname: reviewer\ndescription: Reviews diffs\n---\nBe strict about tests.\n' > $P/.claude/agents/reviewer.md
   ```
 
-  Run `drive.ts r serve`,
+  Run `drive.ts r serve` with `CLAUDE_CONFIG_DIR` set to an empty folder, so
+  your own agent types stay out,
   `drive.ts r rpc conversation/start '{"cwd": "/tmp/nisse-verify/r/project", "provider": "openai"}'`
   and
   `drive.ts r watch <id> --submit 'Get the diff reviewed.' --until run_end --save typed`:
-  a `subagent` entry with `"agentType": "reviewer"`, then
-  `The reviewer approves.` The subagent's `lineage` has no `forkedAt`. In
-  `evidence/fake-openai.ndjson`, all `as recorded`, the parent's
-  `spawn_agent` tool lists `- reviewer: Reviews diffs`, and the second
-  request, the subagent's, has one input item, instructions holding
+  the answer is `The reviewer approves.`, and `conversation/list` shows the
+  subagent with `"agentType": "reviewer"` in its `lineage` and no
+  `forkedAt`. In `evidence/fake-openai.ndjson`, all `as recorded`, the
+  parent's instructions list `- reviewer: Reviews diffs` under
+  `# Agent types`, and the second request,
+  the subagent's, has one input item, instructions holding
   `# You are a reviewer agent`, and no `spawn_agent` tool.
-  On the kernel (`up --kernel`) the same steps give a subagent whose
-  `lineage` in `conversation/list` has `"agentType": "reviewer"`; the types
-  are listed under `# Agent types` in the parent's instructions instead of
-  the tool. Start `serve` with `CLAUDE_CONFIG_DIR` set to an empty folder
-  so your own agent types stay out.
 
 - **Claude subagent asks** (`--fake-claude subagent_asks`).
   `drive.ts r tui start --provider claude`, wait for `READY`, type
@@ -467,8 +429,8 @@ Preconditions:
   message, and the answer. No call waits on you. `conversation/list` lists
   the subagent with `"title": "Find gnome location in notes"` and
   `"agentType": "general-purpose"`. `drive.ts r watch <subagent id> --save plain-sub`
-  holds the prompt, a `Read` call that ran without an `approval`, its
-  result, a `message` and a `run_end` `answered`. `drive.ts r tui stop`, then
+  holds the prompt, a `Read` call that ran without a `nisse.approval`, its
+  `pi.tool-result`, the answer and a `nisse.run_end` `answered`. `drive.ts r tui stop`, then
   `drive.ts r tui start --conversation <subagent id>` and
   `drive.ts r tui wait 'INPUT GOES THROUGH ITS PARENT'`: the same transcript.
   The recording's prompt and answer name your checkout, which replaces the
@@ -491,100 +453,57 @@ Preconditions:
   `▸ Read(<checkout>/notes.txt)`. Press `Escape`, wait for `interrupted`,
   `drive.ts r tui screen sub-stopped`: `◆ interrupted`. The log holds one
   `stop_task` request, and `drive.ts r watch <parent id> --save parent` ends
-  with the `message` `The subagent was stopped.` and a `run_end`
+  with the answer `The subagent was stopped.` and a `nisse.run_end`
   `answered`: only the subagent stopped.
 
 ## Contexts
 
-- **On the kernel.** `exec` follows every conversation of its tree. In a run made with `drive.ts r up --kernel` and
-  the script
-  `[{"tool": {"name": "spawn_agent", "input": {"task_name": "kid", "message": "go"}}}, {"tool": {"name": "wait_agent", "input": {"timeout_ms": 600000}}}, {"text": "the kid is done"}, {"agent": "/root/kid", "tool": {"name": "bash", "input": {"command": "echo ran"}}}, {"agent": "/root/kid", "text": "could not run it"}]`,
-  `drive.ts r nisse exec delegate` prints
-  `the kid is done`, exit 0, with stderr `› spawn_agent(kid)`, `› wait_agent` and
-  `denied bash(echo ran): exec cannot ask, pass --auto to allow calls`.
-- **On the kernel.** In a `drive.ts r up --kernel --script <file>` run with the
-  spawn steps above, `drive.ts r rpc conversation/list` lists each subagent
-  after its parent, with `lineage` naming `parent`, `root`, `call` (the
-  `spawn_agent` call's id), `title` and `task`, and with the model its
-  `spawn_agent` named. Ids are the kernel's numbers, or the id a client chose
-  at `conversation/start`. A subagent is not forked by seq, so `lineage` has
-  no `forkedAt`; a forked subagent's view shows `conversation.parent`.
+- **Ids.** `conversation/list` lists each subagent after its parent, with
+  `lineage` naming `parent`, `root`, `call` (the `spawn_agent` call's id),
+  `title` and `task`, and with the model its `spawn_agent` named. Ids are
+  numbers, or the id a client chose at `conversation/start`.
 - **Provider.** Claude keeps Claude Code's own subagents, which take input only through their parent. OpenAI uses Codex's agent tools.
 
 ## Tests
 
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- subagent-exec: nisse exec on the kernel without --auto denies the calls its subagents would ask about too
-- subagent-exec: nisse exec on the kernel continuing a subagent denies the calls of the subagents it starts
-
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
-
-- subagent-card: a subagent shows as a card under its parent, and ctrl+y answers the call it asks about
-- subagent-approve: a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it
-- subagent-card, codemode-nested-policy: a subagent a script started shows as a card under the script, and ctrl+y answers the call it asks about
-- subagent-card: a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- subagent-spawn, subagent-model: conversation/list shows each subagent with its lineage, on its parent's model or the one its spawn_agent names, and an unlisted model fails the call
-- child-tools, subagent-message: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit
-- child-tools, subagent-agents: interrupting a subagent stops its turn and reports what it was doing
-- subagent-types: spawning an agent of a type nisse doesn't know is refused, naming it
-
-Kernel wire, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- subagent-spawn: a Claude subagent is listed under its parent with the call that started it, and takes no input of its own
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- subagent-limits: a tree runs at most as many subagents at once as config.toml allows
-- subagent-root-env, tool-root-env: an extension's tool run by a subagent knows the conversation people started
-
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- subagent-interrupt: interrupting a conversation stops the runs of its subagents too
-- subagent-interrupt: a person interrupting a subagent wakes its parent's wait, which hears who stopped it
-- subagent-answer: a subagent's answer lands in its idle parent's transcript without starting a run
-- subagent-followup: a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent
-- subagent-limits: a tree runs at most as many subagents at once as config.toml allows
+- child-tools, subagent-answer: the model spawns a subagent, waits for it, and its final answer is mailed back
+- subagent-types: spawning an agent of a type nisse doesn't know is refused, naming it
+- subagent-limits, child-tools: spawns in one response start at most maxThreads subagents
+- subagent-limits, child-tools: a follow-up task does not wake an idle subagent while maxThreads subagents work
+- child-tools, subagent-message, subagent-followup: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit
+- child-tools, subagent-agents: interrupting a subagent stops its turn and reports what it was doing
 - subagent-root-env, tool-root-env: an extension's tool run by a subagent knows the conversation people started
-- subagent-limits: a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows
-- status-subagent: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later
-- subagent-root-env, tool-root-env: commands a conversation runs, its subagents' included, know the conversation people started
-- start-instructions: a conversation keeps the instructions it started with, and its subagents start without them
+- subagent-limits: a tree runs at most as many subagents at once as config.toml allows
+- subagent-interrupt: interrupting a conversation stops the runs of its subagents too, and the tree goes idle
+- subagent-spawn, subagent-model: conversation/list shows each subagent with its lineage, on its parent's model or the one its spawn_agent names, and an unlisted model fails the call
+- subagent-answer: a subagent's answer reaches its idle parent as input that starts a run, so the parent acts on it
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
 - subagent-card: a subagent shows as a card under its parent, and ctrl+y answers the call it asks about
+- subagent-card, codemode-nested-policy: a subagent a script started shows as a card under the script, and ctrl+y answers the call it asks about
 - subagent-approve: a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it
 - subagent-card: a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent
 
 Stack, `packages/nisse/test/stack.test.ts`:
 
 - subagent-exec: nisse exec without --auto denies the calls its subagents would ask about too
+- subagent-exec: nisse exec continuing a subagent denies the calls of the subagents it starts
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
-- subagent-fork: a spawned agent starts from its parent's history, and its last answer reaches the parent
-- subagent-types: an agent of a type gets its instructions, and fork_turns none leaves the parent's history out
-
-Kernel provider, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
-
+- subagent-fork: a spawned agent's requests carry its own conversation, and its last answer reaches the parent
 - subagent-types: an agent of a type gets its instructions and its model, and fork_turns none leaves the parent's history out
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
 - subagent-claude: a Claude subagent works in a conversation of its own under the one that started it
-- subagent-claude: a Claude subagent takes input only through its parent
-- subagent-claude: a Claude subagent leaves the model a new conversation starts with as the person last chose it
 - subagent-claude: a call a Claude subagent wants to make waits for a person in the subagent's conversation
 - subagent-interrupt: stopping a Claude subagent stops only it, and its parent's run carries on
 - subagent-interrupt: stopping a run ends the Claude subagents working under it
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- subagent-interrupt: interrupting a conversation stops the runs of its subagents too, and the tree goes idle
+- subagent-spawn: a Claude subagent is listed under its parent with the call that started it, and takes no input of its own
 
 ## Gotchas
 
@@ -603,6 +522,8 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - No recording has an OpenAI `spawn_agent` that names a `model`; the scripted
   step shows the refusal only, and the real account shows a subagent on
   another model.
+- Stopping a subagent from its own conversation sends its parent no report:
+  a parent waiting in `wait_agent` waits on until its timeout.
 
 ## With a real account
 
@@ -619,9 +540,9 @@ ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
   `⧉ scout done` and an answer naming `found it`.
 - **Another model.** Pick a model from `drive.ts r rpc models/list '{}'` other
   than the conversation's whose entry in `/tmp/nisse-verify/r/home/cache/openai-models.json`
-  has no `"tool_mode":"code_mode_only"`; if every other model has it, install
-  the host first with
-  `NISSE_HOME=/tmp/nisse-verify/r/home scripts/code-mode-host.sh`. Then send
+  has no `"tool_mode":"code_mode_only"`; if every other model has it, the
+  subagent answers through the `codemode` tool, as
+  [Code mode](./code-mode.md) says. Then send
   `Start a subagent named ranger on the model <that id> that replies with exactly: found it. Wait for it, then tell me what it said.`
   (a new name: `scout` exists from the step before, and a name is never reused):
   `/root/ranger`'s conversation in `conversation/list` has
@@ -633,8 +554,7 @@ ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
 - **Message and list.** Then send
   `Send scout the message "stay put", then list your agents and tell me each one's status.`:
   `▸ send_message`, `▸ list_agents` with `/root/scout` in its result, and a
-  `user` entry `stay put` in the subagent's conversation with
-  `"mail": {"kind": "message", ...}`.
+  `nisse.mail` `message` `stay put` in the subagent's conversation.
 
 Claude, in a run made with `drive.ts r up --real-claude`:
 

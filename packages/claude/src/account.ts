@@ -1,22 +1,23 @@
+// A Claude Code instance's account: how it is signed in and which models it has, from a probe of Claude Code, and
+// signing in and out with its own commands. Its conversations run as `claude.run` tasks (`./run.ts`).
 import { query, type AccountInfo, type ModelInfo as ClaudeModel } from "@anthropic-ai/claude-agent-sdk"
-import type { ModelInfo } from "@nisse/protocol"
+import { type Health, type ModelInfo, type ProviderAccount, ProviderError } from "@nisse/models"
 import { tmpdir } from "node:os"
-import { Effect } from "effect"
-import type { Health } from "../../provider.ts"
+import { Effect, Semaphore } from "effect"
 import { Inbox } from "./inbox.ts"
+import { bundledExecutable, type ClaudeProcessSettings } from "./process.ts"
 
 const PATIENCE = "25 seconds"
 
-export interface Probed {
+interface Probed {
   readonly health: Health
   readonly models: ReadonlyArray<ModelInfo>
 }
 
-export interface ProbeOptions {
+interface ProbeOptions {
   readonly executable: string
   readonly env: Readonly<Record<string, string>>
 }
-
 const SUBSCRIPTIONS: Record<string, string> = {
   max: "Claude Max",
   pro: "Claude Pro",
@@ -73,7 +74,7 @@ const modelsOf = (models: ReadonlyArray<ClaudeModel>): ReadonlyArray<ModelInfo> 
       efforts: model.supportsEffort ? [...(model.supportedEffortLevels ?? [])] : [],
     }))
 
-export const probe = (options: ProbeOptions): Effect.Effect<Probed> =>
+const probe = (options: ProbeOptions): Effect.Effect<Probed> =>
   Effect.gen(function* () {
     const inbox = new Inbox<never>()
     const abort = yield* Effect.acquireRelease(
@@ -125,3 +126,55 @@ export const probe = (options: ProbeOptions): Effect.Effect<Probed> =>
       }),
     ),
   )
+
+const failure = (message: string) => new ProviderError({ message })
+
+/** The account of the Claude Code `settings` start; the probe's answer is kept until a refresh or a sign-in. */
+export const claudeAccount = (settings: ClaudeProcessSettings): ProviderAccount => {
+  const executable = settings.executable ?? bundledExecutable()
+  const env = settings.env ?? {}
+  const probing = Semaphore.makeUnsafe(1)
+  let probed: Probed | undefined
+  const probedNow = (refresh: boolean) =>
+    probing.withPermits(1)(
+      Effect.suspend(() =>
+        probed && !refresh
+          ? Effect.succeed(probed)
+          : Effect.tap(probe({ executable, env }), (found) => Effect.sync(() => (probed = found))),
+      ),
+    )
+  const command = (args: ReadonlyArray<string>) =>
+    Effect.tryPromise({
+      try: async () => {
+        const child = Bun.spawn([executable, ...args], {
+          cwd: tmpdir(),
+          env: { ...process.env, ...env },
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        })
+        const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()])
+        if (code !== 0) throw new Error(stderr.trim() || `exit ${code}`)
+      },
+      catch: (error) =>
+        failure(`\`claude ${args.join(" ")}\` failed: ${error instanceof Error ? error.message : String(error)}`),
+    })
+  return {
+    kind: "claude",
+    health: (refresh) => Effect.map(probedNow(refresh), (found) => found.health),
+    models: (refresh) => Effect.map(probedNow(refresh), (found) => found.models),
+    signInMethods: ["terminal"],
+    signIn: (_method, flow) =>
+      Effect.gen(function* () {
+        yield* flow.show({ _tag: "terminal", command: [executable, "auth", "login"], env })
+        while (true) {
+          const response = yield* flow.response
+          if (response._tag !== "terminal_exited") continue
+          if (!response.success) return yield* failure("`claude auth login` did not finish")
+          probed = undefined
+          return
+        }
+      }),
+    signOut: Effect.tap(command(["auth", "logout"]), () => Effect.sync(() => (probed = undefined))),
+  }
+}

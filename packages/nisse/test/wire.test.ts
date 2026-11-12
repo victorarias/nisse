@@ -1,53 +1,51 @@
+// The wire: a real server in process, driven as a raw JSON-RPC client over its socket.
 import { expect, test } from "bun:test"
-import { LIVE_OUTPUT_TAIL, type Delivery } from "@nisse/protocol"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { bodies, deadline, entriesOf, errorTag, hangUpMidAnswer, RawClient, statusOf } from "./support/raw.ts"
-import { runningServer, servingUntilIdle, tempHome } from "./support/server.ts"
 import { homeWithExtensions } from "./support/extensions.ts"
+import { deadline, errorTag, hangUpMidAnswer, RawClient } from "./support/raw.ts"
+import {
+  runEnds,
+  runningServer,
+  servingUntilIdle,
+  settled,
+  start,
+  submit,
+  transcript,
+  type ViewWatch,
+  watchView,
+  tempHome,
+} from "./support/server.ts"
+import { applyImmutable, type Op } from "@nisse/delta"
+import { DEFAULT_MAX_BYTES } from "@nisse/env/truncate"
+import { PROTOCOL_VERSION, RUN_END_KIND, STATUS_LINES_KIND, TOAST_KIND, USER_KIND, type View } from "@nisse/protocol"
+import { VERSION } from "../src/version.ts"
 
-const start = async (client: RawClient, options: Record<string, unknown> = {}) =>
-  (await client.call("conversation/start", { cwd: "/work", ...options })).result.id
+type Tree = { _tag: "tree"; conversation: string; seq: number; status: string; ended?: Record<string, string> }
+type Trees = { _tag: "trees"; seq: number; trees: Array<Tree> } | Tree
+const opened = (watch: ViewWatch) => watch.until(() => true)
 
-const submit = (
-  client: RawClient,
-  conversation: string,
-  text: string,
-  requestId: string = crypto.randomUUID(),
-  steer = false,
-) => client.call("conversation/submit", { conversation, requestId, author: "ada", text, steer })
+/** The model has said something the view shows live, before the run ends. */
+const speaking = (watch: ViewWatch) => {
+  const live = watch.view().docs["pi.live"] as { generation?: { message?: { content?: unknown[] } } } | undefined
+  return (live?.generation?.message?.content?.length ?? 0) > 0
+}
 
-const ended = (count: number) => (deliveries: ReadonlyArray<Delivery>) =>
-  bodies(deliveries).filter((body) => body._tag === "run_end").length >= count
-
-const settled = (deliveries: ReadonlyArray<Delivery>) => ended(1)(deliveries) && statusOf(deliveries) === "idle"
-
-const speaking = (deliveries: ReadonlyArray<Delivery>) =>
-  deliveries.some((delivery) => delivery._tag === "commit" && delivery.live?.some((change) => change._tag === "text"))
-
-const withoutUsers = (deliveries: ReadonlyArray<Delivery>) => bodies(deliveries).filter((body) => body._tag !== "user")
-
-const workdir = () => mkdtempSync("/tmp/nisse-work-")
-
-test("answer-wire, answer-shared: every client of a conversation sees the prompt and the same answer", async () => {
+test("answer-wire, answer-shared: every client of a conversation sees the prompt, the answer and how the run ended", async () => {
   await using server = await runningServer([{ text: "hello ada" }])
   const ada = await RawClient.connect(server.home.socket)
   const grace = await RawClient.connect(server.home.socket)
   const conversation = await start(ada)
-  const adaView = ada.subscribe({ conversation })
-  const graceView = grace.subscribe({ conversation })
-  await adaView.until((deliveries) => deliveries.length > 0)
-  await graceView.until((deliveries) => deliveries.length > 0)
+  const adaView = watchView(ada, conversation)
+  const graceView = watchView(grace, conversation)
+  await Promise.all([opened(adaView), opened(graceView)])
   await submit(ada, conversation, "hi")
-  await adaView.until(ended(1))
-  await graceView.until(ended(1))
-  expect(bodies(adaView.deliveries)).toEqual([
-    expect.objectContaining({ _tag: "user", text: "hi" }),
-    { _tag: "message", text: "hello ada" },
-    { _tag: "run_end", outcome: "answered" },
-  ])
-  expect(graceView.deliveries.map((delivery) => delivery.seq)).toEqual(adaView.deliveries.map((d) => d.seq))
-  expect(adaView.deliveries.at(-1)).toMatchObject({ status: "idle" })
+  await adaView.until(settled(1))
+  await graceView.until(settled(1))
+  expect(transcript(adaView.view().entries)).toEqual(["user: hi", "assistant: hello ada", "run_end: answered"])
+  const answer = adaView.view().entries.find((entry) => entry.kind === "pi.assistant")!.id
+  expect(runEnds(adaView.view().entries)).toEqual([{ outcome: "answered", answer }])
+  expect(graceView.view()).toEqual(adaView.view())
   ada.close()
   grace.close()
 })
@@ -56,127 +54,128 @@ test("queue-idempotent: submitting again with the same request id is answered on
   await using server = await runningServer([{ text: "once" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  const first = await submit(client, conversation, "hi", "request-1")
-  const again = await submit(client, conversation, "hi", "request-1")
-  expect(again.result.submission).toBe(first.result.submission)
-  await view.until(ended(1))
-  const snapshot = client.subscribe({ conversation })
-  await snapshot.until((deliveries) => deliveries.length > 0)
-  expect(bodies(snapshot.deliveries).filter((body) => body._tag === "user")).toHaveLength(1)
-  client.close()
-})
-
-test("resume-since: a client resuming from a seq receives exactly the commits it missed", async () => {
-  await using server = await runningServer([{ text: "first" }, { text: "second" }])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "one")
-  await view.until(ended(1))
-  const resumeAt = view.deliveries.at(-1)!.seq
-  await submit(client, conversation, "two")
-  await view.until(ended(2))
-  const resumed = client.subscribe({ conversation, sinceSeq: resumeAt })
-  const missed = view.deliveries.filter((delivery) => delivery.seq > resumeAt)
-  await resumed.until((deliveries) => deliveries.length >= missed.length)
-  expect(resumed.deliveries).toEqual(missed)
-  client.close()
-})
-
-test("queue-run, queue-shared: prompts sent while nisse is working wait in a visible queue and run in order", async () => {
-  await using server = await runningServer([{ text: "slow answer here", delayMs: 100 }, { text: "quick" }])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "first")
-  await view.until(speaking)
-  await submit(client, conversation, "second")
-  await view.until((deliveries) =>
-    deliveries.some((delivery) => delivery._tag === "commit" && delivery.enqueued?.text === "second"),
+  const view = watchView(client, conversation)
+  const first = await submit(
+    client,
+    conversation,
+    "hi",
+    "request-1" as `${string}-${string}-${string}-${string}-${string}`,
   )
-  await view.until(ended(2))
-  expect(bodies(view.deliveries).map((body) => ("text" in body ? body.text : body._tag))).toEqual([
-    "first",
-    "slow answer here",
-    "run_end",
-    "second",
-    "quick",
-    "run_end",
+  const again = await submit(
+    client,
+    conversation,
+    "hi",
+    "request-1" as `${string}-${string}-${string}-${string}-${string}`,
+  )
+  expect(again.result).toEqual(first.result)
+  await view.until(settled(1))
+  expect(transcript(view.view().entries)).toEqual(["user: hi", "assistant: once", "run_end: answered"])
+  client.close()
+})
+
+test("queue-run: prompts sent while nisse is working wait and run in order, each to its own end", async () => {
+  await using server = await runningServer([{ text: "the first answer", delayMs: 100 }, { text: "second answer" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "one")
+  await view.until(speaking)
+  await submit(client, conversation, "two")
+  await view.until(settled(2))
+  expect(transcript(view.view().entries)).toEqual([
+    "user: one",
+    "assistant: the first answer",
+    "run_end: answered",
+    "user: two",
+    "assistant: second answer",
+    "run_end: answered",
   ])
   client.close()
 })
 
 test("interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted", async () => {
-  await using server = await runningServer([{ text: "one two three four five six seven eight", delayMs: 150 }])
+  await using server = await runningServer([{ text: "one two three four five six seven eight", delayMs: 100 }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
-  const view = client.subscribe({ conversation })
+  const view = watchView(client, conversation)
   await submit(client, conversation, "count")
   await view.until(speaking)
-  await client.call("conversation/interrupt", { conversation })
-  await view.until(ended(1))
-  const [said, end] = withoutUsers(view.deliveries)
-  expect(end).toEqual({ _tag: "run_end", outcome: "interrupted" })
-  expect(said).toMatchObject({ _tag: "message" })
-  expect("one two three four five six seven eight".startsWith((said as { text: string }).text)).toBe(true)
-  expect(view.deliveries.at(-1)).toMatchObject({ status: "idle" })
+  expect(await client.call("conversation/interrupt", { conversation })).toMatchObject({ result: null })
+  await view.until(settled(1))
+  const said = transcript(view.view().entries)
+  expect(said[0]).toBe("user: count")
+  expect(said[1]).toMatch(/^assistant: one /)
+  expect(said[1]!.length).toBeLessThan("assistant: one two three four five six seven eight".length)
+  expect(said.slice(2)).toEqual(["run_end: interrupted (aborted)"])
   client.close()
 })
 
 test("answer-failed: a model failure is recorded after what was said and the conversation goes idle", async () => {
-  await using server = await runningServer([{ text: "partial", fail: "provider went away" }])
+  await using server = await runningServer([{ text: "half", fail: "provider went away" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "go")
-  await view.until(ended(1))
-  expect(withoutUsers(view.deliveries)).toEqual([
-    { _tag: "message", text: "partial" },
-    { _tag: "run_end", outcome: "failed", message: "provider went away" },
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "hi")
+  await view.until(settled(1))
+  expect(transcript(view.view().entries)).toEqual([
+    "user: hi",
+    "assistant: half [error]",
+    "run_end: failed (provider went away)",
   ])
-  await view.until((deliveries) => statusOf(deliveries) === "idle")
   client.close()
 })
 
 test("wire-dropped: a client that stops reading is dropped while the others keep up", async () => {
-  await using server = await runningServer(Array.from({ length: 1500 }, () => ({ text: "ok" })))
+  // A client that reads peaked at 34 queued changes with 100 prompts submitted at once; 200 prompts make about 600.
+  const connectionQueue = 128
+  const prompts = 200
+  await using server = await runningServer(
+    Array.from({ length: prompts }, () => ({ text: "ok" })),
+    { connectionQueue },
+  )
   const reader = await RawClient.connect(server.home.socket)
   const stalled = await RawClient.connect(server.home.socket, { ack: false })
   const conversation = await start(reader)
-  const live = reader.subscribe({ conversation })
-  const behind = stalled.subscribe({ conversation })
-  await Promise.all([live, behind].map((view) => view.until((deliveries) => deliveries.length > 0)))
-  for (let batch = 0; batch < 15; batch++) {
+  const live = watchView(reader, conversation)
+  const behind = watchView(stalled, conversation)
+  await Promise.all([opened(live), opened(behind)])
+  for (let batch = 0; batch < prompts / 100; batch++) {
     await Promise.all(Array.from({ length: 100 }, (_, i) => submit(reader, conversation, `prompt ${batch}-${i}`)))
   }
-  await live.until(ended(1500), 20_000)
+  // Every run ends while the stalled client holds the server's queue full: its commits never waited for it.
+  await live.until(settled(prompts))
   stalled.resumeAcks(behind.id)
-  expect(errorTag(await deadline(behind.ended, 5000, "stalled client told it fell behind"))).toBe("FellBehind")
-  expect(behind.deliveries.length).toBe(1)
+  const dropped = await deadline(behind.ended, 5000, "stalled client told it fell behind")
+  expect(errorTag(dropped)).toBe("FellBehind")
+  expect(behind.items).toHaveLength(1)
   reader.close()
   stalled.close()
-}, 30_000)
+})
 
 test("wire-hangup: a client that hangs up while the server still writes to it is not logged as an error", async () => {
   await using server = await runningServer([{ text: "long ".repeat(5000) }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client)
-  const view = client.subscribe({ conversation })
+  const view = watchView(client, conversation)
+  await opened(view)
   await submit(client, conversation, "go")
-  await view.until(settled)
-  await hangUpMidAnswer(server.home.socket, "conversation/subscribe", { conversation })
-  expect(await client.call("conversation/list")).toMatchObject({ result: [{ id: conversation }] })
+  await view.until(settled(1))
+  await hangUpMidAnswer(server.home.socket, "conversation/watch", { conversation })
+  await submit(client, conversation, "still here")
+  await view.until(settled(2))
   client.close()
   await server.stop()
   expect(server.logged.filter((entry) => entry.level === "Error")).toEqual([])
 })
 
-test("wire-unknown: subscribing to a conversation that does not exist says so", async () => {
+test("wire-unknown: watching a conversation that does not exist says so", async () => {
   await using server = await runningServer()
   const client = await RawClient.connect(server.home.socket)
-  const reply = await client.subscribe({ conversation: "nope" }).ended
-  expect(errorTag(reply)).toBe("NoSuchConversation")
+  for (const conversation of ["nope", "999"]) {
+    const reply = await client.watch("conversation/watch", { conversation }).ended
+    expect(errorTag(reply)).toBe("NoSuchConversation")
+  }
+  expect(errorTag(await submit(client, "999", "hi"))).toBe("NoSuchConversation")
   client.close()
 })
 
@@ -185,667 +184,643 @@ test("server-idle-exit: the server exits once no client is connected and nothing
   const served = await deadline(servingUntilIdle(home, "200 millis"), 5000, "server listening")
   const client = await RawClient.connect(home.socket)
   const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await view.until((deliveries) => deliveries.length > 0)
+  await opened(watchView(client, conversation))
   client.close()
   await deadline(served.exited, 5000, "server exit")
 })
+
+test("server-idle-exit: a submission's run keeps the server up after its client leaves, past the idle grace", async () => {
+  const home = tempHome()
+  const served = await deadline(
+    servingUntilIdle(home, "50 millis", [{ text: "one two three four", delayMs: 100 }]),
+    5000,
+    "server listening",
+  )
+  let client = await RawClient.connect(home.socket)
+  const conversation = await start(client)
+  // No watch: only the submission's run keeps the server up once the client goes.
+  await submit(client, conversation, "count")
+  client.close()
+  await deadline(served.exited, 5000, "server exit")
+
+  // A server that went idle mid-run would have left no answer and no run_end.
+  await using again = await runningServer([], { home })
+  client = await RawClient.connect(again.home.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(transcript(after.view().entries)).toEqual([
+    "user: count",
+    "assistant: one two three four",
+    "run_end: answered",
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
+})
+
+test("server-idle-exit, child-tools: a subagent's work keeps the server up after its client leaves, past the idle grace", async () => {
+  const home = tempHome()
+  const served = await deadline(
+    servingUntilIdle(home, "50 millis", [
+      call("spawn_agent", { task_name: "writer", message: "count", fork_turns: "none" }),
+      { text: "spawned" },
+      { text: "one two three four", delayMs: 100, agent: "/root/writer" },
+      { text: "heard it" },
+    ]),
+    5000,
+    "server listening",
+  )
+  let client = await RawClient.connect(home.socket)
+  const conversation = await start(client)
+  await submit(client, conversation, "delegate")
+  client.close()
+  await deadline(served.exited, 5000, "server exit")
+
+  // A server that went idle while the subagent worked would have mailed nothing back to the parent.
+  await using again = await runningServer([], { home })
+  client = await RawClient.connect(again.home.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(mails(after)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  expect(transcript(after.view().entries).slice(-2)).toEqual(["assistant: heard it", "run_end: answered"])
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
+})
+
+test("server-stop, child-tools: stopping the server lets a working subagent finish and report first", async () => {
+  const home = tempHome()
+  const served = await deadline(
+    servingUntilIdle(home, "1 hour", [
+      call("spawn_agent", { task_name: "writer", message: "count", fork_turns: "none" }),
+      { text: "spawned" },
+      { text: "one two three four", delayMs: 100, agent: "/root/writer" },
+      { text: "heard it" },
+    ]),
+    5000,
+    "server listening",
+  )
+  let client = await RawClient.connect(home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate")
+  await view.until(settled(1))
+  expect(await client.call("server/stop", null)).toMatchObject({ result: null })
+  client.close()
+  await deadline(served.exited, 5000, "server exit")
+
+  // A stop that cut the subagent off would have mailed nothing back to the parent.
+  await using again = await runningServer([], { home })
+  client = await RawClient.connect(again.home.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(mails(after)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
+}, 30_000)
 
 test("server-stop: stopping the server answers the caller, then the server exits", async () => {
   const home = tempHome()
   const served = await deadline(servingUntilIdle(home, "1 hour"), 5000, "server listening")
   const client = await RawClient.connect(home.socket)
-  const reply = await client.call("server/stop", null)
-  expect(reply).toMatchObject({ result: null })
+  expect(await client.call("server/stop", null)).toMatchObject({ result: null })
   await deadline(served.exited, 5000, "server exit")
   client.close()
 })
 
-const writeCall = (path: string, content: string) => ({ tool: { name: "Write", input: { file_path: path, content } } })
-
-test("approval-wire: a call that changes files waits for a person's answer and runs once allowed", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([writeCall(`${cwd}/note.txt`, "hi"), { text: "wrote it" }])
-  const ada = await RawClient.connect(server.home.socket)
-  const grace = await RawClient.connect(server.home.socket)
-  const conversation = await start(ada, { cwd })
-  const view = ada.subscribe({ conversation })
-  await submit(ada, conversation, "write a note")
-  await view.until((deliveries) => statusOf(deliveries) === "waiting")
-  const approval = bodies(view.deliveries).find((body) => body._tag === "approval")!
-  expect(approval).toMatchObject({ tool: "Write", input: { file_path: `${cwd}/note.txt` } })
-  expect(() => readFileSync(`${cwd}/note.txt`)).toThrow()
-  const answer = { conversation, approval: (approval as { approval: string }).approval, author: "grace", allow: true }
-  expect((await grace.call("approval/resolve", answer)).result).toEqual({ accepted: true })
-  expect((await ada.call("approval/resolve", { ...answer, author: "ada", allow: false })).result).toEqual({
-    accepted: false,
-  })
-  await view.until(settled)
-  expect(withoutUsers(view.deliveries).map((body) => body._tag)).toEqual([
-    "tool_call",
-    "approval",
-    "approval_answer",
-    "tool_result",
-    "message",
-    "run_end",
-  ])
-  expect(entriesOf(view.deliveries).find((entry) => entry.body._tag === "approval_answer")?.author).toEqual({
-    _tag: "person",
-    name: "grace",
-  })
-  expect(readFileSync(`${cwd}/note.txt`, "utf8")).toBe("hi")
-  ada.close()
-  grace.close()
-  rmSync(cwd, { recursive: true })
+test("wire-initialize: a client is answered with the server's version and the protocol", async () => {
+  await using server = await runningServer()
+  const client = await RawClient.connect(server.home.socket)
+  const reply = await client.call("initialize", { client: "test", version: "0", protocol: PROTOCOL_VERSION })
+  expect(reply.result).toEqual({ version: VERSION, protocol: PROTOCOL_VERSION })
+  client.close()
 })
 
-test("approval-wire: a denied call is reported to the model as denied and nothing changes", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([writeCall(`${cwd}/note.txt`, "hi"), { text: "ok, I won't" }])
+test("watch-rpc: a watch through a window opens on the newest entries, and from a position gets only what followed", async () => {
+  await using server = await runningServer([{ text: "a" }, { text: "b" }, { text: "c" }])
   const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "write a note")
-  await view.until((deliveries) => statusOf(deliveries) === "waiting")
-  const approval = bodies(view.deliveries).find((body) => body._tag === "approval") as { approval: string }
-  await client.call("approval/resolve", { conversation, approval: approval.approval, author: "ada", allow: false })
-  await view.until(settled)
-  expect(bodies(view.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({ error: true })
-  expect(() => readFileSync(`${cwd}/note.txt`)).toThrow()
+  const conversation = await start(client)
+  const all = watchView(client, conversation)
+  for (const [i, text] of ["one", "two", "three"].entries()) {
+    await submit(client, conversation, text)
+    await all.until(settled(i + 1))
+  }
+  const entries = all.view().entries
+  const third = entries.findIndex((entry) => transcript([entry])[0] === "user: three")
+
+  const newest = watchView(client, conversation, { min: 3, max: 6 })
+  await newest.until(() => true)
+  expect(transcript(newest.view().entries)).toEqual(["user: three", "assistant: c", "run_end: answered"])
+  expect(newest.view().before).toBe(entries[third - 1]!.id)
+
+  const resumed = watchView(client, conversation, { from: entries[3]!.id })
+  await resumed.until(() => true)
+  expect(resumed.view().entries.map((entry) => entry.id)).toEqual(entries.slice(3).map((entry) => entry.id))
   client.close()
-  rmSync(cwd, { recursive: true })
+})
+
+test("watch-rpc: a window that is not one is refused by name, and the connection's other watches go on", async () => {
+  await using server = await runningServer([{ text: "still here" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await opened(view)
+  const refused = await client.watch("conversation/watch", { conversation, window: { min: 10, max: 5 } }).ended
+  expect(errorTag(refused)).toBe("InvalidWindow")
+  expect(JSON.stringify(refused.error)).toContain("Window max must be an integer >= min (10), got 5")
+  await submit(client, conversation, "hi")
+  await view.until(settled(1))
+  expect(transcript(view.view().entries)).toEqual(["user: hi", "assistant: still here", "run_end: answered"])
+  client.close()
+})
+
+test("server-stop: stopping the server while nisse answers lets the answer finish first", async () => {
+  const home = tempHome()
+  const served = await deadline(
+    servingUntilIdle(home, "1 hour", [{ text: "one two three four", delayMs: 100 }]),
+    5000,
+    "server listening",
+  )
+  let client = await RawClient.connect(home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "count")
+  await view.until(speaking)
+  expect(await client.call("server/stop", null)).toMatchObject({ result: null })
+  await deadline(served.exited, 5000, "server exit")
+  client.close()
+
+  // What the stopped server committed, as a fresh server shows it: the whole answer, and its run's end.
+  await using again = await runningServer([], { home })
+  client = await RawClient.connect(again.home.socket)
+  const after = watchView(client, conversation)
+  await after.until(() => true)
+  expect(transcript(after.view().entries)).toEqual([
+    "user: count",
+    "assistant: one two three four",
+    "run_end: answered",
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true, force: true })
+})
+
+type Approvals = { auto?: true; requests: Record<string, { tool: string; answer?: unknown }> }
+const approvalsOf = (watch: ViewWatch) => watch.view().docs["nisse.approvals"] as Approvals | undefined
+const waitingApproval = async (watch: ViewWatch) => {
+  await watch.until((current) => Object.keys(approvalsOf(current)?.requests ?? {}).length > 0)
+  return Object.keys(approvalsOf(watch)!.requests)[0]!
+}
+const toolResults = (watch: ViewWatch) =>
+  watch
+    .seen()
+    .filter((entry) => entry.kind === "pi.tool-result")
+    .map((entry) => {
+      const message = entry.model![0] as { content: Array<{ text?: string }>; isError: boolean }
+      return { text: message.content.map((block) => block.text ?? "").join(""), isError: message.isError }
+    })
+const ECHO = [{ text: "checking", tool: { name: "bash", input: { command: "echo approved" } } }, { text: "all done" }]
+
+test("approval-wire: two clients answer one approval at once and the first answer counts", async () => {
+  await using server = await runningServer(ECHO)
+  const ada = await RawClient.connect(server.home.socket)
+  const bo = await RawClient.connect(server.home.socket)
+  const conversation = await start(ada, server.home.dir)
+  const view = watchView(ada, conversation)
+  await submit(ada, conversation, "check it")
+  const approval = await waitingApproval(view)
+  expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "bash" })
+  const answers = await Promise.all([
+    ada.call("approval/resolve", { conversation, approval, author: "ada", allow: true }),
+    bo.call("approval/resolve", { conversation, approval, author: "bo", allow: false }),
+  ])
+  const accepted = answers.map((reply) => (reply.result as { accepted: boolean }).accepted)
+  expect(accepted.filter(Boolean)).toHaveLength(1)
+  const winner = accepted[0] ? { author: "ada", allow: true } : { author: "bo", allow: false }
+  await view.until(settled(1))
+  const answered = view.seen().filter((entry) => entry.kind === "nisse.approval")
+  expect(answered.map((entry) => entry.data)).toEqual([expect.objectContaining({ approval, ...winner })])
+  expect(toolResults(view)).toEqual([
+    winner.allow
+      ? { text: "approved\n", isError: false }
+      : { text: expect.stringContaining("denied by bo: the person did not allow this call"), isError: true },
+  ])
+  // The request leaves with its call, and a late answer is not accepted.
+  expect(approvalsOf(view)!.requests).toEqual({})
+  const late = await ada.call("approval/resolve", { conversation, approval, author: "cy", allow: true })
+  expect(late.result).toEqual({ accepted: false })
+  expect(transcript(view.view().entries).slice(-2)).toEqual(["assistant: all done", "run_end: answered"])
+  ada.close()
+  bo.close()
+})
+
+test("approval-wire: a denied call is reported to the model as denied and does not run, and an unknown approval is refused by name", async () => {
+  await using server = await runningServer([
+    { tool: { name: "bash", input: { command: "touch made" } } },
+    { text: "all done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "make it")
+  const approval = await waitingApproval(view)
+  const reply = await client.call("approval/resolve", { conversation, approval, author: "bo", allow: false })
+  expect(reply.result).toEqual({ accepted: true })
+  await view.until(settled(1))
+  expect(toolResults(view)).toEqual([
+    { text: expect.stringContaining("denied by bo: the person did not allow this call"), isError: true },
+  ])
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+  expect(
+    errorTag(await client.call("approval/resolve", { conversation, approval: "999", author: "bo", allow: true })),
+  ).toBe("NoSuchApproval")
+  client.close()
+})
+
+test("codemode-nested-policy: a script's call that changes things asks first, and a denied one fails in the script without running", async () => {
+  const code = 'try { await tools.bash({ command: "touch made" }) } catch (error) { text("refused: " + error.message) }'
+  await using server = await runningServer([{ tool: { name: "codemode", input: { code } } }, { text: "all done" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: server.home.dir, model: "script-code-mode" }))
+    .result.conversation as string
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "make it")
+  const approval = await waitingApproval(view)
+  expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "bash" })
+  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: false })
+  await view.until(settled(1))
+  const result = toolResults(view).at(-1)
+  expect(result!.text).toStartWith("Script completed")
+  expect(result!.text).toContain("refused: ")
+  expect(result!.text).toContain("denied by bo: the person did not allow this call")
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+  expect(transcript(view.view().entries).slice(-2)).toEqual(["assistant: all done", "run_end: answered"])
+  client.close()
 })
 
 test("tool-read-only, approval-auto: reading calls and conversations started with auto approvals run without asking", async () => {
-  const cwd = workdir()
-  await Bun.write(`${cwd}/a.txt`, "alpha\n")
   await using server = await runningServer([
-    { tool: { name: "Read", input: { file_path: `${cwd}/a.txt` } } },
+    { tool: { name: "read", input: { path: "notes.txt" } } },
     { text: "read it" },
-    writeCall(`${cwd}/b.txt`, "beta"),
-    { text: "wrote it" },
+    ...ECHO,
   ])
+  await Bun.write(`${server.home.dir}/notes.txt`, "the gnome lives under the floor\n")
   const client = await RawClient.connect(server.home.socket)
-  const asking = await start(client, { cwd })
-  const reading = client.subscribe({ conversation: asking })
-  await submit(client, asking, "read a")
-  await reading.until(settled)
-  expect(bodies(reading.deliveries).some((body) => body._tag === "approval")).toBe(false)
-  expect(bodies(reading.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({
-    output: expect.stringContaining("alpha"),
-    error: false,
-  })
-
-  const auto = await start(client, { cwd, approvals: "auto" })
-  const writing = client.subscribe({ conversation: auto })
-  await submit(client, auto, "write b")
-  await writing.until(settled)
-  expect(bodies(writing.deliveries).some((body) => body._tag === "approval")).toBe(false)
-  expect(readFileSync(`${cwd}/b.txt`, "utf8")).toBe("beta")
-  client.close()
-  rmSync(cwd, { recursive: true })
-})
-
-test("tool-output-live: a running command's output streams live and ends as its result", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([
-    { tool: { name: "Bash", input: { command: "echo first; sleep 0.3; echo second" } } },
-    { text: "done" },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd, approvals: "auto" })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "run it")
-  await view.until(settled)
-  const live = view.deliveries.flatMap((delivery) => (delivery._tag === "commit" ? (delivery.live ?? []) : []))
-  const streamed = live.flatMap((change) => (change._tag === "output" ? [change.append] : [])).join("")
-  expect(streamed).toBe("first\nsecond\n")
-  expect(live.findIndex((change) => change._tag === "output")).toBeLessThan(
-    live.findIndex((change) => change._tag === "output_end"),
-  )
-  expect(bodies(view.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({
-    output: expect.stringContaining("first\nsecond"),
-  })
-  client.close()
-  rmSync(cwd, { recursive: true })
-})
-
-test("approval-interrupt: interrupting while nisse waits for an answer withdraws the question", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([writeCall(`${cwd}/note.txt`, "hi")])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "write a note")
-  await view.until((deliveries) => statusOf(deliveries) === "waiting")
-  const approval = bodies(view.deliveries).find((body) => body._tag === "approval") as { approval: string }
-  await client.call("conversation/interrupt", { conversation })
-  await view.until(settled)
-  expect(withoutUsers(view.deliveries).slice(-3)).toEqual([
-    { _tag: "approval_answer", approval: approval.approval, allow: false },
-    expect.objectContaining({ _tag: "tool_result", error: true }),
-    { _tag: "run_end", outcome: "interrupted" },
-  ])
-  const late = await client.call("approval/resolve", {
-    conversation,
-    approval: approval.approval,
-    author: "ada",
-    allow: true,
-  })
-  expect(late.result).toEqual({ accepted: false })
-  client.close()
-  rmSync(cwd, { recursive: true })
-})
-
-test("steer-wire, steer-place: a steering prompt reaches nisse during the run instead of after it", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([
-    { tool: { name: "Bash", input: { command: "sleep 0.5" } } },
-    { text: "steered" },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd, approvals: "auto" })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "start")
-  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "tool_call"))
-  await submit(client, conversation, "also do this", crypto.randomUUID(), true)
-  await view.until(settled)
-  expect(bodies(view.deliveries).map((body) => ("text" in body ? body.text : body._tag))).toEqual([
-    "start",
-    "tool_call",
-    "tool_result",
-    "also do this",
-    "steered",
-    "run_end",
-  ])
-  client.close()
-  rmSync(cwd, { recursive: true })
-})
-
-test("provider-unknown: starting a conversation with a provider nisse does not have says so", async () => {
-  await using server = await runningServer()
-  const client = await RawClient.connect(server.home.socket)
-  const reply = await client.call("conversation/start", { cwd: "/work", provider: "nope" })
-  expect(errorTag(reply)).toBe("UnknownProvider")
+  const reading = await start(client, server.home.dir)
+  const readView = watchView(client, reading)
+  await submit(client, reading, "read it")
+  await readView.until(settled(1))
+  expect(toolResults(readView)).toEqual([{ text: expect.stringContaining("the gnome lives"), isError: false }])
+  const auto = (await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto" })).result
+    .conversation as string
+  const autoView = watchView(client, auto)
+  await submit(client, auto, "check it")
+  await autoView.until(settled(1))
+  expect(toolResults(autoView)).toEqual([{ text: "approved\n", isError: false }])
+  expect(autoView.seen().some((entry) => entry.kind === "nisse.approval")).toBe(false)
   client.close()
 })
 
-const outputChanges = (deliveries: ReadonlyArray<Delivery>) =>
-  deliveries.flatMap((delivery) =>
-    delivery._tag === "commit"
-      ? (delivery.live ?? []).flatMap((change) => (change._tag === "output" ? [change] : []))
-      : [],
-  )
-
-test("tool-output-live: a command's output keeps characters split across reads and between streams whole", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([
-    {
-      tool: {
-        name: "Bash",
-        input: { command: "printf '\\342'; sleep 0.1; printf 'err\\n' >&2; sleep 0.1; printf '\\202\\254\\n'" },
-      },
-    },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd, approvals: "auto" })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "euro")
-  await view.until(settled)
-  expect(bodies(view.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({ output: "err\n€\n" })
-  client.close()
-  rmSync(cwd, { recursive: true })
-})
-
-test("tool-output-live: a verbose command's live output stays a bounded tail", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([
-    { tool: { name: "Bash", input: { command: "head -c 2000000 /dev/zero | tr '\\0' x; sleep 0.3" } } },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd, approvals: "auto" })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "flood")
-  await view.until(settled)
-  const appended = outputChanges(view.deliveries).map((change) => change.append.length)
-  expect(appended.length).toBeGreaterThan(0)
-  expect(Math.max(...appended)).toBeLessThanOrEqual(LIVE_OUTPUT_TAIL)
-  expect(appended.reduce((sum, length) => sum + length, 0)).toBeLessThan(200_000)
-  client.close()
-  rmSync(cwd, { recursive: true })
-})
-
-test("tool-output-live: output a background process writes after its call ends never reaches the conversation", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([
-    { tool: { name: "Bash", input: { command: "(sleep 1.5; echo late) & echo now" } } },
-    { tool: { name: "Bash", input: { command: "sleep 1" } } },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd, approvals: "auto" })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "background")
-  await view.until(settled)
-  expect(bodies(view.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({ output: "now\n" })
-  expect(outputChanges(view.deliveries).some((change) => change.append.includes("late"))).toBe(false)
-  client.close()
-  rmSync(cwd, { recursive: true })
-})
-
-test("tool-grep-lines: Grep reports only the lines a file has, whatever its line endings", async () => {
-  const cwd = workdir()
-  await Bun.write(`${cwd}/notes.txt`, "alpha\n\nbeta\n")
-  await Bun.write(`${cwd}/windows.txt`, "alpha\r\n\r\nbeta\r\n")
-  await using server = await runningServer([{ tool: { name: "Grep", input: { pattern: "^$" } } }])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "blank lines")
-  await view.until(settled)
-  expect(bodies(view.deliveries).find((body) => body._tag === "tool_result")).toMatchObject({
-    output: expect.stringMatching(/^(notes\.txt:2:\nwindows\.txt:2:|windows\.txt:2:\nnotes\.txt:2:)$/),
-    error: false,
-  })
-  client.close()
-  rmSync(cwd, { recursive: true })
-})
-
-const modelOf = async (client: RawClient, conversation: string) => {
-  const view = client.subscribe({ conversation })
-  await view.until((deliveries) => deliveries.length > 0)
-  const first = view.deliveries[0]!
-  return first._tag === "snapshot" ? first.conversation.model : undefined
-}
-
-test("model-default: a new conversation takes the project's default model, else the home's, else the one chosen last", async () => {
-  const project = workdir()
-  const inside = `${project}/src`
-  await Bun.write(`${project}/.nisse/config.toml`, 'default_model = { provider = "script", effort = "low" }\n')
-  await Bun.write(`${inside}/keep`, "")
-  try {
-    {
-      await using server = await runningServer([], {
-        config: { default_model: { provider: "openai", model: "gpt-test" } },
-      })
-      const client = await RawClient.connect(server.home.socket)
-      expect(await modelOf(client, await start(client, { cwd: inside }))).toEqual({ provider: "script", effort: "low" })
-      expect(await modelOf(client, await start(client))).toEqual({ provider: "openai", model: "gpt-test" })
-      expect(await modelOf(client, await start(client, { model: "gpt-other" }))).toEqual({
-        provider: "openai",
-        model: "gpt-other",
-      })
-      client.close()
-    }
-    await using server = await runningServer()
-    const client = await RawClient.connect(server.home.socket)
-    await start(client, { provider: "claude", model: "opus" })
-    expect(await modelOf(client, await start(client))).toEqual({ provider: "claude", model: "opus" })
-    client.close()
-  } finally {
-    rmSync(project, { recursive: true, force: true })
-  }
-})
-
-test("model-switch, model-switch-provider: switching models is an entry everyone sees, and a provider nisse does not have is refused", async () => {
-  await using server = await runningServer()
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await view.until((deliveries) => deliveries.length > 0)
-
-  const switched = await client.call("conversation/select_model", {
-    conversation,
-    author: "ada",
-    selection: { provider: "openai", model: "gpt-test", effort: "high" },
-  })
-  const refused = await client.call("conversation/select_model", {
-    conversation,
-    author: "ada",
-    selection: { provider: "nobody" },
-  })
-  await view.until((deliveries) => entriesOf(deliveries).length === 1)
-
-  expect(switched.error).toBeUndefined()
-  expect(errorTag(refused)).toBe("UnknownProvider")
-  expect(entriesOf(view.deliveries)[0]).toMatchObject({
-    author: { _tag: "person", name: "ada" },
-    body: { _tag: "model", selection: { provider: "openai", model: "gpt-test", effort: "high" } },
-  })
-  expect(await modelOf(client, conversation)).toEqual({ provider: "openai", model: "gpt-test", effort: "high" })
-  client.close()
-})
-
-test("provider-config: the providers config.toml names can start conversations beside the built-in ones", async () => {
-  await using server = await runningServer([], {
-    config: { providers: { "openai-work": { driver: "openai" }, "claude-personal": { driver: "claude" } } },
-  })
-  const client = await RawClient.connect(server.home.socket)
-  const work = await client.call("conversation/start", { cwd: "/work", provider: "openai-work" })
-  const personal = await client.call("conversation/start", { cwd: "/work", provider: "claude-personal" })
-  client.close()
-
-  expect(work.result.model).toEqual({ provider: "openai-work" })
-  expect(personal.result.model).toEqual({ provider: "claude-personal" })
-})
-
-const childrenOf = async (client: RawClient, parent: string) =>
-  ((await client.call("conversation/list")).result as Array<{ id: string; lineage?: { parent: string; task: string } }>)
-    .filter((conversation) => conversation.lineage?.parent === parent)
-    .map((conversation) => conversation.id)
-
-const spawnStep = (task_name: string, message = "go") => ({
-  tool: { name: "spawn_agent", input: { task_name, message } },
-})
-const waitStep = { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } }
-
-test("subagent-interrupt: interrupting a conversation stops the runs of its subagents too", async () => {
-  await using server = await runningServer([
-    spawnStep("slow"),
-    waitStep,
-    { agent: "/root/slow", text: "one two three four five six seven eight", delayMs: 400 },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "start a slow one")
-  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "subagent"))
-  const [slow] = await childrenOf(client, conversation)
-  const slowView = client.subscribe({ conversation: slow! })
-  await slowView.until(speaking)
-
-  await client.call("conversation/interrupt", { conversation })
-  await view.until(ended(1))
-  await slowView.until(ended(1))
-
-  expect(bodies(view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "interrupted" })
-  expect(bodies(slowView.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "interrupted" })
-  client.close()
-})
-
-test("subagent-interrupt: a person interrupting a subagent wakes its parent's wait, which hears who stopped it", async () => {
-  await using server = await runningServer([
-    spawnStep("slow"),
-    waitStep,
-    { text: "heard" },
-    { agent: "/root/slow", text: "one two three four five six seven eight", delayMs: 400 },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "start a slow one")
-  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "subagent"))
-  const [slow] = await childrenOf(client, conversation)
-  const slowView = client.subscribe({ conversation: slow! })
-  await slowView.until(speaking)
-
-  await client.call("conversation/interrupt", { conversation: slow })
-  await view.until(ended(1))
-
-  const wait = bodies(view.deliveries).findLast((body) => body._tag === "tool_result") as { output: string }
-  expect(JSON.parse(wait.output)).toMatchObject({ message: "Wait completed.", timed_out: false })
-  expect(bodies(view.deliveries)).toContainEqual(
-    expect.objectContaining({
-      _tag: "user",
-      text: expect.stringContaining("A person interrupted this agent."),
-      mail: { kind: "final_answer", task: "/root", sender: "/root/slow" },
-    }),
-  )
-  expect(bodies(view.deliveries).at(-1)).toEqual({ _tag: "run_end", outcome: "answered" })
-  client.close()
-})
-
-test("subagent-answer: a subagent's answer lands in its idle parent's transcript without starting a run", async () => {
-  await using server = await runningServer([
-    spawnStep("kid", "look around"),
-    { text: "asked the kid" },
-    { agent: "/root/kid", text: "all quiet", delayMs: 200 },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "ask the kid")
-  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "user" && body.mail !== undefined))
-
-  const [kid] = await childrenOf(client, conversation)
-  const after = bodies(view.deliveries).slice(bodies(view.deliveries).findIndex((body) => body._tag === "run_end"))
-  expect(after).toEqual([
-    { _tag: "run_end", outcome: "answered" },
-    {
-      _tag: "user",
-      submission: expect.any(String),
-      text: "all quiet",
-      mail: { kind: "final_answer", task: "/root", sender: "/root/kid" },
-    },
-  ])
-  expect(entriesOf(view.deliveries).at(-1)!.author as unknown).toEqual({ _tag: "agent", conversation: kid })
-  expect(view.deliveries.at(-1)).not.toHaveProperty("status", "working")
-  client.close()
-})
-
-test("subagent-followup: a follow-up task wakes an idle subagent, and each of its answers reaches the waiting parent", async () => {
-  await using server = await runningServer([
-    spawnStep("kid", "count"),
-    waitStep,
-    { tool: { name: "followup_task", input: { target: "kid", message: "again" } } },
-    waitStep,
-    { text: "heard both" },
-    { agent: "/root/kid", text: "first", delayMs: 100 },
-    { agent: "/root/kid", text: "second", delayMs: 100 },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "count twice")
-  await view.until(settled)
-
-  const heard = bodies(view.deliveries).flatMap((body) =>
-    body._tag === "user" && body.mail ? [[body.mail.kind, body.text]] : [],
-  )
-  expect(heard).toEqual([
-    ["final_answer", "first"],
-    ["final_answer", "second"],
-  ])
-  expect(bodies(view.deliveries).at(-2)).toEqual({ _tag: "message", text: "heard both" })
-  const [kid] = await childrenOf(client, conversation)
-  const kidView = client.subscribe({ conversation: kid! })
-  await kidView.until((deliveries) => deliveries.length > 0)
-  expect(
-    bodies(kidView.deliveries).flatMap((body) => (body._tag === "user" ? [[body.mail?.kind, body.text]] : [])),
-  ).toEqual([
-    ["new_task", "count"],
-    ["new_task", "again"],
-  ])
-  client.close()
-})
-
-test("subagent-limits: a tree runs at most as many subagents at once as config.toml allows", async () => {
-  await using server = await runningServer(
-    [spawnStep("a"), spawnStep("b"), { text: "tried" }, { agent: "/root/a", text: "a b c d e f g h", delayMs: 300 }],
-    { config: { agents: { max_threads: 1 } } },
-  )
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "spawn two")
-  await view.until(ended(1))
-
-  const results = bodies(view.deliveries).filter((body) => body._tag === "tool_result")
-  expect(results.map((result) => result.error)).toEqual([false, true])
-  expect(results[1]).toMatchObject({ output: expect.stringContaining("the most it may run at once") })
-  expect(await childrenOf(client, conversation)).toHaveLength(1)
-  client.close()
-})
-
-test("subagent-limits: a follow-up task does not wake an idle subagent while the tree runs as many as config.toml allows", async () => {
-  await using server = await runningServer(
-    [
-      spawnStep("a"),
-      { ...spawnStep("b"), text: "letting a finish", delayMs: 300 },
-      { tool: { name: "followup_task", input: { target: "a", message: "again" } } },
-      { text: "tried" },
-      { agent: "/root/a", text: "done" },
-      { agent: "/root/b", text: "a b c d e f g h", delayMs: 300 },
-    ],
-    { config: { agents: { max_threads: 1 } } },
-  )
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "spawn, then follow up")
-  await view.until(ended(1))
-
-  const followup = bodies(view.deliveries).findLast((body) => body._tag === "tool_result")
-  expect(followup).toMatchObject({ error: true, output: expect.stringContaining("the most it may run at once") })
-  const listed = (await client.call("conversation/list")).result as Array<{ id: string; lineage?: { task: string } }>
-  const a = listed.find((member) => member.lineage?.task === "/root/a")!
-  const aView = client.subscribe({ conversation: a.id })
-  await aView.until((deliveries) => deliveries.length > 0)
-  expect(bodies(aView.deliveries).filter((body) => body._tag === "run_end")).toHaveLength(1)
-  client.close()
-})
-
-test("start-with-id: starting a conversation with an id it already has answers with that conversation", async () => {
-  await using server = await runningServer([])
+test("start-with-id: starting a conversation with an id it already has answers with that conversation, and an all-digit id is refused by name", async () => {
+  await using server = await runningServer([{ text: "hello" }])
   const client = await RawClient.connect(server.home.socket)
   const id = crypto.randomUUID()
-  const first = (await client.call("conversation/start", { id, cwd: "/work", approvals: "auto" })).result
-  const again = (await client.call("conversation/start", { id, cwd: "/elsewhere" })).result
-  expect(first).toMatchObject({ id, cwd: "/work", approvals: "auto" })
-  expect(again).toEqual(first)
-  const listed = (await client.call("conversation/list")).result as Array<{ id: string }>
-  expect(listed.filter((conversation) => conversation.id === id)).toHaveLength(1)
+  const first = await client.call("conversation/start", { id, cwd: "/work" })
+  const again = await client.call("conversation/start", { id, cwd: "/elsewhere" })
+  expect(first.result).toEqual({ conversation: id, model: { provider: "script", model: "script" } })
+  expect(again.result).toEqual({ conversation: id, model: { provider: "script", model: "script" } })
+  const view = watchView(client, id)
+  await submit(client, id, "hi")
+  await view.until(settled(1))
+  expect((view.view().docs["pi.agent"] as { cwd?: string }).cwd).toBe("/work")
+  expect(errorTag(await client.call("conversation/start", { id: "42", cwd: "/work" }))).toBe("InvalidConversationId")
   client.close()
 })
 
-type Tree = { _tag: "tree"; conversation: string; seq: number; status: string; ended?: Record<string, string> }
-type Trees = { _tag: "trees"; seq: number; trees: Array<Tree> } | Tree
-
-const treesOf = (items: ReadonlyArray<Trees>, conversation: string) =>
-  items.filter((item): item is Tree => item._tag === "tree" && item.conversation === conversation)
-
-test("status-follow: watching status follows each run of a tree and says how it ended", async () => {
-  await using server = await runningServer([{ text: "all done" }])
-  const client = await RawClient.connect(server.home.socket)
-  const watch = client.watch<Trees>("status/watch")
-  await watch.until((items) => items.length > 0)
-  expect(watch.items[0]).toMatchObject({ _tag: "trees", trees: [] })
-  const conversation = await start(client)
-  await submit(client, conversation, "go")
-  await watch.until((items) => treesOf(items, conversation).some((tree) => tree.ended))
-
-  const seen = treesOf(watch.items, conversation)
-  expect(seen.map(({ status, ended }) => ({ status, ended }))).toEqual([
-    { status: "working", ended: undefined },
-    { status: "idle", ended: { outcome: "answered", said: "all done" } },
-  ])
-  expect(seen[1]!.seq).toBeGreaterThan(seen[0]!.seq)
-  client.close()
+const call = (name: string, input: Record<string, unknown>, agent?: string) => ({
+  tool: { name, input },
+  ...(agent === undefined ? {} : { agent }),
 })
+const mails = (watch: ViewWatch) =>
+  watch
+    .seen()
+    .filter((entry) => entry.kind === "nisse.mail")
+    .map((entry) => entry.data as { kind: string; task: string; sender: string })
 
-test("status-subagent: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([
-    spawnStep("writer"),
-    waitStep,
-    { agent: "/root/writer", ...writeCall(`${cwd}/note.txt`, "hi") },
-  ])
+test("start-with-id: a chosen id that names an object property, such as toString, opens its own conversation", async () => {
+  await using server = await runningServer([{ text: "hello" }])
   const client = await RawClient.connect(server.home.socket)
-  const watch = client.watch<Trees>("status/watch")
-  const conversation = await start(client, { cwd })
-  await submit(client, conversation, "have someone write a note")
-  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "waiting")
-
-  const late = await RawClient.connect(server.home.socket)
-  const lateWatch = late.watch<Trees>("status/watch")
-  await lateWatch.until((items) => items.length > 0)
-  expect(lateWatch.items[0]).toMatchObject({
-    _tag: "trees",
-    trees: [{ _tag: "tree", conversation, status: "waiting" }],
+  await client.call("conversation/start", { id: "first", cwd: "/work" })
+  expect((await client.call("conversation/start", { id: "toString", cwd: "/work" })).result).toEqual({
+    conversation: "toString",
+    model: { provider: "script", model: "script" },
   })
-  expect(treesOf(watch.items, conversation).map((tree) => tree.status)).toEqual(["working", "waiting"])
-  await client.call("conversation/interrupt", { conversation })
-  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "idle")
-  const afterInterrupt = treesOf(watch.items, conversation).slice(2)
-  expect(afterInterrupt.map((tree) => tree.status)).not.toContain("working")
-  expect(afterInterrupt.find((tree) => tree.ended)?.ended).toEqual({ outcome: "interrupted" })
+  const view = watchView(client, "toString")
+  await submit(client, "toString", "hi")
+  await view.until(settled(1))
+  expect(transcript(view.view().entries)).toEqual(["user: hi", "assistant: hello", "run_end: answered"])
   client.close()
-  late.close()
-  rmSync(cwd, { recursive: true })
 })
 
-test("subagent-root-env, tool-root-env: commands a conversation runs, its subagents' included, know the conversation people started", async () => {
+test("child-tools, subagent-answer: the model spawns a subagent, waits for it, and its final answer is mailed back", async () => {
   await using server = await runningServer([
-    { tool: { name: "Bash", input: { command: 'echo "root sees $NISSE_ROOT_CONVERSATION"' } } },
-    spawnStep("helper"),
-    waitStep,
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "the note is written", agent: "/root/writer" },
+    call("list_agents", {}),
+    { text: "writer finished" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view).map((result) => JSON.parse(result.text))
+  expect(results[0]).toEqual({ task_name: "/root/writer", nickname: null })
+  expect(results[1]).toEqual({ message: "Wait completed.", timed_out: false })
+  expect(results[2]).toEqual({
+    agents: [
+      { agent_name: "/root", agent_status: "running" },
+      { agent_name: "/root/writer", agent_status: { completed: "the note is written" } },
+    ],
+  })
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  // The answer reached the running turn as a message, and the turn went on with it.
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: writer finished", "run_end: answered"])
+  client.close()
+}, 30_000)
+
+/** The conversation of the subagent a spawn_agent call started, from its result's details. */
+const spawned = (watch: ViewWatch, task: string) => {
+  const result = watch
+    .seen()
+    .map((entry) => (entry.model?.[0] as { details?: { task?: string; conversation?: number } } | undefined)?.details)
+    .find((details) => details?.task === task)
+  return String(result!.conversation)
+}
+
+test("child-tools: a prompt queued while the model waits on a subagent does not end the wait, and runs after it", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "writer finished" },
+    { text: "now the next prompt" },
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+    { text: "the note is written", agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  // The writer holds on its approval, so the prompt below is queued while the parent's run goes on.
+  await view.until((current) => toolResults(current).length > 0)
+  const child = spawned(view, "/root/writer")
+  const writer = watchView(client, child)
+  const approval = await waitingApproval(writer)
+  await submit(client, conversation, "and then this")
+  await client.call("approval/resolve", { conversation: child, approval, author: "ada", allow: true })
+  await view.until(settled(2), 20_000)
+  expect(JSON.parse(toolResults(view)[1]!.text)).toEqual({ message: "Wait completed.", timed_out: false })
+  expect(transcript(view.seen()).filter((line) => !line.startsWith("assistant: ") || line.includes("next"))).toEqual([
+    "user: delegate it",
+    "run_end: answered",
+    "user: and then this",
+    "assistant: now the next prompt",
+    "run_end: answered",
+  ])
+  client.close()
+}, 30_000)
+
+test("child-tools, approval-auto: a subagent of a conversation that runs calls without asking does not ask either", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "writer finished" },
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+    { text: "the note is written", agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto" })).result
+    .conversation as string
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  await view.until(settled(1), 20_000)
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  const writer = watchView(client, spawned(view, "/root/writer"))
+  await writer.until(() => true)
+  expect(toolResults(writer)).toEqual([{ text: "noted\n", isError: false }])
+  client.close()
+}, 30_000)
+
+test("subagent-types: spawning an agent of a type nisse doesn't know is refused, naming it", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "review", message: "review it", agent_type: "reviewer" }),
+    { text: "no reviewer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "get it reviewed")
+  await view.until(settled(1))
+  expect(toolResults(view)).toEqual([{ text: "no agent type reviewer; there are none", isError: true }])
+  client.close()
+})
+
+/** Six subagents `/root/a1`.. that each hold on an approval, and a seventh the limit refuses, spawned at once. */
+const SEVEN = ["a1", "a2", "a3", "a4", "a5", "a6", "a7"]
+const holding = SEVEN.map((name) => ({
+  tool: { name: "bash", input: { command: "echo held" } },
+  agent: `/root/${name}`,
+}))
+const spawnSeven = {
+  tools: SEVEN.map((name) => ({
+    name: "spawn_agent",
+    input: { task_name: name, message: "hold", fork_turns: "none" },
+  })),
+}
+const MAX_THREADS = "at most 6 subagents work at once (maxThreads); 6 are working, so wait for one to finish"
+
+test("subagent-limits, child-tools: spawns in one response start at most maxThreads subagents", async () => {
+  await using server = await runningServer([spawnSeven, { text: "spawned them" }, ...holding])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "fan out")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view)
+  expect(results.filter((result) => result.isError)).toEqual([{ text: MAX_THREADS, isError: true }])
+  expect(results.filter((result) => !result.isError)).toHaveLength(6)
+  client.close()
+}, 30_000)
+
+test("subagent-limits, child-tools: a follow-up task does not wake an idle subagent while maxThreads subagents work", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "idle", message: "answer", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { ...spawnSeven, tools: spawnSeven.tools.slice(0, 6) },
+    call("followup_task", { target: "idle", message: "again" }),
+    { text: "asked" },
+    { text: "answered", agent: "/root/idle" },
+    ...holding,
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "fan out")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view)
+  expect(results.slice(2, 8).every((result) => !result.isError)).toBe(true)
+  expect(results[8]).toEqual({ text: MAX_THREADS, isError: true })
+  client.close()
+}, 30_000)
+
+test("child-tools: a subagent's answer that waits in its parent's queue still reaches it when the person stops the parent", async () => {
+  await using server = await runningServer([
     {
-      agent: "/root/helper",
-      tool: { name: "Bash", input: { command: 'echo "helper sees $NISSE_ROOT_CONVERSATION"' } },
+      tools: [
+        { name: "spawn_agent", input: { task_name: "writer", message: "write a note", fork_turns: "none" } },
+        { name: "bash", input: { command: "echo waiting" } },
+      ],
     },
-    { agent: "/root/helper", text: "done", delayMs: 100 },
-    { text: "all done" },
+    { text: "the note is written", agent: "/root/writer" },
   ])
   const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd: workdir(), approvals: "auto" })
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "go")
-  await view.until(settled)
-  const [helper] = await childrenOf(client, conversation)
-  const helperView = client.subscribe({ conversation: helper! })
-  await helperView.until(ended(1))
-  const outputs = (deliveries: ReadonlyArray<Delivery>) =>
-    bodies(deliveries).flatMap((body) => (body._tag === "tool_result" ? [body.output.trim()] : []))
-  expect(outputs(view.deliveries)).toContain(`root sees ${conversation}`)
-  expect(outputs(helperView.deliveries)).toEqual([`helper sees ${conversation}`])
-  client.close()
-})
-
-test("start-instructions: a conversation keeps the instructions it started with, and its subagents start without them", async () => {
-  await using server = await runningServer([
-    spawnStep("helper"),
-    waitStep,
-    { agent: "/root/helper", text: "done", delayMs: 100 },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const instructions = "Report progress with `attn` when you finish."
-  const started = (await client.call("conversation/start", { cwd: workdir(), approvals: "auto", instructions })).result
-  expect(started.instructions).toBe(instructions)
-  const view = client.subscribe({ conversation: started.id })
-  await submit(client, started.id, "go")
-  await view.until(settled)
-  const listed = (await client.call("conversation/list")).result as Array<{ id: string; instructions?: string }>
-  const [helper] = await childrenOf(client, started.id)
-  expect(listed.find((conversation) => conversation.id === started.id)?.instructions).toBe(instructions)
-  expect(listed.find((conversation) => conversation.id === helper)?.instructions).toBeUndefined()
-  client.close()
-})
-
-test("conversation-ended: a conversation tells a client that was not watching how its last run ended", async () => {
-  const cwd = workdir()
-  await using server = await runningServer([
-    { text: "all done" },
-    { ...writeCall(`${cwd}/note.txt`, "hi"), text: "Writing the note." },
-  ])
-  const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd })
-  const endedOf = async () =>
-    ((await client.call("conversation/list")).result as Array<{ id: string; ended?: unknown }>).find(
-      (listed) => listed.id === conversation,
-    )?.ended
-  expect(await endedOf()).toBeUndefined()
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "go")
-  await view.until(settled)
-  expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
-  await submit(client, conversation, "write a note")
-  await view.until((deliveries) => statusOf(deliveries) === "waiting")
-  expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  // The parent holds on its call's approval while the writer's answer queues behind it.
+  await waitingApproval(view)
+  await view.until((current) => ((current.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
   await client.call("conversation/interrupt", { conversation })
-  await view.until((deliveries) => ended(2)(deliveries) && statusOf(deliveries) === "idle")
-  expect(await endedOf()).toEqual({ outcome: "interrupted", said: "Writing the note." })
+  await view.until((current) => mails(current).length > 0, 10_000)
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
+  expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
   client.close()
-  rmSync(cwd, { recursive: true })
-})
+}, 30_000)
+
+test("child-tools: a follow-up task reaches a working subagent at its next step, in the same run", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("followup_task", { target: "writer", message: "sign it too" }),
+    { text: "asked" },
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+    { text: "written and signed", agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  await view.until((current) => toolResults(current).length > 0)
+  const child = spawned(view, "/root/writer")
+  const writer = watchView(client, child)
+  const approval = await waitingApproval(writer)
+  // The follow-up waits in the writer's queue while its call holds on the approval.
+  await writer.until((current) => ((current.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
+  await client.call("approval/resolve", { conversation: child, approval, author: "ada", allow: true })
+  await writer.until(settled(1), 20_000)
+  expect(mails(writer).map((mail) => mail.kind)).toEqual(["new_task", "new_task"])
+  expect(transcript(writer.seen()).slice(-2)).toEqual(["assistant: written and signed", "run_end: answered"])
+  expect(runEnds(writer.seen())).toHaveLength(1)
+  client.close()
+}, 30_000)
+
+test("child-tools, subagent-message, subagent-followup: a subagent takes messages and follow-up tasks, and cannot start subagents past the depth limit", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "helper", message: "first", fork_turns: "none" }),
+    call("spawn_agent", { task_name: "deeper", message: "go" }, "/root/helper"),
+    { text: "first done", agent: "/root/helper" },
+    call("wait_agent", { timeout_ms: 600_000 }),
+    call("send_message", { target: "helper", message: "fyi" }),
+    call("followup_task", { target: "/root/helper", message: "second" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "second done", agent: "/root/helper" },
+    { text: "all done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate it")
+  await view.until(settled(1), 20_000)
+  const helper = watchView(client, spawned(view, "/root/helper"))
+  await helper.until(settled(2), 20_000)
+  expect(mails(view)).toEqual([
+    { kind: "final_answer", task: "/root", sender: "/root/helper" },
+    { kind: "final_answer", task: "/root", sender: "/root/helper" },
+  ])
+  expect(mails(helper)).toEqual([
+    { kind: "new_task", task: "/root/helper", sender: "/root" },
+    { kind: "message", task: "/root/helper", sender: "/root" },
+    { kind: "new_task", task: "/root/helper", sender: "/root" },
+  ])
+  // At the depth limit the helper is not offered spawn_agent; its call is refused and it answers anyway.
+  expect(toolResults(helper)).toEqual([{ text: expect.stringContaining("not available"), isError: true }])
+  expect(transcript(helper.seen()).filter((line) => line.startsWith("assistant: ") && line !== "assistant: ")).toEqual([
+    "assistant: first done",
+    "assistant: second done",
+  ])
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: all done", "run_end: answered"])
+  client.close()
+}, 30_000)
+
+test("child-tools, subagent-agents: interrupting a subagent stops its turn and reports what it was doing", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "slow", message: "make it", fork_turns: "none" }),
+    call("bash", { command: "echo ready" }),
+    call("bash", { command: "touch made" }, "/root/slow"),
+    call("interrupt_agent", { target: "slow" }),
+    call("list_agents", {}),
+    { text: "stopped it" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "start and stop")
+  // The root waits on its own approval until the subagent waits on one too, so the subagent is working.
+  const rootApproval = await waitingApproval(view)
+  const slow = watchView(client, spawned(view, "/root/slow"))
+  await waitingApproval(slow)
+  await client.call("approval/resolve", { conversation, approval: rootApproval, author: "ada", allow: true })
+  await view.until(settled(1), 20_000)
+  await slow.until(settled(1), 20_000)
+  const results = toolResults(view).map((result) => result.text)
+  expect(JSON.parse(results[2]!)).toEqual({ previous_status: "running" })
+  expect(JSON.parse(results[3]!).agents).toEqual([
+    { agent_name: "/root", agent_status: "running" },
+    { agent_name: "/root/slow", agent_status: "interrupted" },
+  ])
+  expect(runEnds(slow.seen())).toEqual([expect.objectContaining({ outcome: "interrupted" })])
+  expect(approvalsOf(slow)!.requests).toEqual({})
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+  client.close()
+}, 30_000)
+
+/** What the people in a conversation see of its calls: each call, each toast and each result, in order. */
+const callsAndToasts = (watch: ViewWatch) =>
+  watch.seen().flatMap((entry): Array<string> => {
+    const message = entry.model?.[0] as
+      | { content: Array<{ type: string; text?: string; name?: string; arguments?: unknown }>; isError?: boolean }
+      | undefined
+    if (entry.kind === TOAST_KIND) {
+      const toast = entry.data as { extension: string; text: string }
+      return [`toast ${toast.extension}: ${toast.text}`]
+    }
+    if (entry.kind === "pi.assistant")
+      return message!.content.flatMap((block) =>
+        block.type === "toolCall" ? [`call ${block.name} ${JSON.stringify(block.arguments)}`] : [],
+      )
+    if (entry.kind === "pi.tool-result") {
+      const text = message!.content.map((block) => block.text ?? "").join("")
+      return [`result${message!.isError ? " error" : ""}: ${text}`]
+    }
+    return []
+  })
+/** A result the harness wrote without running the call, as the model reads it. */
+const notRun = (why: string) => `result error: <harness>\n[error] ${why}\n</harness>`
+/** The results the harness wrote without running their calls. */
+const whyNotRun = (watch: ViewWatch) =>
+  callsAndToasts(watch).filter((line) => line.startsWith("result error: <harness>"))
+const statusLines = (watch: ViewWatch) =>
+  (watch.view().docs[STATUS_LINES_KIND] as { lines: Record<string, string> } | undefined)?.lines ?? {}
+const startAuto = async (client: RawClient, cwd: string, id?: string) =>
+  (await client.call("conversation/start", { cwd, approvals: "auto", ...(id === undefined ? {} : { id }) })).result
+    .conversation as string
 
 const clockAndNoGlob = `
 import { Extension, Tool } from "@nisse/extension"
@@ -862,32 +837,44 @@ export default Extension.define((ctx) =>
         run: ({ zone }) => Effect.succeed(Tool.ok("noon in " + zone)),
       }),
     )
-    tools.remove("Glob")
+    tools.remove("glob")
+    tools.update("read", (tool) => {
+      tool.readOnly = false
+    })
   }),
 )
 `
 
-test("tools-transform: an extension's tool answers the model's calls, and a tool it removes is gone", async () => {
+test("tools-transform, extensions-load: an extension's tool answers the model's calls, a tool it removes is gone, and one it makes not read-only asks", async () => {
   const home = homeWithExtensions({ "clock.ts": clockAndNoGlob }, `[extensions.clock]\ncity = "Oslo"\n`)
   await using server = await runningServer(
     [
       { tool: { name: "Clock", input: { zone: "CET" } } },
-      { tool: { name: "Glob", input: { pattern: "*" } } },
+      { tool: { name: "glob", input: { pattern: "*" } } },
+      { tool: { name: "read", input: { path: "notes.txt" } } },
       { text: "done" },
     ],
     { home },
   )
+  await Bun.write(`${home.dir}/notes.txt`, "gnome\n")
   const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
-  await submit(client, conversation, "what time is it")
-  await view.until(settled)
-  expect(bodies(view.deliveries).filter((body) => body._tag === "tool_result")).toEqual([
-    expect.objectContaining({ output: "noon in CET", error: false }),
-    expect.objectContaining({ output: "no tool named Glob", error: true }),
-  ])
   expect((await client.call("extensions/list")).result).toEqual([
     { name: "clock", path: join(home.extensions, "clock.ts"), state: "loaded" },
+  ])
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "what time is it")
+  const approval = await waitingApproval(view)
+  expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "read" })
+  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await view.until(settled(1))
+  expect(callsAndToasts(view)).toEqual([
+    `call Clock {"zone":"CET"}`,
+    "result: noon in CET",
+    `call glob {"pattern":"*"}`,
+    notRun("Tool glob is not available"),
+    `call read {"path":"notes.txt"}`,
+    "result: gnome\n",
   ])
   client.close()
   rmSync(home.dir, { recursive: true })
@@ -901,7 +888,7 @@ export default Extension.define((ctx) =>
   Effect.gen(function* () {
     yield* ctx.tool.hook("execute.before", (call) =>
       Effect.gen(function* () {
-        if (call.tool !== "Bash") return
+        if (call.tool !== "bash") return
         const command = String((call.input as { command: string }).command)
         if (command.includes("rm -rf")) return yield* Tool.refuse("that deletes too much")
         call.input = { command: command.replace("hello", "hej") }
@@ -910,55 +897,91 @@ export default Extension.define((ctx) =>
     yield* ctx.tool.hook("execute.after", (call) =>
       Effect.gen(function* () {
         call.outcome.output = call.outcome.output.toUpperCase()
-        yield* call.conversation.status("ran " + call.tool)
-        yield* call.conversation.toast(call.tool + " finished")
+        yield* call.conversation.status(
+          "ran " + call.tool + " in " + call.conversation.id + " at " + call.conversation.model.effort,
+        )
+        yield* call.conversation.toast(call.tool + " ran " + String((call.input as { command: string }).command))
       }),
     )
   }),
 )
 `
 
-test("execute-before: an extension can refuse a call, change what runs and what the model sees, and tell people", async () => {
-  const cwd = workdir()
+test("execute-before, execute-after, toast, status-line: an extension can refuse a call, change what runs and what the model sees, and tell every client", async () => {
   const home = homeWithExtensions({ "guard.ts": guard })
   await using server = await runningServer(
     [
-      { tool: { name: "Bash", input: { command: "rm -rf /" } } },
-      { tool: { name: "Bash", input: { command: "echo hello" } } },
+      { tool: { name: "bash", input: { command: "rm -rf precious" } } },
+      { tool: { name: "bash", input: { command: "echo hello" } } },
       { text: "done" },
     ],
     { home },
   )
   const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { cwd, approvals: "auto" })
-  const view = client.subscribe({ conversation })
+  const conversation = (
+    await client.call("conversation/start", { cwd: home.dir, approvals: "auto", id: "guarded", effort: "high" })
+  ).result.conversation as string
+  const view = watchView(client, conversation)
   await submit(client, conversation, "clean up")
-  await view.until(settled)
-  expect(withoutUsers(view.deliveries)).toEqual([
-    expect.objectContaining({ _tag: "tool_call", tool: "Bash", input: { command: "rm -rf /" } }),
-    expect.objectContaining({
-      _tag: "tool_result",
-      output: "guard refused this call: that deletes too much",
-      error: true,
-    }),
-    expect.objectContaining({ _tag: "tool_call", tool: "Bash", input: { command: "echo hej" } }),
-    { _tag: "toast", extension: "guard", text: "Bash finished" },
-    expect.objectContaining({ _tag: "tool_result", output: expect.stringContaining("HEJ"), error: false }),
-    { _tag: "message", text: "done" },
-    { _tag: "run_end", outcome: "answered" },
+  await view.until(settled(1))
+  expect(callsAndToasts(view)).toEqual([
+    `call bash {"command":"rm -rf precious"}`,
+    notRun("Tool call blocked: guard refused this call: that deletes too much"),
+    `call bash {"command":"echo hello"}`,
+    "toast guard: bash ran echo hej",
+    "result: HEJ\n",
   ])
-  expect(view.deliveries.findLast((delivery) => delivery._tag === "commit" && delivery.extensionStatus)).toMatchObject({
-    extensionStatus: { guard: "ran Bash" },
-  })
-  const late = client.subscribe({ conversation })
-  await late.until((deliveries) => deliveries.length > 0)
-  expect(late.deliveries[0]).toMatchObject({ _tag: "snapshot", extensionStatus: { guard: "ran Bash" } })
+  expect(statusLines(view)).toEqual({ guard: "ran bash in guarded at high" })
+  const other = await RawClient.connect(server.home.socket)
+  const late = watchView(other, conversation)
+  await opened(late)
+  expect(statusLines(late)).toEqual({ guard: "ran bash in guarded at high" })
   client.close()
-  rmSync(cwd, { recursive: true })
+  other.close()
   rmSync(home.dir, { recursive: true })
 })
 
-test("extensions-failed: an extension that fails to load is listed with why, while the others load and run", async () => {
+test("subagent-root-env, tool-root-env: an extension's tool run by a subagent knows the conversation people started", async () => {
+  const home = homeWithExtensions({
+    "rooted.ts": `import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    tools.add(
+      Tool.make({
+        name: "Root",
+        description: "Says which conversation people started",
+        input: Schema.Struct({}),
+        readOnly: true,
+        run: (_, context) => Effect.succeed(Tool.ok("root=" + context.env.NISSE_ROOT_CONVERSATION)),
+      }),
+    )
+  }),
+)`,
+  })
+  await using server = await runningServer(
+    [
+      { tool: { name: "spawn_agent", input: { task_name: "envy", message: "show your root", fork_turns: "none" } } },
+      { tool: { name: "wait_agent", input: { timeout_ms: 600000 } } },
+      { text: "envy answered" },
+      { agent: "/root/envy", tool: { name: "Root", input: {} } },
+      { agent: "/root/envy", text: "shown" },
+    ],
+    { home },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate")
+  await view.until(settled(1), 20_000)
+  const child = watchView(client, spawned(view, "/root/envy"))
+  await child.until(() => toolResults(child).length > 0)
+  expect(toolResults(child).map((result) => result.text)).toEqual([`root=${conversation}`])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+}, 30_000)
+
+test("extensions-failed, hook-failure: an extension that fails to load is listed with why, while the others load and run", async () => {
   const home = homeWithExtensions(
     {
       "broken.ts": `export default 42`,
@@ -969,17 +992,32 @@ export default Extension.define((ctx) =>
 )`,
       "off.ts": `throw new Error("a disabled extension never runs")`,
       "throws.ts": `throw new Error("the clock broke")`,
+      "twisted.ts": `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  Effect.gen(function* () {
+    // Its edits before the transform that throws are dropped with it, so read stays.
+    yield* ctx.tool.transform((tools) => tools.remove("read"))
+    yield* ctx.tool.transform(() => { throw new Error("no such tool") })
+    yield* ctx.tool.hook("execute.before", () => Effect.die(new Error("a failed extension never runs")))
+  }),
+)`,
+      "bad name.ts": `export default 1`,
     },
     `[extensions.off]\nenabled = false\n`,
   )
   await using server = await runningServer(
-    [{ tool: { name: "Read", input: { file_path: "/etc/hostname" } } }, { text: "done" }],
-    {
-      home,
-    },
+    [{ tool: { name: "read", input: { path: "notes.txt" } } }, { text: "done" }],
+    { home },
   )
   const client = await RawClient.connect(server.home.socket)
   expect((await client.call("extensions/list")).result).toEqual([
+    {
+      name: "bad name",
+      path: join(home.extensions, "bad name.ts"),
+      state: "failed",
+      message: "an extension's name may use only letters, digits, - and _",
+    },
     {
       name: "broken",
       path: join(home.extensions, "broken.ts"),
@@ -989,45 +1027,48 @@ export default Extension.define((ctx) =>
     { name: "crashes", path: join(home.extensions, "crashes", "index.ts"), state: "loaded" },
     { name: "off", path: join(home.extensions, "off.ts"), state: "disabled" },
     { name: "throws", path: join(home.extensions, "throws.ts"), state: "failed", message: "the clock broke" },
+    {
+      name: "twisted",
+      path: join(home.extensions, "twisted.ts"),
+      state: "failed",
+      message: "its tool transform failed: no such tool",
+    },
   ])
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
   await submit(client, conversation, "read it")
-  await view.until(settled)
-  expect(withoutUsers(view.deliveries).slice(0, 3)).toEqual([
-    { _tag: "toast", extension: "crashes", text: "execute.before failed: the guard crashed" },
-    expect.objectContaining({ _tag: "tool_call", tool: "Read" }),
-    expect.objectContaining({
-      _tag: "tool_result",
-      output: "crashes refused this call: it failed: the guard crashed",
-      error: true,
-    }),
+  await view.until(settled(1))
+  expect(callsAndToasts(view)).toEqual([
+    `call read {"path":"notes.txt"}`,
+    "toast crashes: execute.before failed: the guard crashed",
+    notRun("Tool call blocked: crashes refused this call: it failed: the guard crashed"),
   ])
   client.close()
   rmSync(home.dir, { recursive: true })
 })
 
 const statusSaying = (text: string) => `import { Extension } from "@nisse/extension"
-import { Effect } from "effect"
 export default Extension.define((ctx) =>
   ctx.tool.hook("execute.after", (call) => call.conversation.status("${text}")),
 )`
+const READ = [{ tool: { name: "read", input: { path: "notes.txt" } } }, { text: "done" }]
 
 test("reload: reloading runs the extensions as they are now, and no status outlives the code that set it", async () => {
   const home = homeWithExtensions({ "lines.ts": statusSaying("first") })
-  const script = [{ tool: { name: "Read", input: { file_path: "/etc/hostname" } } }, { text: "done" }]
+  await Bun.write(`${home.dir}/notes.txt`, "gnome\n")
   const statusIn = async (client: RawClient, conversation: string) => {
-    const view = client.subscribe({ conversation })
-    await view.until((deliveries) => deliveries.length > 0)
-    return (view.deliveries[0] as { extensionStatus: unknown }).extensionStatus
+    const watch = watchView(client, conversation)
+    await opened(watch)
+    return statusLines(watch)
   }
+  let conversation: string
   {
-    await using server = await runningServer([...script, ...script], { home })
+    await using server = await runningServer([...READ, ...READ], { home })
     const client = await RawClient.connect(server.home.socket)
-    const conversation = await start(client)
-    const view = client.subscribe({ conversation })
+    conversation = await start(client, home.dir)
+    const view = watchView(client, conversation)
     await submit(client, conversation, "read it")
-    await view.until(settled)
+    await view.until(settled(1))
     expect(await statusIn(client, conversation)).toEqual({ lines: "first" })
 
     writeFileSync(join(home.extensions, "lines.ts"), statusSaying("second"))
@@ -1036,7 +1077,7 @@ test("reload: reloading runs the extensions as they are now, and no status outli
     ])
     expect(await statusIn(client, conversation)).toEqual({})
     await submit(client, conversation, "read it again")
-    await view.until(ended(2))
+    await view.until(settled(2))
     expect(await statusIn(client, conversation)).toEqual({ lines: "second" })
     client.close()
   }
@@ -1044,48 +1085,59 @@ test("reload: reloading runs the extensions as they are now, and no status outli
   {
     await using server = await runningServer([], { home })
     const client = await RawClient.connect(server.home.socket)
-    const [conversation] = (await client.call("conversation/list")).result
-    expect(await statusIn(client, conversation.id)).toEqual({})
+    expect(await statusIn(client, conversation)).toEqual({})
     client.close()
   }
   rmSync(home.dir, { recursive: true })
 })
 
-const refusingAfter = (reason: string, loadsOnceExists = "") => `import { Extension, Tool } from "@nisse/extension"
-import { existsSync } from "node:fs"
+/**
+ * A gate a test opens: the server runs in the test's process, so an extension waits on it by name, and the server's own
+ * load and hook limits are its deadline.
+ */
+const gate = (name: string) => {
+  const opened = Promise.withResolvers<void>()
+  ;(globalThis as Record<string, unknown>)[name] = opened.promise
+  return {
+    open: () => opened.resolve(),
+    [Symbol.dispose]: () => delete (globalThis as Record<string, unknown>)[name],
+  }
+}
+const awaitGate = (name: string) => `Effect.promise(() => globalThis[${JSON.stringify(name)}])`
+
+const refusingAfter = (reason: string, loadsAfter?: string) => `import { Extension, Tool } from "@nisse/extension"
 import { Effect } from "effect"
 export default Extension.define((ctx) =>
   Effect.gen(function* () {
-    while (${JSON.stringify(loadsOnceExists)} !== "" && !existsSync(${JSON.stringify(loadsOnceExists)})) yield* Effect.sleep("10 millis")
+    ${loadsAfter === undefined ? "" : `yield* ${awaitGate(loadsAfter)}`}
     yield* ctx.tool.hook("execute.before", () => Tool.refuse("${reason}"))
   }),
 )`
 
 test("reload: while extensions reload, the loaded ones keep guarding calls until their replacements are ready", async () => {
   const home = homeWithExtensions({ "guard.ts": refusingAfter("the old guard says no") })
-  const script = [{ tool: { name: "Bash", input: { command: "echo hi" } } }, { text: "done" }]
+  const script = [{ tool: { name: "bash", input: { command: "echo hi" } } }, { text: "done" }]
   await using server = await runningServer([...script, ...script], { home })
   const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, { approvals: "auto" })
-  const view = client.subscribe({ conversation })
-  const refusals = () => bodies(view.deliveries).flatMap((body) => (body._tag === "tool_result" ? [body.output] : []))
+  const conversation = await startAuto(client, home.dir)
+  const view = watchView(client, conversation)
 
-  const ready = join(home.dir, "new-guard-ready")
-  writeFileSync(join(home.extensions, "guard.ts"), refusingAfter("the new guard says no", ready))
+  using ready = gate("nisseNewGuardReady")
+  writeFileSync(join(home.extensions, "guard.ts"), refusingAfter("the new guard says no", "nisseNewGuardReady"))
   const reloading = client.call("extensions/reload")
   await submit(client, conversation, "say hi")
-  await view.until(settled)
-  expect(refusals()).toEqual(["guard refused this call: the old guard says no"])
+  await view.until(settled(1))
+  expect(whyNotRun(view)).toEqual([notRun("Tool call blocked: guard refused this call: the old guard says no")])
 
-  writeFileSync(ready, "")
+  ready.open()
   expect((await reloading).result).toEqual([
     { name: "guard", path: join(home.extensions, "guard.ts"), state: "loaded" },
   ])
   await submit(client, conversation, "say hi again")
-  await view.until(ended(2))
-  expect(refusals()).toEqual([
-    "guard refused this call: the old guard says no",
-    "guard refused this call: the new guard says no",
+  await view.until(settled(2))
+  expect(whyNotRun(view)).toEqual([
+    notRun("Tool call blocked: guard refused this call: the old guard says no"),
+    notRun("Tool call blocked: guard refused this call: the new guard says no"),
   ])
   client.close()
   rmSync(home.dir, { recursive: true })
@@ -1093,38 +1145,720 @@ test("reload: while extensions reload, the loaded ones keep guarding calls until
 
 test("status-line: a hook still running when its extension is unloaded can't bring back a status line", async () => {
   const home = homeWithExtensions({})
-  const released = join(home.dir, "released")
+  await Bun.write(`${home.dir}/notes.txt`, "gnome\n")
+  using released = gate("nisseSlowReleased")
   writeFileSync(
     join(home.extensions, "slow.ts"),
     `import { Extension } from "@nisse/extension"
-import { existsSync } from "node:fs"
 import { Effect } from "effect"
 export default Extension.define((ctx) =>
   ctx.tool.hook("execute.after", (call) =>
     Effect.gen(function* () {
-      while (!existsSync(${JSON.stringify(released)})) yield* Effect.sleep("10 millis")
+      yield* ${awaitGate("nisseSlowReleased")}
       yield* call.conversation.status("stale")
     }),
   ),
 )`,
   )
-  await using server = await runningServer(
-    [{ tool: { name: "Read", input: { file_path: "/etc/hostname" } } }, { text: "done" }],
-    { home },
-  )
+  await using server = await runningServer(READ, { home })
   const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client)
-  const view = client.subscribe({ conversation })
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
   await submit(client, conversation, "read it")
-  await view.until((deliveries) => bodies(deliveries).some((body) => body._tag === "tool_call"))
+  await view.until((watch) => watch.seen().some((entry) => entry.kind === "pi.assistant"))
 
   rmSync(join(home.extensions, "slow.ts"))
   expect((await client.call("extensions/reload")).result).toEqual([])
-  writeFileSync(released, "")
-  await view.until(settled)
-  const late = client.subscribe({ conversation })
-  await late.until((deliveries) => deliveries.length > 0)
-  expect((late.deliveries[0] as { extensionStatus: unknown }).extensionStatus).toEqual({})
+  released.open()
+  await view.until(settled(1))
+  expect(statusLines(view)).toEqual({})
   client.close()
   rmSync(home.dir, { recursive: true })
 })
+
+const rewriting = (command: string) => `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.before", (call) => Effect.sync(() => { call.input = { command: "${command}" } })),
+)`
+
+test("approval-restart, status-snapshot: a call waiting for approval across a restart, whose hook computes other arguments on the rerun, asks again with them", async () => {
+  const home = homeWithExtensions({ "rewrite.ts": rewriting("echo one") })
+  let conversation: string
+  let approval: string
+  {
+    await using server = await runningServer(
+      [{ tool: { name: "bash", input: { command: "echo model" } } }, { text: "done" }],
+      { home },
+    )
+    const client = await RawClient.connect(server.home.socket)
+    conversation = await start(client, home.dir)
+    const view = watchView(client, conversation)
+    await submit(client, conversation, "say it")
+    approval = await waitingApproval(view)
+    expect(approvalsOf(view)!.requests[approval]).toMatchObject({ arguments: { command: "echo one" } })
+    client.close()
+  }
+  writeFileSync(join(home.extensions, "rewrite.ts"), rewriting("echo two"))
+  {
+    await using server = await runningServer([{ text: "done" }], { home })
+    const client = await RawClient.connect(server.home.socket)
+    const view = watchView(client, conversation)
+    const asked = (watch: ViewWatch) => approvalsOf(watch)?.requests[approval] as { arguments?: unknown } | undefined
+    await view.until((watch) => JSON.stringify(asked(watch)?.arguments) === `{"command":"echo two"}`)
+    const status = client.watch<Trees>("status/watch")
+    await status.until((items) => items.length > 0)
+    expect(status.items[0]).toMatchObject({ _tag: "trees", trees: [{ conversation, status: "waiting" }] })
+    expect(asked(view)).not.toHaveProperty("answer")
+    await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+    await view.until(settled(1))
+    expect(toolResults(view)).toEqual([{ text: "two\n", isError: false }])
+    client.close()
+  }
+  rmSync(home.dir, { recursive: true })
+})
+
+test("reload: a config.toml that stops reading fails every extension in a reload, and says why", async () => {
+  const home = homeWithExtensions({ "lines.ts": statusSaying("first") })
+  await using server = await runningServer([], { home })
+  const client = await RawClient.connect(server.home.socket)
+  writeFileSync(join(home.dir, "config.toml"), "[extensions.lines\n")
+  const [lines] = (await client.call("extensions/reload")).result as Array<{ state: string; message: string }>
+  expect(lines).toMatchObject({ state: "failed", message: expect.stringContaining(`${home.dir}/config.toml: `) })
+  expect((await client.call("extensions/list")).result).toEqual([lines])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
+
+const treesOf = (items: ReadonlyArray<Trees>, conversation: string) =>
+  items.filter((item): item is Tree => item._tag === "tree" && item.conversation === conversation)
+
+test("status-follow, status-ended: watching status follows each run of a tree and says how it ended", async () => {
+  await using server = await runningServer([{ text: "all done" }, { text: "again" }])
+  const client = await RawClient.connect(server.home.socket)
+  const watch = client.watch<Trees>("status/watch")
+  await watch.until((items) => items.length > 0)
+  expect(watch.items[0]).toMatchObject({ _tag: "trees", trees: [] })
+  const conversation = (await client.call("conversation/start", { cwd: "/work", id: "followed" })).result
+    .conversation as string
+  await submit(client, conversation, "go")
+  await watch.until((items) => treesOf(items, conversation).some((tree) => tree.ended))
+  await submit(client, conversation, "go again")
+  await watch.until((items) => treesOf(items, conversation).filter((tree) => tree.ended).length === 2)
+
+  const seen = treesOf(watch.items, conversation)
+  expect(seen.map(({ status, ended }) => ({ status, ended }))).toEqual([
+    { status: "working", ended: undefined },
+    { status: "idle", ended: { outcome: "answered", said: "all done" } },
+    { status: "working", ended: undefined },
+    { status: "idle", ended: { outcome: "answered", said: "again" } },
+  ])
+  const seqs = seen.map((tree) => tree.seq)
+  expect(seqs).toEqual([...seqs].sort((a, b) => a - b))
+  expect(new Set(seqs).size).toBe(4)
+  client.close()
+})
+
+test("status-subagent, status-snapshot: a subagent waiting on a person shows as its whole tree waiting, to watchers then and later", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "writer", message: "write a note", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { tool: { name: "bash", input: { command: "echo noted" } }, agent: "/root/writer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const watch = client.watch<Trees>("status/watch")
+  await watch.until((items) => items.length > 0)
+  const conversation = await start(client, server.home.dir)
+  await submit(client, conversation, "have someone write a note")
+  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "waiting", 20_000)
+
+  const late = await RawClient.connect(server.home.socket)
+  const lateWatch = late.watch<Trees>("status/watch")
+  await lateWatch.until((items) => items.length > 0)
+  expect(lateWatch.items[0]).toMatchObject({
+    _tag: "trees",
+    trees: [{ _tag: "tree", conversation, status: "waiting" }],
+  })
+  expect(treesOf(watch.items, conversation).map((tree) => tree.status)).toEqual(["working", "waiting"])
+  // One interrupt of the root stops its subagent too, so the whole tree goes idle.
+  await client.call("conversation/interrupt", { conversation })
+  await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "idle", 20_000)
+  const ended = treesOf(watch.items, conversation).filter((tree) => tree.ended)
+  expect(ended.map((tree) => tree.ended)).toEqual([{ outcome: "interrupted", message: "aborted" }])
+  client.close()
+  late.close()
+}, 30_000)
+
+test("submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs", async () => {
+  await using server = await runningServer([{ text: "the first answer", delayMs: 100 }, { text: "second answer" }])
+  const ada = await RawClient.connect(server.home.socket)
+  const bo = await RawClient.connect(server.home.socket)
+  const conversation = await start(ada)
+  const view = watchView(bo, conversation)
+  await submit(ada, conversation, "one", undefined, "ada")
+  await view.until(speaking)
+  await submit(bo, conversation, "two", undefined, "bo")
+  await view.until((watch) => ((watch.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
+  expect((view.view().docs["pi.inbox"] as { items: unknown[] }).items).toEqual([
+    expect.objectContaining({ entry: { kind: USER_KIND, data: expect.objectContaining({ author: "bo" }) } }),
+  ])
+  await view.until(settled(2))
+  const users = view.seen().filter((entry) => entry.kind === USER_KIND)
+  expect(users.map((entry) => (entry.data as { author: string }).author)).toEqual(["ada", "bo"])
+  expect(transcript(view.seen()).filter((line) => line.startsWith("user: "))).toEqual(["user: one", "user: two"])
+  ada.close()
+  bo.close()
+})
+
+test("subagent-limits: a tree runs at most as many subagents at once as config.toml allows", async () => {
+  await using server = await runningServer([spawnSeven, { text: "spawned them" }, ...holding], {
+    config: { agents: { max_threads: 2 } },
+  })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "fan out")
+  await view.until(settled(1), 20_000)
+  const results = toolResults(view)
+  expect(results.filter((result) => !result.isError)).toHaveLength(2)
+  expect(results.filter((result) => result.isError)).toHaveLength(5)
+  expect(results.find((result) => result.isError)?.text).toContain("at most 2 subagents work at once (maxThreads)")
+  client.close()
+}, 30_000)
+
+const idle = (watch: ViewWatch) => (watch.view().docs["pi.live"] as { run?: unknown } | undefined)?.run === undefined
+
+test("subagent-interrupt: interrupting a conversation stops the runs of its subagents too, and the tree goes idle", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "slow", message: "make it", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    call("bash", { command: "touch made" }, "/root/slow"),
+    call("list_agents", {}),
+    call("followup_task", { target: "slow", message: "try again" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
+    { text: "made it this time", agent: "/root/slow" },
+    { text: "slow is done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "start a slow one")
+  await view.until((current) => toolResults(current).length > 0)
+  const slow = watchView(client, spawned(view, "/root/slow"))
+  // The subagent waits on a person while its parent waits on it.
+  await waitingApproval(slow)
+
+  await client.call("conversation/interrupt", { conversation })
+  await view.until(settled(1), 10_000)
+  await slow.until(settled(1), 10_000)
+
+  expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
+  expect(runEnds(slow.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
+  expect(approvalsOf(slow)!.requests).toEqual({})
+  await view.until(idle)
+  await slow.until(idle)
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+
+  // The subagent stays in the tree, and takes a new task.
+  await submit(client, conversation, "go on")
+  await view.until(settled(2), 20_000)
+  expect(JSON.parse(toolResults(view).at(-3)!.text).agents).toEqual([
+    { agent_name: "/root", agent_status: "running" },
+    { agent_name: "/root/slow", agent_status: "interrupted" },
+  ])
+  expect(transcript(slow.seen()).slice(-2)).toEqual(["assistant: made it this time", "run_end: answered"])
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/slow" }])
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: slow is done", "run_end: answered"])
+  client.close()
+}, 30_000)
+
+type Listed = {
+  id: string
+  cwd: string
+  model: { provider: string; model?: string; effort?: string }
+  approvals: string
+  lineage?: Record<string, string>
+  instructions?: string
+  ended?: { outcome: string; message?: string; said?: string }
+}
+const list = async (client: RawClient) => {
+  const reply = await client.call("conversation/list")
+  if (reply.error !== undefined) throw new Error(JSON.stringify(reply.error))
+  return reply.result as Array<Listed>
+}
+
+test("subagent-spawn, subagent-model: conversation/list shows each subagent with its lineage, on its parent's model or the one its spawn_agent names, and an unlisted model fails the call", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "same", message: "go", fork_turns: "none" }),
+    call("spawn_agent", { task_name: "other", message: "go", fork_turns: "none", model: "script-code-mode" }),
+    call("spawn_agent", { task_name: "nope", message: "go", fork_turns: "none", model: "no-such-model" }),
+    { text: "spawned" },
+    { text: "same done", agent: "/root/same" },
+    { text: "other done", agent: "/root/other" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (
+    await client.call("conversation/start", { cwd: server.home.dir, id: "lead", instructions: "Be brief." })
+  ).result.conversation as string
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "delegate")
+  await view.until(settled(1), 20_000)
+  const same = watchView(client, spawned(view, "/root/same"))
+  const other = watchView(client, spawned(view, "/root/other"))
+  await same.until(settled(1), 20_000)
+  await other.until(settled(1), 20_000)
+  expect(toolResults(view)[2]).toEqual({
+    text: expect.stringContaining("no model no-such-model on script"),
+    isError: true,
+  })
+  const calls = view
+    .seen()
+    .filter((entry) => entry.kind === "pi.assistant")
+    .flatMap((entry) => (entry.model![0] as { content: Array<{ type: string; id?: string }> }).content)
+    .filter((block) => block.type === "toolCall")
+    .map((block) => block.id!)
+  const listed = await list(client)
+  expect(listed).toEqual([
+    {
+      id: "lead",
+      cwd: server.home.dir,
+      model: { provider: "script", model: "script" },
+      approvals: "ask",
+      instructions: "Be brief.",
+      ended: { outcome: "answered", said: "spawned" },
+    },
+    {
+      id: spawned(view, "/root/same"),
+      cwd: server.home.dir,
+      model: { provider: "script", model: "script" },
+      approvals: "ask",
+      lineage: { parent: "lead", root: "lead", call: calls[0]!, title: "same", task: "/root/same" },
+      ended: { outcome: "answered", said: "same done" },
+    },
+    {
+      id: spawned(view, "/root/other"),
+      cwd: server.home.dir,
+      model: { provider: "script", model: "script-code-mode" },
+      approvals: "ask",
+      lineage: { parent: "lead", root: "lead", call: calls[1]!, title: "other", task: "/root/other" },
+      ended: { outcome: "answered", said: "other done" },
+    },
+  ])
+  client.close()
+}, 30_000)
+
+test("model-switch, model-switch-provider: switching a conversation's model is recorded with who switched it, and the next run answers on it", async () => {
+  await using server = await runningServer([{ text: "first" }, { text: "second" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "one")
+  await view.until(settled(1))
+  const selection = { provider: "script", model: "script-code-mode", effort: "low" }
+  expect((await client.call("conversation/select_model", { conversation, author: "bo", selection })).error).toBe(
+    undefined,
+  )
+  await submit(client, conversation, "two")
+  await view.until(settled(2))
+  const switched = view.seen().filter((entry) => entry.kind === "nisse.model")
+  expect(switched.map((entry) => entry.data)).toEqual([{ author: "bo", selection }])
+  const answers = view.seen().filter((entry) => entry.kind === "pi.assistant")
+  expect(answers.map((entry) => (entry.model![0] as { model: string }).model)).toEqual(["script", "script-code-mode"])
+  expect((await list(client))[0]!.model).toEqual(selection)
+  const unknown = await client.call("conversation/select_model", {
+    conversation,
+    author: "bo",
+    selection: { provider: "nowhere" },
+  })
+  expect(errorTag(unknown)).toBe("UnknownProvider")
+  client.close()
+})
+
+test("model-switch: a switch made while a run works is recorded at once and answers from the next run, not mid-run", async () => {
+  await using server = await runningServer([...ECHO, { text: "next" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "check it")
+  const approval = await waitingApproval(view)
+  const selection = { provider: "script", model: "script-code-mode" }
+  expect((await client.call("conversation/select_model", { conversation, author: "bo", selection })).error).toBe(
+    undefined,
+  )
+  await view.until((current) => current.seen().some((entry) => entry.kind === "nisse.model"))
+  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await view.until(settled(1))
+  await submit(client, conversation, "again")
+  await view.until(settled(2))
+  const answers = view.seen().filter((entry) => entry.kind === "pi.assistant")
+  expect(answers.map((entry) => (entry.model![0] as { model: string }).model)).toEqual([
+    "script",
+    "script",
+    "script-code-mode",
+  ])
+  expect((await list(client))[0]!.model).toEqual(selection)
+  client.close()
+})
+
+test("entries-rpc: a client reads a long transcript a page at a time, newest first or in order from an entry", async () => {
+  await using server = await runningServer([{ text: "a" }, { text: "b" }, { text: "c" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  for (const [index, text] of ["one", "two", "three"].entries()) {
+    await submit(client, conversation, text)
+    await view.until(settled(index + 1))
+  }
+  const all = view.seen()
+  const page = async (args: Record<string, unknown>) =>
+    (await client.call("conversation/entries", { conversation, ...args })).result as {
+      entries: typeof all
+      next?: unknown
+    }
+  const pages: Array<typeof all> = []
+  let cursor: unknown
+  do {
+    const read = await page({ limit: 4, ...(cursor === undefined ? {} : { cursor }) })
+    pages.push(read.entries)
+    cursor = read.next
+  } while (cursor !== undefined)
+  expect(pages.length).toBe(Math.ceil(all.length / 4))
+  expect(pages.flat()).toEqual([...all].reverse())
+  const two = all.findIndex((entry) => transcript([entry])[0] === "user: two")
+  const middle = await page({ from: all[two]!.id, to: all[two + 2]!.id, order: "ascending", limit: 10 })
+  expect(transcript(middle.entries)).toEqual(["user: two", "assistant: b", "run_end: answered"])
+  expect(middle.next).toBeUndefined()
+  const refused = await client.call("conversation/entries", { conversation, limit: 0 })
+  expect(refused.error?.message).toContain("limit")
+  expect(errorTag(await client.call("conversation/entries", { conversation: "99", limit: 1 }))).toBe(
+    "NoSuchConversation",
+  )
+  client.close()
+})
+
+test("context-rpc: a client reads the exact context the model is sent, now or as it was at an entry", async () => {
+  await using server = await runningServer([{ text: "a" }, { text: "b" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const other = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "one")
+  await view.until(settled(1))
+  await submit(client, conversation, "two")
+  await view.until(settled(2))
+  const context = async (at?: number) =>
+    (await client.call("conversation/context", { conversation, ...(at === undefined ? {} : { at }) })).result as {
+      messages: Array<{ role: string; content: unknown }>
+      entries: Array<number>
+    }
+  const roles = (read: { messages: Array<{ role: string }> }) => read.messages.map((message) => message.role)
+  const now = await context()
+  expect(roles(now).filter((role) => role !== "system")).toEqual(["user", "assistant", "user", "assistant"])
+  const firstAnswer = view.seen().find((entry) => entry.kind === "pi.assistant")!.id
+  const then = await context(firstAnswer)
+  expect(roles(then).filter((role) => role !== "system")).toEqual(["user", "assistant"])
+  expect(then.entries.at(-1)).toBe(firstAnswer)
+  const foreign = watchView(client, other)
+  await opened(foreign)
+  await submit(client, other, "elsewhere")
+  await foreign.until(settled(1))
+  const notHere = await client.call("conversation/context", { conversation, at: foreign.seen()[0]!.id })
+  expect(errorTag(notHere)).toBe("NoSuchEntry")
+  client.close()
+})
+
+test("wire-malformed: a call missing a field is answered with an error that names it, and the connection goes on", async () => {
+  await using server = await runningServer([{ text: "fine" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const missing = await client.call("conversation/submit", { conversation, requestId: "r", author: "ada" })
+  expect(missing.error?.message).toContain("text")
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "hi")
+  await view.until(settled(1))
+  expect(transcript(view.view().entries)).toEqual(["user: hi", "assistant: fine", "run_end: answered"])
+  client.close()
+})
+
+test("approval-ask: a call that changes things waits for a person, and every client sees what it asks and that the tree waits", async () => {
+  await using server = await runningServer(ECHO)
+  const client = await RawClient.connect(server.home.socket)
+  const status = client.watch<Trees>("status/watch")
+  await status.until((items) => items.length > 0)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "check it")
+  const approval = await waitingApproval(view)
+  expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "bash", arguments: { command: "echo approved" } })
+  await status.until((items) => treesOf(items, conversation).at(-1)?.status === "waiting")
+  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await view.until(settled(1))
+  client.close()
+})
+
+test("conversation-ended: conversation/list tells a client that was not watching how a conversation's last run ended, also after a restart", async () => {
+  const home = tempHome()
+  try {
+    let conversation: string
+    {
+      await using server = await runningServer(
+        [{ text: "all done" }, { text: "Writing the note.", tool: { name: "bash", input: { command: "echo hi" } } }],
+        { home },
+      )
+      const client = await RawClient.connect(server.home.socket)
+      conversation = await start(client, home.dir)
+      const endedOf = async () => (await list(client)).find((listed) => listed.id === conversation)?.ended
+      expect(await endedOf()).toBeUndefined()
+      const view = watchView(client, conversation)
+      await submit(client, conversation, "go")
+      await view.until(settled(1))
+      expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
+      await submit(client, conversation, "write a note")
+      await waitingApproval(view)
+      expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
+      await client.call("conversation/interrupt", { conversation })
+      await view.until(settled(2))
+      expect(await endedOf()).toEqual({ outcome: "interrupted", message: "aborted", said: "Writing the note." })
+      client.close()
+    }
+    await using server = await runningServer([], { home })
+    const client = await RawClient.connect(server.home.socket)
+    expect((await list(client)).find((listed) => listed.id === conversation)?.ended).toEqual({
+      outcome: "interrupted",
+      message: "aborted",
+      said: "Writing the note.",
+    })
+    client.close()
+  } finally {
+    rmSync(home.dir, { recursive: true, force: true })
+  }
+})
+
+test("reopen-continue: a conversation reopened from a new server and connection goes on with a new prompt", async () => {
+  const home = tempHome()
+  try {
+    let conversation: string
+    {
+      await using server = await runningServer([{ text: "before" }], { home })
+      const client = await RawClient.connect(server.home.socket)
+      conversation = await start(client, home.dir)
+      const view = watchView(client, conversation)
+      await submit(client, conversation, "one")
+      await view.until(settled(1))
+      client.close()
+    }
+    await using server = await runningServer([{ text: "after" }], { home })
+    const client = await RawClient.connect(server.home.socket)
+    const view = watchView(client, conversation)
+    await opened(view)
+    await submit(client, conversation, "two")
+    await view.until(settled(2))
+    expect(transcript(view.view().entries)).toEqual([
+      "user: one",
+      "assistant: before",
+      "run_end: answered",
+      "user: two",
+      "assistant: after",
+      "run_end: answered",
+    ])
+    client.close()
+  } finally {
+    rmSync(home.dir, { recursive: true, force: true })
+  }
+})
+
+/** Every state the view went through, in order: the first view and each change applied to it. */
+const states = (watch: ViewWatch) => {
+  const views: Array<View> = []
+  for (const item of watch.items) {
+    views.push(item._tag === "view" ? item.view : applyImmutable(views.at(-1), item.ops as ReadonlyArray<Op>))
+  }
+  return views
+}
+type Slot = { callId: string; status: string; output?: string }
+const liveSlots = (view: View) => (view.docs["pi.live"] as { tools?: Array<Slot> } | undefined)?.tools ?? []
+/** Each running call's live output, in every state the view went through. */
+const liveOutputs = (watch: ViewWatch) =>
+  states(watch).flatMap((view) => liveSlots(view).flatMap((slot) => (slot.output === undefined ? [] : [slot.output])))
+/** A shell loop that waits until the test makes `file`, so a command's next step follows what the test saw. */
+const waitFor = (file: string) => `while [ ! -e ${file} ]; do sleep 0.01; done`
+const workdir = (home: { dir: string }) => {
+  const dir = `${home.dir}/work`
+  mkdirSync(dir)
+  return dir
+}
+
+test("tool-output-live: a running command's output streams live and ends as its result", async () => {
+  await using server = await runningServer([
+    { tool: { name: "bash", input: { command: `echo first; ${waitFor("go")}; echo second` } } },
+    { text: "done" },
+  ])
+  const cwd = workdir(server.home)
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await startAuto(client, cwd)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "run it")
+  await view.until((current) => liveSlots(current.view()).some((slot) => slot.output === "first\n"))
+  expect(runEnds(view.seen())).toEqual([])
+  writeFileSync(`${cwd}/go`, "")
+  await view.until(settled(1))
+  expect(toolResults(view)).toEqual([{ text: "first\nsecond\n", isError: false }])
+  expect(liveSlots(view.view()).every((slot) => slot.output === undefined)).toBe(true)
+  client.close()
+})
+
+test("tool-output-live: a command's output keeps characters split across reads and between streams whole", async () => {
+  await using server = await runningServer([
+    {
+      tool: {
+        name: "bash",
+        input: { command: "printf '\\342'; sleep 0.1; printf 'err\\n' >&2; sleep 0.1; printf '\\202\\254\\n'" },
+      },
+    },
+    { text: "done" },
+  ])
+  const cwd = workdir(server.home)
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await startAuto(client, cwd)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "euro")
+  await view.until(settled(1))
+  expect(toolResults(view)).toEqual([{ text: "err\n€\n", isError: false }])
+  expect(liveOutputs(view).some((output) => output.includes("�"))).toBe(false)
+  client.close()
+})
+
+test("tool-output-live: a verbose command's live output stays a bounded tail", async () => {
+  await using server = await runningServer([
+    {
+      tool: { name: "bash", input: { command: `head -c 2000000 /dev/zero | tr '\\0' x; echo end; ${waitFor("go")}` } },
+    },
+    { text: "done" },
+  ])
+  const cwd = workdir(server.home)
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await startAuto(client, cwd)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "flood")
+  await view.until((current) => liveSlots(current.view()).some((slot) => slot.output?.endsWith("end\n")))
+  writeFileSync(`${cwd}/go`, "")
+  await view.until(settled(1))
+  const outputs = liveOutputs(view)
+  expect(Math.max(...outputs.map((output) => Buffer.byteLength(output)))).toBeLessThanOrEqual(DEFAULT_MAX_BYTES)
+  // The model gets the same tail, and is told how much was dropped.
+  expect(toolResults(view)[0]!.text).toMatch(
+    /^x+end\n<harness>\n.*\n\[warn\] Output truncated to its end: 0 lines, \d+ bytes dropped\n<\/harness>$/,
+  )
+  client.close()
+})
+
+test("tool-output-live: output a background process writes after its call ends never reaches the conversation", async () => {
+  await using server = await runningServer([
+    // The call's output pipe is closed once it ends, so the late echo fails (SIGPIPE, ignored here) and the process
+    // still marks that it tried.
+    {
+      tool: {
+        name: "bash",
+        input: { command: `(trap '' PIPE; ${waitFor("go")}; echo late; touch wrote) & echo now` },
+      },
+    },
+    { tool: { name: "bash", input: { command: waitFor("wrote") } } },
+    { text: "done" },
+  ])
+  const cwd = workdir(server.home)
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await startAuto(client, cwd)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "background")
+  await view.until((current) => toolResults(current).length > 0)
+  writeFileSync(`${cwd}/go`, "")
+  await view.until(settled(1))
+  expect(toolResults(view)).toEqual([
+    { text: "now\n", isError: false },
+    { text: expect.not.stringContaining("late"), isError: false },
+  ])
+  expect(liveOutputs(view).some((output) => output.includes("late"))).toBe(false)
+  client.close()
+})
+
+test("tool-grep-lines: grep reports only the lines a file has, whatever its line endings", async () => {
+  await using server = await runningServer([{ tool: { name: "grep", input: { pattern: "^$" } } }, { text: "done" }])
+  const cwd = workdir(server.home)
+  await Bun.write(`${cwd}/notes.txt`, "alpha\n\nbeta\n")
+  await Bun.write(`${cwd}/windows.txt`, "alpha\r\n\r\nbeta\r\n")
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, cwd)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "blank lines")
+  await view.until(settled(1))
+  expect(toolResults(view)).toEqual([{ text: "notes.txt:2:\nwindows.txt:2:", isError: false }])
+  client.close()
+})
+
+test("approval-interrupt: interrupting while nisse waits for an answer withdraws the question", async () => {
+  await using server = await runningServer([{ tool: { name: "bash", input: { command: "touch made" } } }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "make it")
+  const approval = await waitingApproval(view)
+  await client.call("conversation/interrupt", { conversation })
+  await view.until(settled(1))
+  expect(approvalsOf(view)!.requests).toEqual({})
+  expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
+  const late = await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  expect(late.result).toEqual({ accepted: false })
+  expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
+  client.close()
+})
+
+test("steer-wire, steer-place: a steering prompt reaches nisse during the run instead of after it", async () => {
+  await using server = await runningServer([
+    { tool: { name: "bash", input: { command: waitFor("go") } } },
+    { text: "steered" },
+  ])
+  const cwd = workdir(server.home)
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await startAuto(client, cwd)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "start")
+  await view.until((current) => liveSlots(current.view()).some((slot) => slot.status === "running"))
+  await submit(client, conversation, "also do this", crypto.randomUUID(), "ada", true)
+  writeFileSync(`${cwd}/go`, "")
+  await view.until(settled(1))
+  expect(callsAndToasts(view)).toEqual([expect.stringContaining("call bash"), "result: "])
+  expect(transcript(view.view().entries)).toEqual([
+    "user: start",
+    "assistant: ",
+    "user: also do this",
+    "assistant: steered",
+    "run_end: answered",
+  ])
+  client.close()
+})
+
+test("subagent-answer: a subagent's answer reaches its idle parent as input that starts a run, so the parent acts on it", async () => {
+  await using server = await runningServer([
+    call("spawn_agent", { task_name: "kid", message: "look around", fork_turns: "none" }),
+    { text: "asked the kid" },
+    { tool: { name: "bash", input: { command: "echo looked" } }, agent: "/root/kid" },
+    { text: "all quiet", agent: "/root/kid" },
+    { text: "the kid says all quiet" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "ask the kid")
+  // The kid holds on its approval until the parent's run has ended, so its answer reaches an idle parent.
+  await view.until(settled(1))
+  const child = spawned(view, "/root/kid")
+  const approval = await waitingApproval(watchView(client, child))
+  await client.call("approval/resolve", { conversation: child, approval, author: "ada", allow: true })
+  await view.until(settled(2), 10_000)
+  expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/kid" }])
+  const kinds = view.seen().map((entry) => entry.kind)
+  expect(kinds.slice(kinds.lastIndexOf("nisse.mail"))).toEqual(["nisse.mail", "pi.assistant", RUN_END_KIND])
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: the kid says all quiet", "run_end: answered"])
+  expect(runEnds(view.seen())).toHaveLength(2)
+  client.close()
+}, 30_000)

@@ -1,25 +1,19 @@
 import { BunSocket } from "@effect/platform-bun"
-import { KernelRpcs } from "@nisse/wire"
-import { NisseRpcs, type Approvals, type ConversationId, type Delivery, type NoSuchConversation } from "@nisse/protocol"
+import { type Approvals, NisseRpcs } from "@nisse/protocol"
 import { spawn } from "node:child_process"
 import { fstatSync, mkdirSync, openSync, readFileSync } from "node:fs"
 import * as Net from "node:net"
-import { Context, Data, Duration, Effect, Layer, Queue, Schedule, type Scope, Stream } from "effect"
+import { Context, Data, Duration, Effect, Layer, Schedule } from "effect"
 import * as RpcClient from "effect/rpc/RpcClient"
 import type { RpcClientError } from "effect/rpc/RpcClientError"
 import * as RpcSerialization from "effect/rpc/RpcSerialization"
 import * as Socket from "effect/socket/Socket"
 import { HOME_TAKEN_EXIT, type Home } from "./home.ts"
 
+/** A client of the home's server. */
 export class Client extends Context.Service<Client, RpcClient.FromGroup<typeof NisseRpcs, RpcClientError>>()(
   "nisse/Client",
 ) {}
-
-/** A client of a server under NISSE_KERNEL=1, which speaks the kernel wire (`@nisse/wire`). */
-export class KernelClient extends Context.Service<
-  KernelClient,
-  RpcClient.FromGroup<typeof KernelRpcs, RpcClientError>
->()("nisse/KernelClient") {}
 
 export interface StartOptions {
   readonly provider?: string
@@ -28,16 +22,6 @@ export interface StartOptions {
   readonly approvals?: Approvals
   readonly instructions?: string
 }
-
-export const startConversation = (client: Client["Service"], id: string | undefined, options: StartOptions) =>
-  Effect.map(
-    client["conversation/start"]({
-      cwd: process.cwd(),
-      ...options,
-      ...(id === undefined ? {} : { id: id as ConversationId }),
-    }),
-    (conversation) => conversation.id,
-  )
 
 const CLOSE_GRACE = "1 second"
 
@@ -62,8 +46,6 @@ const open = (path: string) =>
         socket.end()
       }).pipe(Effect.timeout(CLOSE_GRACE), Effect.ignore, Effect.ensuring(Effect.sync(() => socket.destroy()))),
   )
-
-const RESUBSCRIBE_DELAY = "50 millis"
 
 const WITHOUT_BUN_GC_TIMER = { BUN_GC_TIMER_DISABLE: "1" }
 
@@ -140,58 +122,3 @@ const protocolLayer = (home: Home) =>
 
 export const clientLayer = (home: Home) =>
   Layer.effect(Client, RpcClient.make(NisseRpcs)).pipe(Layer.provide(protocolLayer(home)))
-
-export const kernelClientLayer = (home: Home) =>
-  Layer.effect(KernelClient, RpcClient.make(KernelRpcs)).pipe(Layer.provide(protocolLayer(home)))
-
-export const follow = (
-  client: Client["Service"],
-  conversation: ConversationId,
-): Stream.Stream<Delivery, NoSuchConversation> =>
-  Stream.suspend(() => {
-    let seq: number | undefined
-    const subscribe = (): Stream.Stream<Delivery, NoSuchConversation> =>
-      client["conversation/subscribe"](seq === undefined ? { conversation } : { conversation, sinceSeq: seq }).pipe(
-        Stream.tap((delivery) => Effect.sync(() => (seq = delivery.seq))),
-        Stream.catchIf(
-          (error) => error._tag !== "NoSuchConversation",
-          () => Stream.unwrap(Effect.as(Effect.sleep(RESUBSCRIBE_DELAY), Stream.suspend(subscribe))),
-        ),
-      )
-    return subscribe()
-  })
-
-export interface Followed {
-  readonly conversation: ConversationId
-  readonly delivery: Delivery
-}
-
-const subagentsIn = (delivery: Delivery) =>
-  delivery.entries.flatMap((entry) => (entry.body._tag === "subagent" ? [entry.body.conversation] : []))
-
-export const followTree = (
-  client: Client["Service"],
-  root: ConversationId,
-): Stream.Stream<Followed, NoSuchConversation> =>
-  Stream.callback<Followed, NoSuchConversation>((queue) => {
-    const followed = new Set<ConversationId>()
-    const track = (conversation: ConversationId): Effect.Effect<void, NoSuchConversation, Scope.Scope> =>
-      follow(client, conversation).pipe(
-        Stream.runForEach((delivery) =>
-          Effect.andThen(
-            Queue.offer(queue, { conversation, delivery }),
-            Effect.forEach(subagentsIn(delivery), (subagent) => trackOnce(subagent, Effect.ignore), { discard: true }),
-          ),
-        ),
-      )
-    const trackOnce = (
-      conversation: ConversationId,
-      ended: (tracked: Effect.Effect<void, NoSuchConversation, Scope.Scope>) => Effect.Effect<void, never, Scope.Scope>,
-    ) =>
-      Effect.suspend(() => {
-        if (followed.has(conversation)) return Effect.void
-        followed.add(conversation)
-        return Effect.asVoid(Effect.forkScoped(ended(track(conversation))))
-      })
-    return trackOnce(root, (tracked) => Effect.catch(tracked, (error) => Queue.fail(queue, error)))
-  })

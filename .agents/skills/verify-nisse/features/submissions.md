@@ -42,7 +42,9 @@ Feature ledger area F: spec §6, §8.2; README Busy Conversations, Failures and 
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Package, `packages/harness/test/harness.test.ts`:
+
+- submission-dedupe: a submission retried with its request ID after a restart lands once
 
 ## Gotchas
 

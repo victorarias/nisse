@@ -24,12 +24,13 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
   and a second of one name, such as `foo.ts` beside `foo/index.ts`, with
   `another extension is named <name>`.
 - `tools-transform` adds a tool the model can call, replaces one of the same
-  name, changes a tool's description or `readOnly`, or removes one, from each
-  turn's start; a removed tool answers `no tool named <name>`. A transform that
-  throws is undone, with the toast `its tool transform failed: <why>`.
-- `execute-before` changes a call's input before approval, the run and the
-  transcript, or refuses it: its result is
-  `<name> refused this call: <reason>`, and nobody is asked.
+  name, changes a tool's description or `readOnly`, or removes one, once per
+  load; a removed tool answers `Tool <name> is not available`. A transform
+  that throws fails its extension's load with
+  `its tool transform failed: <why>`, and the extension's hooks never run.
+- `execute-before` changes a call's input before approval and the run, or
+  refuses it: its result is
+  `Tool call blocked: <name> refused this call: <reason>`, and nobody is asked.
 - `execute-after` changes the output or error the model and the transcript
   get.
 - `request-hook` (OpenAI only) adds the text an extension pushes to
@@ -38,23 +39,24 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
 - `hook-failure` turns a hook that fails or takes over 10 seconds into a toast
   `<hook> failed: <why>`, where `<hook>` is `execute.before`, `execute.after` or
   `request`; a failed `execute.before` refuses the call with
-  `<name> refused this call: it failed: <why>`.
-- `status-line` shows `<name>: <text>` in the TUI's status bar, as
-  `extensionStatus` in a snapshot and in the commit that changes it.
+  `Tool call blocked: <name> refused this call: it failed: <why>`.
+- `status-line` shows `<name>: <text>` in the TUI's status bar, as the view's
+  `nisse.status_lines` document, `{"lines": {"<name>": "<text>"}}`.
   `conversation.status()` with no text, or `""`, clears the line.
-- `toast` is a `toast` entry `{ extension, text }`, drawn as
+- `toast` is a `nisse.toast` entry `{ extension, text }`, drawn as
   `◆ <name>: <text>` in the TUI and printed to stderr by `nisse exec`.
 - `claude-extensions`: on Claude, an added tool is served from nisse's MCP
   server `nisse` (Claude calls `mcp__nisse__<name>`, the transcript says
-  `<name>`), a removed tool is passed to Claude Code as `--disallowedTools`
-  (nisse's `read`, `grep`, `glob`, `write`, `edit` and `bash` as Claude Code's
-  `Read`, `Grep`, `Glob`, `Write`, `Edit` and `Bash`; any other name as given),
-  `execute.before` runs as Claude Code's `PreToolUse` hook (subagents' calls
+  `<name>`) and passed to Claude Code as `--disallowedTools` so Claude does
+  not also see it as one of its own; a removed tool is passed to Claude Code
+  as `--disallowedTools` too (nisse's `read`, `grep`, `glob`, `write`, `edit`
+  and `bash` as Claude Code's `Read`, `Grep`, `Glob`, `Write`, `Edit` and
+  `Bash`; any other name as given), `execute.before` runs as Claude Code's `PreToolUse` hook (subagents' calls
   too), and `execute.after` sees Claude Code's results but can't change them:
   a change becomes the toast
   `execute.after changed <tool>'s result, but Claude Code keeps its own tools' results`.
   `tools.update` on a Claude Code tool has no effect: Claude gets only added
-  and removed tools.
+  tools.
 - `reload` (`nisse extensions reload` or `extensions/reload`) loads every
   extension again from disk while the loaded ones keep guarding calls, then
   swaps them in, clears every status line and unloads the old ones. A server
@@ -74,7 +76,7 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
 ### Agents
 
 - Call `extensions/list` and `extensions/reload`.
-- Read `nisse exec`'s stderr, or a subscription's `extensionStatus` and `toast` entries.
+- Read `nisse exec`'s stderr, or a view's `nisse.status_lines` document and `nisse.toast` entries.
 
 ## Driving it with drive.ts
 
@@ -103,7 +105,7 @@ export default Extension.define((ctx) =>
     const greeting = String(ctx.options.greeting ?? "hello")
     yield* ctx.tool.hook("execute.before", (call) =>
       Effect.gen(function* () {
-        if (call.tool !== "Bash") return
+        if (call.tool.toLowerCase() !== "bash") return
         const input = call.input as { command: string }
         if (input.command.includes("rm -rf")) return yield* Tool.refuse("that deletes too much")
         if (input.command.startsWith("touch")) return yield* Tool.refuse("no touching")
@@ -120,7 +122,7 @@ export default Extension.define((ctx) =>
 )
 ```
 
-`guard.ts` refuses Bash commands holding `rm -rf` or starting with `touch`,
+`guard.ts` refuses `bash` commands (Claude Code's `Bash` too) holding `rm -rf` or starting with `touch`,
 replaces `[extensions.guard] replace` (default `hello`) in a command with
 `greeting`, keeping the input's other fields, and after each call sets the
 status `last ran <tool>` and toasts `<tool> finished`.
@@ -142,7 +144,7 @@ export default Extension.define((ctx) =>
         run: ({ zone }) => Effect.succeed(Tool.ok(`noon in ${zone}`)),
       }),
     )
-    tools.remove("WebFetch")
+    tools.remove("glob")
   }),
 )
 ```
@@ -154,11 +156,11 @@ import { Extension } from "@nisse/extension"
 
 export default Extension.define((ctx) =>
   ctx.tool.transform((tools) => {
-    tools.remove("Glob")
-    tools.update("Read", (tool) => {
+    tools.remove("glob")
+    tools.update("read", (tool) => {
       tool.readOnly = false
     })
-    tools.update("Bash", (tool) => {
+    tools.update("bash", (tool) => {
       tool.description = "Run one shell command and return what it prints."
     })
   }),
@@ -190,7 +192,7 @@ export default Extension.define((ctx) =>
   ctx.request.hook((request) =>
     Effect.sync(() => {
       request.instructions.push(String(ctx.options.instruction ?? "Answer briefly."))
-      request.tools = request.tools.filter((name) => name === "Bash")
+      request.tools = request.tools.filter((name) => name === "bash")
     }),
   ),
 )
@@ -240,7 +242,7 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 ```
 
 - **List.** In a fresh run with `--script` steps
-  `[{"tool": {"name": "Bash", "input": {"command": "rm -rf ~/precious"}}}, {"tool": {"name": "Bash", "input": {"command": "echo hello"}}}, {"text": "all done"}]`,
+  `[{"tool": {"name": "bash", "input": {"command": "rm -rf ~/precious"}}}, {"tool": {"name": "bash", "input": {"command": "echo hello"}}}, {"text": "all done"}]`,
   copy in `guard.ts` and `broken.ts` and append
   `[extensions.guard]\ngreeting = "hallo"\n` to `config.toml`. Run
   `drive.ts r nisse extensions`. It prints
@@ -249,25 +251,26 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 - **Hooks in the TUI.** In the same run, `drive.ts r tui start --auto`, wait
   for `READY`, type `tidy my home` and `Enter`, wait for `all done` and
   `READY`, then `drive.ts r tui screen hooks`. The screen shows
-  `▸ Bash(rm -rf ~/precious)` with `guard refused this call: that deletes too much`
-  and no toast, then `▸ Bash(echo hallo)` with `hallo` and
-  `◆ guard: Bash finished`, the line
+  `▸ bash(rm -rf ~/precious)` with `guard refused this call: that deletes too much`
+  and no toast, then `▸ bash(echo hello)`, the model's own arguments, with
+  `hallo`, what ran, and `◆ guard: bash finished`, the line
   `✗ extension broken failed to load: it exports no extension; export default Extension.define(...)`
-  over the prompt, and `READY  guard: last ran Bash` in the status bar.
+  over the prompt, and `guard: last ran bash` in the status bar.
 - **Committed.** Run `drive.ts r rpc conversation/list` for the `<id>`, then
-  `drive.ts r watch <id> --save second-client`. The snapshot's
-  `extensionStatus` is `{"guard":"last ran Bash"}` and its entries include
-  `{"_tag":"toast","extension":"guard","text":"Bash finished"}`.
+  `drive.ts r watch <id> --save second-client`. The view's
+  `nisse.status_lines` is `{"lines":{"guard":"last ran bash"}}` and its
+  entries include a `nisse.toast` with
+  `{"extension":"guard","text":"bash finished"}`.
 - **Reload.** Run `rm /tmp/nisse-verify/r/home/extensions/broken.ts` and
   `drive.ts r nisse extensions reload`: it prints only `guard  loaded ...` and
   exits 0. `drive.ts r tui wait 'guard: last ran' --gone` returns, and a new
-  `drive.ts r watch <id>` shows `"extensionStatus":{}`.
+  `drive.ts r watch <id>` shows `"lines":{}`.
 - **exec.** In a fresh run with the same script, `guard.ts` and
   `config.toml`, `drive.ts r nisse exec --auto "tidy my home"` prints
-  `all done` to stdout and, to stderr, `› Bash(rm -rf ~/precious)`,
-  `› Bash(echo hallo)` and `◆ guard: Bash finished`, exit 0.
+  `all done` to stdout and, to stderr, `› bash(rm -rf ~/precious)`,
+  `› bash(echo hello)` and `◆ guard: bash finished`, exit 0.
 - **Tools, folder form and disabled.** In a fresh run with `--script` steps
-  `[{"tool": {"name": "Clock", "input": {"zone": "CET"}}}, {"tool": {"name": "Glob", "input": {"pattern": "*"}}}, {"tool": {"name": "Read", "input": {"file_path": "/tmp/nisse-verify/r/hostname"}}}, {"tool": {"name": "Bash", "input": {"command": "echo hi"}}}, {"text": "tools done"}]`,
+  `[{"tool": {"name": "Clock", "input": {"zone": "CET"}}}, {"tool": {"name": "glob", "input": {"pattern": "*"}}}, {"tool": {"name": "read", "input": {"path": "/tmp/nisse-verify/r/hostname"}}}, {"tool": {"name": "bash", "input": {"command": "echo hi"}}}, {"text": "tools done"}]`,
   run `printf 'gnome-box\n' > /tmp/nisse-verify/r/hostname`,
   copy `clock.ts` to `/tmp/nisse-verify/r/home/extensions/clock/index.ts`
   (`mkdir -p` that folder first), copy in `tidy.ts`, `shout.ts` and
@@ -277,40 +280,37 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   `shout  loaded` and `tidy  loaded`, exit 0. Run `drive.ts r tui start`
   (no `--auto`), wait for `READY`, type `use your tools` and `Enter`, wait for
   `allow this call?` and `drive.ts r tui screen read-asks`: `▸ Clock` ran
-  without asking and shows `NOON IN CET`, `▸ Glob(*)` shows
-  `no tool named Glob`, and `▸ Read(/tmp/nisse-verify/r/hostname)` asks, since `tidy`
-  made it not read-only. Press `C-y`, wait for `Bash(echo hi)` and
+  without asking and shows `NOON IN CET`, `▸ glob(*)` shows
+  `Tool glob is not available`, and `▸ read(/tmp/nisse-verify/r/hostname)` asks, since `tidy`
+  made it not read-only. Press `C-y`, wait for `bash(echo hi)` and
   `allow this call?`, press `C-y`, wait for `tools done` and `READY`: the
-  Read's result is `1` and `GNOME-BOX`, and the Bash's `HI`.
-  `drive.ts r watch <id> --save tools` holds the `tool_result`s
-  `NOON IN CET`, `no tool named Glob` with `"error":true`, the capitalised
-  Read and `HI\n`, and an `approval` entry for the Read and the Bash only.
+  read's result is `GNOME-BOX`, and the bash's `HI`.
+  `drive.ts r watch <id> --save tools` holds the `pi.tool-result`s
+  `NOON IN CET`, `Tool glob is not available` with `"isError":true`, the
+  capitalised read and `HI\n`, and a `nisse.approval` entry for the read and
+  the bash only.
 - **What the model sees, on OpenAI.** In a fresh run made with
-  `drive.ts r up --fake-openai tool_call`, copy in `tidy.ts` and `shout.ts`.
-  Run `drive.ts r nisse exec --provider openai --auto "what does echo say?"`:
-  stdout `Let me look.` and `It printed hi.` (the recording's words), stderr
-  `› Bash(echo hi)`, exit 0. In `evidence/fake-openai.ndjson` both requests'
-  `body.tools` lack `Glob` and describe `Bash` as
-  `Run one shell command and return what it prints.`; the first request is
-  `as recorded`, and the second `differs` only in its `function_call_output`,
-  `HI\n` where the recording sent `hi\n`.
+  `drive.ts r up --fake-openai text_answer`, copy in `tidy.ts`. Run
+  `drive.ts r nisse exec --provider openai "hello"`: stdout `Hello there`,
+  exit 0. In `evidence/fake-openai.ndjson` the request's `body.tools` lack
+  `glob` and describe `bash` as
+  `Run one shell command and return what it prints.`
 - **Request hook.** In a fresh run made with
-  `drive.ts r up --fake-openai tool_call`, copy in `focus.ts`. Run
-  `drive.ts r nisse exec --provider openai --auto "what does echo say?"`: it
-  prints `Let me look.` and `It printed hi.` to stdout and `› Bash(echo hi)`
-  to stderr, exit 0. Both requests in `evidence/fake-openai.ndjson` are
-  `as recorded`, their `body.instructions` end with `Answer briefly.`, and
-  their `body.tools` hold only `Bash`.
+  `drive.ts r up --fake-openai text_answer`, copy in `focus.ts`. Run
+  `drive.ts r nisse exec --provider openai "hello"`: stdout `Hello there`,
+  exit 0. The request in `evidence/fake-openai.ndjson` has `body.instructions`
+  ending with `Answer briefly.`, after the request's own, and `body.tools`
+  holding only `bash`. On the `script` provider the request hook does not run.
 - **Claude, own tool.** In a fresh run made with
   `drive.ts r up --fake-claude own_tool`, copy in `clock.ts`. Run
   `drive.ts r tui start --provider claude`, wait for `READY`, type
   `what time is it` and `Enter`, wait for `It is noon in CET` and `READY`: the
   screen shows `▸ Clock` with `noon in CET`, and no `allow this call?`.
-  `drive.ts r watch <id> --save second-client` shows the entries
-  `tool_call` with `"tool":"Clock","input":{"zone":"CET"}`, its `tool_result`
-  `noon in CET`, the `message` `It is noon in CET.` and `run_end` `answered`.
+  `drive.ts r watch <id> --save second-client` shows a `pi.assistant`
+  calling `Clock` with `{"zone":"CET"}`, its `pi.tool-result` `noon in CET`,
+  the answer `It is noon in CET.` and a `nisse.run_end` `answered`.
   In `evidence/fake-claude/log.ndjson`, the spawn's `argv` holds
-  `--disallowedTools=WebFetch,Clock` and its `initialize` has
+  `--disallowedTools=Clock` and its `initialize` has
   `"sdkMcpServers":["nisse"]`.
 - **Claude, hook.** In a fresh run made with
   `drive.ts r up --fake-claude bash_hook_rewritten`, copy in `guard.ts` and
@@ -333,12 +333,12 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   `▸ Bash(touch guarded.txt)` with `guard refused this call: no touching`,
   then the answer `no touching`, and no `allow this call?`.
   `drive.ts r watch <id> --save second-client` shows that
-  `tool_result` with `"error":true`, the `message` `no touching` and
-  `run_end` `answered`. The log's hook answer is
-  `"permissionDecision":"deny"` with
-  `"permissionDecisionReason":"guard refused this call: no touching"`; the
-  recording answered `guard: no touching`, so only that reason differs from
-  it.
+  `pi.tool-result`, `Tool call blocked: guard refused this call: no touching`,
+  with `"isError":true`, the answer `no touching` and a `nisse.run_end`
+  `answered`. The log's hook answer is `"permissionDecision":"deny"` with
+  `"permissionDecisionReason":"Tool call blocked: guard refused this call: no touching"`;
+  the recording answered `guard: no touching`, so only that reason differs
+  from it.
 - **Claude, subagent's call.** In a fresh run made with
   `drive.ts r up --fake-claude subagent_hooked`, copy in `brief.ts`. Run
   `drive.ts r tui start --provider claude`, wait for `READY`, type
@@ -347,8 +347,8 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   `⧉ Find the gnome (general-purpose)` with `Read(<cwd>/notes.txt)`.
   `drive.ts r rpc conversation/list` shows a conversation whose
   `lineage.parent` is this one; `drive.ts r watch <subagent> --save subagent`
-  shows its `tool_call` `Read` with
-  `"input":{"file_path":"<cwd>/notes.txt","limit":1}`. The log holds one hook
+  shows its call to `Read` with
+  `{"file_path":"<cwd>/notes.txt","limit":1}`. The log holds one hook
   answer, `"updatedInput":{"file_path":"<cwd>/notes.txt","limit":1}`, for the
   subagent's call; the `Agent` call's hook is answered `{}`.
 - **Claude, a result it can't change.** In a fresh run made with
@@ -361,39 +361,20 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   two toasts
   `◆ shout: execute.after changed Read's result, but Claude Code keeps its own tools' results`,
   and the answer `apple`, `,`, `banana`. `drive.ts r watch <id> --save second-client`
-  has both `toast` entries and the `tool_result`s `1\tapple\n2\t` and
+  has both `nisse.toast` entries and the `pi.tool-result`s `1\tapple\n2\t` and
   `1\tbanana\n2\t`, as Claude Code returned them, not in capitals.
 - **Hook failure.** In a fresh run with `--script` steps
-  `[{"tool": {"name": "Bash", "input": {"command": "echo boom"}}}, {"tool": {"name": "Bash", "input": {"command": "echo slow"}}}, {"tool": {"name": "Bash", "input": {"command": "echo fine"}}}, {"text": "all done"}]`,
+  `[{"tool": {"name": "bash", "input": {"command": "echo boom"}}}, {"tool": {"name": "bash", "input": {"command": "echo slow"}}}, {"tool": {"name": "bash", "input": {"command": "echo fine"}}}, {"text": "all done"}]`,
   copy in `flaky.ts`. Run `drive.ts r nisse exec --auto "try the hooks"`:
-  after about 10 s, stdout `all done`, exit 0, and stderr, in order,
-  `◆ flaky: execute.before failed: boom`, `› Bash(echo boom)`,
+  after about 10 s, stdout `all done`, exit 0, and stderr holds
+  `› bash(echo boom)`, `◆ flaky: execute.before failed: boom`,
+  `› bash(echo slow)`,
   `◆ flaky: execute.before failed: Operation timed out after '10s'`,
-  `› Bash(echo slow)`, `› Bash(echo fine)` and
-  `◆ flaky: execute.after failed: after broke`.
+  `› bash(echo fine)` and `◆ flaky: execute.after failed: after broke`.
   `drive.ts r watch <id> --save hook-failure` shows the first two calls'
-  `tool_result`s `flaky refused this call: it failed: boom` and
-  `flaky refused this call: it failed: Operation timed out after '10s'`,
-  both `"error":true`, and the third `fine`.
-- **On the kernel.** In a fresh run made with `drive.ts r up --kernel` and
-  `--script` steps
-  `[{"tool": {"name": "bash", "input": {"command": "rm -rf ./precious"}}}, {"tool": {"name": "bash", "input": {"command": "echo hello"}}}, {"tool": {"name": "Clock", "input": {"zone": "CET"}}}, {"tool": {"name": "glob", "input": {"pattern": "*"}}}, {"text": "all done"}]`,
-  write `guard.ts` with `"Bash"` replaced by `"bash"`, `clock.ts` with
-  `"WebFetch"` replaced by `"glob"` (as `extensions/clock/index.ts`), and
-  `broken.ts`, and append `[extensions.guard]\ngreeting = "hallo"\n` to
-  `config.toml`. Run `drive.ts r serve`, then `drive.ts r rpc extensions/list`:
-  `broken` `failed` with
-  `it exports no extension; export default Extension.define(...)`, then
-  `clock` and `guard` `loaded`. Run
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp/nisse-verify/r", "approvals": "auto", "id": "guarded"}'`
-  and `drive.ts r watch guarded --submit "tidy my home" --until run_end --save hooks`:
-  the first `bash` result reads
-  `Tool call blocked: guard refused this call: that deletes too much`, the
-  second `hallo` after the toast `{"extension":"guard","text":"bash finished"}`,
-  `Clock` answers `noon in CET`, `glob` reads `Tool glob is not available`,
-  and the view's `nisse.status_lines` is `{"lines":{"guard":"last ran Clock"}}`.
-  Remove `broken.ts` and run `drive.ts r rpc extensions/reload`: only `clock`
-  and `guard`, and a new `drive.ts r watch guarded` shows `"lines":{}`.
+  `pi.tool-result`s `Tool call blocked: flaky refused this call: it failed: boom` and
+  `Tool call blocked: flaky refused this call: it failed: Operation timed out after '10s'`,
+  both `"isError":true`, and the third `fine`.
 - **Load limit.** In a fresh run made with `drive.ts r up`, copy in
   `guard.ts` and `sleepy.ts`. Run `drive.ts r nisse extensions`: after about
   10 s it prints `guard  loaded ...` and
@@ -410,28 +391,11 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 - **Provider.** On Claude the request hook does not run, and `execute.after` cannot change the results of Claude Code's own tools.
 - **Server restart.** Status lines clear, so none outlives the code that set it.
 - **Second client.** Status lines and toasts are committed, so every client sees them, then and later.
-- **On the kernel.** In a run made with `drive.ts r up --kernel` the server loads the same extensions with the same
-  `@nisse/extension` API, and serves `extensions/list` and `extensions/reload`, so `nisse extensions` and
-  `nisse extensions reload` list them as on today's server; the TUI waits for tui-views. The kernel's tools are named `read`, `write`, `edit`, `apply_patch`, `bash`, `grep`
-  and `glob`, so a hook or transform names them so. A status line is the view's `nisse.status_lines` document
-  (`{"lines": {"<name>": "<text>"}}`), and a toast a `nisse.toast` entry `{ extension, text }`. A refused or failed
-  `execute.before` reaches the model as `Tool call blocked: <name> refused this call: <why>`, and a removed tool as
-  `Tool <name> is not available`. Transforms run once per load, not at each turn, so one that throws fails its
-  extension's load with `its tool transform failed: <why>` and the extension's hooks never run. The transcript keeps
-  the model's own arguments; `execute.before`'s change shows in what runs, its result, the approval request and
-  `execute.after`'s `input`.
-  `ctx.request.hook` runs on each ChatGPT request as the harness's
-  `beforeProviderRequest` hook: what it pushes to `instructions` goes after the
-  request's own, and it narrows the tools offered; on `script` it does not run.
-  A hook's `conversation` in a subagent carries its `lineage`, as `conversation/list` shows it.
+- **Subagents.** A hook's `conversation` in a subagent carries its `lineage`, as `conversation/list` shows it.
 
 ## Tests
 
-Kernel screen, `packages/nisse/test/kernel/screen.test.ts`, the TUI under `NISSE_KERNEL=1`:
-
-- status-line, toast, extensions-failed: a person sees what extensions say in the footer and the transcript, and which failed to load
-
-Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE_KERNEL=1`:
+Wire, `packages/nisse/test/wire.test.ts`:
 
 - tools-transform, extensions-load: an extension's tool answers the model's calls, a tool it removes is gone, and one it makes not read-only asks
 - execute-before, execute-after, toast, status-line: an extension can refuse a call, change what runs and what the model sees, and tell every client
@@ -441,36 +405,15 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 - status-line: a hook still running when its extension is unloaded can't bring back a status line
 - reload: a config.toml that stops reading fails every extension in a reload, and says why
 
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- extensions-load: nisse extensions on the kernel lists each extension by its full path
-
-Kernel provider, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- claude-extensions: a tool an extension removes is withheld from Claude Code, by Claude Code's name for nisse's own
-
-Kernel provider, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
-
-- request-hook: an extension's request hook adds instructions and narrows the tools of each request to the model
-- hook-failure: a request hook that fails is skipped with a toast, and the model gets the request as it was
-
-Kernel stack, `packages/nisse/test/kernel/stack.test.ts`:
-
-- extensions-load: a home named relative to the folder nisse serves from loads its extensions, listed by full path
-- reload: a server on the kernel refuses to start on a config.toml that does not read, and says why
-
-Wire, `packages/nisse/test/wire.test.ts`:
-
-- tools-transform: an extension's tool answers the model's calls, and a tool it removes is gone
-- execute-before: an extension can refuse a call, change what runs and what the model sees, and tell people
-- extensions-failed: an extension that fails to load is listed with why, while the others load and run
-- reload: reloading runs the extensions as they are now, and no status outlives the code that set it
-- reload: while extensions reload, the loaded ones keep guarding calls until their replacements are ready
-- status-line: a hook still running when its extension is unloaded can't bring back a status line
-
 Screen, `packages/nisse/test/screen.test.ts`:
 
 - status-line, toast, extensions-failed: a person sees what extensions say in the footer and the transcript, and which failed to load
+
+Stack, `packages/nisse/test/stack.test.ts`:
+
+- extensions-load: a home named relative to the folder nisse serves from loads its extensions, listed by full path
+- reload: a server refuses to start on a config.toml that does not read, and says why
+- extensions-load: nisse extensions lists each extension by its full path
 
 Provider, `packages/nisse/test/openai.test.ts`:
 
@@ -479,15 +422,21 @@ Provider, `packages/nisse/test/openai.test.ts`:
 
 Provider, `packages/nisse/test/claude.test.ts`:
 
-- claude-extensions: an extension's tool reaches Claude through nisse's own MCP server, and a tool it removes is withheld
+- claude-extensions: an extension's tool reaches Claude through nisse's own MCP server, without asking
 - claude-extensions: an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why
 - claude-extensions: an extension's rewrite of a call is what Claude Code runs and what the transcript shows
 - claude-extensions: an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
-- execute-after: execute.after sees what Claude Code's tools return, and says so when it can't change it
+- claude-extensions: an extension's tool runs for Claude's subagents, in the subagent's conversation
+- claude-extensions: a tool an extension removes is withheld from Claude Code, by Claude Code's name for nisse's own
 
-Stack, `packages/nisse/test/stack.test.ts`:
+Package, `packages/claude/test/claude.test.ts`:
 
-- extensions-load: a home named relative to the folder nisse runs in loads its extensions
+- claude-extensions: an extension's tool reaches Claude through nisse's own MCP server, without asking
+- claude-extensions: an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why
+- claude-extensions: an extension's rewrite of a call is what Claude Code runs and what the transcript shows
+- claude-extensions: an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
+- claude-extensions: an extension's tool runs for Claude's subagents, in the subagent's conversation
+- execute-after: afterTool changes what Claude Code's Read returns, and says so when it can't change another tool's result
 
 ## Gotchas
 
@@ -499,7 +448,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - The TUI asks `extensions/list` once when it opens; a reload while it runs
   does not change the failed-to-load lines it shows.
 - A toast is committed when the hook runs, so in the transcript it comes
-  before the `tool_result` of the call it is about; the TUI draws it under the
+  before the `pi.tool-result` of the call it is about; the TUI draws it under the
   call.
 - A Claude recording plays its answers whatever nisse sends it, so judge a
   Claude hook by the log's hook answer, not by the screen alone.

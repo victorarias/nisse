@@ -1,6 +1,6 @@
 // claude.run through the harness's own seams: a Harness over real SQLite whose registry holds extensions written as a
 // host installs them, with Claude Code played by nisse's fake `claude` replaying a recorded process per spawn. These
-// cover what the kernel wire cannot reach yet: extension tools and hooks, and forks.
+// cover what the wire cannot reach yet: extension tools and hooks, and forks.
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"

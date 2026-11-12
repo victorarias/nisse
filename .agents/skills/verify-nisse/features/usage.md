@@ -28,7 +28,7 @@ Feature ledger area U: spec §8.2, §8.6; README Usage and Cost.
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+None yet.
 
 ## Gotchas
 

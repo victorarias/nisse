@@ -25,7 +25,9 @@ Feature ledger area D: spec §6; README Reset and Handoff; example 25-coding-age
 
 ## Tests
 
-`bun run coverage` lists every id here with its test, its mapped upstream rows or its owning child.
+Package, `packages/harness/test/harness.test.ts`:
+
+- reset-context, reset-handoff, fork-at-entry: a fork that resets starts a new context with its handoff, and the original and the fork's earlier entries keep theirs
 
 ## Gotchas
 

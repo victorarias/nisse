@@ -1,10 +1,14 @@
+// The TUI: the real TUI in a PTY on an @xterm/headless screen, typed into, against a real server.
 import { afterEach, expect, test } from "bun:test"
 import { readFileSync, rmSync, watch } from "node:fs"
 import { join } from "node:path"
+import type { ScriptStep } from "@nisse/models"
 import type { AuthState } from "@nisse/protocol"
+import { FakeOpenAi, signIn } from "./support/openai.ts"
 import { deadline, RawClient } from "./support/raw.ts"
-import { tempHome } from "./support/server.ts"
-import { nisseEnv, screenSession, stopServer } from "./support/terminal.ts"
+import { scriptEnv, runningServer, serving, settled, start, submit, watchView, tempHome } from "./support/server.ts"
+import { png } from "./support/png.ts"
+import { screenSession, stopServer } from "./support/terminal.ts"
 
 const homes: Array<ReturnType<typeof tempHome>> = []
 const home = () => {
@@ -20,76 +24,148 @@ afterEach(async () => {
   }
 })
 
-test("answer-tui: a person types a prompt, presses enter and reads the answer under their name", async () => {
-  const session = screenSession([], nisseEnv(home()))
+type Home = ReturnType<typeof tempHome>
+type Session = ReturnType<typeof screenSession>
+
+/** The TUI, in `nisseHome`, whose server answers from `script` when the TUI starts it. */
+const open = async (
+  script: ReadonlyArray<ScriptStep> = [],
+  args: Array<string> = [],
+  nisseHome: Home = home(),
+  extra: Record<string, string | undefined> = {},
+) => screenSession(args, { ...(await scriptEnv(nisseHome, script)), ...extra })
+
+const quit = async (session: Session) => {
+  session.type("\x03")
+  expect(await session.exited).toBe(0)
+}
+
+const call = (name: string, input: Record<string, unknown>, agent?: string): ScriptStep => ({
+  tool: { name, input },
+  ...(agent === undefined ? {} : { agent }),
+})
+
+/** The mouse wheel turned once over the transcript, as an SGR mouse report. */
+const wheelUp = "\x1b[<64;20;5M"
+const wheelDown = "\x1b[<65;20;5M"
+
+/** Turns the wheel until `predicate` holds, waiting for each turn to show before the next. */
+const scrollUntil = (wheel: string) => async (session: Session, predicate: (screen: string) => boolean) => {
+  for (let turn = 0; turn < 400; turn++) {
+    const before = session.screen()
+    if (predicate(before)) return before
+    session.type(wheel.repeat(5))
+    // At an end, a turn changes nothing until a load or a commit does.
+    await session.waitFor((screen) => screen !== before, 10_000)
+  }
+  throw new Error(`never scrolled to it:\n${session.screen()}`)
+}
+const scrollUpUntil = scrollUntil(wheelUp)
+const scrollDownUntil = scrollUntil(wheelDown)
+
+/** `count` prompts `prompt 1`.. answered `answer 1`.., each run settled before the next is sent. */
+const converse = async (client: RawClient, conversation: string, count: number, from = 1) => {
+  const view = watchView(client, conversation)
+  for (let n = from; n < from + count; n++) {
+    await submit(client, conversation, `prompt ${n}`)
+    await view.until(settled(n - from + 1), 10_000)
+  }
+}
+
+const answers = (count: number): Array<ScriptStep> =>
+  Array.from({ length: count }, (_, n) => ({ text: `answer ${n + 1}` }))
+
+test("answer-tui, answer-author: a person types a prompt, presses enter and reads the answer under their name", async () => {
+  const session = await open([{ text: "hello ada" }])
   await session.waitFor((screen) => screen.includes("PROMPT") && screen.includes("READY"))
   session.type("hello nisse")
   await session.waitFor((screen) => screen.includes("hello nisse"))
   session.type("\r")
-  const screen = await session.waitFor((screen) => screen.includes("You said: hello nisse"))
+  const screen = await session.waitFor((screen) => screen.includes("hello ada") && screen.includes("READY"))
   expect(screen).toContain("ADA")
   expect(screen).toContain("NISSE")
-  session.type("\x03")
-  expect(await session.exited).toBe(0)
+  await quit(session)
 })
 
-test("tui-hangup: closing the terminal ends nisse instead of leaving it running unseen", async () => {
-  const session = screenSession([], nisseEnv(home()))
+test("answer-author: without USER the TUI names a person's message after the system's user name", async () => {
+  const session = await open([{ text: "hello" }], [], home(), { USER: undefined })
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("who am i\r")
+  const screen = await session.waitFor((screen) => screen.includes("hello") && screen.includes("READY"))
+  // The system's user name, as a process without USER is told it.
+  const { USER: _, ...withoutUser } = process.env
+  const name = Bun.spawnSync(["bun", "-e", "console.log(require('node:os').userInfo().username)"], { env: withoutUser })
+  expect(screen).toContain(name.stdout.toString().trim().toUpperCase())
+  await quit(session)
+})
+
+test("answer-newline: alt+enter adds a line to the prompt, and enter sends every line as one message", async () => {
+  const session = await open([{ text: "got both" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("line one")
+  session.type("\x1b\r")
+  session.type("line two")
+  await session.waitFor((screen) => screen.includes("line one") && screen.includes("line two"))
+  session.type("\r")
+  const screen = await session.waitFor((screen) => screen.includes("got both") && screen.includes("READY"))
+  const lines = screen.split("\n")
+  const first = lines.findIndex((line) => line.includes("line one"))
+  expect(lines[first + 1]).toContain("line two")
+  expect(lines.findIndex((line) => line.includes("ADA"))).toBe(first - 1)
+  await quit(session)
+})
+
+test("tui-hangup, idle-closed: closing the terminal ends nisse instead of leaving it running unseen", async () => {
+  const session = await open()
   await session.waitFor((screen) => screen.includes("READY"))
   session.hangUp()
   await deadline(session.exited, 5000, "nisse exited")
 })
 
-test("reopen-hint: quitting prints the command that reopens the conversation", async () => {
+test("reopen-hint, reopen-tui: quitting prints the command that reopens the conversation, and it opens with its transcript", async () => {
   const nisseHome = home()
-  const first = screenSession([], nisseEnv(nisseHome))
+  const first = await open([{ text: "I remember" }], [], nisseHome)
   await first.waitFor((screen) => screen.includes("READY"))
   first.type("remember me\r")
-  await first.waitFor((screen) => screen.includes("You said: remember me"))
-  first.type("\x03")
-  await first.exited
+  await first.waitFor((screen) => screen.includes("I remember") && screen.includes("READY"))
+  await quit(first)
   const id = first.output().match(/nisse --conversation (\w+)/)?.[1]
   expect(id).toBeDefined()
-  const second = screenSession(["--conversation", id!], nisseEnv(nisseHome))
-  await second.waitFor((screen) => screen.includes("You said: remember me"))
-  second.type("\x03")
-  await second.exited
+  const second = await open([], ["--conversation", id!], nisseHome)
+  const screen = await second.waitFor((screen) => screen.includes("I remember") && screen.includes("READY"))
+  expect(screen).toContain("remember me")
+  await quit(second)
 })
 
 test("start-with-id: a launcher opens nisse on an id it chose with a first prompt, and that id reopens the conversation", async () => {
   const nisseHome = home()
-  const first = screenSession(["--conversation", "chosen-by-attn", "first words"], nisseEnv(nisseHome))
-  await first.waitFor((screen) => screen.includes("You said: first words"))
-  first.type("\x03")
-  await first.exited
+  const first = await open(
+    [{ text: "You said: first words" }],
+    ["--conversation", "chosen-by-attn", "first words"],
+    nisseHome,
+  )
+  await first.waitFor((screen) => screen.includes("You said: first words") && screen.includes("READY"))
+  await quit(first)
   expect(first.output()).toContain("nisse --conversation chosen-by-attn")
-  const second = screenSession(["--conversation", "chosen-by-attn"], nisseEnv(nisseHome))
+  const second = await open([], ["--conversation", "chosen-by-attn"], nisseHome)
   const screen = await second.waitFor((screen) => screen.includes("You said: first words") && screen.includes("READY"))
   expect(screen.split("You said: first words").length).toBe(2)
-  second.type("\x03")
-  await second.exited
+  await quit(second)
 })
 
 test("interrupt-tui: escape stops nisse mid-answer and the answer shows it was interrupted", async () => {
-  const nisseHome = home()
-  const script = `${nisseHome.dir}/script.json`
-  await Bun.write(script, JSON.stringify([{ text: "one two three four five six seven eight nine ten", delayMs: 300 }]))
-  const session = screenSession([], nisseEnv(nisseHome, { NISSE_MODEL_SCRIPT: script }))
+  const session = await open([{ text: "one two three four five six seven eight nine ten", delayMs: 300 }])
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("count\r")
   await session.waitFor((screen) => screen.includes("WORKING") && screen.includes("one"))
   session.type("\x1b")
   const screen = await session.waitFor((screen) => screen.includes("interrupted") && screen.includes("READY"))
   expect(screen).not.toContain("ten")
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 })
 
 test("queue-show: a prompt sent while nisse works waits in the queue, then runs", async () => {
-  const nisseHome = home()
-  const script = `${nisseHome.dir}/script.json`
-  await Bun.write(script, JSON.stringify([{ text: "slow one two three", delayMs: 300 }, { text: "fast reply" }]))
-  const session = screenSession([], nisseEnv(nisseHome, { NISSE_MODEL_SCRIPT: script }))
+  const session = await open([{ text: "slow one two three", delayMs: 300 }, { text: "fast reply" }])
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("first\r")
   await session.waitFor((screen) => screen.includes("WORKING") && screen.includes("QUEUE"))
@@ -97,50 +173,58 @@ test("queue-show: a prompt sent while nisse works waits in the queue, then runs"
   await session.waitFor((screen) => screen.includes("queued · second"))
   const screen = await session.waitFor((screen) => screen.includes("fast reply"))
   expect(screen).not.toContain("queued · second")
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 })
 
-const scripted = async (nisseHome: ReturnType<typeof tempHome>, steps: unknown) => {
-  const script = `${nisseHome.dir}/script.json`
-  await Bun.write(script, JSON.stringify(steps))
-  return nisseEnv(nisseHome, { NISSE_MODEL_SCRIPT: script })
-}
-
-test("approval-allow-tui: nisse asks before a command runs, ctrl+y allows it and its output shows under the call", async () => {
-  const nisseHome = home()
-  const env = await scripted(nisseHome, [
-    { tool: { name: "Bash", input: { command: "echo hello-from-bash" } } },
-    { text: "all done" },
-  ])
-  const session = screenSession([], env)
+test("approval-ask, approval-allow-tui: nisse asks before a command runs, ctrl+y allows it and its output shows under the call", async () => {
+  const session = await open([call("bash", { command: "echo hello-from-bash" }), { text: "all done" }])
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("run it\r")
   await session.waitFor(
     (screen) =>
-      screen.includes("▸ Bash(echo hello-from-bash)") &&
+      screen.includes("▸ bash(echo hello-from-bash)") &&
       screen.includes("allow this call?") &&
       screen.includes("WAITING"),
   )
   session.type("\x19")
   const screen = await session.waitFor((screen) => screen.includes("all done") && screen.includes("READY"))
-  expect(screen.indexOf("✓ allowed by ada")).toBeGreaterThan(screen.indexOf("▸ Bash(echo hello-from-bash)"))
+  expect(screen.indexOf("✓ allowed by ada")).toBeGreaterThan(screen.indexOf("▸ bash(echo hello-from-bash)"))
   expect(screen.indexOf("     hello-from-bash")).toBeGreaterThan(screen.indexOf("✓ allowed by ada"))
   expect(screen).not.toContain("allow this call?")
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 })
 
-test("steer-toggle: tab switches a prompt sent mid-run from queueing to steering the run", async () => {
-  const nisseHome = home()
-  const env = await scripted(nisseHome, [
-    { tool: { name: "Bash", input: { command: "sleep 1" } } },
-    { text: "turning left now" },
-  ])
-  const session = screenSession(["--auto"], env)
+test("approval-ask, codemode-nested-policy: a script's call that waits for a person shows its command under the script before ctrl+y allows it", async () => {
+  const code = 'await tools.bash({ command: "echo nested-hello" })'
+  const session = await open([call("codemode", { code }), { text: "all done" }], ["--model", "script-code-mode"])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("run it\r")
+  const asking = await session.waitFor((screen) => screen.includes("WAITING") && screen.includes("allow this call?"))
+  expect(asking.indexOf("▸ bash(echo nested-hello)")).toBeGreaterThan(asking.indexOf("▸ codemode"))
+  expect(asking.indexOf("allow this call?")).toBeGreaterThan(asking.indexOf("▸ bash(echo nested-hello)"))
+  session.type("\x19")
+  await session.waitFor((screen) => screen.includes("all done") && screen.includes("READY"))
+  await quit(session)
+})
+
+test("approval-deny-tui: ctrl+n denies a call, the denial shows as its result and the run goes on", async () => {
+  const session = await open([call("bash", { command: "echo never-ran" }), { text: "carrying on" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("run it\r")
+  await session.waitFor((screen) => screen.includes("allow this call?"))
+  session.type("\x0e")
+  const screen = await session.waitFor((screen) => screen.includes("carrying on") && screen.includes("READY"))
+  expect(screen.indexOf("✗ denied by ada")).toBeGreaterThan(screen.indexOf("▸ bash(echo never-ran)"))
+  expect(screen).not.toContain("     never-ran")
+  expect(screen).not.toContain("allow this call?")
+  await quit(session)
+})
+
+test("steer-toggle, steer-show: tab switches a prompt sent mid-run from queueing to steering, and the steer shows until it lands", async () => {
+  const session = await open([call("bash", { command: "sleep 1" }), { text: "turning left now" }], ["--auto"])
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("drive\r")
-  await session.waitFor((screen) => screen.includes("▸ Bash(sleep 1)") && screen.includes("QUEUE · tab"))
+  await session.waitFor((screen) => screen.includes("▸ bash(sleep 1)") && screen.includes("QUEUE · tab"))
   session.type("\t")
   await session.waitFor((screen) => screen.includes("STEER · tab"))
   session.type("turn left\r")
@@ -148,28 +232,26 @@ test("steer-toggle: tab switches a prompt sent mid-run from queueing to steering
   const screen = await session.waitFor((screen) => screen.includes("turning left now") && screen.includes("READY"))
   expect(screen.indexOf("turn left")).toBeLessThan(screen.indexOf("turning left now"))
   expect(screen).not.toContain("steering ·")
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 })
 
 test("signin-status: the splash lists every provider and how it is signed in", async () => {
-  const session = screenSession([], nisseEnv(home()))
+  const session = await open()
   const screen = await session.waitFor(
     (screen) => screen.includes("person@example.com · Claude Max") && screen.includes("signed out"),
   )
   expect(screen).toMatch(/● claude +person@example\.com · Claude Max/)
   expect(screen).toMatch(/○ openai +signed out/)
   expect(screen).toContain("^L  sign in")
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 })
 
-test("model-list: /model lists every provider's models, and enter switches the conversation's model for everyone", async () => {
-  const session = screenSession([], nisseEnv(home()))
-  await session.waitFor((screen) => screen.includes("READY"))
+test("model-list, model-status: /model lists every provider's models, enter switches the conversation's model, and the status bar names it", async () => {
+  const session = await open([], ["--provider", "claude"])
+  await session.waitFor((screen) => screen.includes("READY") && screen.includes("claude  nisse"))
   session.type("/model\r")
   await session.waitFor((screen) => screen.includes("claude · Sonnet") && screen.includes("openai · GPT-5.5"))
-  session.type("\x1b[B")
+  // The picker opens on the conversation's model, Claude's own choice; Sonnet is the next row.
   session.type("\x1b[B")
   session.type("\x1b[C")
   await session.waitFor((screen) => screen.includes("claude · Sonnet ‹ low ›"))
@@ -177,36 +259,24 @@ test("model-list: /model lists every provider's models, and enter switches the c
   const screen = await session.waitFor((screen) => screen.includes("◆ ada switched to claude · sonnet · low"))
   expect(screen).not.toContain("claude · Sonnet ‹")
   expect(screen).toContain("claude · sonnet · low  nisse")
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 }, 20_000)
 
+const signInFixture = join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson")
+
 test("signin-terminal: ^L signs in to a signed-out Claude by running its own sign-in in the terminal", async () => {
-  const nisseHome = home()
-  const session = screenSession(
-    [],
-    nisseEnv(nisseHome, {
-      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
-    }),
-  )
+  const session = await open([], [], home(), { FAKE_CLAUDE_FIXTURE: signInFixture })
   await session.waitFor((screen) => /○ claude +signed out/.test(screen))
   session.type("\x0c")
   const screen = await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen), 30_000)
   expect(session.output()).toContain("fake claude auth login done")
   expect(screen).not.toContain("SIGN IN")
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 }, 40_000)
 
 test("signin-cancel: a sign-in cancelled from another connection stops Claude's sign-in in the terminal", async () => {
   const nisseHome = home()
-  const session = screenSession(
-    [],
-    nisseEnv(nisseHome, {
-      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
-      FAKE_CLAUDE_AUTH_WAITS: "1",
-    }),
-  )
+  const session = await open([], [], nisseHome, { FAKE_CLAUDE_FIXTURE: signInFixture, FAKE_CLAUDE_AUTH_WAITS: "1" })
   await session.waitFor((screen) => /○ claude +signed out/.test(screen))
   session.type("\x0c")
   await session.waitFor((screen) => screen.includes("fake claude auth login waiting"))
@@ -238,12 +308,7 @@ test("signin-cancel: a sign-in cancelled from another connection stops Claude's 
 
 test("signin-shared: an open TUI shows a sign-in another connection finished", async () => {
   const nisseHome = home()
-  const session = screenSession(
-    [],
-    nisseEnv(nisseHome, {
-      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
-    }),
-  )
+  const session = await open([], [], nisseHome, { FAKE_CLAUDE_FIXTURE: signInFixture })
   await session.waitFor((screen) => /○ claude +signed out/.test(screen))
   const other = await RawClient.connect(nisseHome.socket)
   const auth = other.watch<AuthState>("auth/watch")
@@ -256,85 +321,90 @@ test("signin-shared: an open TUI shows a sign-in another connection finished", a
   })
   await auth.until((states) => states.at(-1)?.phase === "succeeded", 30_000)
   other.close()
-
   await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen))
-  session.type("\x03")
-  await session.exited
-}, 40_000)
-
-test("signin-terminal: nisse login hands what the person types to Claude's own sign-in", async () => {
-  const nisseHome = home()
-  const session = screenSession(
-    ["login", "claude"],
-    nisseEnv(nisseHome, {
-      FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/terminal_sign_in.ndjson"),
-      FAKE_CLAUDE_AUTH_ASKS: "1",
-    }),
-  )
-  await session.waitFor((screen) => screen.includes("fake claude asks for a code"))
-  session.type("the-code\r")
-  await session.waitFor((screen) => screen.includes("signed in to claude"), 30_000)
-  expect(await session.exited).toBe(0)
-  expect(readFileSync(join(nisseHome.dir, "fake-claude", "log.ndjson"), "utf8")).toContain('"authAnswer":"the-code"')
+  await quit(session)
 }, 40_000)
 
 test("subagent-card: a subagent shows as a card under its parent, and ctrl+y answers the call it asks about", async () => {
-  const nisseHome = home()
-  const env = await scripted(nisseHome, [
-    { tool: { name: "spawn_agent", input: { task_name: "scribe", message: "write it down" } } },
-    { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
+  const session = await open([
+    call("spawn_agent", { task_name: "scribe", message: "write it down", fork_turns: "none" }),
+    call("wait_agent", { timeout_ms: 600_000 }),
     { text: "the scribe is done" },
-    { agent: "/root/scribe", tool: { name: "Bash", input: { command: "echo scribbled" } } },
+    call("bash", { command: "echo scribbled" }, "/root/scribe"),
     { agent: "/root/scribe", text: "wrote it" },
   ])
-  const session = screenSession([], env)
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("delegate\r")
   await session.waitFor(
     (screen) =>
       screen.includes("⧉ scribe") &&
       screen.includes("waiting on you") &&
-      screen.includes("allow Bash(echo scribbled)?"),
+      screen.includes("allow bash(echo scribbled)?"),
   )
   session.type("\x19")
   const screen = await session.waitFor(
     (screen) => screen.includes("the scribe is done") && screen.includes("READY") && /⧉ scribe +done/.test(screen),
   )
-  expect(screen).toContain("/root/scribe")
-  expect(screen).toContain("wrote it")
-  session.type("\x03")
-  await session.exited
+  // The subagent's answer, mailed to its parent, reads as what it said under its name.
+  const lines = screen.split("\n")
+  expect(lines[lines.findIndex((line) => line.includes("/root/scribe")) + 1]).toContain("wrote it")
+  expect(screen).not.toContain("Payload:")
+  await quit(session)
+}, 30_000)
+
+test("subagent-card, codemode-nested-policy: a subagent a script started shows as a card under the script, and ctrl+y answers the call it asks about", async () => {
+  const spawn = 'await tools.spawn_agent({ task_name: "scribe", message: "write it down", fork_turns: "none" })'
+  const session = await open(
+    [
+      call("codemode", { code: `${spawn}\nawait tools.wait_agent({ timeout_ms: 600000 })` }),
+      { text: "the scribe is done" },
+      call("codemode", { code: 'await tools.bash({ command: "echo scribbled" })' }, "/root/scribe"),
+      { agent: "/root/scribe", text: "wrote it" },
+    ],
+    ["--model", "script-code-mode"],
+  )
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("delegate\r")
+  const asking = await session.waitFor(
+    (screen) => /⧉ scribe +waiting on you/.test(screen) && screen.includes("allow bash(echo scribbled)?"),
+  )
+  expect(asking.indexOf("⧉ scribe")).toBeGreaterThan(asking.indexOf("▸ codemode"))
+  session.type("\x19")
+  await session.waitFor(
+    (screen) => screen.includes("the scribe is done") && screen.includes("READY") && /⧉ scribe +done/.test(screen),
+  )
+  await quit(session)
 })
 
 test("subagent-approve: a call a subagent's subagent asks about shows on the card above it, and ctrl+y answers it", async () => {
   const nisseHome = home()
   await Bun.write(join(nisseHome.dir, "config.toml"), "[agents]\nmax_depth = 2\n")
-  const env = await scripted(nisseHome, [
-    { tool: { name: "spawn_agent", input: { task_name: "lead", message: "delegate further" } } },
-    { tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
-    { text: "the lead is done" },
-    { agent: "/root/lead", tool: { name: "spawn_agent", input: { task_name: "deep", message: "dig" } } },
-    { agent: "/root/lead", tool: { name: "wait_agent", input: { timeout_ms: 600_000 } } },
-    { agent: "/root/lead", text: "deep reported" },
-    { agent: "/root/lead/deep", tool: { name: "Bash", input: { command: "echo dug" } } },
-    { agent: "/root/lead/deep", text: "dug it" },
-  ])
-  const session = screenSession([], env)
+  const session = await open(
+    [
+      call("spawn_agent", { task_name: "lead", message: "delegate further", fork_turns: "none" }),
+      call("wait_agent", { timeout_ms: 600_000 }),
+      { text: "the lead is done" },
+      call("spawn_agent", { task_name: "deep", message: "dig", fork_turns: "none" }, "/root/lead"),
+      call("wait_agent", { timeout_ms: 600_000 }, "/root/lead"),
+      { agent: "/root/lead", text: "deep reported" },
+      call("bash", { command: "echo dug" }, "/root/lead/deep"),
+      { agent: "/root/lead/deep", text: "dug it" },
+    ],
+    [],
+    nisseHome,
+  )
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("delegate\r")
-  await session.waitFor((screen) => /⧉ lead +waiting on you/.test(screen) && screen.includes("allow Bash(echo dug)?"))
+  await session.waitFor((screen) => /⧉ lead +waiting on you/.test(screen) && screen.includes("allow bash(echo dug)?"))
   session.type("\x19")
   await session.waitFor((screen) => screen.includes("the lead is done") && screen.includes("READY"))
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 }, 30_000)
 
 test("subagent-card: a Claude subagent shows as a card in place of its call's result, and its own screen sends input to its parent", async () => {
   const nisseHome = home()
-  const env = nisseEnv(nisseHome, {
-    FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/subagent.ndjson"),
-  })
-  const parent = screenSession(["--provider", "claude"], env)
+  const extra = { FAKE_CLAUDE_FIXTURE: join(import.meta.dir, "../../../fixtures/claude/subagent.ndjson") }
+  const parent = await open([], ["--provider", "claude"], nisseHome, extra)
   await parent.waitFor((screen) => screen.includes("READY"))
   parent.type("go\r")
   const screen = await parent.waitFor(
@@ -342,29 +412,24 @@ test("subagent-card: a Claude subagent shows as a card in place of its call's re
       /⧉ Find gnome location in notes \(general-purpose\) +done/.test(screen) &&
       screen.includes("Under the floor.") &&
       screen.includes("READY"),
+    20_000,
   )
   expect(screen).not.toContain("Subagent hand-back")
-  parent.type("\x03")
-  await parent.exited
+  expect(screen.match(/⧉/g)).toHaveLength(1)
+  await quit(parent)
 
   const client = await RawClient.connect(nisseHome.socket)
   const listed = (await client.call("conversation/list")).result as Array<{ id: string; lineage?: unknown }>
   client.close()
   const child = listed.find((conversation) => conversation.lineage !== undefined)!
-  const own = screenSession(["--conversation", child.id], env)
+  const own = await open([], ["--conversation", child.id], nisseHome, extra)
   const opened = await own.waitFor((screen) => screen.includes("INPUT GOES THROUGH ITS PARENT"))
   expect(opened).toContain("the gnome lives under the floor")
-  own.type("\x03")
-  await own.exited
+  await quit(own)
 }, 40_000)
 
 test("status-line, toast, extensions-failed: a person sees what extensions say in the footer and the transcript, and which failed to load", async () => {
   const nisseHome = home()
-  const script = `${nisseHome.dir}/script.json`
-  await Bun.write(
-    script,
-    JSON.stringify([{ tool: { name: "Read", input: { file_path: script } } }, { text: "read it" }]),
-  )
   await Bun.write(join(nisseHome.extensions, "broken.ts"), "export default 42")
   await Bun.write(
     join(nisseHome.extensions, "watch.ts"),
@@ -376,12 +441,183 @@ export default Extension.define((ctx) =>
   ),
 )`,
   )
-  const session = screenSession([], nisseEnv(nisseHome, { NISSE_MODEL_SCRIPT: script }))
+  const session = await open(
+    [call("read", { path: join(nisseHome.dir, "config.toml") }), { text: "read it" }],
+    [],
+    nisseHome,
+  )
   await session.waitFor((screen) => screen.includes("extension broken failed to load") && screen.includes("READY"))
-  session.type("read the script\r")
+  session.type("read the config\r")
   const screen = await session.waitFor((screen) => screen.includes("read it") && screen.includes("READY"))
   expect(screen).toContain("◆ watch: suite ran")
   expect(screen.split("\n").at(-1)).toContain("watch: tests green")
-  session.type("\x03")
-  await session.exited
+  await quit(session)
 })
+
+test("skills-tui: a message that names a skill shows which skills came with it, also after a reopen", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  const nisseHome = home()
+  await Bun.write(
+    join(nisseHome.dir, "skills", "ship", "SKILL.md"),
+    "---\nname: ship\ndescription: Ship it\n---\nShip.",
+  )
+  await using _server = await runningServer([], { home: nisseHome, openai: fake.options() })
+  await signIn(nisseHome)
+  const first = await open([], ["--provider", "openai", "--conversation", "shipping"], nisseHome)
+  await first.waitFor((screen) => screen.includes("READY"))
+  first.type("$ship it now\r")
+  await first.waitFor((screen) => screen.includes("Hello there") && screen.includes("READY"))
+  const lines = first.screen().split("\n")
+  expect(lines[lines.findIndex((line) => line.includes("$ship it now")) + 1]).toContain("with ship")
+  await quit(first)
+  const second = await open([], ["--conversation", "shipping"], nisseHome)
+  const reopened = await second.waitFor((screen) => screen.includes("Hello there"))
+  expect(reopened).toContain("with ship")
+  await quit(second)
+})
+
+test("image-attach: a dragged image's pasted path shows on the prompt as attached, and the model receives the image with the message", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("text_answer")
+  const nisseHome = home()
+  const path = join(nisseHome.dir, "Screen Shot.png")
+  await Bun.write(path, png(3, 2))
+  await using _server = await runningServer([], { home: nisseHome, openai: fake.options() })
+  await signIn(nisseHome)
+  const session = await open([], ["--provider", "openai"], nisseHome)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("what is this? ")
+  // A terminal pastes a file dropped on it as its path, with spaces escaped.
+  session.type(`\x1b[200~${path.replaceAll(" ", "\\ ")}\x1b[201~`)
+  await session.waitFor((screen) => screen.includes("attaching Screen Shot.png"))
+  session.type("\r")
+  await session.waitFor((screen) => screen.includes("Hello there") && screen.includes("READY"))
+  const lines = session.screen().split("\n")
+  expect(lines[lines.findIndex((line) => line.includes("ADA")) + 2]).toContain("with Screen Shot.png")
+  expect(session.screen()).not.toContain("attaching")
+  const input = JSON.parse(fake.responses()[0]!.body).input as Array<{ role?: string; content?: Array<any> }>
+  const content = input.find((item) => item.role === "user")!.content!
+  expect(content.map((part) => part.type)).toEqual(["input_text", "input_image"])
+  expect(content[1].image_url).toBe(`data:image/png;base64,${Buffer.from(png(3, 2)).toString("base64")}`)
+  await quit(session)
+})
+
+test("image-attach: an image the server cannot decode is refused on screen by name, and nothing is sent", async () => {
+  const nisseHome = home()
+  // Its header says PNG, so the prompt attaches it; its pixels are cut off.
+  await Bun.write(join(nisseHome.dir, "cut.png"), png(4, 4).subarray(0, 40))
+  const session = await open([{ text: "never" }], [], nisseHome)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type(`look ${join(nisseHome.dir, "cut.png")}`)
+  await session.waitFor((screen) => screen.includes("attaching cut.png"))
+  session.type("\r")
+  const screen = await session.waitFor((screen) => screen.includes("✗ cut.png (image/png) cannot be decoded"))
+  expect(screen).not.toContain("ADA")
+  await quit(session)
+})
+
+test("crash-tui: the open TUI finishes the answer after the server is killed mid-answer", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, [{ text: "one two three four five six seven eight nine ten", delayMs: 100 }])
+  const server = await serving(env)
+  const session = screenSession([], env)
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("count\r")
+  await session.waitFor((screen) => screen.includes("WORKING") && screen.includes("one two"))
+  server.kill("SIGKILL")
+  await server.exited
+  // The TUI brings a server back; the run picks up where it was cut off and answers once.
+  const screen = await session.waitFor(
+    (screen) => screen.includes("one two three four five six seven eight nine ten") && screen.includes("READY"),
+    20_000,
+  )
+  expect(screen).not.toContain("missing messages")
+  await quit(session)
+}, 30_000)
+
+test("idle-tui: the TUI draws nothing and uses no CPU while nothing changes", async () => {
+  const session = await open([{ text: "done" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("hi\r")
+  await session.waitFor((screen) => screen.includes("done") && screen.includes("READY"))
+  // The second after an answer still settles, so the measure starts after it.
+  await Bun.sleep(1000)
+  const drawn = session.output().length
+  const before = cpuSeconds(session.pid)
+  await Bun.sleep(3000)
+  expect(session.output().length).toBe(drawn)
+  // Drawing nothing is the promise; CPU only catches heavy work that draws nothing. Bun's GC runs in bursts
+  // after an answer: these 3 s measured 0-2 hundredths locally and 10 on a macOS CI runner. Idle wakeups cost
+  // less than that noise (a 30 fps render loop 3-6, a 1 ms timer 2), so 50 is a tripwire for a spin or a
+  // relayout on every frame, not for timers.
+  expect(Math.round((cpuSeconds(session.pid) - before) * 100)).toBeLessThanOrEqual(50)
+  await quit(session)
+}, 20_000)
+
+test("answer-scroll, tui-load-earlier: a conversation longer than the window scrolls back to its first message, loading earlier entries on the way, and a reconnect leaves no gap", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, answers(41))
+  const server = await serving(env)
+  const client = await RawClient.connect(nisseHome.socket)
+  const conversation = await start(client, nisseHome.dir)
+  // 40 runs of three entries each: more than the window's 50 newest, and than twice that.
+  await converse(client, conversation, 40)
+  client.close()
+
+  const session = screenSession(["--conversation", conversation], env)
+  await session.waitFor((screen) => screen.includes("answer 40") && screen.includes("READY"))
+  expect(session.screen()).not.toContain("answer 1\n")
+  const top = await scrollUpUntil(session, (screen) => /^ +prompt 1 *$/m.test(screen))
+  expect(top).not.toContain("earlier messages")
+  // Eighty speaker bars, and no warning about listeners printed over the screen.
+  expect(session.output()).not.toContain("MaxListeners")
+  expect(top).toMatch(/^ +answer 1 *$/m)
+
+  // The server goes away. A prompt typed now waits for the server the TUI brings back, where the TUI watches again
+  // from the newest entry it holds.
+  server.kill("SIGKILL")
+  await server.exited
+  // The server the TUI brings back plays its script from the start.
+  await Bun.write(join(nisseHome.dir, "script.json"), JSON.stringify([{ text: "answer 41" }]))
+  session.type("prompt 41\r")
+  await scrollDownUntil(session, (screen) => screen.includes("answer 41"))
+  await session.waitFor((screen) => screen.includes("answer 41") && screen.includes("READY"), 20_000)
+  const back = await scrollUpUntil(session, (screen) => /^ +prompt 1 *$/m.test(screen))
+  expect(back).not.toContain("missing messages")
+  await quit(session)
+}, 120_000)
+
+test("tui-fill-gap: a TUI that fell behind marks where entries are missing, and loads them once scrolled to", async () => {
+  const nisseHome = home()
+  await using _server = await runningServer(answers(45), { home: nisseHome, connectionQueue: 16 })
+  const client = await RawClient.connect(nisseHome.socket)
+  const conversation = await start(client, nisseHome.dir)
+  await converse(client, conversation, 2)
+  const session = await open([], ["--conversation", conversation], nisseHome)
+  await session.waitFor((screen) => screen.includes("answer 2") && screen.includes("READY"))
+  // A frozen TUI reads nothing; its watch falls behind while 40 more runs commit, more than a window holds.
+  session.pause()
+  await converse(client, conversation, 40, 3)
+  session.resume()
+  await session.waitFor((screen) => screen.includes("answer 42") && screen.includes("READY"), 20_000)
+  await scrollUpUntil(session, (screen) => screen.includes("missing messages") || /^ +answer 3 *$/m.test(screen))
+  const filled = await scrollUpUntil(session, (screen) => /^ +answer 2 *$/m.test(screen))
+  expect(filled).not.toContain("missing messages")
+  expect(filled).toMatch(/^ +prompt 3 *$/m)
+  client.close()
+  await quit(session)
+}, 120_000)
+
+/** A process's CPU time in seconds, user and system, to the hundredth. */
+const cpuSeconds = (pid: number) => {
+  if (process.platform === "linux") {
+    const fields = readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1]!.split(" ")
+    return (Number(fields[11]) + Number(fields[12])) / 100
+  }
+  const out = Bun.spawnSync(["ps", "-o", "time=", "-p", String(pid)])
+    .stdout.toString()
+    .trim()
+  const [minutes, seconds] = out.split(":")
+  return Number(minutes) * 60 + Number(seconds)
+}
