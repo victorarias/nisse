@@ -276,7 +276,7 @@
           },
           "requestId": {
             "type": "string",
-            "description": "Submitting again with the same id is answered once."
+            "description": "Submitting again with the same id is answered once. The input's nisse.user entry keeps it in its data."
           },
           "author": {
             "type": "string",

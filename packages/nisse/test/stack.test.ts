@@ -733,6 +733,42 @@ test("server-refuse: a second server for the same home refuses to start, and say
   expect(first.exitCode).toBeNull()
 }, 30_000)
 
+test("answer-exec, wire-dropped: a nisse exec whose prompt waits, runs and ends while exec is dropped still prints the answer and exits 0", async () => {
+  const nisseHome = home()
+  const fifo = join(nisseHome.dir, "gate")
+  expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0)
+  writeFileSync(join(nisseHome.dir, "note.txt"), "a note\n")
+  // The first run waits on the gate while exec's prompt queues; exec's run then commits more than a window holds.
+  const reads = Array.from({ length: 60 }, () => ({ tool: { name: "read", input: { path: "note.txt" } } }))
+  const script = [
+    { tool: { name: "bash", input: { command: `cat ${fifo}` } } },
+    { text: "the gate opened" },
+    ...reads,
+    { text: "read them all" },
+  ]
+  await using server = await runningServer(script, { home: nisseHome, connectionQueue: 16 })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: nisseHome.dir, approvals: "auto", id: "gated" }))
+    .result.conversation as string
+  const watch = watchView(client, conversation)
+  await submit(client, conversation, "open the gate")
+  await watch.until((current) => current.view().docs["pi.live"] !== undefined)
+  const exec = nisse(["exec", "--auto", "--conversation", conversation, "read the note"], nisseEnv(nisseHome))
+  const queued = (current: ViewWatch) =>
+    ((current.view().docs["pi.inbox"] as { items?: unknown[] } | undefined)?.items ?? []).length > 0
+  await watch.until(queued)
+  // Exec is stopped with its prompt queued: it never sees the run that takes it while that run is live.
+  exec.kill("SIGSTOP")
+  writeFileSync(fifo, "open\n")
+  await watch.until(settled(2))
+  client.close()
+  exec.kill("SIGCONT")
+  expect({
+    code: await deadline(exec.exited, 20_000, "exec finished"),
+    stdout: await new Response(exec.stdout).text(),
+  }).toEqual({ code: 0, stdout: "read them all\n" })
+}, 60_000)
+
 test("answer-exec, wire-dropped: a nisse exec too slow for the run watches again when dropped, prints every call it missed, and exits 0", async () => {
   const nisseHome = home()
   const fifo = join(nisseHome.dir, "gate")

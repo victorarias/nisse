@@ -121,6 +121,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - mode-print, answer-exec, server-on-demand: nisse exec starts a server, prints the answer and exits 0
 - mode-print, answer-exec-fail: nisse exec exits 1 and says why when the run fails
 - answer-exec-fail: nisse exec exits 1 when an interrupt withdraws its queued prompt, instead of waiting for good
+- answer-exec, wire-dropped: a nisse exec whose prompt waits, runs and ends while exec is dropped still prints the answer and exits 0
 - answer-exec, wire-dropped: a nisse exec too slow for the run watches again when dropped, prints every call it missed, and exits 0
 
 ## Gotchas

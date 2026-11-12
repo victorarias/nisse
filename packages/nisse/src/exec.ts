@@ -241,6 +241,7 @@ export const exec = Effect.fnUntraced(function* (
   }
 
   const images = imagesIn(prompt, process.cwd())
+  const requestId = crypto.randomUUID()
   yield* following(
     rewatched(() => client["conversation/watch"]({ conversation })),
     (after, to) => missedEntries(client, conversation, after, to),
@@ -250,19 +251,26 @@ export const exec = Effect.fnUntraced(function* (
         // Submitted once the watch holds the view, so the watch covers the whole run.
         submission ??= (yield* client["conversation/submit"]({
           conversation,
-          requestId: crypto.randomUUID(),
+          requestId,
           author: userName(),
           text: prompt,
           ...(images.length === 0 ? {} : { images }),
         })).submission
         if (json) write(`${JSON.stringify(item)}\n`)
         placed ||= liveOf(view)?.run?.inputs.includes(submission) === true
-        // A queued input that leaves the queue without being placed was withdrawn, as an interrupt does.
         const waiting = queued(view, submission)
+        for (const entry of added) {
+          // The input's own entry places it, also when the watch dropped while the run that took it came and went.
+          if (entry.kind === USER_KIND && (entry.data as { requestId?: string } | undefined)?.requestId === requestId) {
+            placed = true
+            started = true
+          }
+          if (placed && ended === undefined) onEntry(entry)
+        }
+        // A queued input that leaves the queue without being placed was withdrawn, as an interrupt does.
         if (!placed && waited && !waiting) withdrawn = true
         waited ||= waiting
         if (placed) {
-          for (const entry of added) if (ended === undefined) onEntry(entry)
           const live = liveOf(view)?.generation?.message
           if (!json && started && ended === undefined && live !== undefined) printer.show(textOf(live))
         }

@@ -220,7 +220,9 @@ export type Image = typeof Image.Type
 export const Submit = Rpc.make("conversation/submit", {
   payload: {
     conversation: ConversationId,
-    requestId: Schema.String.annotate({ description: "Submitting again with the same id is answered once." }),
+    requestId: Schema.String.annotate({
+      description: `Submitting again with the same id is answered once. The input's ${USER_KIND} entry keeps it in its data.`,
+    }),
     author: Schema.String.annotate({
       description: `Who wrote it; the input is placed as a ${USER_KIND} entry naming them, and waits in pi.inbox with them.`,
     }),

@@ -340,6 +340,7 @@ const Handlers = NisseRpcs.toLayer(
             kind: USER_KIND,
             data: {
               author,
+              requestId,
               ...(attached.length === 0 ? {} : { skills: attached }),
               ...(attaching.length === 0 ? {} : { images: attaching.map((image) => image.name) }),
             },

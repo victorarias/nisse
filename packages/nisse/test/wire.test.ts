@@ -1300,11 +1300,11 @@ test("submit-author, queue-shared: every client sees who wrote each prompt, whil
   await submit(bo, conversation, "two", undefined, "bo")
   await view.until((watch) => ((watch.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
   expect((view.view().docs["pi.inbox"] as { items: unknown[] }).items).toEqual([
-    expect.objectContaining({ entry: { kind: USER_KIND, data: { author: "bo" } } }),
+    expect.objectContaining({ entry: { kind: USER_KIND, data: expect.objectContaining({ author: "bo" }) } }),
   ])
   await view.until(settled(2))
   const users = view.seen().filter((entry) => entry.kind === USER_KIND)
-  expect(users.map((entry) => entry.data)).toEqual([{ author: "ada" }, { author: "bo" }])
+  expect(users.map((entry) => (entry.data as { author: string }).author)).toEqual(["ada", "bo"])
   expect(transcript(view.seen()).filter((line) => line.startsWith("user: "))).toEqual(["user: one", "user: two"])
   ada.close()
   bo.close()
