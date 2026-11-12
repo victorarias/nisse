@@ -12,7 +12,7 @@ import {
   type View,
   type ViewItem,
 } from "@nisse/protocol"
-import { Deferred, Effect, type Scope, Stream } from "effect"
+import { Deferred, Effect, Schedule, type Scope, Stream } from "effect"
 import { imagesIn } from "./attach.ts"
 import type { RpcClientError } from "effect/rpc/RpcClientError"
 import { userName } from "./author.ts"
@@ -73,6 +73,7 @@ const missedEntries = (client: Client["Service"], conversation: string, after: n
     const entries: Array<EntryRecord> = []
     let cursor: unknown
     do {
+      // A page the connection drops is asked for again, from the same place, once the server is back.
       const page = yield* Effect.orDie(
         client["conversation/entries"]({
           conversation,
@@ -81,7 +82,9 @@ const missedEntries = (client: Client["Service"], conversation: string, after: n
           order: "ascending",
           limit: MISSED_PAGE,
           ...(cursor === undefined ? {} : { cursor: cursor as never }),
-        }),
+        }).pipe(
+          Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
+        ),
       )
       entries.push(...(page.entries as ReadonlyArray<EntryRecord>))
       cursor = page.next
