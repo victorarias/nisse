@@ -59,14 +59,55 @@ export interface Screen {
   readonly workingSince: number | undefined
   /** Its parent's provider runs it, so it takes input only through its parent. */
   readonly hosted: boolean
+  /** The server opened its home read-only: it takes no input, and only the commands that read work. */
+  readonly readOnly: boolean
   readonly statusLines: Readonly<Record<string, string>>
   /** Nothing to show yet: the splash shows instead of the transcript. */
   readonly empty: boolean
   /** A subagent under it waits on a person. */
   readonly subagentAsks: boolean
-  /** Why the last input was refused, until the next one. */
-  readonly refused?: string | undefined
+  /** What the last command or input came to, such as why it was refused, until the next one. */
+  readonly notice?: Notice | undefined
+  /** What the run in flight and the compactions are doing, from the conversation's live state. */
+  readonly live: LiveStatus
+  /** The tokens the conversation spent, and how full its context was at its last answer. */
+  readonly usage: UsageStatus
+  /** A list a command opened in place of the transcript, until escape closes it. */
+  readonly panel?: Panel | undefined
 }
+
+export type Notice = { readonly text: string; readonly warning: boolean }
+
+export type LiveStatus = {
+  readonly compacting: boolean
+  /** Why the newest compaction failed, until one succeeds. */
+  readonly compactionFailure?: string | undefined
+  /** The model failed and is asked again at `at`. */
+  readonly retry?: { readonly at: number; readonly error: string } | undefined
+}
+
+export type UsageStatus = {
+  readonly tokens: number
+  readonly context?: number | undefined
+  readonly contextWindow?: number | undefined
+}
+
+export type Panel = { readonly title: string; readonly lines: ReadonlyArray<string> }
+
+/** The slash commands, with what each does, as /help lists them. */
+export const COMMANDS: ReadonlyArray<readonly [string, string]> = [
+  ["/model", "switch the model"],
+  ["/fork", "go on in a new conversation from before your last prompt"],
+  ["/reset [handoff]", "start a new, empty context, with the handoff as its first message"],
+  ["/compact [instructions]", "summarize the context now"],
+  ["/continue", "start a run with no new input, such as after one failed"],
+  ["/withdraw", "take back the newest queued prompt"],
+  ["/instructions [text]", "set the model's instructions; without text, clear them"],
+  ["/max-turns [n]", "end a run after n tool rounds; without n, no limit"],
+  ["/usage", "the tokens this conversation and every conversation spent"],
+  ["/tasks", "the work running now in every conversation"],
+  ["/help", "these commands"],
+]
 
 /** What a person can do to the conversation itself, on the wire the TUI speaks. */
 export interface ConversationActions {
@@ -77,6 +118,9 @@ export interface ConversationActions {
   readonly answer: (allow: boolean) => void
   readonly interrupt: () => void
   readonly selectModel: (selection: ModelSelection) => void
+  /** Runs `/name argument`; false when it names no command, so the text goes to the model. */
+  readonly command: (name: string, argument: string) => boolean
+  readonly closePanel: () => void
   readonly quit: () => void
 }
 
@@ -110,6 +154,7 @@ const Splash = (props: { providers: ReadonlyArray<ProviderSnapshot> }) => (
       <KeyCap cap="⇧⏎" what="newline" />
       <KeyCap cap="esc" what="stop" />
       <KeyCap cap="/model" what="switch model" />
+      <KeyCap cap="/help" what="commands" />
       <KeyCap cap="^C" what="quit" />
     </box>
     <ProviderList providers={props.providers} />
@@ -119,6 +164,24 @@ const Splash = (props: { providers: ReadonlyArray<ProviderSnapshot> }) => (
 const elapsed = (since: number | undefined, now: number) => {
   const seconds = since === undefined ? 0 : Math.max(0, Math.floor((now - since) / 1000))
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`
+}
+
+/** 1234 as 1.2k, 1234567 as 1.2M. */
+export const tokens = (count: number) =>
+  count < 1000
+    ? String(count)
+    : count < 1_000_000
+      ? `${(count / 1000).toFixed(1)}k`
+      : `${(count / 1_000_000).toFixed(1)}M`
+
+const usageLabel = (usage: UsageStatus) => {
+  const context =
+    usage.context === undefined
+      ? ""
+      : usage.contextWindow === undefined
+        ? ` · context ${tokens(usage.context)}`
+        : ` · context ${Math.round((usage.context / usage.contextWindow) * 100)}% of ${tokens(usage.contextWindow)}`
+  return usage.tokens === 0 && context === "" ? "" : `${tokens(usage.tokens)} tokens${context}  `
 }
 
 const statusLines = (lines: Readonly<Record<string, string>>) => {
@@ -150,8 +213,19 @@ const StatusBar = (props: { screen: Screen }) => {
           {` ${waiting() ? "◆ WAITING" : `${spinner()} WORKING`} ${elapsed(props.screen.workingSince, now())} `}
         </text>
       </Show>
+      <Show when={props.screen.live.compacting}>
+        <text fg={color.cyan}> ◆ compacting</text>
+      </Show>
+      <Show when={props.screen.live.retry}>
+        {(retry) => (
+          <text fg={color.yellow}>
+            {` ↻ retrying in ${Math.max(0, Math.ceil((retry().at - now()) / 1000))}s · ${retry().error}`}
+          </text>
+        )}
+      </Show>
       <text fg={color.dim}>{statusLines(props.screen.statusLines)}</text>
       <box flexGrow={1} />
+      <text fg={color.dim}>{usageLabel(props.screen.usage)}</text>
       <Show when={props.screen.model}>{(model) => <text fg={color.violet}>{`${modelLabel(model())}  `}</text>}</Show>
       <text fg={color.dim}>{`nisse ${VERSION} `}</text>
     </box>
@@ -175,6 +249,7 @@ const Prompt = (props: {
   setup: SetupView
   submit: (text: string) => void
   openPicker: () => void
+  command: (name: string, argument: string) => boolean
   pasteCallback: (url: string) => void
   steer: boolean
   attachments: ((text: string) => ReadonlyArray<string>) | undefined
@@ -186,9 +261,17 @@ const Prompt = (props: {
     if (!input || props.screen.hosted) return
     const text = input.plainText
     if (text.trim() === "") return
+    const typed = /^\/([a-z-]+)(?:\s+([\s\S]*))?$/.exec(text.trim())
+    if (props.screen.readOnly) {
+      // Only commands run on a read-only server; anything else stays typed, and submit says why.
+      if (typed && props.command(typed[1]!, typed[2]?.trim() ?? "")) input.clear()
+      else props.submit(text)
+      return
+    }
     input.clear()
     if (text.trim() === "/model") props.openPicker()
     else if (props.setup.signIn?.interaction?._tag === "browser") props.pasteCallback(text.trim())
+    else if (typed && props.command(typed[1]!, typed[2]?.trim() ?? "")) return
     else props.submit(text)
   }
   return (
@@ -199,11 +282,13 @@ const Prompt = (props: {
       title={
         props.screen.hosted
           ? " INPUT GOES THROUGH ITS PARENT "
-          : props.screen.status === "idle"
-            ? " PROMPT "
-            : props.steer
-              ? " STEER · tab "
-              : " QUEUE · tab "
+          : props.screen.readOnly
+            ? " READ ONLY "
+            : props.screen.status === "idle"
+              ? " PROMPT "
+              : props.steer
+                ? " STEER · tab "
+                : " QUEUE · tab "
       }
       titleColor={color.magenta}
       flexDirection="column"
@@ -221,7 +306,11 @@ const Prompt = (props: {
           textColor={color.ink}
           focusedTextColor={color.ink}
           placeholder={
-            props.screen.hosted ? "Claude Code runs this subagent; talk to it through its parent" : "type a message"
+            props.screen.hosted
+              ? "Claude Code runs this subagent; talk to it through its parent"
+              : props.screen.readOnly
+                ? "the server shows this home read-only and takes no input; /usage, /tasks and /help still work"
+                : "type a message"
           }
           placeholderColor={color.faint}
           keyBindings={promptKeys}
@@ -236,6 +325,16 @@ const Prompt = (props: {
   )
 }
 
+const PanelView = (props: { panel: Panel }) => (
+  <scrollbox flexGrow={1} paddingLeft={2} paddingRight={1}>
+    <box flexDirection="row" marginTop={1} gap={2}>
+      <text fg={color.violet}>{props.panel.title}</text>
+      <KeyCap cap="esc" what="close" />
+    </box>
+    <For each={props.panel.lines}>{(line) => <text fg={color.ink}>{line}</text>}</For>
+  </scrollbox>
+)
+
 /** The whole screen, with `transcript` drawn between the header and the prompt. */
 export const Shell = (props: {
   screen: Screen
@@ -248,6 +347,7 @@ export const Shell = (props: {
   useKeyboard((key) => {
     const picker = setup.view.picker
     if (key.ctrl && key.name === "c") props.actions.quit()
+    else if (props.screen.panel && key.name === "escape") props.actions.closePanel()
     else if (picker) {
       if (key.name === "up") setup.movePicker(-1, 0)
       else if (key.name === "down") setup.movePicker(1, 0)
@@ -273,24 +373,38 @@ export const Shell = (props: {
         <Show
           when={setup.view.picker}
           fallback={
-            <Show when={!props.screen.empty} fallback={<Splash providers={setup.view.providers} />}>
-              {props.transcript()}
+            <Show
+              when={props.screen.panel}
+              fallback={
+                <Show when={!props.screen.empty} fallback={<Splash providers={setup.view.providers} />}>
+                  {props.transcript()}
+                </Show>
+              }
+            >
+              {(panel) => <PanelView panel={panel()} />}
             </Show>
           }
         >
           {(picker) => <ModelPicker picker={picker()} />}
         </Show>
         <Show when={setup.view.signIn}>{(state) => <SignInPanel state={state()} />}</Show>
-        <Show when={props.screen.refused}>
-          {(refused) => (
-            <text fg={color.yellow} marginLeft={1}>
-              {`✗ ${refused()}`}
+        <Show when={props.screen.live.compactionFailure}>
+          {(failure) => (
+            <text fg={color.yellow} marginLeft={1} flexShrink={0}>
+              {`✗ compaction failed: ${failure()}`}
+            </text>
+          )}
+        </Show>
+        <Show when={props.screen.notice}>
+          {(notice) => (
+            <text fg={notice().warning ? color.yellow : color.dim} marginLeft={1} flexShrink={0}>
+              {`${notice().warning ? "✗" : "◆"} ${notice().text}`}
             </text>
           )}
         </Show>
         <For each={setup.view.brokenExtensions}>
           {(extension) => (
-            <text fg={color.yellow} marginLeft={1}>
+            <text fg={color.yellow} marginLeft={1} flexShrink={0}>
               {`✗ extension ${extension.name} failed to load: ${extension.message ?? "no reason given"}`}
             </text>
           )}
@@ -300,6 +414,7 @@ export const Shell = (props: {
           setup={setup.view}
           submit={(text) => props.actions.submit(text, steer() && props.screen.status !== "idle")}
           openPicker={() => setup.openPicker(props.screen.model)}
+          command={props.actions.command}
           pasteCallback={setup.pasteCallback}
           steer={steer()}
           attachments={props.actions.attachments}
@@ -512,6 +627,8 @@ export const showUntilDone = (
   done: Deferred.Deferred<void, string>,
   conversation: string,
   opened: (renderer: CliRenderer) => void,
+  /** Whether the person quit, rather than moved on to another conversation: then the reopen hint prints. */
+  hint: () => boolean = () => true,
 ) =>
   Effect.gen(function* () {
     const outcome = yield* Effect.scoped(
@@ -526,7 +643,7 @@ export const showUntilDone = (
     if (outcome._tag === "Failure") {
       process.stderr.write(`${outcome.failure}\n`)
       process.exitCode = 1
-    } else {
+    } else if (hint()) {
       process.stdout.write(`resume with: nisse --conversation ${conversation}\n`)
     }
   })

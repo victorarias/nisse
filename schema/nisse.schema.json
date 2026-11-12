@@ -36,11 +36,16 @@
             "type": "integer",
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
+          },
+          "readOnly": {
+            "type": "boolean",
+            "description": "The server shows its home and changes nothing: calls that would change it fail ReadOnlyServer."
           }
         },
         "required": [
           "version",
-          "protocol"
+          "protocol",
+          "readOnly"
         ],
         "additionalProperties": true
       },
@@ -127,6 +132,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/InvalidConversationIdEncoded"
           },
@@ -341,6 +349,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
@@ -777,6 +788,9 @@
       "error": {
         "anyOf": [
           {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
           {
@@ -853,9 +867,794 @@
         "type": "null"
       },
       "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "conversation/fork": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "at": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The last entry the fork inherits; the fork goes on from it."
+          },
+          "id": {
+            "type": "string",
+            "description": "The id to name the fork by, as conversation/start takes one."
+          }
+        },
+        "required": [
+          "conversation",
+          "at"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "The fork: a conversation of its own, on the same model, settings and approvals."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchEntryEncoded"
+          },
+          {
+            "$ref": "#/$defs/InvalidConversationIdEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "conversation/reset": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "author": {
+            "type": "string",
+            "description": "Who reset it; its pi.reset entry names them."
+          },
+          "handoff": {
+            "type": "string",
+            "description": "The first message of the new context, such as a brief of the work."
+          }
+        },
+        "required": [
+          "conversation",
+          "author"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "conversation/compact": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "instructions": {
+            "type": "string",
+            "description": "What the summary should keep, beside what it always keeps."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "compacted",
+              "nothing_to_compact",
+              "failed",
+              "stopped"
+            ],
+            "description": "compacted: its pi.compaction entry is placed, at once or, behind a run in flight, at the run's next step. nothing_to_compact: the context is no longer than what a summary keeps. stopped: interrupted before it ended."
+          },
+          "message": {
+            "type": "string",
+            "description": "Why it failed."
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "additionalProperties": true,
+        "description": "How the compaction ended; the call answers once it has."
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
+          },
+          {
+            "$ref": "#/$defs/CannotCompactEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "conversation/continue": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          }
+        },
+        "required": [
+          "conversation"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "submission": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "submission"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
+          },
+          {
+            "$ref": "#/$defs/ConversationBusyEncoded"
+          },
+          {
+            "$ref": "#/$defs/NothingToContinueEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "submission/withdraw": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "submission": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "An `id` of the view's pi.inbox `items`."
+          }
+        },
+        "required": [
+          "conversation",
+          "submission"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string",
+            "enum": [
+              "withdrawn",
+              "already_placed",
+              "settled"
+            ],
+            "description": "already_placed: the run took it in already; settled: its run ended."
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "additionalProperties": true
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchSubmissionEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "conversation/configure": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "author": {
+            "type": "string",
+            "description": "Who changed it; its nisse.configured entry names them."
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model's instructions beside its own; null clears them."
+          },
+          "maxTurns": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tool rounds one run may take before it ends failed, naming the limit; null for no limit, the default."
+          }
+        },
+        "required": [
+          "conversation",
+          "author"
+        ],
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "null"
+      },
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          },
+          {
+            "$ref": "#/$defs/TakesNoInputEncoded"
+          }
+        ]
+      },
+      "stream": false
+    },
+    "usage/get": {
+      "params": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "One conversation's own spend; absent for every conversation's, summed."
+          }
+        },
+        "additionalProperties": true
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "models": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "input": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "output": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "cacheRead": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "cacheWrite": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "totalTokens": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "cost": {
+                  "type": "object",
+                  "properties": {
+                    "input": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    },
+                    "output": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    },
+                    "cacheRead": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    },
+                    "cacheWrite": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    },
+                    "total": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "input",
+                    "output",
+                    "cacheRead",
+                    "cacheWrite",
+                    "total"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "required": [
+                "input",
+                "output",
+                "cacheRead",
+                "cacheWrite",
+                "totalTokens",
+                "cost"
+              ],
+              "additionalProperties": true,
+              "description": "Tokens spent, as the providers reported them."
+            },
+            "description": "By `provider/model`: the answers and summaries each model made."
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "input": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "output": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "cacheRead": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "cacheWrite": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "totalTokens": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "cost": {
+                  "type": "object",
+                  "properties": {
+                    "input": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    },
+                    "output": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    },
+                    "cacheRead": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    },
+                    "cacheWrite": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    },
+                    "total": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "enum": [
+                            "Infinity",
+                            "-Infinity",
+                            "NaN"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "input",
+                    "output",
+                    "cacheRead",
+                    "cacheWrite",
+                    "total"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "required": [
+                "input",
+                "output",
+                "cacheRead",
+                "cacheWrite",
+                "totalTokens",
+                "cost"
+              ],
+              "additionalProperties": true,
+              "description": "Tokens spent, as the providers reported them."
+            },
+            "description": "By tool name: what tools that call models spent, such as a summary a tool asked for."
+          }
+        },
+        "required": [
+          "models",
+          "tools"
+        ],
+        "additionalProperties": true,
+        "description": "The same ledger as the view's pi.usage document."
+      },
+      "error": {
         "$ref": "#/$defs/NoSuchConversationEncoded"
       },
       "stream": false
+    },
+    "tasks/watch": {
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "graph"
+                ]
+              },
+              "graph": {
+                "type": "object",
+                "properties": {
+                  "tasks": {
+                    "type": "object",
+                    "description": "Every live task by id: its kind, conversationId, owner task, state (status, phase, the tasks it waits on), blocked reason, and the conversations it owns."
+                  }
+                },
+                "required": [
+                  "tasks"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "_tag",
+              "graph"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "_tag": {
+                "type": "string",
+                "enum": [
+                  "change"
+                ]
+              },
+              "ops": {
+                "type": "array",
+                "description": "The operations one commit applied to the graph, as a view's."
+              }
+            },
+            "required": [
+              "_tag",
+              "ops"
+            ],
+            "additionalProperties": true
+          }
+        ],
+        "description": "The graph of the home's live work, then each commit's changes."
+      },
+      "error": {
+        "$ref": "#/$defs/FellBehindEncoded"
+      },
+      "stream": true
     },
     "approval/resolve": {
       "params": {
@@ -900,6 +1699,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
@@ -1470,6 +2272,9 @@
       "error": {
         "anyOf": [
           {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
             "$ref": "#/$defs/UnknownProviderEncoded"
           },
           {
@@ -1672,6 +2477,9 @@
       "error": {
         "anyOf": [
           {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
             "$ref": "#/$defs/UnknownProviderEncoded"
           },
           {
@@ -1804,6 +2612,25 @@
     }
   },
   "$defs": {
+    "ReadOnlyServerEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "ReadOnlyServer"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": true
+    },
     "InvalidConversationIdEncoded": {
       "type": "object",
       "properties": {
@@ -1988,6 +2815,84 @@
       "required": [
         "_tag",
         "entry"
+      ],
+      "additionalProperties": true
+    },
+    "CannotCompactEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "CannotCompact"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "ConversationBusyEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "ConversationBusy"
+          ]
+        },
+        "conversation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "conversation"
+      ],
+      "additionalProperties": true
+    },
+    "NothingToContinueEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "NothingToContinue"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "NoSuchSubmissionEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "NoSuchSubmission"
+          ]
+        },
+        "submission": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "_tag",
+        "submission"
       ],
       "additionalProperties": true
     },

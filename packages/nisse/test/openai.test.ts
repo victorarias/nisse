@@ -208,6 +208,26 @@ test("openai-refresh: a turned-down token is refreshed once, saved, and used fro
   expect(saved).toMatchObject({ access_token: accessToken("second"), refresh_token: "second-refresh" })
 })
 
+test("serve-read-only: a read-only server lists ChatGPT's saved models without asking ChatGPT, so an expired sign-in is left as it was", async () => {
+  await using fake = new FakeOpenAi()
+  fake.issueTokens("second", 3600)
+  const home = tempHome()
+  try {
+    await signIn(home, "first", Date.now() - 1000)
+    const authPath = join(home.dir, "auth", "openai.json")
+    const before = readFileSync(authPath, "utf8")
+    await using server = await runningServer([], { home, openai: fake.options(), readOnly: true })
+    const client = await RawClient.connect(server.home.socket)
+    const listed = await client.call("models/list", { refresh: true })
+    expect(listed.error).toBe(undefined)
+    expect(fake.received).toEqual([])
+    expect(readFileSync(authPath, "utf8")).toBe(before)
+    client.close()
+  } finally {
+    rmSync(home.dir, { recursive: true, force: true })
+  }
+})
+
 test("openai-failed: a cut stream, a reached usage limit and an empty error each end the run with the reason", async () => {
   for (const [fixture, message, kept] of [
     ["stream_cut", "the response stream ended before the response finished", "Hel"],

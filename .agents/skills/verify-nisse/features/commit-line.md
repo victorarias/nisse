@@ -1,6 +1,13 @@
 # Commit line and session
 
-Every change to a conversation goes through one ordered, atomic store commit, and a session that cannot store fails once and loudly.
+Every change to a conversation goes through one ordered, atomic store commit,
+and a session that cannot store fails once and loudly. `nisse serve --read-only`
+serves a home without changing it: it resumes no run, answers `initialize`
+with `"readOnly": true`, and refuses every write by name with `ReadOnlyServer`.
+A ChatGPT sign-in lists its saved models without asking ChatGPT, so viewing a
+home never refreshes its sign-in or rewrites its model list.
+A TUI on it titles its prompt `READ ONLY`, says it takes no input, and still
+runs `/usage`, `/tasks` and `/help`.
 
 ## Sub-features
 
@@ -18,7 +25,7 @@ Every change to a conversation goes through one ordered, atomic store commit, an
 - `error-model` [kernel] Three-rule error model (R923-939): An extension author knows which errors throw, which become records, and which go to reports
 - `session-resume-explicit` [kernel] `resume()` as an explicit start of scheduling (R115-138): The host installs extensions before any work restarts
 - `session-read-only` [kernel] Read-only open (R115-138, §2.2): Look at a session without running or changing anything
-- `serve-read-only` [pending surface-conversations] The client path for Read-only open (R115-138, §2.2): Look at a session without running or changing anything
+- `serve-read-only` The client path for Read-only open (R115-138, §2.2): Look at a session without running or changing anything
 - `session-clock` [kernel] Injected clock: Effect's `Clock`, or a `now` (R140-212): Tests and hosts control durable time
 - `provider-session-id` [kernel] Provider session id, stable per conversation (R115-138): Provider prompt caches keep hitting across requests
 - `session-clean-close` [kernel, pending harness-run-core] Explicit `Harness` close without counting a crash (§5.4): A clean shutdown leaves runs resumable without using up their restarts
@@ -30,17 +37,75 @@ Every change to a conversation goes through one ordered, atomic store commit, an
 
 ### People
 
-None yet.
+- Run `nisse serve --read-only`, or `nisse serve --read-only --restart` to replace the running server once its runs settle, then open the TUI.
 
 ### Agents
 
-- Not reachable yet: `serve-read-only` lands with `surface-conversations`, which adds its entry point and recipe.
+- The same commands; `initialize` answers `readOnly`, and every call that would change the home fails `ReadOnlyServer`.
+
+## Driving it with drive.ts
+
+Preconditions:
+
+- A fresh run whose script is
+  `[{"text": "answer one"}, {"text": "one two three four five six seven eight", "delayMs": 1000}]`,
+  `drive.ts r up --script s.json`.
+
+- **Leave a run in flight.** `drive.ts r tui start --conversation talk`,
+  `drive.ts r tui wait READY`, send `prompt one` and wait for `answer one` and
+  `READY`, then send `count` and `drive.ts r tui wait 'two three'`. Run
+  `drive.ts r tui stop` and then `drive.ts r kill-server`, in that order: a
+  TUI still open would start a new server that resumes the run.
+- **Serve read-only.** `drive.ts r serve --read-only`, then
+  `drive.ts r rpc initialize '{"client": "drive", "version": "0", "protocol": 1}'`:
+  `"readOnly": true`. `drive.ts r watch talk --save read-only-view`: the
+  entries up to `nisse.user` `count`, and `pi.live` still holding the run and
+  its partial answer `one two three `; a second `watch` sees no new commit.
+- **The TUI.** `drive.ts r tui start --conversation talk` and
+  `drive.ts r tui wait 'READ ONLY'`: the transcript up to `one two three`, the
+  status bar at `READY`, since nothing runs, and the prompt panel titled
+  `READ ONLY` reading
+  `the server shows this home read-only and takes no input; /usage, /tasks and /help still work`.
+  Type `prompt two` and `Enter`: it stays in the prompt, unsent, and
+  `✗ this server is read-only and sends nothing; stop it and run nisse serve to send`
+  shows above it. `/reset` is refused by name and nothing is committed.
+  `/usage` opens the `USAGE` panel. The status bar shows no compacting or
+  retry for a run the first server left in flight.
+- **Refusals.** Each of `conversation/start`, `conversation/submit`,
+  `conversation/interrupt`, `conversation/reset`, `conversation/configure`,
+  `conversation/fork`, `conversation/compact`, `conversation/continue`,
+  `submission/withdraw` and `conversation/select_model`, called with valid
+  params through `drive.ts r rpc`, fails `ReadOnlyServer` with
+  `the server opened /tmp/nisse-verify/r/home read-only, so it changes nothing; stop it and run nisse serve to make changes`.
+  `drive.ts r nisse exec hi` exits 1 with the same line on stderr.
+  `usage/get` and `conversation/list` answer.
+- **Back to writable.** `drive.ts r serve --restart` replaces the read-only
+  server, and `initialize` answers `"readOnly": false`.
+  `drive.ts r watch talk --until run_end --timeout 30000 --save resumed`: the
+  run left in flight resumes and ends `answered`. A restarted server starts
+  its script over, so the answer is `answer one`.
+
+## Contexts
+
+- **Server restart.** Only a server started without `--read-only` resumes the runs a crash cut off.
 
 ## Sources
 
 Feature ledger area A: spec §1, §2, §2.2, §4, §10.1; README Persist and Resume, Errors; examples 00-conversation, 12-recovery, 35-durable-on-the-store.
 
 ## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- serve-read-only: a read-only server shows a home's conversations without resuming the run left in flight, and refuses every change by name
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- serve-read-only: a read-only server lists ChatGPT's saved models without asking ChatGPT, so an expired sign-in is left as it was
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- serve-read-only: under nisse serve --read-only the TUI shows a conversation and runs commands, but keeps a typed message unsent and says why
 
 Package, `packages/harness/test/harness.test.ts`:
 
@@ -80,3 +145,8 @@ Package, `packages/kernel/test/session.test.ts`:
 
 - A commit observer's `advance` runs on the mutation line, before the commit resolves: it should only capture what it needs, because anything slow there delays every commit.
 - A commit's callback runs on the line too. Code after `session.commit` returns runs later, on the caller's fiber, so it never delays the next commit.
+- A TUI left open while `serve --restart` replaces its server keeps drawing
+  the old server's state: after a switch from read-only it still shows
+  `READ ONLY`, and a prompt typed into an open TUI after any `serve --restart`
+  is committed but never drawn. Stop the TUI and start it again after a
+  restart.

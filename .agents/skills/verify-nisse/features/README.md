@@ -177,6 +177,8 @@ lists when a change touches them.
   to an OpenAI model, and show a status line and toasts, on every provider and
   on Claude through Claude Code; failing or slow hooks and loads become toasts
   and `failed`; `nisse extensions` lists them and `reload` reloads them.
+- [Slash commands](./commands.md) (people): `/help` lists the TUI's commands in
+  a panel; a line naming no command goes to the model.
 - [Status and chosen ids](./status.md) (agents): `status/watch` follows every tree's
   status and how its runs end, a conversation says how its last run ended, and
   `conversation/start` takes a chosen `id`.

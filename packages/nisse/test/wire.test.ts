@@ -338,7 +338,7 @@ test("wire-initialize: a client is answered with the server's version and the pr
   await using server = await runningServer()
   const client = await RawClient.connect(server.home.socket)
   const reply = await client.call("initialize", { client: "test", version: "0", protocol: PROTOCOL_VERSION })
-  expect(reply.result).toEqual({ version: VERSION, protocol: PROTOCOL_VERSION })
+  expect(reply.result).toEqual({ version: VERSION, protocol: PROTOCOL_VERSION, readOnly: false })
   client.close()
 })
 
@@ -1973,3 +1973,393 @@ test("subagent-answer: a subagent's answer reaches its idle parent as input that
   expect(runEnds(view.seen())).toHaveLength(2)
   client.close()
 }, 30_000)
+
+/** The text of each message of `conversation`'s context the model is sent, system messages left out. */
+const contextOf = async (client: RawClient, conversation: string) => {
+  const reply = await client.call("conversation/context", { conversation })
+  const messages = (reply.result as { messages: Array<{ role: string; content: unknown }> }).messages
+  return messages
+    .filter((message) => message.role !== "system")
+    .map((message) => {
+      const content = message.content
+      const text =
+        typeof content === "string"
+          ? content
+          : (content as Array<{ type: string; text?: string }>).map((block) => block.text ?? "").join("")
+      return `${message.role}: ${text}`
+    })
+}
+
+const liveOf = (watch: ViewWatch) =>
+  watch.view().docs["pi.live"] as
+    | {
+        run?: unknown
+        generation?: { retry?: { at: number; error: string } }
+        compactions?: Array<{ trigger: string }>
+        compactionFailure?: { error: string }
+      }
+    | undefined
+
+test("fork-rpc: a fork goes on from an earlier entry with only what came before it and the settings as they are now, and the conversation it left is unchanged", async () => {
+  await using server = await runningServer([{ text: "a" }, { text: "b" }, { text: "c" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "one")
+  await view.until(settled(1))
+  await submit(client, conversation, "two")
+  await view.until(settled(2))
+  const firstEnd = view.seen().find((entry) => entry.kind === RUN_END_KIND)!.id
+  // Changed after the fork's entry, and still what the fork runs with.
+  await client.call("conversation/configure", { conversation, author: "bo", instructions: "be brief", maxTurns: 3 })
+  const forked = await client.call("conversation/fork", { conversation, at: firstEnd, id: "other-way" })
+  expect(forked.result).toEqual({ conversation: "other-way" })
+  const fork = watchView(client, "other-way")
+  await opened(fork)
+  expect(fork.view().conversation.parent).toEqual({ conversationId: Number(conversation), at: firstEnd })
+  expect(fork.view().docs["pi.agent"]).toMatchObject({ instructions: "be brief", maxTurns: 3 })
+  await submit(client, "other-way", "three")
+  await fork.until(settled(2))
+  expect(transcript(fork.seen())).toEqual([
+    "user: one",
+    "assistant: a",
+    "run_end: answered",
+    "user: three",
+    "assistant: c",
+    "run_end: answered",
+  ])
+  expect(await contextOf(client, "other-way")).toEqual(["user: one", "assistant: a", "user: three", "assistant: c"])
+  expect(transcript(view.seen())).toEqual([
+    "user: one",
+    "assistant: a",
+    "run_end: answered",
+    "user: two",
+    "assistant: b",
+    "run_end: answered",
+  ])
+  const unnamed = await client.call("conversation/fork", { conversation, at: firstEnd })
+  expect((unnamed.result as { conversation: string }).conversation).toMatch(/^\d+$/)
+  expect(errorTag(await client.call("conversation/fork", { conversation, at: firstEnd, id: "other-way" }))).toBe(
+    "InvalidConversationId",
+  )
+  expect(errorTag(await client.call("conversation/fork", { conversation, at: 9999 }))).toBe("NoSuchEntry")
+  client.close()
+})
+
+test("reset-rpc, reset-handoff: a reset starts an empty context with the handoff as its first message, and the transcript keeps everything", async () => {
+  await using server = await runningServer([{ text: "a" }, { text: "b" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "one")
+  await view.until(settled(1))
+  expect(
+    (await client.call("conversation/reset", { conversation, author: "bo", handoff: "we were counting" })).error,
+  ).toBe(undefined)
+  await view.until((current) => current.seen().some((entry) => entry.kind === "pi.reset"))
+  const reset = view.seen().find((entry) => entry.kind === "pi.reset")!
+  expect(reset.data).toEqual({ author: "bo" })
+  expect(await contextOf(client, conversation)).toEqual(["user: we were counting"])
+  await submit(client, conversation, "two")
+  await view.until(settled(2))
+  expect(await contextOf(client, conversation)).toEqual(["user: we were counting", "user: two", "assistant: b"])
+  expect(transcript(view.seen())).toEqual([
+    "user: one",
+    "assistant: a",
+    "run_end: answered",
+    "user: two",
+    "assistant: b",
+    "run_end: answered",
+  ])
+  client.close()
+})
+
+test("compact-rpc, compaction-live-status: compacting shows live, then a summary replaces the context; a failed one says why", async () => {
+  // Past the 20,000 tokens a summary keeps by default, so the run before it is summarized.
+  const long = "word ".repeat(20_000)
+  await using server = await runningServer([
+    { text: "a" },
+    { text: "b" },
+    { text: "summary of one", delayMs: 100 },
+    { text: "c" },
+    { fail: "the summary model is gone" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  const compact = (instructions?: string) =>
+    client.call("conversation/compact", { conversation, ...(instructions === undefined ? {} : { instructions }) })
+  expect((await compact()).result).toEqual({ outcome: "nothing_to_compact" })
+  await submit(client, conversation, long)
+  await view.until(settled(1))
+  await submit(client, conversation, long)
+  await view.until(settled(2))
+  const compacting = compact()
+  await view.until((current) => (liveOf(current)?.compactions ?? []).length > 0)
+  expect(liveOf(view)!.compactions!.map((status) => status.trigger)).toEqual(["manual"])
+  const summary = view.seen().find((entry) => entry.kind === "pi.compaction")
+  expect(summary).toBe(undefined)
+  expect((await compacting).result).toEqual({ outcome: "compacted" })
+  await view.until((current) => current.seen().some((entry) => entry.kind === "pi.compaction"))
+  expect(liveOf(view)?.compactions).toBe(undefined)
+  const context = await contextOf(client, conversation)
+  expect(context[0]).toContain("summary of one")
+  expect(context.slice(1)).toEqual([`user: ${long}`, "assistant: b"])
+  await submit(client, conversation, long)
+  await view.until(settled(3))
+  expect((await compact("keep the numbers")).result).toMatchObject({ outcome: "failed" })
+  expect(liveOf(view)!.compactionFailure!.error).toContain("the summary model is gone")
+  client.close()
+})
+
+test("continue-rpc: a conversation whose run failed goes on with no new input; one that works, never ran or answered is refused by name", async () => {
+  await using server = await runningServer([
+    { fail: "provider went away" },
+    { text: "back on it", tool: { name: "bash", input: { command: "echo held" } } },
+    { text: "back on it now" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  const go = () => client.call("conversation/continue", { conversation })
+  expect(errorTag(await go())).toBe("NothingToContinue")
+  await submit(client, conversation, "hi")
+  await view.until(settled(1))
+  expect((await go()).error).toBe(undefined)
+  // The run waits on its approval, so it is still working when continue is asked again.
+  const approval = await waitingApproval(view)
+  expect(errorTag(await go())).toBe("ConversationBusy")
+  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: true })
+  await view.until(settled(2))
+  expect(errorTag(await go())).toBe("NothingToContinue")
+  expect(transcript(view.seen())).toEqual([
+    "user: hi",
+    "assistant:  [error]",
+    "run_end: failed (provider went away)",
+    "assistant: back on it",
+    "assistant: back on it now",
+    "run_end: answered",
+  ])
+  client.close()
+})
+
+test("withdraw-rpc: a queued prompt taken back never runs, and one already run cannot be", async () => {
+  await using server = await runningServer(ECHO)
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  const first = (await submit(client, conversation, "one")).result as { submission: number }
+  // The run waits on its approval, so "two" waits in the queue.
+  const approval = await waitingApproval(view)
+  const second = (await submit(client, conversation, "two", "two")).result as { submission: number }
+  const inbox = () => (view.view().docs["pi.inbox"] as { items: Array<{ id: number }> }).items.map((item) => item.id)
+  await view.until(() => inbox().includes(second.submission))
+  const withdraw = (submission: number) => client.call("submission/withdraw", { conversation, submission })
+  expect((await withdraw(second.submission)).result).toEqual({ result: "withdrawn" })
+  expect(inbox()).not.toContain(second.submission)
+  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: true })
+  await view.until(settled(1))
+  expect(transcript(view.seen())).toEqual([
+    "user: one",
+    "assistant: checking",
+    "withdrawn: two",
+    "assistant: all done",
+    "run_end: answered",
+  ])
+  expect((await withdraw(first.submission)).result).toEqual({ result: "settled" })
+  expect(errorTag(await withdraw(9999))).toBe("NoSuchSubmission")
+  client.close()
+})
+
+test("configure-rpc, run-turn-limit: changed instructions reach the model and the transcript says who changed them; a turn limit ends a looping run by name", async () => {
+  const echo = { tool: { name: "bash", input: { command: "echo again" } } }
+  await using server = await runningServer([{ text: "a" }, echo, echo, echo, { text: "b" }])
+  const client = await RawClient.connect(server.home.socket)
+  const reply = await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto" })
+  const conversation = (reply.result as { conversation: string }).conversation
+  const view = watchView(client, conversation)
+  const configure = (settings: Record<string, unknown>) =>
+    client.call("conversation/configure", { conversation, author: "bo", ...settings })
+  /** The instructions the newest system message gives the model. */
+  const instructions = async () => {
+    const reply = await client.call("conversation/context", { conversation })
+    const messages = (reply.result as { messages: Array<{ role: string; sections?: { instructions?: unknown } }> })
+      .messages
+    return messages.findLast((message) => message.sections !== undefined && "instructions" in message.sections)
+      ?.sections?.instructions
+  }
+  expect((await configure({ instructions: "answer in French" })).error).toBe(undefined)
+  await submit(client, conversation, "one")
+  await view.until(settled(1))
+  expect(await instructions()).toContain("answer in French")
+  expect((await configure({ maxTurns: 1 })).error).toBe(undefined)
+  await submit(client, conversation, "loop")
+  await view.until(settled(2))
+  const end = runEnds(view.seen())[1]!
+  expect(end).toEqual({ outcome: "failed", message: "reached the turn limit of 1 turn" })
+  const configured = view.seen().filter((entry) => entry.kind === "nisse.configured")
+  expect(configured.map((entry) => entry.data)).toEqual([
+    { author: "bo", instructions: "answer in French" },
+    { author: "bo", maxTurns: 1 },
+  ])
+  expect((await configure({ instructions: null, maxTurns: null })).error).toBe(undefined)
+  await submit(client, conversation, "two")
+  await view.until(settled(3))
+  expect(await instructions()).toBe(null)
+  expect((await configure({ maxTurns: 0 })).error?.message).toContain("maxTurns")
+  client.close()
+})
+
+test("usage-rpc, usage-per-model, usage-total: a client reads the tokens each conversation spent, by model, and the home's total", async () => {
+  await using server = await runningServer([
+    { text: "a", usage: { input: 100, output: 10 } },
+    { text: "b", usage: { input: 200, output: 20 } },
+    { text: "c", usage: { input: 50, output: 5 } },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const first = await start(client, server.home.dir)
+  const second = await start(client, server.home.dir)
+  for (const [conversation, prompts] of [
+    [first, ["one", "two"]],
+    [second, ["three"]],
+  ] as const) {
+    const view = watchView(client, conversation)
+    for (const [index, prompt] of prompts.entries()) {
+      await submit(client, conversation, prompt)
+      await view.until(settled(index + 1))
+    }
+  }
+  const usage = async (conversation?: string) =>
+    (await client.call("usage/get", conversation === undefined ? {} : { conversation })).result as {
+      models: Record<string, { input: number; output: number; totalTokens: number }>
+    }
+  expect((await usage(first)).models["script/script"]).toMatchObject({ input: 300, output: 30, totalTokens: 330 })
+  expect((await usage(second)).models["script/script"]).toMatchObject({ input: 50, output: 5, totalTokens: 55 })
+  expect((await usage()).models["script/script"]).toMatchObject({ input: 350, output: 35, totalTokens: 385 })
+  expect(errorTag(await client.call("usage/get", { conversation: "99" }))).toBe("NoSuchConversation")
+  client.close()
+})
+
+test("task-graph-rpc: a client watches the home's live work, a run and the call it waits on, until it is done", async () => {
+  await using server = await runningServer(ECHO)
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  type Graph = { tasks: Record<string, { kind: string; conversationId: number; state: { status: string } }> }
+  const watch = client.watch<{ _tag: "graph"; graph: Graph } | { _tag: "change"; ops: ReadonlyArray<Op> }>(
+    "tasks/watch",
+  )
+  let graph: Graph | undefined
+  let applied = 0
+  const current = () => {
+    for (; applied < watch.items.length; applied++) {
+      const item = watch.items[applied]!
+      graph = item._tag === "graph" ? item.graph : applyImmutable(graph, item.ops)
+    }
+    return graph!
+  }
+  await watch.until(() => current() !== undefined)
+  expect(current().tasks).toEqual({})
+  await submit(client, conversation, "check it")
+  await waitingApproval(view)
+  await watch.until(() => Object.values(current().tasks).some((task) => task.kind === "pi.tool"))
+  const kinds = Object.values(current().tasks).map((task) => [task.kind, task.state.status])
+  expect(kinds).toContainEqual(["pi.generation", "waiting"])
+  expect(Object.values(current().tasks).every((task) => task.conversationId === Number(conversation))).toBe(true)
+  const approval = Object.keys((view.view().docs["nisse.approvals"] as { requests: object }).requests)[0]!
+  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await view.until(settled(1))
+  await watch.until(() => Object.keys(current().tasks).length === 0)
+  client.close()
+})
+
+test("run-retry-live: a provider hiccup shows its retry and when it comes, and stopping it ends the run", async () => {
+  await using server = await runningServer([{ fail: "503 service unavailable" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "hi")
+  await view.until((current) => liveOf(current)?.generation?.retry !== undefined)
+  const retry = liveOf(view)!.generation!.retry!
+  expect(retry.error).toContain("503")
+  // When the retry comes is still ahead when a client first sees it.
+  expect(retry.at).toBeGreaterThan(Date.now())
+  await client.call("conversation/interrupt", { conversation })
+  await view.until(settled(1))
+  expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
+  client.close()
+})
+
+test("serve-read-only: a read-only server shows a home's conversations without resuming the run left in flight, and refuses every change by name", async () => {
+  const home = tempHome()
+  const slow = { text: "one two three four five six seven eight", delayMs: 200 }
+  let conversation = ""
+  try {
+    {
+      await using writable = await runningServer([slow], { home })
+      const client = await RawClient.connect(writable.home.socket)
+      conversation = await start(client, home.dir)
+      const view = watchView(client, conversation)
+      await submit(client, conversation, "count")
+      await view.until(speaking)
+      client.close()
+    }
+    {
+      // Had the viewer resumed the run, it would answer with this at once.
+      await using viewer = await runningServer([{ text: "answered by the viewer" }], { home, readOnly: true })
+      const client = await RawClient.connect(viewer.home.socket)
+      expect(
+        (await client.call("initialize", { client: "test", version: "0", protocol: PROTOCOL_VERSION })).result,
+      ).toEqual({
+        version: VERSION,
+        protocol: PROTOCOL_VERSION,
+        readOnly: true,
+      })
+      const view = watchView(client, conversation)
+      await opened(view)
+      const said = transcript(view.seen())
+      expect(said).toEqual(["user: count"])
+      expect((view.view().docs["pi.live"] as { run?: unknown }).run).toBeDefined()
+      expect(((await client.call("conversation/list")).result as Array<{ id: string }>).map((each) => each.id)).toEqual(
+        [conversation],
+      )
+      const refused = await Promise.all([
+        client.call("conversation/start", { cwd: home.dir }),
+        submit(client, conversation, "more"),
+        client.call("conversation/interrupt", { conversation }),
+        client.call("conversation/reset", { conversation, author: "bo" }),
+        client.call("conversation/configure", { conversation, author: "bo", maxTurns: 2 }),
+        client.call("conversation/fork", { conversation, at: view.seen()[0]!.id }),
+        client.call("conversation/select_model", {
+          conversation,
+          author: "bo",
+          selection: { provider: "script", model: "script" },
+        }),
+        client.call("conversation/compact", { conversation }),
+        client.call("conversation/continue", { conversation }),
+        client.call("submission/withdraw", { conversation, submission: 1 }),
+        client.call("approval/resolve", { conversation, approval: "1", author: "bo", allow: true }),
+        client.call("auth/start", { provider: "openai" }),
+        client.call("auth/logout", { provider: "openai" }),
+      ])
+      expect(refused.map(errorTag)).toEqual(Array(refused.length).fill("ReadOnlyServer"))
+      expect(JSON.stringify(refused[0]!.error)).toContain("read-only")
+      expect((await client.call("usage/get", {})).error).toBe(undefined)
+      client.close()
+    }
+    {
+      await using resumed = await runningServer([slow], { home })
+      const client = await RawClient.connect(resumed.home.socket)
+      const view = watchView(client, conversation)
+      await view.until(settled(1), 10_000)
+      // What the first server had said when it closed stays, cut off, before the answer.
+      const resumedSaid = transcript(view.seen())
+      expect(resumedSaid[0]).toBe("user: count")
+      expect(resumedSaid.slice(-2)).toEqual(["assistant: one two three four five six seven eight", "run_end: answered"])
+      expect(resumedSaid.join("\n")).not.toContain("answered by the viewer")
+      client.close()
+    }
+  } finally {
+    rmSync(home.dir, { recursive: true, force: true })
+  }
+})

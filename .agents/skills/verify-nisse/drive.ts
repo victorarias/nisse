@@ -25,7 +25,8 @@ const usage = `usage: drive.ts <run> <command> [args]
                                    ChatGPT sign-in in, and down writes it back if a refresh rotated it.
   doctor                           is this run's instance worth driving?
   nisse <args...>                  run the nisse CLI against the run's home
-  serve                            start the run's server in the foreground of a tmux window
+  serve [nisse serve args...]      start the run's server in the foreground of a tmux window,
+                                   e.g. serve --read-only, or --restart to replace the running one
   kill-server                      SIGKILL the server that holds the run's home lock
   rpc <method> [params-json] [--timeout MS]
                                    one raw JSON-RPC call over the run's socket (5 s)
@@ -535,10 +536,13 @@ const commands: Record<string, () => Promise<void> | void> = {
 
   serve: async () => {
     requireUp()
-    if (lockOwner()) fail(`a server already holds ${lock}`)
-    openWindow("serve", [MAIN, "serve"])
-    record("serve")
-    if (!(await until(() => existsSync(socket) && lockOwner() !== undefined, 20_000)))
+    // --restart replaces the server that holds the lock once its runs settle, so wait for a new holder.
+    const replaced = args.includes("--restart") ? lockOwner()?.pid : undefined
+    if (lockOwner() && replaced === undefined) fail(`a server already holds ${lock}`)
+    openWindow("serve", [MAIN, "serve", ...args])
+    record(["serve", ...args].join(" "))
+    const holder = () => lockOwner()?.pid
+    if (!(await until(() => existsSync(socket) && holder() !== undefined && holder() !== replaced, 20_000)))
       fail(`the server did not take ${lock} in 20s:\n${tmux("capture-pane", "-p", "-t", "serve").stdout}`)
     console.log(`serving, pid ${lockOwner()!.pid}`)
   },

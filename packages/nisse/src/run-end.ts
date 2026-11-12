@@ -36,8 +36,12 @@ const OUTCOMES: Record<RunFailureReason, Outcome> = {
   turn_limit: "failed",
 }
 
-const describe = (reason: RunFailureReason, detail: unknown): string =>
-  typeof detail === "string" && detail !== "" ? detail : reason.replaceAll("_", " ")
+const describe = (reason: RunFailureReason, detail: unknown): string => {
+  const said = typeof detail === "string" && detail !== "" ? detail : undefined
+  // The turn limit's detail is only its count, such as `1 turn`.
+  if (reason === "turn_limit") return `reached the turn limit of ${said ?? "its turns"}`
+  return said ?? reason.replaceAll("_", " ")
+}
 
 /** The conversation's newest `nisse.run_end`, so how its last run ended is read without scanning its transcript. */
 export const LastRunEndDoc = defineDoc<{ end?: { id: EntryId; data: RunEnd } }>({

@@ -108,8 +108,12 @@ const serveCommand = Command.make(
       Flag.withDescription("Replace the running server once its runs settle"),
       Flag.withDefault(false),
     ),
+    readOnly: Flag.Boolean("read-only").pipe(
+      Flag.withDescription("Show the home's conversations and change nothing: no run resumes, and no input is taken"),
+      Flag.withDefault(false),
+    ),
   },
-  Effect.fn(function* ({ restart }) {
+  Effect.fn(function* ({ restart, readOnly }) {
     const home = defaultHome()
     if (restart) yield* stopRunningServer(home)
     const claim = claimHome(home)
@@ -118,7 +122,7 @@ const serveCommand = Command.make(
           Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "30 seconds" })) }),
         )
       : claim
-    yield* serveHome(home, claimed)
+    yield* serveHome(home, claimed, readOnly)
   }),
 ).pipe(Command.withDescription("Run this home's server in the foreground"))
 
@@ -141,12 +145,14 @@ const providerOptions = (home: Home) =>
 
 // A stuck code-mode worker survives terminate() and keeps the process alive (F19), so the end of the server's lifetime
 // ends the process.
-const serveHome = <A, R>(home: Home, claimed: Effect.Effect<A, HomeTaken, R>) =>
+const serveHome = <A, R>(home: Home, claimed: Effect.Effect<A, HomeTaken, R>, readOnly: boolean) =>
   Effect.gen(function* () {
     const served = yield* Effect.scoped(
       Effect.andThen(
         claimed,
-        Effect.flatMap(providerOptions(home), (providers) => serve(home, { idleGrace: IDLE_GRACE, providers })),
+        Effect.flatMap(providerOptions(home), (providers) =>
+          serve(home, { idleGrace: IDLE_GRACE, providers, readOnly }),
+        ),
       ),
     ).pipe(
       Effect.as(true),
@@ -181,6 +187,7 @@ const execCommand = Command.make(
           refuse(`nisse knows no effort named ${error.effort}; it knows ${error.efforts.join(", ")}`),
         InvalidConversationId: (error) => refuse(error.message),
         UnreadableImage: (error) => refuse(error.message),
+        ReadOnlyServer: (error) => refuse(error.message),
       }),
     )
     if (ok === false) process.exitCode = 1
@@ -281,6 +288,7 @@ const nisse = Command.make(
       Effect.catchTags({
         UnknownProvider: unknownProvider,
         UnreadableImage: (error) => refuse(error.message),
+        ReadOnlyServer: (error) => refuse(error.message),
       }),
     )
   }),

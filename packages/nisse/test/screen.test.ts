@@ -621,3 +621,195 @@ const cpuSeconds = (pid: number) => {
   const [minutes, seconds] = out.split(":")
   return Number(minutes) * 60 + Number(seconds)
 }
+
+/** The TUI on the conversation `talk`, and a raw client of its server for what is slow to type. */
+const openTalk = async (script: ReadonlyArray<ScriptStep>) => {
+  const nisseHome = home()
+  const session = await open(script, ["--conversation", "talk"], nisseHome)
+  await session.waitFor((screen) => screen.includes("READY"))
+  const client = await RawClient.connect(nisseHome.socket)
+  return { session, client }
+}
+
+const ask = async (session: Session, prompt: string, answer: string) => {
+  session.type(`${prompt}\r`)
+  await session.waitFor((screen) => screen.includes(answer) && screen.includes("READY"))
+}
+
+test("fork-rpc: /fork moves the screen to a new conversation that goes on from before the last prompt", async () => {
+  const session = await open([{ text: "answer one" }, { text: "answer two" }, { text: "another way" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  await ask(session, "prompt one", "answer one")
+  await ask(session, "prompt two", "answer two")
+  const before = session.screen().split("\n")[0]!
+  session.type("/fork\r")
+  const forked = await session.waitFor(
+    (screen) => screen.split("\n")[0] !== before && screen.includes("answer one") && screen.includes("READY"),
+  )
+  expect(forked).not.toContain("answer two")
+  await ask(session, "prompt three", "another way")
+  await quit(session)
+})
+
+test("reset-rpc, reset-handoff: /reset draws a new context with its handoff, and the conversation goes on after it", async () => {
+  const session = await open([{ text: "answer one" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  await ask(session, "prompt one", "answer one")
+  session.type("/reset we were counting sheep\r")
+  const screen = await session.waitFor((screen) => screen.includes("started a new context"))
+  expect(screen).toContain("we were counting sheep")
+  // With no step left the script repeats the newest user text it was sent.
+  await ask(session, "go on", "You said: go on")
+  await quit(session)
+})
+
+test("compact-rpc, compaction-live-status: /compact says when there is nothing to compact, shows a compaction running, and why one failed", async () => {
+  // Past the 20,000 tokens a summary keeps by default, so the run before it is summarized.
+  const long = "word ".repeat(20_000)
+  const { session, client } = await openTalk([
+    { text: "answer one" },
+    { text: "answer two" },
+    { text: "the summary of it all", delayMs: 300 },
+    { text: "answer three" },
+    { fail: "the summary model is gone" },
+  ])
+  session.type("/compact\r")
+  await session.waitFor((screen) => screen.includes("nothing to compact"))
+  const view = watchView(client, "talk")
+  for (const runs of [1, 2]) {
+    await submit(client, "talk", long)
+    await view.until(settled(runs), 10_000)
+  }
+  session.type("/compact keep the numbers\r")
+  await session.waitFor((screen) => screen.includes("◆ compacting"))
+  await session.waitFor((screen) => screen.includes("compacted the context") && !screen.includes("◆ compacting"))
+  await submit(client, "talk", long)
+  await view.until(settled(3), 10_000)
+  session.type("/compact\r")
+  await session.waitFor((screen) => /compaction failed: .*the summary model is gone/.test(screen))
+  client.close()
+  await quit(session)
+})
+
+test("continue-rpc: /continue goes on after a failed run with no new input, and says why when there is nothing to go on with", async () => {
+  const session = await open([{ fail: "provider went away" }, { text: "back on it" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("/continue\r")
+  await session.waitFor((screen) => screen.includes("no run has ended here yet"))
+  session.type("hi\r")
+  await session.waitFor((screen) => screen.includes("provider went away") && screen.includes("READY"))
+  session.type("/continue\r")
+  await session.waitFor((screen) => screen.includes("back on it") && screen.includes("READY"))
+  await quit(session)
+})
+
+test("withdraw-rpc: /withdraw takes back the queued prompt before it runs", async () => {
+  const session = await open([call("bash", { command: "echo hi" }), { text: "all done" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("first\r")
+  // The run waits on its approval, so "second" waits in the queue.
+  await session.waitFor((screen) => screen.includes("allow this call?"))
+  session.type("second\r")
+  await session.waitFor((screen) => screen.includes("queued · second"))
+  session.type("/withdraw\r")
+  await session.waitFor((screen) => screen.includes("withdrew: second") && !screen.includes("queued · second"))
+  session.type("\x19")
+  const screen = await session.waitFor((screen) => screen.includes("all done") && screen.includes("READY"))
+  expect(screen).not.toContain("You said: second")
+  await quit(session)
+})
+
+test("configure-rpc, run-turn-limit: /instructions and /max-turns show who changed what, and a looping run ends naming the limit", async () => {
+  const echo = call("bash", { command: "echo again" })
+  const session = await open([echo, echo], ["--auto"])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("/instructions answer in French\r")
+  await session.waitFor((screen) => screen.includes("set the instructions: answer in French"))
+  session.type("/max-turns 1\r")
+  await session.waitFor((screen) => screen.includes("set the turn limit to 1 turn"))
+  session.type("/max-turns zero\r")
+  await session.waitFor((screen) => screen.includes("max turns takes a whole number 1 or more, got zero"))
+  session.type("loop\r")
+  await session.waitFor((screen) => screen.includes("✗ reached the turn limit of 1 turn") && screen.includes("READY"))
+  await quit(session)
+})
+
+test("usage-rpc, usage-context-live: the status bar counts tokens and the context, and /usage lists them by model", async () => {
+  const { session, client } = await openTalk([
+    { text: "answer one", usage: { input: 1200, output: 300 } },
+    { text: "answer two", usage: { input: 2000, output: 500 } },
+  ])
+  await converse(client, "talk", 1)
+  await session.waitFor((screen) => screen.includes("1.5k tokens · context 1.5k"))
+  await converse(client, "talk", 1, 2)
+  await session.waitFor((screen) => screen.includes("4.0k tokens · context 2.5k"))
+  session.type("/usage\r")
+  const screen = await session.waitFor((screen) => screen.includes("USAGE") && screen.includes("every conversation"))
+  expect(screen).toContain("this conversation: 4.0k tokens")
+  expect(screen).toContain("script/script  4.0k (3.2k in, 800 out)")
+  session.type("\x1b")
+  await session.waitFor((screen) => !screen.includes("USAGE") && screen.includes("answer two"))
+  client.close()
+  await quit(session)
+})
+
+test("task-graph-rpc: /tasks lists the work running now, and it empties once the work is done", async () => {
+  const session = await open([call("bash", { command: "echo hi" }), { text: "all done" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("check\r")
+  await session.waitFor((screen) => screen.includes("allow this call?"))
+  session.type("/tasks\r")
+  const screen = await session.waitFor((screen) => screen.includes("TASKS") && screen.includes("pi.tool"))
+  expect(screen).toContain("pi.generation")
+  session.type("\x19")
+  await session.waitFor((screen) => screen.includes("nothing is running"))
+  session.type("\x1b")
+  await session.waitFor((screen) => screen.includes("all done") && screen.includes("READY"))
+  await quit(session)
+})
+
+test("run-retry-live: the status bar counts down a provider's retry, and escape stops it", async () => {
+  const session = await open([{ fail: "503 service unavailable" }])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("hi\r")
+  await session.waitFor((screen) => /retrying in \d+s · .*503/.test(screen))
+  session.type("\x1b")
+  await session.waitFor((screen) => screen.includes("interrupted") && screen.includes("READY"))
+  await quit(session)
+})
+
+test("commands-help: /help lists every command with what it does, and escape goes back", async () => {
+  const session = await open([])
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("/help\r")
+  const screen = await session.waitFor((screen) => screen.includes("COMMANDS"))
+  for (const command of ["/fork", "/reset", "/compact", "/continue", "/withdraw", "/instructions", "/max-turns"])
+    expect(screen).toContain(command)
+  session.type("\x1b")
+  await session.waitFor((screen) => !screen.includes("COMMANDS"))
+  await quit(session)
+})
+
+test("serve-read-only: under nisse serve --read-only the TUI shows a conversation and runs commands, but keeps a typed message unsent and says why", async () => {
+  const nisseHome = home()
+  const first = await open([{ text: "answer one" }], ["--conversation", "talk"], nisseHome)
+  await first.waitFor((screen) => screen.includes("READY"))
+  await ask(first, "prompt one", "answer one")
+  await quit(first)
+  // Replaces the server the first TUI started, once it stops.
+  const env = await scriptEnv(nisseHome, [])
+  const viewer = await serving(env, undefined, ["serve", "--read-only", "--restart"])
+  const session = screenSession(["--conversation", "talk"], env)
+  await session.waitFor((screen) => screen.includes("READ ONLY") && screen.includes("answer one"))
+  session.type("/help\r")
+  await session.waitFor((screen) => screen.includes("COMMANDS"))
+  session.type("\x1b")
+  await session.waitFor((screen) => !screen.includes("COMMANDS"))
+  session.type("prompt two\r")
+  const refused = await session.waitFor((screen) => screen.includes("read-only and sends nothing"))
+  // Still in the prompt, not in the transcript.
+  expect(refused).toMatch(/❯ prompt two/)
+  await quit(session)
+  viewer.kill()
+  await viewer.exited
+})
