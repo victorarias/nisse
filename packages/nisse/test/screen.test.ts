@@ -562,9 +562,11 @@ test("server-cannot-start: an open TUI whose server cannot start shows why, star
   await Bun.write(config, "[extensions.guard\n")
   server.kill("SIGKILL")
   await server.exited
+  // A server that refuses takes 0.6 s to start and exit on a quiet machine, and up to 4.7 s on one under load (100
+  // starts at load average 30): each wait here allows several of them.
   await session.waitFor(
     (screen) => screen.includes("nisse's server cannot start") && screen.includes("TOML Parse error"),
-    10_000,
+    20_000,
   )
   // Each server the TUI starts writes its refusal to the home's log as it exits, and the TUI waits a second after it
   // before starting the next: the gap between two refusals is more than that second.
@@ -581,7 +583,7 @@ test("server-cannot-start: an open TUI whose server cannot start shows why, star
       watcher.on("change", check)
       check()
     }),
-    10_000,
+    20_000,
     "three refusals in the home's log",
   ).finally(() => watcher.close())
   expect(seen.map(({ count }) => count - seen[0]!.count)).toEqual([0, 1, 2])
@@ -589,15 +591,15 @@ test("server-cannot-start: an open TUI whose server cannot start shows why, star
   // A prompt typed now clears the notice, which comes back while the server still refuses; the prompt waits.
   session.type("hi\r")
   await session.waitFor((screen) => !screen.includes("cannot start"))
-  await session.waitFor((screen) => screen.includes("cannot start"), 5_000)
+  await session.waitFor((screen) => screen.includes("cannot start"), 20_000)
   // The config fixed, the next server starts, the notice goes and the prompt is answered.
   rmSync(config)
   await session.waitFor(
     (screen) => screen.includes("back again") && screen.includes("READY") && !screen.includes("cannot start"),
-    10_000,
+    20_000,
   )
   await quit(session)
-}, 40_000)
+}, 90_000)
 
 test("idle-tui: the TUI draws nothing and uses no CPU while nothing changes", async () => {
   const session = await open([{ text: "done" }])

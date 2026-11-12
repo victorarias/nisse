@@ -1001,13 +1001,13 @@ test("server-cannot-start: each nisse exec whose server cannot come back says wh
   for (const each of execs) {
     while (!each.said.includes("\n")) {
       // A client whose server lost the home to the other client's waits up to 10 s for that one's socket before it
-      // starts another and hears the refusal itself.
-      const { value, done } = await deadline(each.stderr.read(), 20_000, "the refusal on stderr")
+      // starts another and hears the refusal itself. A refusing server takes up to 4.7 s on a machine under load.
+      const { value, done } = await deadline(each.stderr.read(), 30_000, "the refusal on stderr")
       if (done) throw new Error(`exec ended before saying why: ${each.said}`)
       each.said += new TextDecoder().decode(value)
     }
   }
-  // Long enough for each to see several servers refuse.
+  // Long enough for each to see several servers refuse; each refusal takes up to 4.7 s under load.
   await deadline(
     new Promise<void>((resolve) => {
       const watcher = watch(nisseHome.dir, () => {
@@ -1017,7 +1017,7 @@ test("server-cannot-start: each nisse exec whose server cannot come back says wh
         }
       })
     }),
-    15_000,
+    40_000,
     "six refusals in the home's log",
   )
   rmSync(config)
@@ -1038,7 +1038,7 @@ test("server-cannot-start: each nisse exec whose server cannot come back says wh
       answered: true,
     })
   }
-}, 60_000)
+}, 120_000)
 
 /** Each tool result's text and whether it is an error. */
 const toolResults = (entries: ReadonlyArray<{ kind: string; model?: ReadonlyArray<unknown> }>) =>
