@@ -11,6 +11,7 @@ import {
   type ConversationWindow,
   createRegistry,
   type EndedRun,
+  type WithdrawnInput,
   openHarness,
   type Harness,
 } from "@nisse/harness"
@@ -32,6 +33,7 @@ import {
   UnknownProvider,
   type EntryRecord as WireEntry,
   USER_KIND,
+  WITHDRAWN_KIND,
   type View,
   type ViewItem,
   type Window,
@@ -124,6 +126,17 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           if (stops === undefined || run.answered || run.end.status === "done") return writeRunEnd(tx, run)
           return endRun(tx, run.conversationId, { outcome: "restart_limit", message: restartLimitMessage(stops) })
         }
+        // A person's input withdrawn while it waited says so in the transcript, under the requestId it was submitted
+        // with, so a client that lost its watch learns the input's fate from entries alone.
+        const inputWithdrawn = (tx: Tx, { conversationId, entry }: WithdrawnInput) =>
+          entry?.kind === USER_KIND
+            ? Effect.asVoid(
+                tx.appendEntry(conversationId, {
+                  kind: WITHDRAWN_KIND,
+                  data: { requestId: (entry.data as { requestId: string }).requestId },
+                }),
+              )
+            : Effect.void
         const harness = yield* Effect.acquireRelease(
           Effect.flatMap(openSqliteStorage(home.database), (storage) =>
             openHarness(storage, {
@@ -131,6 +144,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
               models,
               env: ({ cwd }) => Effect.succeed(new LocalExecutionEnv({ cwd: cwd ?? home.dir })),
               runEnded,
+              inputWithdrawn,
               viewDocs: [StatusLinesDoc],
               runTasks: claudeRuns.runTasks,
             }),

@@ -32,7 +32,8 @@ import {
   pickInputEntry,
   prepareBoundary,
   type QueueModes,
-  removeInboxItem,
+  type InputWithdrawnHook,
+  withdrawQueued,
 } from "./inbox.ts"
 import { LiveDoc, type RunTasks, type Stored } from "./live.ts"
 import type { InputEntry, SettledSubmissionRecord, SubmissionDraft } from "./types.ts"
@@ -105,6 +106,7 @@ export class Submissions {
   /** Read at each admission, on the Session line. */
   readonly #queueModes: () => QueueModes
   readonly #runTasks: RunTasks
+  readonly #inputWithdrawn: InputWithdrawnHook | undefined
   /** Enables task scheduling; submitting or waiting asks for progress. */
   readonly #resume: Effect.Effect<void, unknown>
   readonly #propagation: TracePropagation | undefined
@@ -122,8 +124,10 @@ export class Submissions {
     resume: Effect.Effect<void, unknown>,
     telemetry: SubmitTelemetry,
     runTasks: RunTasks,
+    inputWithdrawn: InputWithdrawnHook | undefined,
   ) {
     this.#runTasks = runTasks
+    this.#inputWithdrawn = inputWithdrawn
     this.#session = session
     this.#propagation = telemetry.propagation
     this.#tracer = telemetry.tracer
@@ -292,6 +296,7 @@ export class Submissions {
     id: SubmissionId,
     conversationId?: ConversationId,
   ): Effect.Effect<AbortResult | "not_found", ReadFailure | CommitError> {
+    const withdrawn = this.#inputWithdrawn
     return this.#session.commit((tx) =>
       Effect.gen(function* () {
         const record = yield* tx.submission(id)
@@ -299,8 +304,7 @@ export class Submissions {
           return "not_found" as const
         }
         if (record.status === "queued") {
-          yield* tx.settleSubmission(id, { status: "unanswered", reason: "aborted" })
-          yield* removeInboxItem(tx, record.conversationId, id)
+          yield* withdrawQueued(tx, record.conversationId, id, withdrawn)
           return "aborted" as const
         }
         return record.status === "placed" ? ("already_placed" as const) : ("settled" as const)

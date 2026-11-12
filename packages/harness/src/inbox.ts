@@ -176,32 +176,64 @@ export function isStale(boundary: Boundary, entry: EntryDraft): boolean {
   return typeof entry.head === "number" && boundary.head !== undefined && entry.head < boundary.head
 }
 
-/** Removes a withdrawn submission's item; the caller settles the submission. */
-export const removeInboxItem = (
+/** A queued input as it is withdrawn, handed to the host's `inputWithdrawn` in the commit that withdraws it. */
+export type WithdrawnInput = {
+  readonly conversationId: ConversationId
+  /** The entry it would have been placed as, when not `pi.user`. */
+  readonly entry: Stored<InputEntry> | undefined
+}
+
+/**
+ * Runs in the commit that withdraws a queued input, after it is settled, so what it writes is stored with the
+ * withdrawal. The commit has written already, so it reads no table. A failure fails that commit.
+ */
+export type InputWithdrawnHook = (tx: Tx, input: WithdrawnInput) => Effect.Effect<void, StorageError>
+
+/** Settles a queued item `unanswered` with `reason`, removes it from `items`, and hands an input to `withdrawn`. */
+const withdraw = (
+  tx: Tx,
+  conversationId: ConversationId,
+  items: InboxItem[],
+  index: number,
+  reason: string,
+  withdrawn: InputWithdrawnHook | undefined,
+): Effect.Effect<void, StorageError> =>
+  Effect.gen(function* () {
+    const item = items[index]!
+    yield* tx.settleSubmission(item.id, { status: "unanswered", reason })
+    items.splice(index, 1)
+    if (item.mode === "write" || withdrawn === undefined) return
+    yield* withdrawn(tx, { conversationId, entry: item.entry })
+  })
+
+/** Withdraws queued submission `id`: it settles `unanswered` with `aborted` and leaves the inbox. */
+export const withdrawQueued = (
   tx: Tx,
   conversationId: ConversationId,
   id: SubmissionId,
-): Effect.Effect<void, DocError> =>
-  Effect.map(tx.doc(InboxDoc, conversationId), (inbox) => {
-    const index = inbox.items.findIndex((item) => item.id === id)
-    if (index >= 0) inbox.items.splice(index, 1)
+  withdrawn: InputWithdrawnHook | undefined,
+): Effect.Effect<void, DocError | StorageError> =>
+  Effect.gen(function* () {
+    const items = (yield* tx.doc(InboxDoc, conversationId)).items as InboxItem[]
+    const index = items.findIndex((item) => item.id === id)
+    if (index >= 0) yield* withdraw(tx, conversationId, items, index, "aborted", withdrawn)
   })
 
 /**
  * Withdraws every queued input of a conversation, as `Conversation.abort()` and abort cascades do: each settles
- * `unanswered` with `reason` (default `aborted`) and leaves the inbox; queued writes stay for later placement.
+ * `unanswered` with `reason` and leaves the inbox; queued writes stay for later placement.
  */
 export const withdrawQueuedInputs = (
   tx: Tx,
   conversationId: ConversationId,
-  reason = "aborted",
-): Effect.Effect<void, DocError> =>
+  reason: string,
+  withdrawn: InputWithdrawnHook | undefined,
+): Effect.Effect<void, DocError | StorageError> =>
   Effect.gen(function* () {
-    const items = (yield* tx.doc(InboxDoc, conversationId)).items
-    for (let index = items.length - 1; index >= 0; index--) {
-      const item = items[index]!
-      if (item.mode === "write") continue
-      yield* tx.settleSubmission(item.id, { status: "unanswered", reason })
-      items.splice(index, 1)
+    const items = (yield* tx.doc(InboxDoc, conversationId)).items as InboxItem[]
+    // In queue order; a withdrawn item leaves `items`, so the next one takes its index.
+    for (let index = 0; index < items.length; ) {
+      if (items[index]!.mode === "write") index++
+      else yield* withdraw(tx, conversationId, items, index, reason, withdrawn)
     }
   })

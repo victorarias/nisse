@@ -8,6 +8,10 @@ can interrupt any conversation's run.
 
 - `interrupt-tui` stops the run with `Esc`.
 - `interrupt-wire` stops it with `conversation/interrupt` from another client.
+- `interrupt-withdraw` withdraws the prompts waiting in the queue: each leaves
+  the queue without running, and the transcript gets a `nisse.withdrawn` entry
+  naming its `requestId`, so a client that lost its watch learns the prompt's
+  fate from entries alone.
 
 ## How to get to it
 
@@ -44,6 +48,15 @@ Preconditions:
   watch ends on a `pi.assistant` entry with what was said and
   `"stopReason": "aborted"`, then `nisse.run_end` with
   `{"outcome": "interrupted", "message": "aborted"}`.
+- **Withdraw.** In a fresh run with the same script, run `drive.ts r serve`,
+  start a conversation, and run
+  `drive.ts r watch <id> --submit count --until run_end --save withdraw &`.
+  Once its output holds a live word, run
+  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "waiting-1", "author": "ada", "text": "then this"}'`,
+  then `conversation/interrupt`. The watch shows `pi.inbox` holding the
+  prompt, then one change that empties it and adds
+  `nisse.withdrawn` with `{"requestId": "waiting-1"}`, before
+  `nisse.run_end` `interrupted`.
 
 ## Contexts
 
@@ -55,6 +68,7 @@ Preconditions:
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted
+- interrupt-withdraw: interrupting withdraws the prompts that wait, and the transcript names each by its requestId
 
 Screen, `packages/nisse/test/screen.test.ts`:
 

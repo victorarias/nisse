@@ -19,7 +19,7 @@ export const EntryRecord = Schema.Struct({
   conversationId: Schema.Int,
   kind: Schema.String.annotate({
     description:
-      "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call.",
+      "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call, nisse.withdrawn which input was withdrawn before it ran.",
   }),
   model: Schema.optionalKey(Schema.Array(Json)),
   data: Schema.optionalKey(Json),
@@ -37,8 +37,11 @@ export const RUN_END_KIND = "nisse.run_end"
 /** An entry `{ author, selection }`: someone switched the conversation's model; it answers with it from the next run on. */
 export const MODEL_KIND = "nisse.model"
 
-/** A person's input: the entry its user message is placed as, with data `{ author }`. */
+/** A person's input: the entry its user message is placed as, with data `{ author, requestId }`. */
 export const USER_KIND = "nisse.user"
+
+/** A person's input withdrawn while it waited, as an interrupt withdraws what waits, with data `{ requestId }`. */
+export const WITHDRAWN_KIND = "nisse.withdrawn"
 
 export const RunEnd = Schema.Struct({
   outcome: Outcome,
@@ -221,7 +224,7 @@ export const Submit = Rpc.make("conversation/submit", {
   payload: {
     conversation: ConversationId,
     requestId: Schema.String.annotate({
-      description: `Submitting again with the same id is answered once. The input's ${USER_KIND} entry keeps it in its data.`,
+      description: `Submitting again with the same id is answered once. The input's ${USER_KIND} entry keeps it in its data, or its ${WITHDRAWN_KIND} entry when it is withdrawn before it runs.`,
     }),
     author: Schema.String.annotate({
       description: `Who wrote it; the input is placed as a ${USER_KIND} entry naming them, and waits in pi.inbox with them.`,
