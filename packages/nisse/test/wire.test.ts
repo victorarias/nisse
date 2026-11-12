@@ -104,6 +104,8 @@ test("queue-run: a prompt sent while nisse works runs after the run fails, inste
   await submit(client, conversation, "one")
   await view.until(speaking)
   await submit(client, conversation, "two")
+  // Queued behind the run that is about to fail, not started after it.
+  await view.until((watch) => (watch.view().docs["pi.inbox"] as { items: Array<unknown> }).items.length === 1)
   await view.until(settled(2))
   expect(transcript(view.view().entries)).toEqual([
     "user: one",
