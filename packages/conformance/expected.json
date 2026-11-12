@@ -689,7 +689,7 @@
  "upstream/test/harness-observers.test.ts :: task documents > a watch whose retirement call runs when its task ends ends only after that call returns": "pass",
  "upstream/test/harness-observers.test.ts :: task documents > an observer gets the retirement, then its end, at the publication of the commit that ends the task": "pass",
  "upstream/test/harness-observers.test.ts :: task documents > hands listeners changes that keep nothing of the Harness": "flaky WeakRef retention varies by run under JavaScriptCore (F2)",
- "upstream/test/harness-observers.test.ts :: task documents > keeps no task document watch alive once its task ended": "pass",
+ "upstream/test/harness-observers.test.ts :: task documents > keeps no task document watch alive once its task ended": "flaky WeakRef retention varies by run under JavaScriptCore (F2): a concurrent JIT plan can hold the watch",
  "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > aborts a subagent run with its parent's conversation, rejecting the waiting tool": "pass",
  "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > aborts the children of a tool call that throws or is interrupted, while the run continues": "pass",
  "upstream/test/harness-ownership.test.ts :: owned conversations from tools and supervisors > gives a tool an invocation-bound handle whose submissions stay durable after the call ends": "pass",
