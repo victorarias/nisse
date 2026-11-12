@@ -415,8 +415,9 @@ const spawnAgent = (limits: AgentLimits, agentTypes: AgentTypes) =>
                   : `${instructions}\n\n# You are a ${agentType.name} agent\n\n${agentType.instructions}`,
               ...(model === undefined ? {} : { model: { provider: parentModel!.provider, modelId: model } }),
               ...(input.reasoning_effort === undefined ? {} : { thinkingLevel: input.reasoning_effort }),
-              // Past the depth limit a subagent is not offered spawn_agent at all.
-              ...(depthOf(task) >= limits.maxDepth ? { modelTools: { remove: [{ name: "spawn_agent" }] } } : {}),
+              // Past the depth limit a subagent has no spawn_agent at all: not offered to its model, nor callable from
+              // its code mode scripts.
+              ...(depthOf(task) >= limits.maxDepth ? { tools: { remove: [{ name: "spawn_agent" }] } } : {}),
             })
             ;(yield* tx.doc(TaskPathDoc, child.id)).task = task
             yield* recordOrigin(tx, child.id, {
