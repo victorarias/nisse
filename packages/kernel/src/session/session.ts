@@ -98,6 +98,11 @@ export type DocumentChange<T> = {
   readonly context?: Context.Context<never>
 }
 
+/** Runs one read beside the line, for `readBeside`. */
+export type PageReader = <A, E>(
+  body: (storage: StorageReads) => Effect.Effect<A, E>,
+) => Effect.Effect<A, E | SessionFailed | SessionClosed>
+
 /**
  * How a document observer ended: as a commit observer does; `ended` is the Session's close, or, with `retired`, the end
  * of a task document's task, right after the retirement call of the commit that ended it (spec 9.1).
@@ -212,14 +217,15 @@ export interface Session {
    */
   read<A, E>(body: (storage: StorageReads) => Effect.Effect<A, E>): Effect.Effect<A, E | SessionFailed | SessionClosed>
   /**
-   * Runs `onLine` as `read` does, then `beside` with its value beside the line, for reads of records no commit changes,
-   * such as entries at or below a tail read on the line: commits go on meanwhile. A storage error fails the Session.
-   * Once `onLine` ran, the read is admitted: a close begun meanwhile waits for `beside` before closing Storage, and only
-   * a failed Session refuses what it read (spec 2.2).
+   * Runs `onLine` as `read` does, then `beside` with its value, for paged reads of records no commit changes, such as
+   * entries at or below a tail read on the line: each `page` runs beside the line while commits go on. A storage error
+   * fails the Session, and a failed Session refuses what a page read. A read queued on the line when close began
+   * completes, and the close waits for it before closing Storage; a read already beside the line then starts no other
+   * page, and the page underway is refused when it ends (spec 2.2).
    */
   readBeside<A, B, E, E2>(
     onLine: (storage: StorageReads) => Effect.Effect<A, E>,
-    beside: (value: A, storage: StorageReads) => Effect.Effect<B, E2>,
+    beside: (value: A, page: PageReader) => Effect.Effect<B, E2>,
   ): Effect.Effect<B, E | E2 | SessionFailed | SessionClosed>
   /** Drops every loaded document not observed; the next access loads it from Storage. */
   readonly unloadDocuments: Effect.Effect<void, SessionFailed | SessionClosed>
@@ -623,39 +629,50 @@ class SessionImpl implements Session, SessionInternals {
 
   readBeside<A, B, E, E2>(
     onLine: (storage: StorageReads) => Effect.Effect<A, E>,
-    beside: (value: A, storage: StorageReads) => Effect.Effect<B, E2>,
+    beside: (value: A, page: PageReader) => Effect.Effect<B, E2>,
   ): Effect.Effect<B, E | E2 | SessionFailed | SessionClosed> {
-    return Effect.suspend((): Effect.Effect<B, E | E2 | SessionFailed | SessionClosed> => {
-      const refused = this.#admissionError()
-      if (refused !== undefined) return Effect.fail(refused)
-      // Counted on the line, before the reply: a close sealed after this job waits for the part beside the line.
-      const admitted = Effect.map(
+    return Effect.suspend(() => {
+      let queuedAtSeal = false
+      const started = Effect.map(
         Effect.suspend(() => onLine(this.#reads)),
         (value) => {
-          this.#offLine++
+          // Run after the seal: the read was queued when close began, so it completes, and the close waits for it.
+          queuedAtSeal = this.#sealed
+          if (queuedAtSeal) this.#offLine++
           return value
         },
       )
       return Effect.flatMap(
-        this.#onLine(admitted, () => Effect.runSync(this.#leaveOffLine)),
-        (value) =>
-          Effect.suspend(() => beside(value, this.#reads)).pipe(
-            Effect.ensuring(this.#leaveOffLine),
-            Effect.flatMap((read) =>
-              this.#failure === undefined ? Effect.succeed(read) : Effect.fail<SessionFailed>(this.#sessionFailed()),
-            ),
-          ),
+        this.#onLine(started, () => {
+          if (queuedAtSeal) Effect.runSync(this.#leaveOffLine)
+        }),
+        (value) => {
+          if (!queuedAtSeal) return beside(value, (body) => this.#readOffLine(body))
+          const page: PageReader = (body) =>
+            Effect.flatMap(
+              Effect.suspend(() => body(this.#reads)),
+              (read) => (this.#failure === undefined ? Effect.succeed(read) : Effect.fail(this.#sessionFailed())),
+            )
+          return Effect.ensuring(beside(value, page), this.#leaveOffLine)
+        },
       )
     })
   }
 
-  get #leaveOffLine(): Effect.Effect<void> {
+  #readOffLine<A, E>(
+    body: (storage: StorageReads) => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E | SessionFailed | SessionClosed> {
     return Effect.suspend(() => {
-      this.#offLine--
-      // A storage error here failed the Session outside any job, so nothing on the line starts its close.
-      if (this.#failure !== undefined) this.#beginClose()
-      const ended = this.#offLineEnded
-      return this.#offLine === 0 && ended !== undefined ? Deferred.succeed(ended, undefined) : Effect.void
+      const refused = this.#admissionError()
+      if (refused !== undefined) return Effect.fail(refused)
+      this.#offLine++
+      return Effect.suspend(() => body(this.#reads)).pipe(
+        Effect.ensuring(this.#leaveOffLine),
+        Effect.flatMap((value) => {
+          const late = this.#admissionError()
+          return late === undefined ? Effect.succeed(value) : Effect.fail(late)
+        }),
+      )
     })
   }
 
@@ -689,6 +706,16 @@ class SessionImpl implements Session, SessionInternals {
    * Runs `body` as a job on the line and hands its outcome back through a queue. A caller that stops waiting before the
    * job started skips it; `abandon` undoes what a job finished for a caller that stopped waiting.
    */
+  get #leaveOffLine(): Effect.Effect<void> {
+    return Effect.suspend(() => {
+      this.#offLine--
+      // A storage error here failed the Session outside any job, so nothing on the line starts its close.
+      if (this.#failure !== undefined) this.#beginClose()
+      const ended = this.#offLineEnded
+      return this.#offLine === 0 && ended !== undefined ? Deferred.succeed(ended, undefined) : Effect.void
+    })
+  }
+
   #onLine<A, E>(
     body: Effect.Effect<A, E>,
     abandon?: (value: A) => void,

@@ -46,6 +46,7 @@ export {
   type Session,
   type SessionEnd,
   type SessionOptions,
+  type PageReader,
   type StorageReads,
 } from "./session/session.ts"
 export { type DocumentWatch, makeWatch } from "./session/watch.ts"
