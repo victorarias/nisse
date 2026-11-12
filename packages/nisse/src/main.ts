@@ -1,11 +1,11 @@
 #!/usr/bin/env -S BUN_GC_TIMER_DISABLE=1 bun
 import { BunRuntime, BunServices } from "@effect/platform-bun"
-import { Console, Effect, Layer, Option, Schedule } from "effect"
+import { Console, Effect, Layer, Option } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import type { ExtensionInfo } from "@nisse/protocol"
-import { Client, clientLayer, ServerFailed, type StartOptions } from "./client.ts"
+import { Client, clientLayer, ServerFailed, serverAnswers, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
-import { claimHome, defaultHome, HOME_TAKEN_EXIT, type Home, type HomeTaken } from "./home.ts"
+import { claimHome, defaultHome, HOME_TAKEN_EXIT, type Home, type HomeTaken, replaceServer } from "./home.ts"
 import { openAiOptions, type ProviderOptions, readScript } from "./providers.ts"
 import { readHomeConfig } from "./config.ts"
 import { login, logout } from "./login.ts"
@@ -99,7 +99,11 @@ const homeTaken = (home: Home) => refuse(`another server already serves ${home.d
 const unknownProvider = (error: { readonly provider: string }) =>
   refuse(`nisse has no provider named ${error.provider}`)
 
-const stopRunningServer = (home: Home) => Effect.ignore(withServer(home, (client) => client["server/stop"]()))
+/** Stops the home's server when one answers; it starts none, since a server started now would give way to this one. */
+const stopRunningServer = (home: Home) =>
+  Effect.flatMap(serverAnswers(home), (answers) =>
+    answers ? Effect.ignore(withServer(home, (client) => client["server/stop"]())) : Effect.void,
+  )
 
 const serveCommand = Command.make(
   "serve",
@@ -115,14 +119,7 @@ const serveCommand = Command.make(
   },
   Effect.fn(function* ({ restart, readOnly }) {
     const home = defaultHome()
-    if (restart) yield* stopRunningServer(home)
-    const claim = claimHome(home)
-    const claimed = restart
-      ? claim.pipe(
-          Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: "30 seconds" })) }),
-        )
-      : claim
-    yield* serveHome(home, claimed, readOnly)
+    yield* serveHome(home, restart ? replaceServer(home, stopRunningServer(home)) : claimHome(home), readOnly)
   }),
 ).pipe(Command.withDescription("Run this home's server in the foreground"))
 
