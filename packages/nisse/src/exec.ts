@@ -45,8 +45,14 @@ const REWATCH_DELAY = "50 millis"
 /** The entries one read of what a dropped watch missed asks for; a read pages on past it. */
 const MISSED_PAGE = 200
 
-/** What the home's server last said refusing to start, noted once while exec waits for a server that starts. */
+/**
+ * What the home's server last said refusing to start, noted once while exec waits for a server that starts, and
+ * forgotten once one answers.
+ */
 let refusal: string | undefined
+const answered = Effect.sync(() => {
+  refusal = undefined
+})
 const noteRefusal = (error: unknown) =>
   Effect.sync(() => {
     const said = serverRefusal(error)
@@ -63,6 +69,7 @@ const rewatched = <A, E extends { readonly _tag: string }, R>(
   open: () => Stream.Stream<A, E | RpcClientError | FellBehind, R>,
 ): Stream.Stream<A, Exclude<E, RpcClientError | FellBehind>, R> =>
   open().pipe(
+    Stream.tap(() => answered),
     Stream.catchIf(
       (error): error is RpcClientError | FellBehind => error._tag === "RpcClientError" || error._tag === "FellBehind",
       (error) =>
@@ -81,6 +88,7 @@ const rewatched = <A, E extends { readonly _tag: string }, R>(
 const reconnecting = <A, E extends { readonly _tag: string }, R>(call: Effect.Effect<A, E, R>) =>
   call.pipe(
     Effect.tapError(noteRefusal),
+    Effect.tap(() => answered),
     Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
   )
 

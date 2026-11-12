@@ -2,7 +2,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { applyImmutable, type Op } from "@nisse/delta"
 import { PROTOCOL_VERSION, type View, type ViewItem } from "@nisse/protocol"
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
@@ -972,45 +972,73 @@ test("crash-exec: a run cut off by a crashed server finishes after the server co
   ])
 }, 30_000)
 
-test("server-cannot-start: nisse exec whose server cannot come back says why once, and finishes once a server starts", async () => {
+test("server-cannot-start: each nisse exec whose server cannot come back says why once, and finishes once a server starts", async () => {
   const nisseHome = home()
-  const env = await scriptEnv(nisseHome, [{ text: "one two three four five six seven eight nine ten", delayMs: 100 }])
+  const env = await scriptEnv(nisseHome, [
+    { text: "one two three four five six seven eight nine ten", delayMs: 300 },
+    { text: "one two three four five six seven eight nine ten", delayMs: 300 },
+  ])
   const server = await serving(env)
-  const exec = nisse(["exec", "count"], env)
-  const stdout = exec.stdout.getReader()
-  let printed = ""
-  while (!printed.includes("one")) {
-    const { value } = await deadline(stdout.read(), 10_000, "first words printed")
-    printed += new TextDecoder().decode(value)
+  // Two clients wait at once, each starting servers that refuse, and all of them write to the home's one log.
+  const execs = [nisse(["exec", "count"], env), nisse(["exec", "count"], env)].map((exec) => ({
+    exec,
+    stdout: exec.stdout.getReader(),
+    stderr: exec.stderr.getReader(),
+    printed: "",
+    said: "",
+  }))
+  for (const each of execs) {
+    while (!each.printed.includes("one")) {
+      const { value, done } = await deadline(each.stdout.read(), 10_000, "first words printed")
+      if (done) throw new Error(`exec ended before the server was killed: ${each.printed}`)
+      each.printed += new TextDecoder().decode(value)
+    }
   }
   const config = join(nisseHome.dir, "config.toml")
   await Bun.write(config, "[extensions.guard\n")
   server.kill("SIGKILL")
   await server.exited
-  const stderr = exec.stderr.getReader()
-  let said = ""
-  while (!said.includes("\n")) {
-    const { value } = await deadline(stderr.read(), 10_000, "the refusal on stderr")
-    said += new TextDecoder().decode(value)
+  for (const each of execs) {
+    while (!each.said.includes("\n")) {
+      // A client whose server lost the home to the other client's waits up to 10 s for that one's socket before it
+      // starts another and hears the refusal itself.
+      const { value, done } = await deadline(each.stderr.read(), 20_000, "the refusal on stderr")
+      if (done) throw new Error(`exec ended before saying why: ${each.said}`)
+      each.said += new TextDecoder().decode(value)
+    }
   }
-  expect(said).toStartWith("nisse's server cannot start: ")
-  expect(said).toContain("TOML Parse error")
+  // Long enough for each to see several servers refuse.
+  await deadline(
+    new Promise<void>((resolve) => {
+      const watcher = watch(nisseHome.dir, () => {
+        if (readFileSync(nisseHome.log, "utf8").split("TOML Parse error").length - 1 >= 6) {
+          watcher.close()
+          resolve()
+        }
+      })
+    }),
+    15_000,
+    "six refusals in the home's log",
+  )
   rmSync(config)
-  while (true) {
-    const { value, done } = await deadline(stdout.read(), 20_000, "answer once a server starts")
-    if (done) break
-    printed += new TextDecoder().decode(value)
+  for (const each of execs) {
+    for (let read = await each.stdout.read(); !read.done; read = await each.stdout.read())
+      each.printed += new TextDecoder().decode(read.value)
+    for (let read = await each.stderr.read(); !read.done; read = await each.stderr.read())
+      each.said += new TextDecoder().decode(read.value)
+    expect({
+      code: await each.exec.exited,
+      said: each.said.split("\n").filter(Boolean),
+      answered: each.printed.endsWith("one two three four five six seven eight nine ten\n"),
+    }).toEqual({
+      code: 0,
+      said: [
+        `nisse's server cannot start: ${nisseHome.dir}/config.toml: TOML Parse error: Expected ']' to close a table header but found (0x0A)`,
+      ],
+      answered: true,
+    })
   }
-  while (true) {
-    const { value, done } = await stderr.read()
-    if (done) break
-    said += new TextDecoder().decode(value)
-  }
-  expect(await exec.exited).toBe(0)
-  // Said once, however many servers refused while exec waited.
-  expect(said.split("\n").filter(Boolean)).toHaveLength(1)
-  expect(printed).toEndWith("one two three four five six seven eight nine ten\n")
-}, 40_000)
+}, 60_000)
 
 /** Each tool result's text and whether it is an error. */
 const toolResults = (entries: ReadonlyArray<{ kind: string; model?: ReadonlyArray<unknown> }>) =>

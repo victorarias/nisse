@@ -1,9 +1,10 @@
 #!/usr/bin/env -S BUN_GC_TIMER_DISABLE=1 bun
 import { BunRuntime, BunServices } from "@effect/platform-bun"
+import { writeFileSync } from "node:fs"
 import { Console, Effect, Layer, Option } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import type { ExtensionInfo } from "@nisse/protocol"
-import { Client, clientLayer, ServerFailed, serverAnswers, type StartOptions } from "./client.ts"
+import { Client, clientLayer, REFUSAL_FILE, ServerFailed, serverAnswers, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
 import { claimHome, defaultHome, HOME_TAKEN_EXIT, type Home, type HomeTaken, replaceServer } from "./home.ts"
 import { openAiOptions, type ProviderOptions, readScript } from "./providers.ts"
@@ -119,7 +120,15 @@ const serveCommand = Command.make(
   },
   Effect.fn(function* ({ restart, readOnly }) {
     const home = defaultHome()
-    yield* serveHome(home, restart ? replaceServer(home, stopRunningServer(home)) : claimHome(home), readOnly)
+    // Read once and dropped, so nothing this server runs writes to it.
+    const refusalFile = process.env[REFUSAL_FILE]
+    delete process.env[REFUSAL_FILE]
+    yield* serveHome(
+      home,
+      restart ? replaceServer(home, stopRunningServer(home)) : claimHome(home),
+      readOnly,
+      refusalFile,
+    )
   }),
 ).pipe(Command.withDescription("Run this home's server in the foreground"))
 
@@ -142,7 +151,12 @@ const providerOptions = (home: Home) =>
 
 // A stuck code-mode worker survives terminate() and keeps the process alive (F19), so the end of the server's lifetime
 // ends the process.
-const serveHome = <A, R>(home: Home, claimed: Effect.Effect<A, HomeTaken, R>, readOnly: boolean) =>
+const serveHome = <A, R>(
+  home: Home,
+  claimed: Effect.Effect<A, HomeTaken, R>,
+  readOnly: boolean,
+  refusalFile: string | undefined,
+) =>
   Effect.gen(function* () {
     const served = yield* Effect.scoped(
       Effect.andThen(
@@ -154,7 +168,11 @@ const serveHome = <A, R>(home: Home, claimed: Effect.Effect<A, HomeTaken, R>, re
     ).pipe(
       Effect.as(true),
       Effect.catchTag("HomeTaken", () => Effect.as(homeTaken(home), false)),
-      Effect.catchTag("ConfigError", (error) => Effect.as(refuse(`${error.path}: ${error.message}`), false)),
+      Effect.catchTag("ConfigError", (error) => {
+        const reason = `${error.path}: ${error.message}`
+        if (refusalFile !== undefined) writeFileSync(refusalFile, reason)
+        return Effect.as(refuse(reason), false)
+      }),
     )
     if (served) process.exit(0)
   })

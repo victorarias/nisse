@@ -586,11 +586,16 @@ test("server-cannot-start: an open TUI whose server cannot start shows why, star
   ).finally(() => watcher.close())
   expect(seen.map(({ count }) => count - seen[0]!.count)).toEqual([0, 1, 2])
   expect(seen[2]!.at - seen[1]!.at).toBeGreaterThan(900)
-  // The config fixed, the next server starts, the notice goes and a prompt is answered.
-  rmSync(config)
-  await session.waitFor((screen) => !screen.includes("cannot start"), 10_000)
+  // A prompt typed now clears the notice, which comes back while the server still refuses; the prompt waits.
   session.type("hi\r")
-  await session.waitFor((screen) => screen.includes("back again") && screen.includes("READY"))
+  await session.waitFor((screen) => !screen.includes("cannot start"))
+  await session.waitFor((screen) => screen.includes("cannot start"), 5_000)
+  // The config fixed, the next server starts, the notice goes and the prompt is answered.
+  rmSync(config)
+  await session.waitFor(
+    (screen) => screen.includes("back again") && screen.includes("READY") && !screen.includes("cannot start"),
+    10_000,
+  )
   await quit(session)
 }, 40_000)
 

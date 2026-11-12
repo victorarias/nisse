@@ -932,8 +932,10 @@ const conversationScreen = Effect.fnUntraced(function* (
     Effect.catchTag("RpcClientError", (error) =>
       Effect.sync(() => {
         const said = serverRefusal(error)
+        if (said === undefined) return
         const text = `nisse's server cannot start: ${said}`
-        if (said === undefined || text === refusal?.text) return
+        // Shown again after the person's next action replaced it, while the server still refuses.
+        if (untrack(notice)?.text === text) return
         refusal = { text, warning: true }
         setNotice(refusal)
       }),
