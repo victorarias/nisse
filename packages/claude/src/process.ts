@@ -981,6 +981,11 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
               }
               if (!Array.isArray(message.message.content)) return undefined
               const bySubagent = message.parent_tool_use_id !== null
+              // An Agent call whose subagent handed back its report gets a placeholder as its result; the frame's
+              // `tool_use_result` holds the report, which the SDK's types do not declare yet. Keeping the report means
+              // a retelling of the conversation, to a new session or another provider, still has it.
+              const handback = (message as { tool_use_result?: { handbackReport?: { text?: string } } }).tool_use_result
+                ?.handbackReport?.text
               let anyResult = false
               for (const block of message.message.content) {
                 if (block.type !== "tool_result") continue
@@ -997,7 +1002,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 yield* recordResult(
                   owner,
                   call,
-                  textOf(block.content),
+                  handback || textOf(block.content),
                   block.is_error === true,
                   message.uuid && !bySubagent ? message.uuid : undefined,
                 )
@@ -1022,13 +1027,17 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 const child = children.get(message.tool_use_id)
                 if (child !== undefined) {
                   const status = endings[message.status as keyof typeof endings] ?? "failed"
+                  // A subagent that hands back its report through `SubagentHandback` leaves only a placeholder in
+                  // `summary`; the report is `handback_report`, which the SDK's types do not declare yet.
+                  const handback = (message as { handback_report?: { text?: string } }).handback_report?.text
+                  const summary = handback || message.summary
                   // Claude Code reports a subagent's final answer only here, so it becomes the answer in its conversation.
-                  if (status === "completed" && message.summary) {
-                    yield* recordText(child, message.summary, `${message.task_id}/summary`, undefined)
+                  if (status === "completed" && summary) {
+                    yield* recordText(child, summary, `${message.task_id}/summary`, undefined)
                   }
                   yield* Deferred.succeed(ctx.links.link(child.task).ended, {
                     status,
-                    ...(message.summary === undefined ? {} : { summary: message.summary }),
+                    ...(summary === undefined ? {} : { summary }),
                   })
                 }
               }

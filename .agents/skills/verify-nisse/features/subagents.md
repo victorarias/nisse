@@ -506,6 +506,7 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - subagent-interrupt: stopping a Claude subagent stops only it, and its parent's run carries on
 - subagent-interrupt: stopping a run ends the Claude subagents working under it
 - subagent-spawn: a Claude subagent is listed under its parent with the call that started it, and takes no input of its own
+- subagent-claude: a Claude subagent that hands back its report answers with the report, not Claude Code's placeholder
 
 ## Gotchas
 
@@ -561,7 +562,12 @@ Claude, in a run made with `drive.ts r up --real-claude`:
 
 - **Spawn and answer.** `drive.ts r tui start --provider claude`, send
   `Use the Task tool to start a general-purpose subagent that replies with exactly: found it. Then tell me what it said.`:
-  a `⧉ ... done` card, and `conversation/list` holds the subagent.
+  a `⧉ ... done` card over `found it`, and `conversation/list` holds the
+  subagent, whose last message is `found it`. Claude Code 2.1.312 has the
+  subagent hand its report back through a `SubagentHandback` call, and
+  reports only a placeholder (`This agent's report was delivered to you as a
+message...`) as its summary; neither the card nor the subagent shows that
+  placeholder.
 - **A subagent asks.** Precondition: a Claude Code whose user settings would
   ask before running `touch`. Nisse starts Claude Code with
   `--setting-sources=user,project,local`, so a `defaultMode` such as `auto` or
