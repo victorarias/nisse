@@ -35,6 +35,8 @@ export interface ChatGptOptions {
   readonly callbackPort: number
   /** nisse's own instructions, sent before the conversation's. */
   readonly instructions: string
+  /** Lists only the saved model list, never asking ChatGPT, so neither the sign-in nor the list is rewritten. */
+  readonly readOnly?: boolean
 }
 
 const failure = (message: string) => new ProviderError({ message })
@@ -127,7 +129,7 @@ export const openChatGpt = Effect.fnUntraced(function* (options: Omit<ChatGptOpt
     health: () => health,
     models: (refresh) =>
       Effect.gen(function* () {
-        if (refresh || !askedForModels) {
+        if (!options.readOnly && (refresh || !askedForModels)) {
           askedForModels = true
           yield* Effect.ignore(fetchModels)
         }

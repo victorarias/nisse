@@ -684,7 +684,13 @@ export const serverLayer = (home: Home, options: ServerOptions) =>
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
     Layer.provide(homeSocketServer(home.socket)),
     Layer.provideMerge(KernelHarness.layer(home, options.readOnly === true)),
-    Layer.provideMerge(Providers.layer(options.providers)),
+    Layer.provideMerge(
+      Providers.layer(
+        options.readOnly === true
+          ? { ...options.providers, openai: (id) => ({ ...options.providers.openai(id), readOnly: true }) }
+          : options.providers,
+      ),
+    ),
     Layer.provideMerge(Lifetime.layer(options.idleGrace)),
   )
 

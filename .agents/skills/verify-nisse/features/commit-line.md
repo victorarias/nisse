@@ -4,6 +4,8 @@ Every change to a conversation goes through one ordered, atomic store commit,
 and a session that cannot store fails once and loudly. `nisse serve --read-only`
 serves a home without changing it: it resumes no run, answers `initialize`
 with `"readOnly": true`, and refuses every write by name with `ReadOnlyServer`.
+A ChatGPT sign-in lists its saved models without asking ChatGPT, so viewing a
+home never refreshes its sign-in or rewrites its model list.
 A TUI on it titles its prompt `READ ONLY`, says it takes no input, and still
 runs `/usage`, `/tasks` and `/help`.
 
@@ -96,6 +98,10 @@ Feature ledger area A: spec §1, §2, §2.2, §4, §10.1; README Persist and Res
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - serve-read-only: a read-only server shows a home's conversations without resuming the run left in flight, and refuses every change by name
+
+Provider, `packages/nisse/test/openai.test.ts`:
+
+- serve-read-only: a read-only server lists ChatGPT's saved models without asking ChatGPT, so an expired sign-in is left as it was
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
