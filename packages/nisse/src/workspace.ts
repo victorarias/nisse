@@ -226,8 +226,9 @@ export const workspaceInstructions = (
             const provider = agent.model?.provider
             if (provider === undefined || instances.get(provider)?.kind !== "openai") return undefined
             const cwd = agent.cwd ?? home.dir
-            // Past the depth limit a subagent is not offered spawn_agent, so it has no use for the types.
-            const offersSpawn = agent.tools.some((tool) => tool.name === "spawn_agent")
+            // Past the depth limit a subagent has no spawn_agent, so it has no use for the types. A code-mode model is
+            // offered only codemode, whose scripts call spawn_agent, so the callable tools decide, not the offered ones.
+            const offersSpawn = agent.callable.some((tool) => tool.name === "spawn_agent")
             const text = `The working directory is ${cwd}.\n${agentsMdInstructions(cwd, home.dir)}${skillsInstructions(cwd, home.dir, "read")}${agentTypesInstructions(offersSpawn ? agentTypes(agent) : [])}`
             return text.trimEnd()
           }),
