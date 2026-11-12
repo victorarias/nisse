@@ -304,14 +304,20 @@ model following the prompt. Follow the skill's
 [Real accounts](../SKILL.md#real-accounts): one run,
 `drive.ts r up --real-claude`, whose Claude Code sessions land in your own
 Claude Code configuration (`$CLAUDE_CONFIG_DIR`, or `~/.claude`). First run
-`drive.ts r serve` and `drive.ts r rpc providers/list '{}'`: `claude` is
-`ready` with your account. Otherwise stop and report what it shows. Give every
+`drive.ts r serve` and `drive.ts r rpc providers/list '{}' --timeout 60000`:
+`claude` is `ready` with a version, and no account, since `drive.ts` runs
+under `USER=ada` (SKILL.md's First check says why). Otherwise stop and report what it shows. Give every
 `tui wait` `--timeout 120000` and every `watch --until` `--timeout 120000`.
 Keep `evidence/`. No step needs a person. Your Claude Code settings decide
 which calls ask: when one that a step expects to ask runs without
 `allow this call?`, report the setting that allowed it rather than a failure.
 
-- **Ask, allow, resume.** `drive.ts r tui start --provider claude`, send
+- **Ask, allow, resume.** Precondition: a Claude Code whose user settings would
+  ask before running `touch`. Nisse starts Claude Code with
+  `--setting-sources=user,project,local`, so a `defaultMode` such as `auto` or
+  an allow rule such as `Bash(touch:*)` in your `~/.claude/settings.json` runs
+  the command without asking; report that setting instead of driving the
+  step. `drive.ts r tui start --provider claude`, send
   `Use the Bash tool to run exactly: touch /tmp/nisse-verify/r/touched  Then reply with one word: done`,
   wait for `allow this call?`, `C-y`, wait for `READY`,
   `drive.ts r tui screen allowed`: `✓ allowed by ada` and `done`, and
@@ -322,7 +328,12 @@ which calls ask: when one that a step expects to ask runs without
 - **Read without asking.** `drive.ts r nisse exec --provider claude 'Use the Read tool to read README.md, then reply with its first heading only.'`:
   stderr `› Read(<checkout>/README.md)` and no denial, stdout `Nisse`, the
   checkout's `README.md` heading.
-- **Exec denies.** `drive.ts r nisse exec --provider claude 'Use the Bash tool to run exactly: touch /tmp/nisse-verify/r/denied  If it is not allowed, reply with one word: refused'`:
+- **Exec denies.** Precondition: a Claude Code whose user settings would
+  ask before running `touch`. Nisse starts Claude Code with
+  `--setting-sources=user,project,local`, so a `defaultMode` such as `auto` or
+  an allow rule such as `Bash(touch:*)` in your `~/.claude/settings.json` runs
+  the command without asking; report that setting instead of driving the
+  step. `drive.ts r nisse exec --provider claude 'Use the Bash tool to run exactly: touch /tmp/nisse-verify/r/denied  If it is not allowed, reply with one word: refused'`:
   the denial on stderr and no file. With `--auto` and `.../auto`, the file
   exists.
 - **Cut off.** `drive.ts r tui start --provider claude --auto`, send
@@ -332,8 +343,8 @@ which calls ask: when one that a step expects to ask runs without
   and `drive.ts r tui wait READY`: the call's result
   `interrupted; it may or may not have taken effect`, then `resumed ok`.
   `drive.ts r watch <id> --save cut-off` holds one `Bash` call, not two.
-- **Health and model.** `drive.ts r rpc providers/list '{}'`: `claude` `ready`
-  with your account and the Claude Code version installed now.
+- **Health and model.** `drive.ts r rpc providers/list '{}' --timeout 60000`:
+  `claude` `ready` with the Claude Code version installed now.
   `drive.ts r rpc models/list '{}'` lists today's models.
   `drive.ts r nisse exec --provider claude --model haiku --effort low 'Reply with one word: ok'`:
   the newest session file under your Claude Code configuration's `projects/`

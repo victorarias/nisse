@@ -76,9 +76,12 @@ Preconditions:
   calls it again, which shows `slept`, then `carried on`. `watch <id>` shows
   the interrupted `pi.tool-result` with `"isError": true` and one
   `nisse.run_end` with `"outcome": "answered"`.
-- **Limit.** In a fresh `count` run, start the run as in the first step, then
-  three times: `drive.ts r tui wait three`, `drive.ts r kill-server`,
-  `drive.ts r tui wait --gone three`. Then
+- **Limit.** In a fresh `count` run, start the run as in the first step. Each
+  killed attempt leaves its partial answer committed on screen, so for `k`
+  from 1 to 3 wait until `k` screen lines show `three` (`k - 1` earlier
+  partials plus the live attempt), then kill:
+  `for k in 1 2 3; do until [ "$(drive.ts r tui screen | grep -c three)" -ge $k ]; do sleep 0.2; done; drive.ts r kill-server; done`.
+  Then
   `drive.ts r tui wait --timeout 30000 'times in a row'`,
   `drive.ts r tui screen restart-limit`:
   `✗ the server stopped during this run 3 times in a row` and `READY`. The
@@ -96,8 +99,9 @@ Preconditions:
   `drive.ts r tui wait READY` and `drive.ts r tui screen recovered`: the card
   reads `interrupted` and `resumed ok` follows. `rpc conversation/list` shows
   the parent `answered` with `"said": "resumed ok"` and the subagent
-  `interrupted`; `watch <parent>` shows a `pi.tool-result`
-  `Tool bash was interrupted and may have partially run`, the answer `resumed ok`
+  `interrupted`; `watch <parent>` shows the cut-off Agent call's
+  `pi.tool-result` `interrupted; it may or may not have taken effect`, the
+  answer `resumed ok`
   and one `nisse.run_end` with `"outcome": "answered"`, and `watch <subagent>`
   ends with one `nisse.run_end` with `"outcome": "interrupted"`. In
   `evidence/fake-claude/log.ndjson` spawn 0 has `--session-id`, spawn 1 has
@@ -144,8 +148,8 @@ Stack, `packages/nisse/test/stack.test.ts`:
   Killing in the middle of a recorded Claude answer needs a helper that holds
   the fake `claude` at a frame.
 - Kill only with `kill-server`, which checks the pid holds this run's home.
-- Between kills, wait for `three` to go and come back: the restarted run
-  clears the live text, and a kill before the run restarts does not count.
+- Between kills, wait for one more line with `three`: each aborted partial
+  stays on screen, and a kill before the run restarts does not count.
 
 ## With a real account
 
@@ -153,7 +157,8 @@ Proves that a real Claude Code, not a recording, is resumed after the server
 dies while its subagent works. Follow the skill's
 [Real accounts](../SKILL.md#real-accounts): one run,
 `drive.ts r up --real-claude`, then `drive.ts r serve` and
-`drive.ts r rpc providers/list '{}'`: `claude` is `ready` with your account.
+`drive.ts r rpc providers/list '{}' --timeout 60000`: `claude` is `ready`
+with a version.
 Otherwise stop and report what it shows. Give every `tui wait`
 `--timeout 120000`, and keep `evidence/`. No step needs a person. The plain
 call cut off by a kill is Claude's **Cut off** step in [Claude](./claude.md#with-a-real-account).
@@ -161,15 +166,15 @@ call cut off by a kill is Claude's **Cut off** step in [Claude](./claude.md#with
 - **Subagent cut off.** Run `drive.ts r tui start --provider claude --auto`,
   `drive.ts r tui wait READY`, then
   `drive.ts r tui type 'Use the Task tool to start a general-purpose subagent that runs the Bash command sleep 90 and then reports done. Do not run anything yourself. If the Agent call is cut off or interrupted, do not start another subagent; reply with exactly: resumed ok'`
-  and `drive.ts r tui key Enter`. Once `drive.ts r tui wait 'sleep 90'`
-  returns and the subagent's card reads `working`, run
+  and `drive.ts r tui key Enter`. Once `drive.ts r tui wait 'Bash(sleep'`
+  returns (`sleep 90` alone matches the prompt at once) and the subagent's card reads `working`, run
   `drive.ts r tui screen before-kill` and `drive.ts r kill-server`. Then
   `drive.ts r tui wait 'resumed ok'` and `drive.ts r tui wait READY`, and
   `drive.ts r tui screen recovered`: the card reads `interrupted` and
   `resumed ok` follows. `drive.ts r rpc conversation/list` shows the parent
   `answered` with `"said": "resumed ok"` and the subagent `interrupted`;
-  `drive.ts r watch <parent>` shows a `pi.tool-result` starting
-  `Tool bash was interrupted and may have partially run`, and one `nisse.run_end`
+  `drive.ts r watch <parent>` shows the cut-off Agent call's `pi.tool-result`
+  `interrupted; it may or may not have taken effect`, and one `nisse.run_end`
   with `"outcome": "answered"`; `drive.ts r watch <subagent>` ends with one
   `nisse.run_end` with `"outcome": "interrupted"`. A new
   `drive.ts r tui start --conversation <parent>` shows the same screen. A

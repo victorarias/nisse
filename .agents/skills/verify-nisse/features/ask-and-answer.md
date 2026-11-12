@@ -94,9 +94,10 @@ Preconditions:
 - **Wire.** Run `drive.ts r serve`, then
   `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` and take its `id`, then
   `drive.ts r watch <id> --submit 'tell me about the queue and the steering' --until run_end --save wire`.
-  The lines show the view, the submit reply, then one `change` per commit:
+  The lines show the view, then the submit reply and one `change` per commit:
   `nisse.user` spliced into `entries`, live words as `"a"` ops on
   `docs.pi.live.generation.message`, then `pi.assistant` and `nisse.run_end`.
+  The reply and the `nisse.user` change come in either order.
 
 ## Contexts
 

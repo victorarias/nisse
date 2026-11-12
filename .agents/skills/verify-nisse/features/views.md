@@ -45,8 +45,9 @@ Preconditions: a run made with `drive.ts r up`, so Nisse echoes `You said: <prom
 
 - **Watch.** Run `drive.ts r serve`, take the id from
   `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`, and run
-  `drive.ts r watch <id> --submit hi --until run_end --save answer`: the first
-  line is `{"_tag": "view", ...}` with `entries` and `docs`, then one
+  `drive.ts r watch <id> --submit 'a b c d e f g h i j k l m n o p q r s t u v w x y z one two three four five six seven eight nine ten' --until run_end --save answer`
+  (a prompt this long streams; a short one ends before any live text
+  commits): the first line is `{"_tag": "view", ...}` with `entries` and `docs`, then one
   `{"_tag": "change", "ops": [...]}` per commit, live words as `"a"` ops on
   `docs.pi.live.generation.message`, and the entries `nisse.user`,
   `pi.assistant` and `nisse.run_end` spliced into `entries`. A fresh

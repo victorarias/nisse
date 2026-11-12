@@ -13,8 +13,8 @@ and nisse commits each into a conversation of its own the same way.
 
 ## Sub-features
 
-- `subagent-spawn` starts a subagent from a `spawn_agent` call: the TUI shows
-  `▸ spawn_agent(<name>)`, then a `⧉ <name>` card, and `conversation/list`
+- `subagent-spawn` starts a subagent from a `spawn_agent` call: the TUI draws a
+  `⧉ <name>` card in place of the call, and `conversation/list`
   gains a conversation whose `lineage` names its `parent`, `root`, `call`,
   `task` and `title`.
 - `subagent-fork` gives a subagent its parent's history up to the spawn
@@ -65,8 +65,8 @@ and nisse commits each into a conversation of its own the same way.
   `⧉ <name> (<agent type>)`, and it runs on the type's `model` when ChatGPT
   lists it.
 - `subagent-claude` gives each subagent Claude Code starts a conversation of
-  its own: the parent shows `▸ Agent` and a `⧉ <description> (<agent type>)`
-  card, the subagent's conversation holds its prompt, calls, results and last
+  its own: the parent shows a `⧉ <description> (<agent type>)` card in place
+  of the `Agent` call, the subagent's conversation holds its prompt, calls, results and last
   message, and its `lineage` has no `task`. Its calls wait on a person there
   and on its card. Input to it is refused with `TakesNoInput`, and its TUI
   prompt reads `INPUT GOES THROUGH ITS PARENT`. `Esc` there stops only it;
@@ -111,8 +111,8 @@ Preconditions:
   ```
 
   `drive.ts r tui start`, wait for `READY`, type `delegate` and `Enter`. Wait
-  for `allow bash(echo scribbled)?`: the screen shows `▸ spawn_agent(scribe)`,
-  `⧉ scribe waiting on you`, `bash(echo scribbled)` and `◆ WAITING`. Press
+  for `allow bash(echo scribbled)?`: the screen shows
+  `⧉ scribe waiting on you` (the card stands in place of the call), `bash(echo scribbled)` and `◆ WAITING`. Press
   `C-y` and wait for `the scribe is done`: the card reads `⧉ scribe done` over
   `wrote it`, `▸ wait_agent` shows
   `{"message":"Wait completed.","timed_out":false}`, then `/root/scribe` says
@@ -138,7 +138,7 @@ Preconditions:
       "agent": "/root/reader",
       "text": "reading it now slowly",
       "delayMs": 600,
-      "tool": { "name": "read", "input": { "path": "/etc/hostname" } }
+      "tool": { "name": "read", "input": { "path": "/etc/hosts" } }
     },
     { "agent": "/root/reader", "text": "read it" }
   ]
@@ -373,14 +373,16 @@ Preconditions:
 
 - **OpenAI subagent** (`--fake-openai subagent`). `drive.ts r tui start --provider openai`,
   wait for `READY`, type `Send a scout to find the gnome.` and `Enter`, then
-  wait for `The scout says` and `READY`: `▸ spawn_agent(scout)`,
-  `⧉ scout done` over `Under the floor.`, `▸ wait_agent` with
+  wait for `The scout says` and `READY`: `⧉ scout done` over `Under the floor.`, `▸ wait_agent` with
   `{"message":"Wait completed.","timed_out":false}`, `/root/scout` saying
   `Under the floor.`, then `The scout says: under the floor.`
   `conversation/list` has the subagent with `"task": "/root/scout"`. In
   `evidence/fake-openai.ndjson` all three requests are `as recorded`; the
-  second is the subagent's: no `spawn_agent` tool, and two input items, the
-  parent's prompt and `Message Type: NEW_TASK` for `/root/scout`.
+  second is the subagent's: no `spawn_agent` tool, and six input items: the
+  parent's prompt, the `spawn_agent` and `wait_agent` calls from the spawning
+  response, two placeholder results reading
+  `Tool result unavailable: history ends before this call completed.`, then
+  `Message Type: NEW_TASK` for `/root/scout`.
 
 - **Agent types, no history** (`--fake-openai subagent_of_a_type`, whose
   `spawn_agent` names `"agent_type": "reviewer"` and `"fork_turns": "none"`).
@@ -408,7 +410,7 @@ Preconditions:
 - **Claude subagent asks** (`--fake-claude subagent_asks`).
   `drive.ts r tui start --provider claude`, wait for `READY`, type
   `Use the Task tool to start a general-purpose subagent that reads notes.txt with the Read tool and reports where the gnome lives. Do not read it yourself. Then reply with where the gnome lives, in three words.`
-  and `Enter`, then wait for `waiting on you`: `▸ Agent`, then
+  and `Enter`, then wait for `waiting on you`:
   `⧉ Find gnome location in notes (general-purpose) waiting on you` over
   `Bash(touch made.txt)` and `allow Bash(touch made.txt)?  ^Y  allow  ^N  deny`.
   Press `C-y` and wait for `READY`: the card reads `done` over
@@ -424,7 +426,7 @@ Preconditions:
 
 - **Claude subagent, plain** (`--fake-claude subagent`). Send the same prompt
   as `Claude subagent asks`, with `drive.ts r tui start --provider claude`, and wait for
-  `Under the floor.` and `READY`: `▸ Agent`, then
+  `Under the floor.` and `READY`:
   `⧉ Find gnome location in notes (general-purpose) done` over its last
   message, and the answer. No call waits on you. `conversation/list` lists
   the subagent with `"title": "Find gnome location in notes"` and
@@ -536,8 +538,7 @@ ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
 
 - **Spawn and answer.** `drive.ts r tui start --provider openai`, send
   `Start a subagent named scout that replies with exactly: found it. Wait for it, then tell me what it said.`,
-  wait for `READY` and save the screen: `▸ spawn_agent(scout)`,
-  `⧉ scout done` and an answer naming `found it`.
+  wait for `READY` and save the screen: `⧉ scout done` and an answer naming `found it`.
 - **Another model.** Pick a model from `drive.ts r rpc models/list '{}'` other
   than the conversation's whose entry in `/tmp/nisse-verify/r/home/cache/openai-models.json`
   has no `"tool_mode":"code_mode_only"`; if every other model has it, the
@@ -560,8 +561,12 @@ Claude, in a run made with `drive.ts r up --real-claude`:
 
 - **Spawn and answer.** `drive.ts r tui start --provider claude`, send
   `Use the Task tool to start a general-purpose subagent that replies with exactly: found it. Then tell me what it said.`:
-  `▸ Agent`, a `⧉ ... done` card, and `conversation/list` holds the subagent.
-- **A subagent asks.** Send
+  a `⧉ ... done` card, and `conversation/list` holds the subagent.
+- **A subagent asks.** Precondition: a Claude Code whose user settings would
+  ask before running `touch`. Nisse starts Claude Code with
+  `--setting-sources=user,project,local`, so a `defaultMode` such as `auto` or
+  an allow rule in your `~/.claude/settings.json` runs the command without
+  asking; report that setting instead of driving the step. Send
   `Use the Task tool to start a general-purpose subagent that runs exactly: touch /tmp/nisse-verify/r/sub-made with the Bash tool. Then reply with one word: done`,
   wait for `waiting on you`: the card shows `allow Bash(touch /tmp/nisse-verify/r/sub-made)?`.
   Press `C-y` and wait for `READY`: the card reads `done`, and

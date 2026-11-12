@@ -305,14 +305,16 @@ person `--timeout 300000`, and keep `evidence/`.
   `[providers.claude-alt]` with `driver = "claude"` and
   `config_dir = "/tmp/nisse-verify/r2/claude-alt"` to the home's
   `config.toml`, so the sign-in lands there and not in your own Claude Code.
-  Run `drive.ts r2 serve` and `drive.ts r2 rpc providers/list '{}'`: `claude`
-  is `ready` with your account, and `claude-alt` is `signed_out`. Where
+  Run `drive.ts r2 serve` and
+  `drive.ts r2 rpc providers/list '{}' --timeout 60000`: `claude` is `ready`,
+  and `claude-alt` is `signed_out`. Where
   Claude Code is signed in by its environment, as in a hosted session,
   `claude-alt` is `ready` too; report that and skip this step. Run
   `drive.ts r2 tui start login claude-alt` and
   `drive.ts r2 tui wait --timeout 20000 http`: Claude Code's own sign-in asks
   for a browser and a pasted code. The person signs in and pastes the code:
-  `signed in to claude-alt as <account>`, exit 0. To prove the cancel
+  `signed in to claude-alt`, with `as <account>` when Claude Code names one,
+  exit 0. To prove the cancel
   instead, press `drive.ts r2 tui key C-c C-c` (Claude Code's sign-in needs
   `^C` twice; `tui stop` presses it once): `drive.ts r2 tui stop` shows
   ``signing in to claude-alt failed: `claude auth login` did not finish``,
