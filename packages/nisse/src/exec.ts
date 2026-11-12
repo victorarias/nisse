@@ -67,23 +67,32 @@ const rewatched = <A, E extends { readonly _tag: string }, R>(
     ),
   ) as Stream.Stream<A, Exclude<E, RpcClientError | FellBehind>, R>
 
+/**
+ * `call` asked again, spaced like a rewatch, while the connection is down, as when the server crashes and restarts.
+ * Every call exec makes once it has a conversation is safe to ask again: it reads, or it is answered once (a
+ * submission by its requestId, an approval by its first answer).
+ */
+const reconnecting = <A, E extends { readonly _tag: string }, R>(call: Effect.Effect<A, E, R>) =>
+  call.pipe(
+    Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
+  )
+
 /** The entries of `conversation` after `after` (from its start when undefined) up to `to`, oldest first, page by page. */
 const missedEntries = (client: Client["Service"], conversation: string, after: number | undefined, to: number) =>
   Effect.gen(function* () {
     const entries: Array<EntryRecord> = []
     let cursor: unknown
     do {
-      // A page the connection drops is asked for again, from the same place, once the server is back.
       const page = yield* Effect.orDie(
-        client["conversation/entries"]({
-          conversation,
-          ...(after === undefined ? {} : { from: after + 1 }),
-          to,
-          order: "ascending",
-          limit: MISSED_PAGE,
-          ...(cursor === undefined ? {} : { cursor: cursor as never }),
-        }).pipe(
-          Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
+        reconnecting(
+          client["conversation/entries"]({
+            conversation,
+            ...(after === undefined ? {} : { from: after + 1 }),
+            to,
+            order: "ascending",
+            limit: MISSED_PAGE,
+            ...(cursor === undefined ? {} : { cursor: cursor as never }),
+          }),
         ),
       )
       entries.push(...(page.entries as ReadonlyArray<EntryRecord>))
@@ -159,7 +168,9 @@ export const exec = Effect.fnUntraced(function* (
       requestsOf(view).filter(([key, request]) => request.answer === undefined && !asked.has(`${from} ${key}`)),
       ([key, request]) => {
         asked.add(`${from} ${key}`)
-        return client["approval/resolve"]({ conversation: from, approval: key, author: userName(), allow: false }).pipe(
+        return reconnecting(
+          client["approval/resolve"]({ conversation: from, approval: key, author: userName(), allow: false }),
+        ).pipe(
           Effect.tap(({ accepted }) =>
             Effect.sync(() => {
               if (accepted) {
@@ -184,11 +195,11 @@ export const exec = Effect.fnUntraced(function* (
   // Subagents ask in their own conversations, so exec follows every conversation under its own, which may itself be a
   // subagent: it looks again when the status of the tree it is in changes, as when a subagent waits on a person, and
   // when a followed conversation adds entries, as when it starts one. A subagent's watch ends when exec does.
-  const listed = yield* client["conversation/list"]()
+  const listed = yield* reconnecting(client["conversation/list"]())
   const root = listed.find((info) => info.id === conversation)?.lineage?.root ?? conversation
   const followed = new Set([conversation])
   const discover: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
-    const conversations = yield* Effect.orDie(client["conversation/list"]())
+    const conversations = yield* Effect.orDie(reconnecting(client["conversation/list"]()))
     const parents = new Map(conversations.map((info) => [info.id, info.lineage?.parent]))
     const under = (id: string | undefined): boolean => id !== undefined && (followed.has(id) || under(parents.get(id)))
     for (const info of conversations) {
@@ -252,13 +263,15 @@ export const exec = Effect.fnUntraced(function* (
     Stream.tap(({ item, view, added }) =>
       Effect.gen(function* () {
         // Submitted once the watch holds the view, so the watch covers the whole run.
-        submission ??= (yield* client["conversation/submit"]({
-          conversation,
-          requestId,
-          author: userName(),
-          text: prompt,
-          ...(images.length === 0 ? {} : { images }),
-        })).submission
+        submission ??= (yield* reconnecting(
+          client["conversation/submit"]({
+            conversation,
+            requestId,
+            author: userName(),
+            text: prompt,
+            ...(images.length === 0 ? {} : { images }),
+          }),
+        )).submission
         if (json) write(`${JSON.stringify(item)}\n`)
         const taken = liveOf(view)?.run?.inputs.includes(submission) === true
         const waiting = queued(view, submission)
