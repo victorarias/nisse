@@ -20,6 +20,7 @@ import {
   openHarness,
   UsageDoc,
   type Harness,
+  LiveDoc,
 } from "@nisse/harness"
 import {
   type ConversationId,
@@ -570,6 +571,9 @@ const Handlers = NisseRpcs.toLayer(
       "conversation/continue": writing(({ conversation: id }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
+          // A working run is the reason to refuse first: how the run before it ended says nothing about this one.
+          if ((yield* Effect.orDie(harness.session.snapshot(LiveDoc, conversation.id)))?.run !== undefined)
+            return yield* new ConversationBusy({ conversation: id })
           const last = (yield* Effect.orDie(harness.session.snapshot(LastRunEndDoc, conversation.id)))?.end?.data
           if (last === undefined)
             return yield* new NothingToContinue({ message: "no run has ended here yet; send a message to start one" })

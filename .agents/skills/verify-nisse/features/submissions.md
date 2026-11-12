@@ -93,6 +93,7 @@ Feature ledger area F: spec §6, §8.2; README Busy Conversations, Failures and 
 Wire, `packages/nisse/test/wire.test.ts`:
 
 - continue-rpc: a conversation whose run failed goes on with no new input; one that works, never ran or answered is refused by name
+- continue-rpc: continue while a run works says the conversation is busy, whether the run before it answered or none has ended
 - withdraw-rpc: a queued prompt taken back never runs, and one already run cannot be
 
 Screen, `packages/nisse/test/screen.test.ts`:

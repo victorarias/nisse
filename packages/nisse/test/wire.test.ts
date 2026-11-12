@@ -2236,6 +2236,32 @@ test("continue-rpc: a conversation whose run failed goes on with no new input; o
   client.close()
 })
 
+test("continue-rpc: continue while a run works says the conversation is busy, whether the run before it answered or none has ended", async () => {
+  await using server = await runningServer([
+    { text: "checking", tool: { name: "bash", input: { command: "echo held" } } },
+    { text: "first done" },
+    { text: "checking again", tool: { name: "bash", input: { command: "echo held" } } },
+    { text: "second done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  const go = () => client.call("conversation/continue", { conversation })
+  // Each run waits on its approval, so it is still working when continue is asked.
+  await submit(client, conversation, "one")
+  const first = await waitingApproval(view)
+  expect(errorTag(await go())).toBe("ConversationBusy")
+  await client.call("approval/resolve", { conversation, approval: first, author: "bo", allow: true })
+  await view.until(settled(1))
+  await submit(client, conversation, "two")
+  const second = await waitingApproval(view)
+  expect(errorTag(await go())).toBe("ConversationBusy")
+  await client.call("approval/resolve", { conversation, approval: second, author: "bo", allow: true })
+  await view.until(settled(2))
+  expect(errorTag(await go())).toBe("NothingToContinue")
+  client.close()
+})
+
 test("withdraw-rpc: a queued prompt taken back never runs, and one already run cannot be", async () => {
   await using server = await runningServer(ECHO)
   const client = await RawClient.connect(server.home.socket)
