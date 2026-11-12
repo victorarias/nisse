@@ -773,6 +773,16 @@ test("claude-extensions: execute.after changes what Claude reads, and a change C
   await session.view.until(settled(1))
   const entries = session.view.seen()
   expect(results(entries).map((result) => result.text)).toEqual(["1\tTHE GNOME LIVES UNDER THE FLOOR\n2\t", "quiet"])
+  // The fake replays its recorded results, so what reached Claude Code is nisse's answer to the Read's hook.
+  const after = claude.hookAnswers().filter((output) => output.hookEventName === "PostToolUse")
+  expect(after).toEqual([
+    {
+      hookEventName: "PostToolUse",
+      updatedToolOutput: expect.objectContaining({
+        file: expect.objectContaining({ content: "THE GNOME LIVES UNDER THE FLOOR\n" }),
+      }),
+    },
+  ])
   // Claude Code keeps Bash's own result, so the extension hears its change did not reach Claude.
   expect(toasts(entries)).toEqual([
     { extension: "shout", text: "execute.after changed Bash's result, but the model gets Bash's own result" },
