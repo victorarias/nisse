@@ -116,11 +116,29 @@ const openSocket = (home: Home) =>
     ),
   )
 
+const refusalOf = (reason: Socket.SocketError["reason"] | RpcClientError["reason"]) =>
+  reason._tag === "SocketOpenError" && reason.cause instanceof ServerFailed ? reason.cause.output : undefined
+
+/** What the home's server said when it refused to start, when that is why the connection is down. */
+export const serverRefusal = (error: unknown): string | undefined =>
+  error instanceof RpcClientError ? refusalOf(error.reason) : undefined
+
+/**
+ * A server that refused to start refuses again until the person changes what it refused, such as its config, so the
+ * next start waits this long: a fixed config is picked up within it, and a home that stays broken costs one failed
+ * start a second, where starting again after 50 ms measured about three a second.
+ */
+const AFTER_REFUSAL = "1 second"
+
 /** The home's socket, starting the server when none runs. */
 const protocolLayer = (home: Home) =>
   RpcClient.layerProtocolSocket({
     pingInterval: Duration.infinity,
-    retryPolicy: Schedule.spaced("50 millis"),
+    retryPolicy: Schedule.spaced("50 millis").pipe(
+      Schedule.modifyDelay(({ input, duration }) =>
+        Effect.succeed(refusalOf(input.reason) === undefined ? duration : AFTER_REFUSAL),
+      ),
+    ),
   }).pipe(
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
     Layer.provide(Layer.effect(Socket.Socket, BunSocket.fromDuplex(openSocket(home)))),

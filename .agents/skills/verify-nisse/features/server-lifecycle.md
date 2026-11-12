@@ -13,6 +13,10 @@ running server once its runs settle.
 - `server-refuse` makes `nisse serve` refuse a home that already has a server.
 - `server-idle-exit` exits the server 30 s after its last watch closes
   and its last run settles.
+- `server-cannot-start` shows a waiting client why the home's server refuses
+  to start, such as a `config.toml` that does not read: on the TUI's status
+  line, and on `exec`'s stderr. The client starts the next server a second
+  after each refusal, and carries on once one starts.
 - `server-stop` stops it on `server/stop` once its runs settle.
 - `server-restart` replaces the running server with `nisse serve --restart`
   once its runs settle.
@@ -78,6 +82,17 @@ Preconditions:
   draws what it answers. Repeat `drive.ts r serve --restart`, adding
   `--read-only` every other time: each prints `serving` and the TUI shows
   `READ ONLY` or `PROMPT` to match.
+- **Cannot start.** Run `drive.ts r serve`, `drive.ts r tui start` and
+  `drive.ts r tui wait READY`. Write `[extensions.guard` to
+  `/tmp/nisse-verify/r/home/config.toml`, run `drive.ts r kill-server`, then
+  `drive.ts r tui wait 'cannot start'`: above the prompt, `✗ nisse's server
+cannot start: .../config.toml: TOML Parse error ...`. Count
+  `TOML Parse error` lines in the home's `nisse.log` twice, 5 s apart: about
+  four more, one start a second. Delete `config.toml`: the line goes, and a
+  prompt typed then is answered. For `exec`, use a script whose answer has
+  `"delayMs": 300`, run `drive.ts r nisse exec count &`, and break the config
+  and kill the server a second later: the saved output's stderr has the same
+  line once, and once the config is deleted it prints the answer and exits 0.
 - **Restart waits for runs.** In a run whose script is
   `[{"text": "one two three four five six seven eight", "delayMs": 300}]`,
   run `drive.ts r serve`, then `drive.ts r nisse exec count &` and, a second
@@ -105,6 +120,7 @@ Wire, `packages/nisse/test/wire.test.ts`:
 Screen, `packages/nisse/test/screen.test.ts`:
 
 - server-restart, serve-read-only: an open TUI keeps drawing while nisse serve --restart replaces its server, read-only and back
+- server-cannot-start: an open TUI whose server cannot start shows why, starts one at most once a second, and carries on once it can
 
 Stack, `packages/nisse/test/stack.test.ts`:
 
@@ -114,6 +130,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - server-restart: nisse serve --restart replaces the running server once its run settles
 - server-shared: clients starting at the same moment share one server
 - server-refuse: a second server for the same home refuses to start, and says which home
+- server-cannot-start: nisse exec whose server cannot come back says why once, and finishes once a server starts
 
 ## Gotchas
 

@@ -552,6 +552,48 @@ test("crash-tui: quitting while the server cannot come back ends nisse, though a
   await quit(session)
 }, 30_000)
 
+test("server-cannot-start: an open TUI whose server cannot start shows why, starts one at most once a second, and carries on once it can", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, [{ text: "back again" }])
+  const server = await serving(env)
+  const session = screenSession([], env)
+  await session.waitFor((screen) => screen.includes("READY"))
+  const config = join(nisseHome.dir, "config.toml")
+  await Bun.write(config, "[extensions.guard\n")
+  server.kill("SIGKILL")
+  await server.exited
+  await session.waitFor(
+    (screen) => screen.includes("nisse's server cannot start") && screen.includes("TOML Parse error"),
+    10_000,
+  )
+  // Each server the TUI starts writes its refusal to the home's log as it exits, and the TUI waits a second after it
+  // before starting the next: the gap between two refusals is more than that second.
+  const refusals = () => readFileSync(nisseHome.log, "utf8").split("TOML Parse error").length - 1
+  const watcher = watch(nisseHome.dir)
+  const seen: Array<{ readonly count: number; readonly at: number }> = []
+  await deadline(
+    new Promise<void>((resolve) => {
+      const check = () => {
+        const count = refusals()
+        if (count !== seen.at(-1)?.count) seen.push({ count, at: performance.now() })
+        if (seen.length >= 3) resolve()
+      }
+      watcher.on("change", check)
+      check()
+    }),
+    10_000,
+    "three refusals in the home's log",
+  ).finally(() => watcher.close())
+  expect(seen.map(({ count }) => count - seen[0]!.count)).toEqual([0, 1, 2])
+  expect(seen[2]!.at - seen[1]!.at).toBeGreaterThan(900)
+  // The config fixed, the next server starts, the notice goes and a prompt is answered.
+  rmSync(config)
+  await session.waitFor((screen) => !screen.includes("cannot start"), 10_000)
+  session.type("hi\r")
+  await session.waitFor((screen) => screen.includes("back again") && screen.includes("READY"))
+  await quit(session)
+}, 40_000)
+
 test("idle-tui: the TUI draws nothing and uses no CPU while nothing changes", async () => {
   const session = await open([{ text: "done" }])
   await session.waitFor((screen) => screen.includes("READY"))

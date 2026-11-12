@@ -972,6 +972,46 @@ test("crash-exec: a run cut off by a crashed server finishes after the server co
   ])
 }, 30_000)
 
+test("server-cannot-start: nisse exec whose server cannot come back says why once, and finishes once a server starts", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, [{ text: "one two three four five six seven eight nine ten", delayMs: 100 }])
+  const server = await serving(env)
+  const exec = nisse(["exec", "count"], env)
+  const stdout = exec.stdout.getReader()
+  let printed = ""
+  while (!printed.includes("one")) {
+    const { value } = await deadline(stdout.read(), 10_000, "first words printed")
+    printed += new TextDecoder().decode(value)
+  }
+  const config = join(nisseHome.dir, "config.toml")
+  await Bun.write(config, "[extensions.guard\n")
+  server.kill("SIGKILL")
+  await server.exited
+  const stderr = exec.stderr.getReader()
+  let said = ""
+  while (!said.includes("\n")) {
+    const { value } = await deadline(stderr.read(), 10_000, "the refusal on stderr")
+    said += new TextDecoder().decode(value)
+  }
+  expect(said).toStartWith("nisse's server cannot start: ")
+  expect(said).toContain("TOML Parse error")
+  rmSync(config)
+  while (true) {
+    const { value, done } = await deadline(stdout.read(), 20_000, "answer once a server starts")
+    if (done) break
+    printed += new TextDecoder().decode(value)
+  }
+  while (true) {
+    const { value, done } = await stderr.read()
+    if (done) break
+    said += new TextDecoder().decode(value)
+  }
+  expect(await exec.exited).toBe(0)
+  // Said once, however many servers refused while exec waited.
+  expect(said.split("\n").filter(Boolean)).toHaveLength(1)
+  expect(printed).toEndWith("one two three four five six seven eight nine ten\n")
+}, 40_000)
+
 /** Each tool result's text and whether it is an error. */
 const toolResults = (entries: ReadonlyArray<{ kind: string; model?: ReadonlyArray<unknown> }>) =>
   entries

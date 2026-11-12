@@ -17,7 +17,7 @@ import { Deferred, Effect, Schedule, type Scope, Stream } from "effect"
 import { imagesIn } from "./attach.ts"
 import type { RpcClientError } from "effect/rpc/RpcClientError"
 import { userName } from "./author.ts"
-import { Client, type StartOptions } from "./client.ts"
+import { Client, serverRefusal, type StartOptions } from "./client.ts"
 import { describeCall } from "./tui/calls.ts"
 
 type Block = { readonly type: string; readonly text?: string; readonly name?: string; readonly arguments?: unknown }
@@ -45,6 +45,16 @@ const REWATCH_DELAY = "50 millis"
 /** The entries one read of what a dropped watch missed asks for; a read pages on past it. */
 const MISSED_PAGE = 200
 
+/** What the home's server last said refusing to start, noted once while exec waits for a server that starts. */
+let refusal: string | undefined
+const noteRefusal = (error: unknown) =>
+  Effect.sync(() => {
+    const said = serverRefusal(error)
+    if (said === undefined || said === refusal) return
+    refusal = said
+    note(`nisse's server cannot start: ${said}`)
+  })
+
 /**
  * A watch opened again each time it drops: when the connection goes, as when the server crashes and restarts, or when
  * the server ends it because this client fell behind.
@@ -55,9 +65,9 @@ const rewatched = <A, E extends { readonly _tag: string }, R>(
   open().pipe(
     Stream.catchIf(
       (error): error is RpcClientError | FellBehind => error._tag === "RpcClientError" || error._tag === "FellBehind",
-      () =>
+      (error) =>
         Stream.concat(
-          Stream.fromEffectDrain(Effect.sleep(REWATCH_DELAY)),
+          Stream.fromEffectDrain(Effect.andThen(noteRefusal(error), Effect.sleep(REWATCH_DELAY))),
           Stream.suspend(() => rewatched(open)),
         ),
     ),
@@ -70,6 +80,7 @@ const rewatched = <A, E extends { readonly _tag: string }, R>(
  */
 const reconnecting = <A, E extends { readonly _tag: string }, R>(call: Effect.Effect<A, E, R>) =>
   call.pipe(
+    Effect.tapError(noteRefusal),
     Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
   )
 
