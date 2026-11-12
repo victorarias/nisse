@@ -19,7 +19,8 @@ running server once its runs settle.
   after each refusal, and carries on once one starts.
 - `server-stop` stops it on `server/stop` once its runs settle.
 - `server-restart` replaces the running server with `nisse serve --restart`
-  once its runs settle.
+  once its runs settle. A server a client starts meanwhile gives way to it,
+  even one that was already waiting for the old server's home.
 - `server-old-home` keeps working in a home an earlier Nisse used: its
   older databases, such as `nisse.sqlite`, stay as they were, and this Nisse uses
   `kernel.sqlite` beside them.
@@ -129,6 +130,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - mode-print, answer-exec, server-on-demand: nisse exec starts a server, prints the answer and exits 0
 - server-restart: nisse serve --restart replaces the running server once its run settles
 - server-restart: nisse exec waiting on a run that serve --restart lets finish prints the answer and exits 0
+- server-restart: a server that starts while serve --restart replaces the old one gives way, though it waited on the old one's lock
 - server-shared: clients starting at the same moment share one server
 - server-refuse: a second server for the same home refuses to start, and says which home
 - server-cannot-start: nisse exec whose server cannot come back says why once, and finishes once a server starts

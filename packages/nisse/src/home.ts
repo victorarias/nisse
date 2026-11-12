@@ -54,11 +54,16 @@ const tryLock = (dir: string, path: string, waitMs: number) => {
   }
 }
 
-const lockHome = (home: Home) =>
+/** The home's lock; with `giveWay`, refused while a restart replaces the server, as `claimHome` describes. */
+const lockHome = (home: Home, giveWay = false) =>
   Effect.acquireRelease(
     Effect.suspend(() => {
       const lock = tryLock(home.dir, home.lock, LOCK_WAIT_MS)
       if (!lock) return Effect.fail(new HomeTaken({ dir: home.dir }))
+      if (giveWay && replacing(home)) {
+        lock.close()
+        return Effect.fail(new HomeTaken({ dir: home.dir }))
+      }
       rmSync(home.socket, { force: true })
       return Effect.succeed(lock)
     }),
@@ -76,9 +81,13 @@ const replacing = (home: Home) => {
   return next === undefined
 }
 
-/** The home, for this process to serve; a server is taken to hold it while a restart replaces the server. */
-export const claimHome = (home: Home) =>
-  Effect.suspend(() => (replacing(home) ? Effect.fail(new HomeTaken({ dir: home.dir })) : lockHome(home)))
+/**
+ * The home, for this process to serve; a server is taken to hold it while a restart replaces the server. The restart is
+ * looked for once the home's lock is held: a claim waits up to `LOCK_WAIT_MS` for the lock, and a restart that starts
+ * meanwhile releases the home to whoever waits, so a look before the wait would let this process take the home the
+ * restart is replacing the server for.
+ */
+export const claimHome = (home: Home) => lockHome(home, true)
 
 /**
  * How long a restart waits for the server it stopped to let go of the home: past the time its runs take to settle,

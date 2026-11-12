@@ -118,11 +118,18 @@ export const serving = async (env: Record<string, string | undefined>, cwd?: str
   const server = nisse(args, env, cwd)
   const log = server.stderr.getReader()
   let printed = ""
-  while (!printed.includes("serving")) {
-    const { value, done } = await deadline(log.read(), 10_000, "server listening")
-    if (done) throw new Error(`server exited: ${printed}`)
-    printed += new TextDecoder().decode(value)
+  const listening = async () => {
+    while (!printed.includes("serving")) {
+      const { value, done } = await log.read()
+      if (done) throw new Error(`server exited: ${printed}`)
+      printed += new TextDecoder().decode(value)
+    }
   }
+  // A tripwire for a server that never listens: a start, `--restart` included, took 0.3 s idle, 0.9 s at load ~50
+  // and 2.4 s at load ~69 on 10 cores.
+  await deadline(listening(), 20_000, "server listening").catch((error) => {
+    throw new Error(`${error.message}; nisse ${args.join(" ")} printed: ${JSON.stringify(printed)}`)
+  })
   log.releaseLock()
   return server
 }

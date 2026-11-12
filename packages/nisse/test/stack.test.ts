@@ -1,5 +1,6 @@
 // The `nisse` binary: its commands, and its server over its socket: stop, kill, restart.
 import { afterEach, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { applyImmutable, type Op } from "@nisse/delta"
 import { PROTOCOL_VERSION, type View, type ViewItem } from "@nisse/protocol"
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs"
@@ -782,6 +783,42 @@ test("server-refuse: a second server for the same home refuses to start, and say
   // The first server still answers.
   expect(await conversationsOf(nisseHome)).toEqual([])
   expect(first.exitCode).toBeNull()
+}, 30_000)
+
+/** A lock on `path` as a server holds its home's: open until `close`. */
+const holdLock = (path: string) => {
+  const lock = new Database(path, { create: true })
+  lock.run("PRAGMA locking_mode = EXCLUSIVE")
+  lock.run("BEGIN EXCLUSIVE")
+  return lock
+}
+
+test("server-restart: a server that starts while serve --restart replaces the old one gives way, though it waited on the old one's lock", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome)
+  mkdirSync(nisseHome.dir, { recursive: true })
+  // The test holds the home as the old server does, and a client's server starts and waits for it.
+  const old = holdLock(homeAt(nisseHome.dir).lock)
+  const starting = nisse(["serve"], env)
+  const waitsOnHome = () =>
+    Bun.spawnSync(["lsof", "-Fn", "-p", String(starting.pid)])
+      .stdout.toString()
+      .includes(homeAt(nisseHome.dir).lock)
+  await deadline(
+    (async () => {
+      while (!waitsOnHome()) await Bun.sleep(10)
+    })(),
+    10_000,
+    "the starting server waiting on the home",
+  )
+  // A restart begins, as serve --restart does, and the old server lets go of the home while the starter waits.
+  const restart = holdLock(homeAt(nisseHome.dir).nextLock)
+  old.close()
+  expect(await finished(starting)).toMatchObject({
+    code: 75,
+    stderr: `another server already serves ${nisseHome.dir}\n`,
+  })
+  restart.close()
 }, 30_000)
 
 test("answer-exec, wire-dropped: a nisse exec whose prompt waits, runs and ends while exec is dropped still prints the answer and exits 0", async () => {
