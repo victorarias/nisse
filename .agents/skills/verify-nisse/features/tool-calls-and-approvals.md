@@ -15,7 +15,9 @@ conversation was started with `--auto`, which runs every call without asking.
 - `approval-allow-tui` allows with `^Y`: `✓ allowed by ada`, then the call's
   output.
 - `approval-deny-tui` denies with `^N`: `✗ denied by ada` and the denial as
-  the call's result; the run goes on.
+  the call's result; the run goes on. The screen draws the harness's notes on
+  a result, such as the denial, as plain lines, without the `<harness>` tags
+  the model gets them in.
 - `approval-wire` answers with `approval/resolve`; a second answer is not
   accepted.
 - `approval-exec-deny` makes `exec` deny the call and say how to allow it.
@@ -69,9 +71,13 @@ Preconditions:
   `✓ allowed by ada` and `approved`, then `all done`.
 - **Deny.** In a fresh run, ask as above, then `drive.ts r tui key C-n`,
   `drive.ts r tui wait 'all done'`, `drive.ts r tui screen denied`. The call
-  shows `✗ denied by ada`, then `all done`. `watch <id>` shows a
+  shows `✗ denied by ada` over
+  `denied by ada: the person did not allow this call`, with no `<harness>`
+  line, then `all done`. `watch <id>` shows a
   `nisse.approval` entry with `"allow": false`, and a `pi.tool-result`
-  `denied by ada: the person did not allow this call` with `"isError": true`.
+  whose text is
+  `<harness>\n[error] denied by ada: the person did not allow this call\n</harness>`
+  with `"isError": true`.
 - **Read-only.** In the `read` run, run `drive.ts r nisse exec 'read it'`.
   Exit 0, stdout `reading` and `read it`, stderr `› read(/etc/hostname)` and
   no denial.
