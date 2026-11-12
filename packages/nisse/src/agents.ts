@@ -664,5 +664,13 @@ export const agentTools = (limits: AgentLimits = DEFAULT_AGENT_LIMITS, agentType
   defineExtension({
     name: AGENTS_EXTENSION,
     tasks: [Anchor, Reporter],
-    tools: [spawnAgent(limits, agentTypes), sendMessage, followupTask(limits), waitAgent, listAgents, interruptAgent],
+    tools: [
+      // With no depth to nest into, every conversation is at the limit, the root included, so none is offered spawn_agent.
+      ...(limits.maxDepth > 0 ? [spawnAgent(limits, agentTypes)] : []),
+      sendMessage,
+      followupTask(limits),
+      waitAgent,
+      listAgents,
+      interruptAgent,
+    ],
   })

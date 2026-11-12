@@ -51,9 +51,9 @@ and nisse commits each into a conversation of its own the same way.
   subagents would ask about, as it does its own; `exec` follows every
   conversation of its tree.
 - `subagent-limits` takes `[agents] max_depth` (default 1) and `max_threads`
-  (default 6) from `NISSE_HOME/config.toml`: at the depth limit
-  `spawn_agent` is not offered, and a tree runs at most `max_threads`
-  subagents at once.
+  (default 6) from `NISSE_HOME/config.toml`: a conversation at the depth
+  limit is not offered `spawn_agent`, the root too when `max_depth = 0`, and
+  a tree runs at most `max_threads` subagents at once.
 - `subagent-types` reads agent types from `.claude/agents/*.md` from the
   directory up to the repository root, then Claude Code's config directory's
   `agents/` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). A ChatGPT conversation

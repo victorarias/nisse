@@ -1437,6 +1437,24 @@ test("subagent-limits: a tree runs at most as many subagents at once as config.t
   client.close()
 }, 30_000)
 
+test("subagent-limits: with max_depth 0 in config.toml the root conversation is not offered spawn_agent", async () => {
+  await using server = await runningServer(
+    [call("spawn_agent", { task_name: "scout", message: "go", fork_turns: "none" }), { text: "alone then" }],
+    { config: { agents: { max_depth: 0 } } },
+  )
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "send a scout")
+  await view.until(settled(1), 20_000)
+  expect(toolResults(view)).toEqual([
+    { text: expect.stringContaining("Tool spawn_agent is not available"), isError: true },
+  ])
+  expect(transcript(view.seen()).slice(-2)).toEqual(["assistant: alone then", "run_end: answered"])
+  expect((await client.call("conversation/list")).result).toHaveLength(1)
+  client.close()
+}, 30_000)
+
 const idle = (watch: ViewWatch) => (watch.view().docs["pi.live"] as { run?: unknown } | undefined)?.run === undefined
 
 test("subagent-interrupt: interrupting a conversation stops the runs of its subagents too, and the tree goes idle", async () => {
