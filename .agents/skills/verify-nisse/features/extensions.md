@@ -52,9 +52,10 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
   as `--disallowedTools` too (nisse's `read`, `grep`, `glob`, `write`, `edit`
   and `bash` as Claude Code's `Read`, `Grep`, `Glob`, `Write`, `Edit` and
   `Bash`; any other name as given), `execute.before` runs as Claude Code's `PreToolUse` hook (subagents' calls
-  too), and `execute.after` sees Claude Code's results but can't change them:
-  a change becomes the toast
-  `execute.after changed <tool>'s result, but Claude Code keeps its own tools' results`.
+  too), and `execute.after` runs as Claude Code's `PostToolUse` hook: it sees
+  Claude Code's results, and can change what a `Read` returns. Claude Code
+  keeps every other tool's own result, so a change to one becomes the toast
+  `execute.after changed <tool>'s result, but the model gets <tool>'s own result`.
   `tools.update` on a Claude Code tool has no effect: Claude gets only added
   tools.
 - `reload` (`nisse extensions reload` or `extensions/reload`) loads every
@@ -351,18 +352,19 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   `{"file_path":"<cwd>/notes.txt","limit":1}`. The log holds one hook
   answer, `"updatedInput":{"file_path":"<cwd>/notes.txt","limit":1}`, for the
   subagent's call; the `Agent` call's hook is answered `{}`.
-- **Claude, a result it can't change.** In a fresh run made with
-  `drive.ts r up --fake-claude parallel_reads_hooked`, copy in `shout.ts`.
-  Run `drive.ts r tui start --provider claude --model claude-haiku-5-5`,
-  wait for `READY`, type
-  `In a single message, call the Read tool twice in parallel: once on a.txt and once on b.txt. Then reply with both contents, separated by a comma.`
-  and `Enter`, and wait for `banana` and `READY`. The screen shows
-  `▸ Read(<cwd>/a.txt)` with `apple`, `▸ Read(<cwd>/b.txt)` with `banana`,
-  two toasts
-  `◆ shout: execute.after changed Read's result, but Claude Code keeps its own tools' results`,
-  and the answer `apple`, `,`, `banana`. `drive.ts r watch <id> --save second-client`
-  has both `nisse.toast` entries and the `pi.tool-result`s `1\tapple\n2\t` and
-  `1\tbanana\n2\t`, as Claude Code returned them, not in capitals.
+- **Claude, a result it changes and one it can't.** In a fresh run made
+  with `drive.ts r up --fake-claude read_after_hooked`, copy in `shout.ts`.
+  Run `drive.ts r tui start --provider claude`, wait for `READY`, type
+  ``Use the Read tool to read notes.txt, then use the Bash tool to run `echo quiet`, then reply with exactly what each returned, separated by a comma.``
+  and `Enter`, and wait for `GNOME LIVES` and `READY`. The screen shows
+  `▸ Read(<cwd>/notes.txt)` with `THE GNOME LIVES UNDER THE FLOOR`,
+  `▸ Bash(echo quiet)` with `quiet`, the toast
+  `◆ shout: execute.after changed Bash's result, but the model gets Bash's own result`,
+  and the answer `THE GNOME LIVES UNDER THE FLOOR, quiet`.
+  `drive.ts r watch <id> --save second-client` has the `nisse.toast` and the
+  `pi.tool-result`s `1\tTHE GNOME LIVES UNDER THE FLOOR\n2\t` and `quiet`.
+  The log's `PostToolUse` answer for `Read` carries `updatedToolOutput` with
+  the text in capitals; the one for `Bash` is `{}`.
 - **Hook failure.** In a fresh run with `--script` steps
   `[{"tool": {"name": "bash", "input": {"command": "echo boom"}}}, {"tool": {"name": "bash", "input": {"command": "echo slow"}}}, {"tool": {"name": "bash", "input": {"command": "echo fine"}}}, {"text": "all done"}]`,
   copy in `flaky.ts`. Run `drive.ts r nisse exec --auto "try the hooks"`:
@@ -388,7 +390,7 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
 
 ## Contexts
 
-- **Provider.** On Claude the request hook does not run, and `execute.after` cannot change the results of Claude Code's own tools.
+- **Provider.** On Claude the request hook does not run, and `execute.after` can change only what Claude Code's `Read` returns.
 - **Server restart.** Status lines clear, so none outlives the code that set it.
 - **Second client.** Status lines and toasts are committed, so every client sees them, then and later.
 - **Subagents.** A hook's `conversation` in a subagent carries its `lineage`, as `conversation/list` shows it.
@@ -428,6 +430,8 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - claude-extensions: an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
 - claude-extensions: an extension's tool runs for Claude's subagents, in the subagent's conversation
 - claude-extensions: a tool an extension removes is withheld from Claude Code, by Claude Code's name for nisse's own
+- claude-extensions: an extension's execute.after runs after Claude's calls, and its status line and toast show
+- claude-extensions: execute.after changes what Claude reads, and a change Claude Code drops is toasted
 
 Package, `packages/claude/test/claude.test.ts`:
 

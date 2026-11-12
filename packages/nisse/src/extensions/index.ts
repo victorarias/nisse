@@ -287,7 +287,16 @@ export const openExtensions = (
             Effect.suspend(() => registered.value(event)),
           )
           if (Exit.isFailure(exit)) continue
-          shown = { output: String(event.outcome.output), error: event.outcome.error === true }
+          const changed = { output: String(event.outcome.output), error: event.outcome.error === true }
+          if (changed.output === shown.output && changed.error === shown.error) continue
+          // A change the model never gets would vanish without a word, so the extension is told.
+          if (result.final === true) {
+            yield* toast(
+              api.conversationId,
+              registered.extension,
+              `execute.after changed ${call.name}'s result, but the model gets ${call.name}'s own result`,
+            )
+          } else shown = changed
         }
         if (shown.output === before.output && shown.error === before.error) return undefined
         return {

@@ -576,7 +576,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
       /**
        * Hands what Claude Code's own tool returned to the extensions' `afterTool`. Claude Code takes a changed output
        * only as the tool's own result object; for `Read`, whose object carries the file's text, nisse swaps that text
-       * (F15). Another tool's change cannot reach Claude, and is reported as such.
+       * (F15). Another tool's result is given to the hooks as `final`: their change cannot reach Claude.
        */
       const postToolUse: HookCallback = async (input, _toolUseID, { signal }) => {
         if (input.hook_event_name !== "PostToolUse" || input.tool_name.startsWith(OWN_TOOL)) return {}
@@ -595,7 +595,9 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           arguments: input.tool_input as ToolCall["arguments"],
         }
         const owner = recorded.get(call.id)?.owner ?? main
-        const after = await run(afterTool(call, { output: [{ type: "text", text }] }, owner), signal)
+        // Only a Read's text can be swapped; the hooks are told when what they change cannot reach Claude.
+        const given = { output: [{ type: "text" as const, text }], ...(read ? {} : { final: true as const }) }
+        const after = await run(afterTool(call, given, owner), signal)
         const changed = textOf(after.output ?? [])
         if (changed === text) return {}
         if (!read) {
