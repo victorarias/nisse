@@ -1455,6 +1455,36 @@ test("subagent-limits: with max_depth 0 in config.toml the root conversation is 
   client.close()
 }, 30_000)
 
+test("subagent-limits: a code-mode subagent at the depth limit has no spawn_agent to call from its scripts", async () => {
+  const spawn = `await tools.spawn_agent({ task_name: "helper", message: "go", fork_turns: "none" })
+await tools.wait_agent({ timeout_ms: 600000 })`
+  const probe = `text(Object.keys(tools).includes("spawn_agent") ? "has spawn_agent" : "no spawn_agent")
+await tools.spawn_agent({ task_name: "deeper", message: "go" })`
+  await using server = await runningServer([
+    call("codemode", { code: spawn }),
+    call("codemode", { code: probe }, "/root/helper"),
+    { text: "helper done", agent: "/root/helper" },
+    { text: "all done" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (
+    await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto", model: "script-code-mode" })
+  ).result.conversation as string
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "send a helper")
+  await view.until(settled(1), 20_000)
+  // The helper is the only conversation the root started.
+  const listed = await list(client)
+  expect(listed).toHaveLength(2)
+  const helper = watchView(client, listed.find((candidate) => candidate.id !== conversation)!.id)
+  await helper.until(settled(1), 20_000)
+  const [probed] = toolResults(helper)
+  expect(probed!.text).toContain("no spawn_agent")
+  expect(probed!.text).toContain("tools.spawn_agent does not exist")
+  expect(transcript(helper.seen()).slice(-2)).toEqual(["assistant: helper done", "run_end: answered"])
+  client.close()
+}, 30_000)
+
 const idle = (watch: ViewWatch) => (watch.view().docs["pi.live"] as { run?: unknown } | undefined)?.run === undefined
 
 test("subagent-interrupt: interrupting a conversation stops the runs of its subagents too, and the tree goes idle", async () => {
