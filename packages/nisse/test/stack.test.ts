@@ -807,6 +807,28 @@ test("answer-exec-fail, wire-dropped: a nisse exec dropped while an interrupt wi
   expect(result.stderr).toContain("the prompt was withdrawn before it ran")
 }, 60_000)
 
+test("answer-exec-fail: nisse exec exits 1 when one interrupt withdraws its prompt among more than its window holds", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, [{ text: "one two three four five six seven eight nine ten", delayMs: 300 }])
+  await serving(env)
+  const client = await RawClient.connect(nisseHome.socket)
+  await client.call("conversation/start", { id: "shared", cwd: nisseHome.dir })
+  const view = watchView(client, "shared")
+  await view.until(() => true)
+  await submit(client, "shared", "count")
+  const exec = nisse(["exec", "-c", "shared", "first in line"], env)
+  const inbox = (watch: ViewWatch) => (watch.view().docs["pi.inbox"] as { items: Array<unknown> }).items
+  await view.until((watch) => inbox(watch).length === 1, 10_000)
+  // More prompts wait behind exec's than a watch's window keeps, so the commit that withdraws them all slides exec's
+  // withdrawal out of the window it hands exec.
+  for (let i = 0; i < 110; i++) await submit(client, "shared", `behind ${i}`)
+  await client.call("conversation/interrupt", { conversation: "shared" })
+  const result = await finished(exec)
+  expect(result).toMatchObject({ code: 1, stdout: "" })
+  expect(result.stderr).toContain("the prompt was withdrawn before it ran")
+  client.close()
+}, 30_000)
+
 test("answer-exec, wire-dropped: a nisse exec dropped while an earlier prompt runs prints only its own answer", async () => {
   const nisseHome = home()
   const [first, last] = ["first", "last"].map((name) => join(nisseHome.dir, name))

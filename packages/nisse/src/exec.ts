@@ -98,8 +98,8 @@ const missedEntries = (client: Client["Service"], conversation: string, after: n
   })
 
 /**
- * The view after each item, as a client keeps it, beside the entries that item added. A watch opened again starts
- * with a fresh window; what was committed between the newest entry held and that window is read with `missed`.
+ * The view after each item, as a client keeps it, beside the entries that item added. What was committed between the
+ * newest entry held and the window's start, as when a watch opened again starts a fresh window, is read with `missed`.
  */
 const following = <E>(
   stream: Stream.Stream<ViewItem, E>,
@@ -111,11 +111,12 @@ const following = <E>(
     (state, item) =>
       Effect.gen(function* () {
         const view = item._tag === "view" ? item.view : applyImmutable(state.view, item.ops as ReadonlyArray<Op>)
-        // A watch opened again, whose window starts past the newest entry held, or past the start of a transcript that
-        // was empty when first watched.
-        const reopened = item._tag === "view" && state.view !== undefined
+        // A window that starts past the newest entry held, or past the start of a transcript that was empty when first
+        // watched: a watch opened again, or one commit that added more entries than the window keeps.
         const gap =
-          reopened && view.before !== undefined && (state.newest === undefined || view.before > state.newest)
+          state.view !== undefined &&
+          view.before !== undefined &&
+          (state.newest === undefined || view.before > state.newest)
             ? yield* missed(state.newest, view.before)
             : []
         const added = [...gap, ...view.entries].filter((entry) => !state.held.has(entry.id))

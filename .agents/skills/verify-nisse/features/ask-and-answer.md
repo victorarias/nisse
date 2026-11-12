@@ -125,6 +125,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - mode-print, answer-exec-fail: nisse exec exits 1 and says why when the run fails
 - answer-exec-fail: nisse exec exits 1 when an interrupt withdraws its queued prompt, instead of waiting for good
 - answer-exec, wire-dropped: a nisse exec whose prompt waits, runs and ends while exec is dropped still prints the answer and exits 0
+- answer-exec-fail: nisse exec exits 1 when one interrupt withdraws its prompt among more than its window holds
 - answer-exec-fail, wire-dropped: a nisse exec dropped while an interrupt withdraws its queued prompt exits 1 and says so
 - answer-exec, wire-dropped: a nisse exec dropped while an earlier prompt runs prints only its own answer
 - answer-exec, wire-dropped: a nisse exec too slow for the run watches again when dropped, prints every call it missed, and exits 0
