@@ -60,7 +60,10 @@ Preconditions:
   `drive.ts r rpc conversation/interrupt '{"conversation": "11111111-1111-4111-8111-111111111111"}'`
   while `drive.ts r watch-status 11111111-1111-4111-8111-111111111111 --until idle`
   runs. Interrupting stops the subagent too, and the last line is `idle`
-  with `"ended":{"outcome":"interrupted","message":"aborted"}`.
+  with `"ended":{"outcome":"interrupted","message":"aborted"}`. Between
+  `waiting` and `idle` the tree may report `working` once: the subagent's
+  call settles and its approval request goes in one commit, while both runs
+  still have to commit their ends.
 - **Ended, read later.** Then run `drive.ts r rpc conversation/list`: the
   conversation carries `"ended":{"outcome":"interrupted","message":"aborted"}`,
   with `said` when the model wrote a message.
@@ -97,5 +100,8 @@ Stack, `packages/nisse/test/stack.test.ts`:
 
 - A tree's status changes only when the commit changes it; a subagent that
   starts working inside a working tree reports nothing.
+- An interrupted tree can report `working` after `waiting` and before
+  `idle`. That is the committed state while its runs wind down, not a stale
+  status.
 - In `status/watch`, `ended` belongs to the root's own run. A subagent's run
   ending never carries it there.
