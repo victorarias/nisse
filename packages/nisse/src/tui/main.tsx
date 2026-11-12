@@ -13,8 +13,11 @@ import {
 } from "@nisse/harness"
 import type { EntryRecord } from "@nisse/kernel"
 import {
+  COMPACTION_KIND,
+  CONFIGURED_KIND,
   type ModelSelection,
   type Outcome,
+  RESET_KIND,
   RUN_END_KIND,
   type RunEnd,
   STATUS_LINES_KIND,
@@ -23,7 +26,7 @@ import {
   MODEL_KIND,
   type View,
 } from "@nisse/protocol"
-import { Deferred, Effect, Schedule, type Scope, Stream } from "effect"
+import { Deferred, Effect, Fiber, Schedule, type Scope, Stream } from "effect"
 import {
   type Accessor,
   createEffect,
@@ -42,7 +45,18 @@ import { mailPayload } from "../agents.ts"
 import { Client, type StartOptions } from "../client.ts"
 import { attachmentsIn, imagesIn } from "../attach.ts"
 import { describeCall } from "./calls.ts"
-import { type ConversationActions, type Screen, setupOf, Shell, showUntilDone, Tag } from "./chrome.tsx"
+import {
+  COMMANDS,
+  type ConversationActions,
+  type Notice,
+  type Panel,
+  type Screen,
+  setupOf,
+  Shell,
+  showUntilDone,
+  Tag,
+  tokens,
+} from "./chrome.tsx"
 import { modelLabel } from "./setup.tsx"
 import { color, KeyCap } from "./theme.tsx"
 
@@ -70,19 +84,30 @@ type LiveTool = { readonly callId: string; readonly status: string; readonly out
 type NestedTool = LiveTool & { readonly parentCallId: string; readonly name: string; readonly arguments?: unknown }
 type Live = {
   readonly run?: unknown
-  readonly generation?: { readonly message?: Message }
+  readonly generation?: {
+    readonly message?: Message
+    readonly retry?: { readonly at: number; readonly error: string }
+  }
+  readonly compactions?: ReadonlyArray<unknown>
+  readonly compactionFailure?: { readonly error: string }
   readonly tools?: ReadonlyArray<LiveTool>
   readonly nestedTools?: ReadonlyArray<NestedTool>
 }
 type Approval = { readonly callId: string; readonly answer?: unknown }
 type Approvals = { readonly requests?: Readonly<Record<string, Approval>> }
-type InboxItem = { readonly mode: string; readonly content?: Message["content"] }
+type InboxItem = { readonly id: number; readonly mode: string; readonly content?: Message["content"] }
+type Usage = { readonly totalTokens: number; readonly input: number; readonly output: number }
+type UsageLedger = {
+  readonly models?: Readonly<Record<string, Usage>>
+  readonly tools?: Readonly<Record<string, Usage>>
+}
 type Agent = { readonly model?: { readonly provider: string; readonly modelId?: string }; readonly cwd?: string }
 type Docs = {
   readonly "pi.live"?: Live
   readonly "pi.inbox"?: { readonly items?: ReadonlyArray<InboxItem> }
   readonly "pi.agent"?: Agent & { readonly thinkingLevel?: string }
   readonly "nisse.approvals"?: Approvals
+  readonly "pi.usage"?: UsageLedger
   readonly [STATUS_LINES_KIND]?: { readonly lines?: Readonly<Record<string, string>> }
 }
 
@@ -257,7 +282,18 @@ const head = (text: string, lines: number) => {
  * The kinds the transcript draws a row for; the rest it skips: the context's system entries, and results, answers and
  * hosted subagents, which the call they belong to draws.
  */
-const DRAWN = new Set(["pi.user", USER_KIND, MAIL_KIND, "pi.assistant", RUN_END_KIND, MODEL_KIND, TOAST_KIND])
+const DRAWN = new Set([
+  "pi.user",
+  USER_KIND,
+  MAIL_KIND,
+  "pi.assistant",
+  RUN_END_KIND,
+  MODEL_KIND,
+  TOAST_KIND,
+  RESET_KIND,
+  COMPACTION_KIND,
+  CONFIGURED_KIND,
+])
 
 const drawn = (item: TranscriptItem) => item.kind !== "entry" || DRAWN.has(item.entry.kind)
 
@@ -582,6 +618,42 @@ const EntryView = (props: {
         </text>
       )
     }
+    case RESET_KIND: {
+      const author = dataOf<{ author?: string }>(entry).author
+      const handoff = textOf(messageOf(entry)?.content)
+      return (
+        <box flexDirection="column" marginTop={1} marginLeft={2}>
+          <text fg={color.dim}>{`◆ ${author ? `${author.toLowerCase()} started` : "started"} a new context`}</text>
+          <Show when={handoff !== ""}>
+            <text fg={color.dim} marginLeft={2}>
+              {handoff}
+            </text>
+          </Show>
+        </box>
+      )
+    }
+    case COMPACTION_KIND:
+      return (
+        <text fg={color.dim} marginTop={1} marginLeft={2}>
+          {`◆ compacted the context${dataOf<{ reason?: string }>(entry).reason === "manual" ? "" : " to make room"}`}
+        </text>
+      )
+    case CONFIGURED_KIND: {
+      const data = dataOf<{ author: string; instructions?: string | null; maxTurns?: number | null }>(entry)
+      const changes = [
+        ...(data.instructions === undefined
+          ? []
+          : [data.instructions === null ? "cleared the instructions" : `set the instructions: ${data.instructions}`]),
+        ...(data.maxTurns === undefined
+          ? []
+          : [data.maxTurns === null ? "removed the turn limit" : `limited runs to ${data.maxTurns} tool rounds`]),
+      ]
+      return (
+        <text fg={color.dim} marginTop={1} marginLeft={2}>
+          {`◆ ${data.author.toLowerCase()} ${changes.join(" and ")}`}
+        </text>
+      )
+    }
     case TOAST_KIND: {
       const data = dataOf<{ extension: string; text: string }>(entry)
       return (
@@ -708,11 +780,60 @@ const Transcript = (props: { followed: Followed; tree: Tree }) => {
   )
 }
 
+type TaskGraph = {
+  readonly tasks: Readonly<
+    Record<
+      string,
+      {
+        readonly kind: string
+        readonly conversationId: number
+        readonly state: { readonly status: string; readonly phase?: string }
+        readonly blocked?: unknown
+      }
+    >
+  >
+}
+
+const taskLines = (graph: TaskGraph) => {
+  const tasks = Object.entries(graph.tasks)
+  if (tasks.length === 0) return ["nothing is running"]
+  return tasks.map(
+    ([id, task]) =>
+      `${id}  ${task.kind}  conversation ${task.conversationId}  ${task.state.status}${task.state.phase ? ` · ${task.state.phase}` : ""}${task.blocked === undefined ? "" : "  blocked"}`,
+  )
+}
+
+/**
+ * The tokens of the context at the newest answer: its request and what it wrote. Unknown once a reset or summary
+ * came after it, or before an answer that reports usage.
+ */
+const contextUsed = (items: ReadonlyArray<TranscriptItem>) => {
+  for (const item of items.toReversed()) {
+    if (item.kind !== "entry") continue
+    if (item.entry.kind === RESET_KIND || item.entry.kind === COMPACTION_KIND) return undefined
+    if (item.entry.kind !== "pi.assistant") continue
+    const usage = (messageOf(item.entry) as { usage?: Usage } | undefined)?.usage
+    if (usage !== undefined && usage.totalTokens > 0) return usage.totalTokens
+  }
+  return undefined
+}
+
 /** The subagents `followed`'s entries started. */
 const subagentsOf = (followed: Followed) =>
   [...indexOf(followed.items()).subagents.values()].map((subagent) => subagent.conversation)
 
+/** Opens `id`, or a new conversation, and then each fork the person moves on to, until they quit. */
 export const tui = Effect.fnUntraced(function* (
+  id: string | undefined,
+  options: StartOptions,
+  prompt: string | undefined,
+) {
+  let next = yield* Effect.scoped(conversationScreen(id, options, prompt))
+  while (next !== undefined) next = yield* Effect.scoped(conversationScreen(next, options, undefined))
+})
+
+/** Shows one conversation until the person quits it, or moves on to a fork of it: then the fork's id. */
+const conversationScreen = Effect.fnUntraced(function* (
   id: string | undefined,
   options: StartOptions,
   prompt: string | undefined,
@@ -797,7 +918,43 @@ export const tui = Effect.fnUntraced(function* (
   let renderer: CliRenderer | undefined
   const setup = yield* setupOf(client, scope, () => renderer)
   const [workingSince, setWorkingSince] = createSignal<number | undefined>(undefined)
-  const [refused, setRefused] = createSignal<string | undefined>(undefined)
+  const [notice, setNotice] = createSignal<Notice | undefined>(undefined)
+  const [panel, setPanel] = createSignal<Panel | undefined>(undefined)
+  const [contextWindows, setContextWindows] = createSignal<ReadonlyMap<string, number>>(new Map())
+  Effect.runFork(
+    client["models/list"]({}).pipe(
+      Effect.tap((lists) =>
+        Effect.sync(() =>
+          setContextWindows(
+            new Map(
+              lists.flatMap((list) =>
+                list.models.flatMap((model) =>
+                  model.contextWindow === undefined ? [] : [[`${list.provider}/${model.id}`, model.contextWindow]],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      Effect.ignore,
+    ),
+  )
+  /** A task, its notice once it ends: what it came to, or why it failed. */
+  const report = <A, E extends { readonly _tag: string; readonly message?: string }>(
+    effect: Effect.Effect<A, E>,
+    said: (value: A) => string | undefined,
+  ) =>
+    Effect.runFork(
+      effect.pipe(
+        Effect.match({
+          onSuccess: (value) => {
+            const text = said(value)
+            setNotice(text === undefined ? undefined : { text, warning: false })
+          },
+          onFailure: (error) => setNotice({ text: error.message || error._tag, warning: true }),
+        }),
+      ),
+    )
   const status = () => statusOf(root.docs())
   const screen: Screen = {
     id: conversation,
@@ -826,14 +983,36 @@ export const tui = Effect.fnUntraced(function* (
     get subagentAsks() {
       return Object.values(tree.children).some((child) => pendingCalls(child.docs()).length > 0)
     },
-    get refused() {
-      return refused()
+    get notice() {
+      return notice()
+    },
+    get live() {
+      const live = root.docs()["pi.live"]
+      return {
+        compacting: (live?.compactions?.length ?? 0) > 0,
+        compactionFailure: live?.compactionFailure?.error,
+        retry: live?.generation?.retry,
+      }
+    },
+    get usage() {
+      const ledger = root.docs()["pi.usage"]
+      const spent = [...Object.values(ledger?.models ?? {}), ...Object.values(ledger?.tools ?? {})]
+      const model = screen.model
+      return {
+        tokens: spent.reduce((sum, usage) => sum + usage.totalTokens, 0),
+        context: contextUsed(root.items()),
+        contextWindow:
+          model?.model === undefined ? undefined : contextWindows().get(`${model.provider}/${model.model}`),
+      }
+    },
+    get panel() {
+      return panel()
     },
   }
   const actions: ConversationActions = {
     // While the server is away the prompt is sent again under the same request id, which the server answers once.
     submit: (text, steer) => {
-      setRefused(undefined)
+      setNotice(undefined)
       const images = imagesIn(text, screen.cwd ?? process.cwd())
       const payload = {
         conversation,
@@ -846,7 +1025,9 @@ export const tui = Effect.fnUntraced(function* (
       Effect.runFork(
         client["conversation/submit"](payload).pipe(
           Effect.retry({ while: (error) => error._tag === "RpcClientError", schedule: Schedule.spaced(REWATCH_DELAY) }),
-          Effect.catchTag("UnreadableImage", (error) => Effect.sync(() => setRefused(error.message))),
+          Effect.catchTag("UnreadableImage", (error) =>
+            Effect.sync(() => setNotice({ text: error.message, warning: true })),
+          ),
         ),
       )
     },
@@ -863,7 +1044,126 @@ export const tui = Effect.fnUntraced(function* (
     interrupt: () => Effect.runFork(client["conversation/interrupt"]({ conversation })),
     selectModel: (selection) =>
       Effect.runFork(client["conversation/select_model"]({ conversation, author: userName(), selection })),
+    command: (name, argument) => {
+      const run = commands[name]
+      if (run === undefined) return false
+      setNotice(undefined)
+      run(argument)
+      return true
+    },
+    closePanel: () => setPanel(undefined),
     quit: () => Effect.runFork(Deferred.succeed(done, undefined)),
+  }
+
+  /** The conversation to open once this one closes: a fork it made. */
+  let next: string | undefined
+  const usageLines = (title: string, ledger: UsageLedger) => {
+    const rows = [
+      ...Object.entries(ledger.models ?? {}).map(([model, usage]) => ({ name: model, usage })),
+      ...Object.entries(ledger.tools ?? {}).map(([tool, usage]) => ({ name: `tool ${tool}`, usage })),
+    ]
+    const total = rows.reduce((sum, row) => sum + row.usage.totalTokens, 0)
+    return [
+      "",
+      `${title}: ${tokens(total)} tokens`,
+      ...rows.map(
+        ({ name, usage }) =>
+          `  ${name}  ${tokens(usage.totalTokens)} (${tokens(usage.input)} in, ${tokens(usage.output)} out)`,
+      ),
+    ]
+  }
+  const commands: Readonly<Record<string, (argument: string) => void>> = {
+    help: () => setPanel({ title: "COMMANDS", lines: COMMANDS.map(([command, what]) => `${command}  ${what}`) }),
+    fork: () => {
+      // Before the last prompt a person typed, so they can try it another way; with none, at the newest entry.
+      const entries = root.items().flatMap((item) => (item.kind === "entry" ? [item.entry] : []))
+      const last = entries.findLastIndex((entry) => entry.kind === USER_KIND || entry.kind === "pi.user")
+      const at = (last > 0 ? entries[last - 1] : entries.at(-1))?.id
+      if (at === undefined) return setNotice({ text: "nothing to fork yet", warning: true })
+      report(client["conversation/fork"]({ conversation, at: Number(at) }), (forked) => {
+        next = forked.conversation
+        Effect.runFork(Deferred.succeed(done, undefined))
+        return undefined
+      })
+    },
+    reset: (handoff) =>
+      report(
+        client["conversation/reset"]({ conversation, author: userName(), ...(handoff === "" ? {} : { handoff }) }),
+        () => undefined,
+      ),
+    compact: (instructions) => {
+      setNotice({ text: "compacting", warning: false })
+      report(
+        client["conversation/compact"]({ conversation, ...(instructions === "" ? {} : { instructions }) }),
+        (ended) =>
+          // A failure shows from the live state, which every client sees.
+          ended.outcome === "nothing_to_compact"
+            ? "nothing to compact: the context is short enough already"
+            : ended.outcome === "stopped"
+              ? "compaction stopped"
+              : undefined,
+      )
+    },
+    continue: () => report(client["conversation/continue"]({ conversation }), () => undefined),
+    withdraw: () => {
+      const queued = (root.docs()["pi.inbox"]?.items ?? []).filter(
+        (item) => item.mode === "steer" || item.mode === "followUp",
+      )
+      const newest = queued.at(-1)
+      if (newest === undefined) return setNotice({ text: "nothing queued to withdraw", warning: true })
+      report(client["submission/withdraw"]({ conversation, submission: newest.id }), (withdrawn) =>
+        withdrawn.result === "withdrawn"
+          ? `withdrew: ${typedOf(newest.content)}`
+          : `too late to withdraw: ${typedOf(newest.content)} already ${withdrawn.result === "settled" ? "ran" : "reached nisse"}`,
+      )
+    },
+    instructions: (text) =>
+      report(
+        client["conversation/configure"]({ conversation, author: userName(), instructions: text === "" ? null : text }),
+        () => undefined,
+      ),
+    "max-turns": (count) => {
+      const turns = count === "" ? null : Number(count)
+      if (turns !== null && !(Number.isInteger(turns) && turns >= 1))
+        return setNotice({ text: `max turns takes a whole number 1 or more, got ${count}`, warning: true })
+      report(client["conversation/configure"]({ conversation, author: userName(), maxTurns: turns }), () => undefined)
+    },
+    usage: () =>
+      report(client["usage/get"]({}), (home) => {
+        setPanel({
+          title: "USAGE",
+          lines: [
+            ...usageLines("this conversation", root.docs()["pi.usage"] ?? {}),
+            ...usageLines("every conversation", home),
+          ],
+        })
+        return undefined
+      }),
+    tasks: () => {
+      let graph: TaskGraph | undefined
+      const shown = Effect.runFork(
+        client["tasks/watch"]().pipe(
+          Stream.runForEach((item) =>
+            Effect.sync(() => {
+              graph =
+                item._tag === "graph"
+                  ? (item.graph as unknown as TaskGraph)
+                  : (applyImmutable(graph, item.ops as ReadonlyArray<Op>) as TaskGraph)
+              if (untrack(panel)?.title === "TASKS") setPanel({ title: "TASKS", lines: taskLines(graph) })
+            }),
+          ),
+          Effect.ignore,
+        ),
+      )
+      setPanel({ title: "TASKS", lines: ["loading"] })
+      createRoot((dispose) =>
+        createEffect(() => {
+          if (panel()?.title === "TASKS") return
+          Effect.runFork(Fiber.interrupt(shown))
+          dispose()
+        }),
+      )
+    },
   }
 
   yield* showUntilDone(
@@ -888,5 +1188,7 @@ export const tui = Effect.fnUntraced(function* (
     done,
     conversation,
     (opened) => (renderer = opened),
+    () => next === undefined,
   )
+  return next
 })

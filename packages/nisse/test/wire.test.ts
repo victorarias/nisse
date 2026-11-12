@@ -2175,8 +2175,7 @@ test("configure-rpc, run-turn-limit: changed instructions reach the model and th
   await submit(client, conversation, "loop")
   await view.until(settled(2))
   const end = runEnds(view.seen())[1]!
-  expect(end.outcome).toBe("failed")
-  expect(end.message).toContain("1")
+  expect(end).toEqual({ outcome: "failed", message: "reached the turn limit of 1 turn" })
   const configured = view.seen().filter((entry) => entry.kind === "nisse.configured")
   expect(configured.map((entry) => entry.data)).toEqual([
     { author: "bo", instructions: "answer in French" },
