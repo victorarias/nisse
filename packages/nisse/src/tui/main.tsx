@@ -45,7 +45,7 @@ import {
 import { userName } from "../author.ts"
 import { VERSION } from "../version.ts"
 import { mailPayload } from "../agents.ts"
-import { Client, type StartOptions } from "../client.ts"
+import { Client, serverRefusal, type StartOptions } from "../client.ts"
 import { attachmentsIn, imagesIn } from "../attach.ts"
 import { describeCall } from "./calls.ts"
 import {
@@ -951,14 +951,29 @@ const conversationScreen = Effect.fnUntraced(function* (
   )
   // Watched again whenever the server goes away, and the server that answers may be another one: a `serve --restart`
   // can replace a read-only server with one that writes, or the other way, so each watch asks what this server is.
+  // While the server refuses to start, the person sees what it said, until a server answers again.
+  let refusal: Notice | undefined
   const relist: Effect.Effect<void> = initialize.pipe(
     Effect.tap(({ readOnly }) =>
       Effect.sync(() => {
         setReadOnly(readOnly)
-        if (!readOnly && untrack(notice) === READ_ONLY_NOTICE) setNotice(undefined)
+        const shown = untrack(notice)
+        if (shown === refusal || (!readOnly && shown === READ_ONLY_NOTICE)) setNotice(undefined)
+        refusal = undefined
       }),
     ),
     Effect.andThen(Stream.runForEach(client["status/watch"](), () => listed)),
+    Effect.catchTag("RpcClientError", (error) =>
+      Effect.sync(() => {
+        const said = serverRefusal(error)
+        if (said === undefined) return
+        const text = `nisse's server cannot start: ${said}`
+        // Shown again after the person's next action replaced it, while the server still refuses.
+        if (untrack(notice)?.text === text) return
+        refusal = { text, warning: true }
+        setNotice(refusal)
+      }),
+    ),
     Effect.ignore,
     Effect.andThen(Effect.sleep(REWATCH_DELAY)),
     Effect.andThen(Effect.suspend(() => relist)),

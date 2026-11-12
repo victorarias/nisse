@@ -1,7 +1,8 @@
 import { BunSocket } from "@effect/platform-bun"
 import { type Approvals, NisseRpcs } from "@nisse/protocol"
 import { spawn } from "node:child_process"
-import { fstatSync, mkdirSync, openSync, readFileSync } from "node:fs"
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs"
+import { join } from "node:path"
 import * as Net from "node:net"
 import { Cause, Context, Data, Duration, Effect, Layer, Schedule, Stream } from "effect"
 import * as RpcClient from "effect/rpc/RpcClient"
@@ -65,21 +66,34 @@ export const serveCommand = (): Array<string> => {
 
 export class ServerFailed extends Data.TaggedError("ServerFailed")<{ readonly output: string }> {}
 
+/**
+ * Names the file a server writes its refusal to when it will not serve, such as over a config.toml that does not read.
+ * The home's log is shared by every server any client starts, so only this file says why this one refused.
+ */
+export const REFUSAL_FILE = "NISSE_REFUSAL_FILE"
+
 const startServer = (home: Home) =>
   Effect.sync(() => {
     mkdirSync(home.dir, { recursive: true, mode: 0o700 })
     const log = openSync(home.log, "a")
-    const written = fstatSync(log).size
+    const refusal = join(home.dir, `refusal-${crypto.randomUUID()}`)
     const [command, ...args] = serveCommand()
     const server = spawn(command!, args, {
       detached: true,
       stdio: ["ignore", log, log],
-      env: { ...process.env, ...WITHOUT_BUN_GC_TIMER },
+      env: { ...process.env, ...WITHOUT_BUN_GC_TIMER, [REFUSAL_FILE]: refusal },
     })
+    closeSync(log)
     server.unref()
     return Effect.callback<{ readonly code: number | null; readonly output: string }>((resume) => {
       const exited = (code: number | null) =>
-        resume(Effect.sync(() => ({ code, output: readFileSync(home.log).subarray(written).toString().trim() })))
+        resume(
+          Effect.sync(() => {
+            const said = existsSync(refusal) ? readFileSync(refusal, "utf8").trim() : ""
+            rmSync(refusal, { force: true })
+            return { code, output: said || `nisse's server exited with code ${code}; see ${home.log}` }
+          }),
+        )
       server.once("exit", exited)
       return Effect.sync(() => server.off("exit", exited))
     })
@@ -116,11 +130,29 @@ const openSocket = (home: Home) =>
     ),
   )
 
+const refusalOf = (reason: Socket.SocketError["reason"] | RpcClientError["reason"]) =>
+  reason._tag === "SocketOpenError" && reason.cause instanceof ServerFailed ? reason.cause.output : undefined
+
+/** What the home's server said when it refused to start, when that is why the connection is down. */
+export const serverRefusal = (error: unknown): string | undefined =>
+  error instanceof RpcClientError ? refusalOf(error.reason) : undefined
+
+/**
+ * A server that refused to start refuses again until the person changes what it refused, such as its config, so the
+ * next start waits this long: a fixed config is picked up within it, and a home that stays broken costs one failed
+ * start a second, where starting again after 50 ms measured about three a second.
+ */
+const AFTER_REFUSAL = "1 second"
+
 /** The home's socket, starting the server when none runs. */
 const protocolLayer = (home: Home) =>
   RpcClient.layerProtocolSocket({
     pingInterval: Duration.infinity,
-    retryPolicy: Schedule.spaced("50 millis"),
+    retryPolicy: Schedule.spaced("50 millis").pipe(
+      Schedule.modifyDelay(({ input, duration }) =>
+        Effect.succeed(refusalOf(input.reason) === undefined ? duration : AFTER_REFUSAL),
+      ),
+    ),
   }).pipe(
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
     Layer.provide(Layer.effect(Socket.Socket, BunSocket.fromDuplex(openSocket(home)))),
@@ -133,22 +165,29 @@ const protocolLayer = (home: Home) =>
  * a caller that asks again or watches again once the server is back does that after a stop as it does after a crash.
  * A caller's own interruption is not a failure and passes through, and so does the client's own close, which ends the
  * calls still waiting with an interrupt: a caller that asks again on a lost connection would otherwise ask forever.
+ *
+ * While the server refuses to start, every call fails at once. Such a failure is held for the same second the next start
+ * waits, so a caller that asks again on a lost connection asks once a second rather than every 50 ms.
  */
 const serverGone = new RpcClientError({
   reason: new Socket.SocketCloseError({ code: 1001, closeReason: "the server stopped" }),
 })
 
 const survivingStops = (client: Client["Service"], open: () => boolean): Client["Service"] => {
-  const failInterrupts = (cause: Cause.Cause<unknown>) =>
-    open() && Cause.hasInterruptsOnly(cause) ? Effect.fail(serverGone) : Effect.failCause(cause)
+  const failed = (cause: Cause.Cause<unknown>) =>
+    open() && Cause.hasInterruptsOnly(cause)
+      ? Effect.fail(serverGone)
+      : serverRefusal(Cause.squash(cause)) === undefined
+        ? Effect.failCause(cause)
+        : Effect.delay(Effect.failCause(cause), AFTER_REFUSAL)
   return Object.fromEntries(
     Object.entries(client).map(([tag, call]) => [
       tag,
       (...args: Array<unknown>) => {
         const answer = (call as (...args: Array<unknown>) => unknown)(...args)
         return Stream.isStream(answer)
-          ? Stream.catchCause(answer, (cause) => Stream.fromEffect(failInterrupts(cause)))
-          : Effect.catchCause(answer as Effect.Effect<unknown, unknown>, failInterrupts)
+          ? Stream.catchCause(answer, (cause) => Stream.fromEffect(failed(cause)))
+          : Effect.catchCause(answer as Effect.Effect<unknown, unknown>, failed)
       },
     ]),
   ) as unknown as Client["Service"]
