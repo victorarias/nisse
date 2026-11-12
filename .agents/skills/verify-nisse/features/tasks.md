@@ -19,16 +19,16 @@ gives each conversation's `number` beside its `id` and `title`.
 - `task-memo` [kernel] Memos (§5.1): A side effect runs once, and its result is reused on replay
 - `task-effect-sandwich` [kernel] Effect sandwich: intent, effect, record (§5.2): Every side effect has a crash story
 - `task-terminal` [kernel] Terminal outcomes and results (§5.3): Waiters get a stored result
-- `task-scheduler` [kernel, pending harness-run-core] Scheduler (§5.4, 3,164 lines upstream): Many tasks progress concurrently and restart correctly
+- `task-scheduler` [kernel] Scheduler (§5.4, 3,164 lines upstream): Many tasks progress concurrently and restart correctly
 - `task-wait` [kernel] Waiting on another task (§5.5): A task pauses for a result, across restarts
-- `task-sleep` [kernel, pending harness-run-core] Durable `sleep` (R140-212, §5.6): Wait an hour or a day and survive restarts
+- `task-sleep` [kernel] Durable `sleep` (R140-212, §5.6): Wait an hour or a day and survive restarts
 - `task-wake` [kernel] Durable timers and `wake` (§5.6): Work resumes at a time or on a signal
 - `task-completing` [kernel] Completing state (§5.5): A parent's finishing work runs after its children end
 - `task-fail-fast` [kernel] `failFast` and `allSettled` (§5.5): Choose how a group of children fails
 - `task-cycle-check` [kernel] Cycle check (§5.5): Tasks waiting on each other fail clearly
 - `task-abort-bottom-up` [kernel] Abort bottom-up (§5.5): Children stop before their parent
 - `task-orphaned` [kernel] Orphaned tasks (§5.4): Work whose definition is gone is marked and kept
-- `task-blocked` [kernel, pending harness-run-core] Blocked tasks and reports (R214-222, §5.4): A broken extension's work waits to be fixed, and people are told
+- `task-blocked` [kernel] Blocked tasks and reports (R214-222, §5.4): A broken extension's work waits to be fixed, and people are told
 - `task-migration` [kernel] Task migrations (§5.4): Running tasks survive a new version
 - `task-handover` [kernel] Task handover (§5.4): One task passes its work to another without a gap
 - `task-restart-count` [kernel] Restarts counted per task (§5.4): One bad task stops, others go on
@@ -45,7 +45,7 @@ gives each conversation's `number` beside its `id` and `title`.
 - `task-graph` [kernel] Task graph view (R799-814, §9.4): See and draw all work and its dependencies
 - `task-graph-rpc` The client path for Task graph view (R799-814, §9.4): See and draw all work and its dependencies
 - `task-tool-rounds` [kernel] Tool rounds as tasks (§8.5): A round finishes or restarts as a unit
-- `task-scheduling-ownership` [kernel, pending harness-tools] Scheduling ownership on one process (§5.4): Restart picks up exactly the unfinished work
+- `task-scheduling-ownership` [kernel] Scheduling ownership on one process (§5.4): Restart picks up exactly the unfinished work
 - `task-memory-bounded` [kernel] The scheduler's memory and the cost of each task follow the work alive, not how deep its ownership chain runs, and work that ended leaves nothing behind.
 - `task-id-order` [kernel] Live and ended tasks are listed in a stable order through ids that always increase.
 

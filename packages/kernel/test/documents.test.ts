@@ -268,7 +268,9 @@ describe("documents", () => {
         const watch = (yield* session.watchDoc(Counter))!
         expect(watch.value).toEqual({ count: 1 })
         const seen = yield* Queue.unbounded<DocumentChange<{ count: number }>>()
-        yield* Effect.forkScoped(Stream.runForEach(watch.changes, (change) => Queue.offer(seen, change)))
+        yield* Effect.forkScoped(
+          Stream.runForEach(watch.changes, ({ value, ops, retired }) => Queue.offer(seen, { value, ops, retired })),
+        )
 
         yield* bump(session)
         expect(yield* Queue.take(seen)).toEqual({ value: { count: 2 }, ops: [["s", ["count"], 2]], retired: false })

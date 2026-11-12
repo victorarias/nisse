@@ -151,7 +151,8 @@ export class Submissions {
   ): Effect.Effect<Submission, AdmissionError | ReadError | CommitError> {
     return Effect.gen({ self: this }, function* () {
       // The commit runs in the submit span, so its entry and submission events land there.
-      const { id } = yield* this.#traced(conversationId, draft, (trace) =>
+      const caller = Option.getOrUndefined(yield* Effect.serviceOption(Tracer.ParentSpan))
+      const { id } = yield* this.#traced(conversationId, draft, caller, (trace) =>
         this.#session.commit((tx) =>
           admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), this.#runTasks, trace),
         ),
@@ -173,7 +174,8 @@ export class Submissions {
       if (!this.#session.owns(tx)) return yield* Effect.die(new Error("The transaction belongs to another Session"))
       // Enforced on every path: admission reads tables only on some (request IDs, an idle boundary).
       if (tx.hasTableWrite) return yield* Effect.die(new ReadAfterWrite("submit(tx, draft)"))
-      const admission = yield* this.#traced(conversationId, draft, (trace) =>
+      // The caller is the commit's: its callback runs on the Session line, outside the caller's fiber.
+      const admission = yield* this.#traced(conversationId, draft, tx.span, (trace) =>
         admitSubmission(tx, conversationId, draft, this.#now(), this.#queueModes(), this.#runTasks, trace),
       )
       return admission.id
@@ -189,17 +191,21 @@ export class Submissions {
   #traced<E, R>(
     conversationId: ConversationId,
     draft: SubmissionDraft,
+    caller: Tracer.AnySpan | undefined,
     admit: (trace: SubmitTrace | undefined) => Effect.Effect<Admission, E, R>,
   ): Effect.Effect<Admission, E, R> {
     return Effect.gen({ self: this }, function* () {
       yield* Effect.ignore(this.#resume)
       const startsRun = draft.type !== "write"
-      const caller = Option.getOrUndefined(yield* Effect.serviceOption(Tracer.ParentSpan))
       const opened = yield* Effect.exit(
         Effect.withTracer(
           Effect.makeSpan("pi.durable.submit", {
             attributes: { "submission.type": draft.type, "conversation.id": conversationId },
-            ...(startsRun ? { root: true, links: caller === undefined ? [] : [{ span: caller, attributes: {} }] } : {}),
+            ...(startsRun
+              ? { root: true, links: caller === undefined ? [] : [{ span: caller, attributes: {} }] }
+              : caller === undefined
+                ? {}
+                : { parent: caller }),
           }),
           this.#tracer,
         ),

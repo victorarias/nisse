@@ -11,7 +11,7 @@
 // completer's call, which on the line would run that fiber's code before the next job; outcomes therefore go back
 // through a queue, whose waiter resumes later. Observers are called on the line, so they must only capture.
 import { type Op, track } from "@nisse/delta"
-import { Cause, Clock, Deferred, Effect, Exit, Fiber, Option, Queue, type Scope, Tracer } from "effect"
+import { Cause, Clock, type Context, Deferred, Effect, Exit, Fiber, Option, Queue, type Scope, Tracer } from "effect"
 import { spanTime, TracePropagation } from "../telemetry.ts"
 import {
   type AnyDocDefinition,
@@ -88,9 +88,20 @@ export type CommitObservation = { detach(): void }
 /**
  * One change at a document address: the newest value, the operations that turn the previous value into it, and whether
  * the incarnation followed was retired. A retirement carries the last value and no operations; a later incarnation at
- * the address arrives as a root replacement `[["r", value]]` (spec 9.1).
+ * the address arrives as a root replacement `[["r", value]]` (spec 9.1). `context` is the services of the caller of the
+ * newest commit it holds, so a watcher's work goes on under that caller's values, never its interruption (spec 9.2).
  */
-export type DocumentChange<T> = { readonly value: Readonly<T>; readonly ops: readonly Op[]; readonly retired: boolean }
+export type DocumentChange<T> = {
+  readonly value: Readonly<T>
+  readonly ops: readonly Op[]
+  readonly retired: boolean
+  readonly context?: Context.Context<never>
+}
+
+/** Runs one read beside the line, for `readBeside`. */
+export type PageReader = <A, E>(
+  body: (storage: StorageReads) => Effect.Effect<A, E>,
+) => Effect.Effect<A, E | SessionFailed | SessionClosed>
 
 /**
  * How a document observer ended: as a commit observer does; `ended` is the Session's close, or, with `retired`, the end
@@ -206,13 +217,16 @@ export interface Session {
    */
   read<A, E>(body: (storage: StorageReads) => Effect.Effect<A, E>): Effect.Effect<A, E | SessionFailed | SessionClosed>
   /**
-   * Runs `body` beside the line, for reads of records no commit changes, such as entries at or below a tail read on the
-   * line: commits go on meanwhile. A storage error fails the Session. What it read is refused once the Session failed
-   * or began closing before it ended, and the close waits for it before closing Storage.
+   * Runs `onLine` as `read` does, then `beside` with its value, for paged reads of records no commit changes, such as
+   * entries at or below a tail read on the line: each `page` runs beside the line while commits go on. A storage error
+   * fails the Session, and a failed Session refuses what a page read. A read queued on the line when close began
+   * completes, and the close waits for it before closing Storage; a read already beside the line then starts no other
+   * page, and the page underway is refused when it ends (spec 2.2).
    */
-  readOffLine<A, E>(
-    body: (storage: StorageReads) => Effect.Effect<A, E>,
-  ): Effect.Effect<A, E | SessionFailed | SessionClosed>
+  readBeside<A, B, E, E2>(
+    onLine: (storage: StorageReads) => Effect.Effect<A, E>,
+    beside: (value: A, page: PageReader) => Effect.Effect<B, E2>,
+  ): Effect.Effect<B, E | E2 | SessionFailed | SessionClosed>
   /** Drops every loaded document not observed; the next access loads it from Storage. */
   readonly unloadDocuments: Effect.Effect<void, SessionFailed | SessionClosed>
   /** For tests that bound memory: what the document cache holds. */
@@ -458,12 +472,15 @@ class SessionImpl implements Session, SessionInternals {
         const refused = this.#admissionError()
         if (refused !== undefined) return yield* Effect.fail(refused)
         const span = Option.getOrUndefined(yield* Effect.serviceOption(Tracer.ParentSpan))
+        const caller = yield* Effect.context<never>()
         const reply = yield* Queue.bounded<Exit.Exit<A, E | CommitError>>(1)
         const job: Job = {
           cancelled: false,
           callback: undefined,
           storing: false,
-          run: Effect.suspend(() => (job.cancelled ? Effect.void : this.#runCommit(job, scope, body, reply, span))),
+          run: Effect.suspend(() =>
+            job.cancelled ? Effect.void : this.#runCommit(job, scope, body, reply, span, caller),
+          ),
         }
         if (!(yield* Queue.offer(this.#jobs, job)))
           return yield* Effect.fail(this.#admissionError() ?? SessionClosed.instance)
@@ -581,10 +598,12 @@ class SessionImpl implements Session, SessionInternals {
       const observer = args[resolved.nextArgument] as DocumentObserver<JsonObject>
       return this.#onLine(
         Effect.flatMap(this.#loadDocument(definition, resolved.id, resolved.address), (loaded) => {
+          // An absent document has nothing to follow, also once closing began (spec 2.2).
+          if (loaded === undefined) return Effect.succeed(undefined)
           // Close ends observers at its seal: one attached after it would never end.
           const sealed = this.#admissionError()
           if (sealed !== undefined) return Effect.fail(sealed)
-          return Effect.succeed(loaded === undefined ? undefined : this.#attach(definition, loaded, observer))
+          return Effect.succeed(this.#attach(definition, loaded, observer))
         }),
         (observation) => observation?.detach(),
       )
@@ -608,21 +627,53 @@ class SessionImpl implements Session, SessionInternals {
     })
   }
 
-  readOffLine<A, E>(body: (storage: StorageReads) => Effect.Effect<A, E>) {
+  readBeside<A, B, E, E2>(
+    onLine: (storage: StorageReads) => Effect.Effect<A, E>,
+    beside: (value: A, page: PageReader) => Effect.Effect<B, E2>,
+  ): Effect.Effect<B, E | E2 | SessionFailed | SessionClosed> {
+    return Effect.suspend(() => {
+      // Taken on the line by a read that ran after the seal: it was queued when close began, so it completes, and the
+      // close waits for it. Released once, by whichever comes first: the caller's exit, however it ends, or the line
+      // finding the caller gone.
+      let lease: { released: boolean } | undefined
+      const release = (): void => {
+        if (lease === undefined || lease.released) return
+        lease.released = true
+        Effect.runSync(this.#leaveOffLine)
+      }
+      const started = Effect.map(
+        Effect.suspend(() => onLine(this.#reads)),
+        (value) => {
+          if (this.#sealed) {
+            this.#offLine++
+            lease = { released: false }
+          }
+          return value
+        },
+      )
+      const leased: PageReader = (body) =>
+        Effect.flatMap(
+          Effect.suspend(() => body(this.#reads)),
+          (read) => (this.#failure === undefined ? Effect.succeed(read) : Effect.fail(this.#sessionFailed())),
+        )
+      return Effect.ensuring(
+        Effect.flatMap(this.#onLine(started, release), (value) =>
+          beside(value, lease === undefined ? (body) => this.#readOffLine(body) : leased),
+        ),
+        Effect.sync(release),
+      )
+    })
+  }
+
+  #readOffLine<A, E>(
+    body: (storage: StorageReads) => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E | SessionFailed | SessionClosed> {
     return Effect.suspend(() => {
       const refused = this.#admissionError()
       if (refused !== undefined) return Effect.fail(refused)
       this.#offLine++
       return Effect.suspend(() => body(this.#reads)).pipe(
-        Effect.ensuring(
-          Effect.suspend(() => {
-            this.#offLine--
-            // A storage error here failed the Session outside any job, so nothing on the line starts its close.
-            if (this.#failure !== undefined) this.#beginClose()
-            const ended = this.#offLineEnded
-            return this.#offLine === 0 && ended !== undefined ? Deferred.succeed(ended, undefined) : Effect.void
-          }),
-        ),
+        Effect.ensuring(this.#leaveOffLine),
         Effect.flatMap((value) => {
           const late = this.#admissionError()
           return late === undefined ? Effect.succeed(value) : Effect.fail(late)
@@ -661,6 +712,16 @@ class SessionImpl implements Session, SessionInternals {
    * Runs `body` as a job on the line and hands its outcome back through a queue. A caller that stops waiting before the
    * job started skips it; `abandon` undoes what a job finished for a caller that stopped waiting.
    */
+  get #leaveOffLine(): Effect.Effect<void> {
+    return Effect.suspend(() => {
+      this.#offLine--
+      // A storage error here failed the Session outside any job, so nothing on the line starts its close.
+      if (this.#failure !== undefined) this.#beginClose()
+      const ended = this.#offLineEnded
+      return this.#offLine === 0 && ended !== undefined ? Deferred.succeed(ended, undefined) : Effect.void
+    })
+  }
+
   #onLine<A, E>(
     body: Effect.Effect<A, E>,
     abandon?: (value: A) => void,
@@ -710,6 +771,7 @@ class SessionImpl implements Session, SessionInternals {
     body: (tx: Transaction) => Effect.Effect<A, E>,
     reply: Queue.Queue<Exit.Exit<A, E | CommitError>>,
     span: Tracer.AnySpan | undefined,
+    caller: Context.Context<never>,
   ) {
     const deliver = (exit: Exit.Exit<A, E | CommitError>) => Queue.offer(reply, exit)
     return Effect.gen({ self: this }, function* () {
@@ -724,6 +786,7 @@ class SessionImpl implements Session, SessionInternals {
         install: (document) => this.#cache.install(document),
         retire: (id, recordId) => this.#cache.retire(id, recordId),
         trace: this.#traceOf(span),
+        span,
         ...(this.#conversationCreated === undefined ? {} : { conversationCreated: this.#conversationCreated }),
       })
       const callback = yield* Effect.forkChild(
@@ -773,8 +836,13 @@ class SessionImpl implements Session, SessionInternals {
       job.storing = true
       let seq: Seq | undefined
       const stored = yield* Effect.exit(this.#storage.commit([writes], (_index, received) => void (seq = received)))
+      // Another error failed the Session while the call ran: what it stored is durable but never published (§10.1).
+      if (this.#failure !== undefined) {
+        tx.abort()
+        return yield* deliver(Exit.fail(this.#sessionFailed()))
+      }
       // A commit Storage gave a receipt for is durable: it is adopted and published even when the call then fails.
-      if (seq !== undefined) this.#publish(seq, writes, tx, span)
+      if (seq !== undefined) this.#publish(seq, writes, tx, span, caller)
       else tx.abort()
       if (Exit.isFailure(stored)) {
         const error = failureOf(stored)
@@ -796,7 +864,13 @@ class SessionImpl implements Session, SessionInternals {
   }
 
   /** Adopts a stored commit's document changes, then shows it to document observers and commit observers. */
-  #publish(seq: Seq, writes: readonly StorageWrite[], tx: Transaction, span: Tracer.AnySpan | undefined): void {
+  #publish(
+    seq: Seq,
+    writes: readonly StorageWrite[],
+    tx: Transaction,
+    span: Tracer.AnySpan | undefined,
+    caller: Context.Context<never>,
+  ): void {
     let documents: readonly DocumentCommitChange[]
     try {
       documents = tx.adopt(seq)
@@ -821,7 +895,7 @@ class SessionImpl implements Session, SessionInternals {
     if (span?._tag === "Span") this.#recordEvents(span, writes)
     for (const change of documents) {
       changes.push(change)
-      if (change.type === "document") this.#advanceDocumentObservers(change)
+      if (change.type === "document") this.#advanceDocumentObservers(change, caller)
     }
     if (ended.size > 0) this.#endTaskDocumentObservers(ended)
     const publication: CommitPublication = { seq, changes, ...(span === undefined ? {} : { span }) }
@@ -964,7 +1038,10 @@ class SessionImpl implements Session, SessionInternals {
   }
 
   /** At publication: one call per change at the address to each observer there (spec 9.1). */
-  #advanceDocumentObservers(change: Extract<DocumentCommitChange, { readonly type: "document" }>): void {
+  #advanceDocumentObservers(
+    change: Extract<DocumentCommitChange, { readonly type: "document" }>,
+    context: Context.Context<never>,
+  ): void {
     const observers = this.#documentObservers.get(addressId(change.record))
     if (observers === undefined) return
     for (const attached of [...observers]) {
@@ -974,7 +1051,7 @@ class SessionImpl implements Session, SessionInternals {
       if (change.kind === "retire") {
         if (change.record.id !== attached.incarnation) continue
         // Set with every incarnation.
-        call = { value: attached.value!, ops: NO_OPS, retired: true }
+        call = { value: attached.value!, ops: NO_OPS, retired: true, context }
         attached.incarnation = undefined
         attached.value = undefined
         attached.unpin()
@@ -988,12 +1065,12 @@ class SessionImpl implements Session, SessionInternals {
         }
         attached.version = change.version
         attached.value = change.value
-        call = { value: change.value, ops: [["r", change.value]], retired: false }
+        call = { value: change.value, ops: [["r", change.value]], retired: false, context }
       } else {
         // A migration-only base changes nothing for an observer of the new version.
         if (change.ops.length === 0) continue
         attached.value = change.value
-        call = { value: change.value, ops: change.ops, retired: false }
+        call = { value: change.value, ops: change.ops, retired: false, context }
       }
       try {
         const returned: unknown = observer.advance(call)

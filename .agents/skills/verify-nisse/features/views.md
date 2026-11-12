@@ -20,7 +20,7 @@ Clients and extensions follow conversations and documents through windowed views
 - `observer-commits` [kernel] `observeCommits` (§4): Extensions see every commit
 - `view-slow-folding` [kernel] Slow-watcher folding and 10,000-op root replacement (§9.2): A slow client catches up with merged changes rather than being dropped
 - `view-live` [kernel] Live state, `pi.live` (§8.2): Clients see partial answers and running tools
-- `view-reasoning` [kernel, pending harness-views] Reasoning streamed live (§8.2): People see the model thinking
+- `view-reasoning` [kernel] Reasoning streamed live (§8.2): People see the model thinking
 - `view-partial-arguments` [kernel] Partial tool arguments streamed (`harness/partial-changes`): See a file being written as it is generated
 - `view-run` [kernel] A run as the view shows it: turns, partials, tool rounds, and a late joiner.
 - `view-watch-end` [kernel] A watch ends once, and `closed` or `stop()` gives its end reason and last value.

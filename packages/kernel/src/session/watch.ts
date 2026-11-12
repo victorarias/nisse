@@ -82,6 +82,7 @@ class PendingState<T> {
   /** The only change pending, passed on as made: a consumer that keeps up pays for no folding. */
   #lone: DocumentChange<T> | undefined
   #newest: Readonly<T> | undefined
+  #context: DocumentChange<T>["context"]
   #has = false
   #retired = false
   end: DocumentObserverEnd | undefined
@@ -101,6 +102,7 @@ class PendingState<T> {
     this.#ops.take()
     this.#lone = undefined
     this.#newest = undefined
+    this.#context = undefined
     this.#has = false
   }
 
@@ -109,6 +111,7 @@ class PendingState<T> {
     this.#lone = this.#has ? undefined : change
     this.#ops.push(change.ops)
     this.#newest = change.value
+    this.#context = change.context
     this.#has = true
     if (change.retired) this.#retired = true
   }
@@ -119,12 +122,14 @@ class PendingState<T> {
     const value = this.#newest!
     const batch = this.#ops.take()
     const retired = this.#retired
+    const context = this.#context
     this.#lone = undefined
     this.#newest = undefined
+    this.#context = undefined
     this.#has = false
     this.#retired = false
     if (lone !== undefined) return lone
     const ops: readonly Op[] = batch.kind === "ops" ? batch.ops : [["r", value as JsonValue]]
-    return { value, ops, retired }
+    return { value, ops, retired, ...(context === undefined ? {} : { context }) }
   }
 }

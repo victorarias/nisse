@@ -1,4 +1,4 @@
-// Amends three tests of upstream/test/harness-scheduler-retention.test.ts (spec sections 5.4 and 5.5,
+// Amends four tests of upstream/test/harness-scheduler-retention.test.ts (spec sections 5.4 and 5.5,
 // amendments.json). Each keeps its tree and its outcome, through public calls only:
 // - "holds a live owner for work later created in a forgotten conversation, loading its chain again" keeps the holding
 //   assertions and drops the bound on upstream's scheduler index sizes.
@@ -7,6 +7,11 @@
 //   handler, so P is still cancelling when the late work is created.
 // - "withdraws an input queued two ended levels below an owner whose intent appears later" fails the owner from its own
 //   phase instead of writing its state with a private setTask(), and waits on the submission status alone.
+// - "loads the chain of new work below a forgotten conversation before admitting it, and keeps the scope busy" (5.4)
+//   keeps the reopen and the held chain read, and drops upstream's check that the commit waits for that read: when the
+//   chain loads is the scheduler's own choice, since the spec promises no outcome that depends on it. It checks what
+//   section 5.4's idle traversal promises instead: Harness idle and the conversation's idle stay pending while the
+//   chain read is held and after it, and resolve once the new task ends.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +19,7 @@ import { defineTask, type Harness, LiveDoc, type TaskId } from "@earendil-works/
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../upstream/src/storage/sqlite/node.ts";
 import { context } from "../upstream/test/session-support.ts";
-import { aborted, type Deferred, deferred, eventually, openTasks } from "../upstream/test/task-support.ts";
+import { aborted, type Deferred, deferred, eventually, openTasks, settled } from "../upstream/test/task-support.ts";
 
 const gates = new Map<string, Deferred<void>>();
 function gate(name: string): Deferred<void> {
@@ -64,10 +69,14 @@ afterEach(async () => {
 	for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
-async function open() {
+async function sqlitePath(): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), "pi-durable-retention-"));
 	directories.push(directory);
-	const opened = await openTasks(await openNodeSqliteStorage(join(directory, "session.sqlite")), [Hold]);
+	return join(directory, "session.sqlite");
+}
+
+async function open(storage?: Awaited<ReturnType<typeof openNodeSqliteStorage>>) {
+	const opened = await openTasks(storage ?? (await openNodeSqliteStorage(await sqlitePath())), [Hold]);
 	const root = await opened.harness.root(context);
 	opened.harness.resume();
 	return { ...opened, root };
@@ -164,5 +173,52 @@ describe("scheduler retention", () => {
 		expect(await (await harness.submission(queued, context))!.status(context)).toMatchObject({ reason: "aborted" });
 		expect((await harness.waitForTask(tree.p, context)).state.outcome.status).toBe("failed");
 		await harness.close(context);
+	});
+	it("loads the chain of new work below a forgotten conversation before admitting it, and keeps the scope busy", async () => {
+		const path = await sqlitePath();
+		const { harness, root } = await open(await openNodeSqliteStorage(path));
+		const tree = await root.commit(async (tx) => {
+			const b = await tx.createTask(Hold, { name: "b" }, { ownership: { kind: "conversation" } });
+			const c = await tx.createConversation({ ownership: { kind: "task", taskId: b } });
+			return { b, c: c.id };
+		}, context);
+		gate("b").resolve();
+		await harness.waitForTask(tree.b, context);
+		await harness.close(context);
+		// Reopen, so that B is in no cache: the chain load reads it from Storage. Hold that read.
+		const reopened = await openNodeSqliteStorage(path);
+		const read = reopened.task.bind(reopened);
+		const held = deferred<void>();
+		const reached = deferred<void>();
+		let holding = false;
+		reopened.task = async (id, readContext) => {
+			if (holding && id === tree.b) {
+				reached.resolve();
+				await held.promise;
+			}
+			return read(id, readContext);
+		};
+		const second = (await open(reopened)).harness;
+		const c = (await second.conversation(tree.c, context))!;
+		holding = true;
+		const committing = c.commit(
+			(tx) => tx.createTask(Hold, { name: "d" }, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		await reached.promise;
+		// D is live below C while its chain is unknown: both scopes that may hold it stay busy.
+		const idle = second.waitForIdle(context);
+		const conversationIdle = c.waitForIdle(context);
+		expect(await settled(idle)).toBe(false);
+		expect(await settled(conversationIdle)).toBe(false);
+		held.resolve();
+		const d = await committing;
+		expect(await settled(idle)).toBe(false);
+		expect(await settled(conversationIdle)).toBe(false);
+		gate("d").resolve();
+		expect((await second.waitForTask(d, context)).state.outcome.status).toBe("completed");
+		await idle;
+		await conversationIdle;
+		await second.close(context);
 	});
 });

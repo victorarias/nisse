@@ -6,37 +6,7 @@ import { join } from "node:path"
 const MAP = ".agents/skills/verify-nisse"
 const CONFORMANCE = "packages/conformance"
 
-// The plot's child steps a use case may be pending on.
-const STEPS = new Set([
-  "pure-packages",
-  "kernel-storage",
-  "kernel-session",
-  "kernel-documents",
-  "kernel-tasks",
-  "models-seam",
-  "env-package",
-  "harness-shell",
-  "harness-run-core",
-  "harness-tools",
-  "harness-compaction",
-  "harness-views",
-  "tools-package",
-  "kernel-server",
-  "provider-registry",
-  "chatgpt-provider",
-  "codemode-package",
-  "nisse-surface",
-  "claude-run",
-  "wire-complete",
-  "cli-kernel",
-  "tui-views",
-  "tui-images",
-  "switch-delete",
-  "surface-conversations",
-  "zero-pending",
-])
-
-type UseCase = { id: string; file: string; kind: "client" | "kernel"; pending: string | undefined }
+type UseCase = { id: string; file: string; kind: "client" | "kernel" }
 type LedgerRow = { id: string; useCases?: string[]; exclusion?: string }
 type Test = { ids: string[]; file: string; title: string }
 
@@ -61,18 +31,18 @@ function readUseCases(): Map<string, UseCase> {
         continue
       }
       if (!inSection || !line.startsWith("- ")) continue
-      const m = /^- `([a-z0-9-]+)`(?: \[(kernel)?(?:, )?(?:pending ([a-z0-9-]+))?\])?/.exec(line)
+      const m = /^- `([a-z0-9-]+)`(?: \[([^\]]*)\])?/.exec(line)
       if (!m) {
         problems.push(`${file}: sub-feature line has no id: ${line}`)
         continue
       }
-      const [, id, kernel, pending] = m
+      const [, id, tag] = m
       if (out.has(id!)) problems.push(`${file}: duplicate use case id ${id}`)
-      if (pending !== undefined && !STEPS.has(pending))
-        problems.push(`${file}: ${id} is pending on unknown step ${pending}`)
-      if (/\[[^\]]*pending\s*\]/.test(line) && pending === undefined)
-        problems.push(`${file}: ${id} is pending with no owner`)
-      out.set(id!, { id: id!, file, kind: kernel ? "kernel" : "client", pending })
+      if (tag !== undefined && tag !== "kernel")
+        problems.push(
+          `${file}: ${id} has tag [${tag}]; the only tag is [kernel], and a use case is covered or it is a gap`,
+        )
+      out.set(id!, { id: id!, file, kind: tag === "kernel" ? "kernel" : "client" })
     }
     if (!sawSection) problems.push(`${file}: no ## Sub-features section`)
   }
@@ -157,10 +127,9 @@ for (const row of ledger) {
     problems.push(`ledger ${row.id}: unknown decision ${row.exclusion}`)
 }
 
-// A use case's mapped upstream rows are settled when none is still pending and at least one passes.
+// The conformance check makes every `pass` row pass, so one mapped `pass` row covers a use case.
 function upstreamCovers(id: string): boolean {
-  const rows = upstream.get(id) ?? []
-  return rows.some((s) => s === "pass") && rows.every((s) => !s.startsWith("pending"))
+  return (upstream.get(id) ?? []).some((s) => s === "pass")
 }
 
 function coverage(useCase: UseCase): { covered: boolean; detail: string } {
@@ -178,20 +147,13 @@ function coverage(useCase: UseCase): { covered: boolean; detail: string } {
 
 const lines: string[] = []
 let coveredCount = 0
-let pendingCount = 0
 for (const useCase of useCases.values()) {
   const { covered, detail } = coverage(useCase)
-  if (useCase.pending !== undefined) {
-    pendingCount++
-    // A client test may depend on a binary installed on this machine, so only a kernel use case can go stale.
-    if (covered && useCase.kind === "kernel")
-      problems.push(`${useCase.id} is covered (${detail}): remove its pending ${useCase.pending} from ${useCase.file}`)
-    lines.push(`${useCase.id} ${useCase.kind} pending ${useCase.pending} (${detail})`)
-  } else if (covered) {
+  if (covered) {
     coveredCount++
     lines.push(`${useCase.id} ${useCase.kind} covered (${detail})`)
   } else {
-    problems.push(`${useCase.id} (${useCase.kind}) in ${useCase.file} has no coverage and no pending owner (${detail})`)
+    problems.push(`${useCase.id} (${useCase.kind}) in ${useCase.file} has no coverage (${detail})`)
     lines.push(`${useCase.id} ${useCase.kind} UNCOVERED (${detail})`)
   }
 }
@@ -203,6 +165,6 @@ if (!quiet) {
 }
 for (const p of problems) console.error(`coverage: ${p}`)
 console.log(
-  `coverage: ${useCases.size} use cases, ${coveredCount} covered, ${pendingCount} pending, ${ledger.length} ledger rows, ${problems.length} problems`,
+  `coverage: ${useCases.size} use cases, ${coveredCount} covered, ${ledger.length} ledger rows, ${problems.length} problems`,
 )
 if (problems.length > 0) process.exit(1)
