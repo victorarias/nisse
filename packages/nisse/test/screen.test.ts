@@ -215,6 +215,10 @@ test("approval-deny-tui: ctrl+n denies a call, the denial shows as its result an
   session.type("\x0e")
   const screen = await session.waitFor((screen) => screen.includes("carrying on") && screen.includes("READY"))
   expect(screen.indexOf("✗ denied by ada")).toBeGreaterThan(screen.indexOf("▸ bash(echo never-ran)"))
+  expect(screen.indexOf("denied by ada: the person did not allow this call")).toBeGreaterThan(
+    screen.indexOf("✗ denied by ada"),
+  )
+  expect(screen).not.toContain("harness>")
   expect(screen).not.toContain("     never-ran")
   expect(screen).not.toContain("allow this call?")
   await quit(session)

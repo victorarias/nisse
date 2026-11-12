@@ -121,6 +121,20 @@ const textOf = (content: Message["content"]) =>
     ? content
     : (content ?? []).flatMap((block) => (block.type === "text" && block.text ? [block.text] : [])).join("")
 
+/**
+ * A call's result as a person reads it: its output, then the harness's diagnostics one per line. The harness tells the
+ * model its diagnostics in a tagged text block it appends last to the content, and keeps them in the entry's data;
+ * the screen draws them from the data, without the tags.
+ */
+const resultTextOf = (message: Message, entry: EntryRecord) => {
+  const diagnostics = dataOf<{ diagnostics?: ReadonlyArray<{ readonly message: string }> }>(entry).diagnostics ?? []
+  const content =
+    typeof message.content === "string" || diagnostics.length === 0 ? message.content : message.content?.slice(0, -1)
+  const output = textOf(content)
+  const notes = diagnostics.map((diagnostic) => diagnostic.message).join("\n")
+  return output === "" || notes === "" ? output + notes : `${output.replace(/\n$/, "")}\n${notes}`
+}
+
 /** What a person wrote: their input's first text, before the skills it named, which follow it as text of their own. */
 const typedOf = (content: Message["content"]) =>
   typeof content === "string" ? content : (content?.find((block) => block.type === "text")?.text ?? "")
@@ -446,7 +460,7 @@ const ToolCallView = (props: { followed: Followed; index: Index; tree: Tree; cal
   const result = () => {
     const entry = props.index.results.get(props.call.id)
     const message = entry && messageOf(entry)
-    return message && { text: textOf(message.content), error: message.isError === true }
+    return message && { text: resultTextOf(message, entry), error: message.isError === true }
   }
   const output = () =>
     props.followed.docs()["pi.live"]?.tools?.find((tool) => tool.callId === props.call.id)?.output ?? ""
