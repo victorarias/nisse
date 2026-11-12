@@ -28,6 +28,6 @@ export default defineConfig({
 	test: {
 		include: ["upstream/test/**/*.test.ts", "amended/**/*.test.ts"],
 		environment: "node",
-		setupFiles: ["./upstream/test/setup-document-retention.ts", "./setup-rows.ts"],
+		setupFiles: ["./upstream/test/setup-document-retention.ts", "./setup-rows.ts", "./setup-timeout-message.ts"],
 	},
 });

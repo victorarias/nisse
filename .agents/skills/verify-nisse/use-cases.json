@@ -187,8 +187,30 @@
   "amended/session-watches.test.ts :: Session document watches > takes the version of a recreation written by a newer definition, then its ops": [
     "doc-watch"
   ],
+  "amended/sqlite-commit.test.ts :: SqliteStorage batch commits against the memory reference > agrees with MemoryStorage on random batch calls (seed 1)": [
+    "storage-sqlite-commit"
+  ],
+  "amended/sqlite-commit.test.ts :: SqliteStorage batch commits against the memory reference > agrees with MemoryStorage on random batch calls (seed 2)": [
+    "storage-sqlite-commit"
+  ],
+  "amended/sqlite-commit.test.ts :: SqliteStorage batch commits against the memory reference > agrees with MemoryStorage on random batch calls (seed 3)": [
+    "storage-sqlite-commit"
+  ],
+  "amended/sqlite-commit.test.ts :: SqliteStorage batch commits against the memory reference > agrees with MemoryStorage on random batch calls (seed 4)": [
+    "storage-sqlite-commit"
+  ],
+  "amended/sqlite-commit.test.ts :: SqliteStorage batch commits against the memory reference > agrees with MemoryStorage on random batch calls (seed 5)": [
+    "storage-sqlite-commit"
+  ],
+  "amended/sqlite-commit.test.ts :: SqliteStorage batch commits against the memory reference > agrees with MemoryStorage on random batch calls (seed 6)": [
+    "storage-sqlite-commit"
+  ],
   "amended/sqlite-storage.test.ts :: Pico SqliteStorage > rolls SQL rows and sequence allocation back as one transaction": [
     "storage-conformance"
+  ],
+  "amended/tools-images.test.ts :: createNodePhotonImages > gives the same result as the calling thread, and keeps the caller's bytes": [
+    "tool-image-preparation",
+    "image-worker"
   ],
   "amended/tools-images.test.ts :: createNodePhotonImages > prepares in a worker thread, leaving the event loop free": [
     "tool-image-preparation",
