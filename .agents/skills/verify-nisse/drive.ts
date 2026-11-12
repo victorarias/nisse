@@ -100,7 +100,11 @@ const writeRealClaude = () => {
     `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`,
     join(REPO, "packages/claude/src"),
   )
-  writeFileSync(realClaude, `#!/bin/sh\nexec '${bundled}' "$@" --setting-sources=project\n`)
+  // `claude auth ...` takes no --setting-sources; signing in and out runs as the person's own Claude Code does.
+  writeFileSync(
+    realClaude,
+    `#!/bin/sh\n[ "$1" = auth ] && exec '${bundled}' "$@"\nexec '${bundled}' "$@" --setting-sources=project\n`,
+  )
   chmodSync(realClaude, 0o755)
 }
 

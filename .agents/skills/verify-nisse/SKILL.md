@@ -236,7 +236,8 @@ holding the account drives it cold, like this.
   `drive.ts` makes the last `--setting-sources` read only the project's. A
   `defaultMode` such as `auto`, or an allow rule, would run a call a step
   waits on as `allow this call?`, and Claude Code withdraws a question it can
-  answer itself.
+  answer itself. A sign-in that lives in those settings, such as an
+  `apiKeyHelper` or an `env` block, does not reach the run.
 - **First check.** Before any step, `drive.ts r serve` and
   `drive.ts r rpc providers/list '{}'`: the provider is `ready`. ChatGPT names
   your account; Claude shows its version and names no account, because
