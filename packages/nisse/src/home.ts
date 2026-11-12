@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { mkdirSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
-import { Effect, Schedule, Schema } from "effect"
+import { Console, Effect, Schedule, Schema } from "effect"
 
 export interface Home {
   readonly dir: string
@@ -90,29 +90,41 @@ const replacing = (home: Home) => {
 export const claimHome = (home: Home) => lockHome(home, true)
 
 /**
- * How long a restart waits for the server it stopped to let go of the home: past the time its runs take to settle,
- * which `stop` already waited for, and its close.
+ * How long a restart waits for the home after its last stop reached a server: past the time that server takes to close,
+ * since `stop` already waited for its runs to settle. A restart that reaches no server waits this long from its start.
  */
-const REPLACE_WAIT = "30 seconds"
+const REPLACE_WAIT_MS = 30_000
 
 /**
- * The home, taken over from the server that holds it: `stop` stops that server, then this process claims the home once
- * it is let go. A client that loses the stopped server starts a server of its own, and that server would race this one
- * for the home, so the restart holds the home's next lock from before the stop until it holds the home, and a server
- * started meanwhile gives way to it (`claimHome`).
+ * The home, taken over from the server that holds it: `stop` stops that server when one answers and says whether it
+ * did, then this process claims the home once it is let go. A client that loses the stopped server starts a server of
+ * its own, and that server would race this one for the home, so the restart holds the home's next lock from before the
+ * stop until it holds the home, and a server started meanwhile gives way to it (`claimHome`). A server that took the
+ * home before the restart may start answering only after the first stop, so each attempt on the home stops again.
  */
-export const replaceServer = <R>(home: Home, stop: Effect.Effect<void, never, R>) =>
+export const replaceServer = <R>(home: Home, stop: Effect.Effect<boolean, never, R>) =>
   Effect.acquireUseRelease(
     Effect.suspend(() => {
       const next = tryLock(home.dir, home.nextLock, LOCK_WAIT_MS)
       return next ? Effect.succeed(next) : Effect.fail(new HomeTaken({ dir: home.dir }))
-    }).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: REPLACE_WAIT })) })),
+    }).pipe(
+      Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: REPLACE_WAIT_MS })) }),
+    ),
     () =>
-      Effect.andThen(
-        stop,
-        lockHome(home).pipe(
-          Effect.retry({ schedule: Schedule.spaced("100 millis").pipe(Schedule.upTo({ duration: REPLACE_WAIT })) }),
-        ),
-      ),
+      Effect.suspend(() => {
+        let deadline = Date.now() + REPLACE_WAIT_MS
+        let waiting = false
+        return Effect.flatMap(stop, (stopped) => {
+          if (stopped) deadline = Date.now() + REPLACE_WAIT_MS
+          return lockHome(home)
+        }).pipe(
+          Effect.tapError(() => {
+            if (waiting) return Effect.void
+            waiting = true
+            return Console.error(`waiting for the server that holds ${home.dir} to stop`)
+          }),
+          Effect.retry({ schedule: Schedule.spaced("100 millis"), while: () => Date.now() < deadline }),
+        )
+      }),
     (next) => Effect.sync(() => next.close()),
   )
