@@ -56,4 +56,22 @@ describe("createNodePhotonImages", () => {
 		expect(await turnsWhilePreparing(await createNodePhotonImages({ worker: false }))).toBe(false);
 		expect(await turnsWhilePreparing(processor)).toBe(true);
 	}, 60_000);
+
+	// Amends "gives the same result as the calling thread, and keeps the caller's bytes" (spec 7.3, amendments.json): the
+	// same image and checks, with a limit measured on Bun. On Bun 1.4.4 (10-core Apple M5) it takes about 7.4 s alone,
+	// 7.1 s of it vitest's toEqual over the caller's 4.8 MB of PNG bytes and 0.2-0.3 s the two prepares, and up to 46.5 s
+	// of upstream's 60 s with two conformance suites running at once over 7 rounds in each mode; 180 s is about four times
+	// that.
+	it("gives the same result as the calling thread, and keeps the caller's bytes", async () => {
+		const png = noisyPng(1100, 1100);
+		const copy = png.slice();
+		const threaded = await processor.prepare(png, "image/png", DEFAULT_IMAGE_LIMITS);
+		const inline = await (await createNodePhotonImages({ worker: false })).prepare(
+			png,
+			"image/png",
+			DEFAULT_IMAGE_LIMITS,
+		);
+		expect(threaded).toEqual(inline);
+		expect(png).toEqual(copy);
+	}, 180_000);
 });
