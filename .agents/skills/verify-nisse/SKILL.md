@@ -136,7 +136,8 @@ to settle and stops it, and the next client starts one on the new code.
   `✓ allowed by <name>` and `✗ denied by <name>`, `with <skill>, <skill>`
   under a message that named skills, a run's end `◆ interrupted` or
   `✗ <message>`, and the exit line `resume with: nisse --conversation <id>`.
-  The splash lists each provider as `● <id> <account>` or `○ <id> signed out`
+  The splash lists each provider as `● <id> <account>` (`● <id> ready` when it
+  names none) or `○ <id> signed out`
   over `^L  sign in`; a sign-in shows in the `SIGN IN · <provider>` panel over
   `esc  cancel`; the model list is the `MODEL` panel, whose chosen row ends in
   `‹ <effort> ›`; a switch shows as `◆ <name> switched to <provider> · <model> · <effort>`,
@@ -233,8 +234,14 @@ holding the account drives it cold, like this.
   PATH, whose version may differ. It uses your own login, and its sessions land
   in your Claude Code configuration.
 - **First check.** Before any step, `drive.ts r serve` and
-  `drive.ts r rpc providers/list '{}'`: the provider is `ready` and names your
-  account. Otherwise stop and report what it shows.
+  `drive.ts r rpc providers/list '{}'`: the provider is `ready`. ChatGPT names
+  your account; Claude shows its version and names no account, because
+  `drive.ts` runs everything with `USER=ada` and under that user Claude Code
+  reports only `{"apiProvider": "firstParty"}` as its account (under your own
+  `USER` the same probe names your email and plan). A real
+  Claude's probe can outlast the helper's 5 s default, so with
+  `--real-claude` pass `--timeout 60000` to that `rpc`. Otherwise stop and
+  report what it shows.
 - **Report** each step with its evidence, and the steps you could not drive as
   not verified, with why. A model may word its answers differently from a
   recipe; judge what the step says to check, not the wording.

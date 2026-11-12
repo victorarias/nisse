@@ -310,7 +310,7 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   calling `Clock` with `{"zone":"CET"}`, its `pi.tool-result` `noon in CET`,
   the answer `It is noon in CET.` and a `nisse.run_end` `answered`.
   In `evidence/fake-claude/log.ndjson`, the spawn's `argv` holds
-  `--disallowedTools=Clock` and its `initialize` has
+  `--disallowedTools=Glob,Clock` (`clock.ts` also removes `glob`) and its `initialize` has
   `"sdkMcpServers":["nisse"]`.
 - **Claude, hook.** In a fresh run made with
   `drive.ts r up --fake-claude bash_hook_rewritten`, copy in `guard.ts` and
@@ -343,7 +343,7 @@ export default Extension.define(() => Effect.sleep("11 seconds"))
   `drive.ts r up --fake-claude subagent_hooked`, copy in `brief.ts`. Run
   `drive.ts r tui start --provider claude`, wait for `READY`, type
   `what time is it` and `Enter`, and wait for `Under the floor` and `READY`.
-  The screen shows `▸ Agent` and the card
+  The screen shows the card
   `⧉ Find the gnome (general-purpose)` with `Read(<cwd>/notes.txt)`.
   `drive.ts r rpc conversation/list` shows a conversation whose
   `lineage.parent` is this one; `drive.ts r watch <subagent> --save subagent`
@@ -472,8 +472,8 @@ Give every `tui wait` `--timeout 120000` and keep `evidence/`.
 - **Claude, rewrite and refusal.** In a run made with
   `drive.ts r up --real-claude`, copy in the preconditions' `guard.ts` and
   append `[extensions.guard]\ngreeting = "hallo"\n` to `config.toml`. Run `drive.ts r serve` and
-  `drive.ts r rpc providers/list '{}'`: `claude` is `ready` with your
-  account; otherwise stop and report what it shows. Run
+  `drive.ts r rpc providers/list '{}' --timeout 60000`: `claude` is `ready`;
+  otherwise stop and report what it shows. Run
   `drive.ts r tui start --provider claude --auto`, send
   `Use the Bash tool to run exactly: echo hello  Then reply with its output only.`,
   wait for `guard: Bash finished` and `READY`, then

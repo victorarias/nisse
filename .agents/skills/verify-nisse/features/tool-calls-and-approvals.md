@@ -52,7 +52,7 @@ Preconditions:
 - A run whose script is
   `[{"text": "checking", "tool": {"name": "bash", "input": {"command": "echo approved"}}}, {"text": "all done"}]`;
   for `tool-read-only`, a run whose script is
-  `[{"text": "reading", "tool": {"name": "read", "input": {"path": "/etc/hostname"}}}, {"text": "read it"}]`.
+  `[{"text": "reading", "tool": {"name": "read", "input": {"path": "/etc/hosts"}}}, {"text": "read it"}]`.
   Start a fresh run for each journey: the script's steps are used up in
   order.
 
@@ -73,7 +73,7 @@ Preconditions:
   `nisse.approval` entry with `"allow": false`, and a `pi.tool-result`
   `denied by ada: the person did not allow this call` with `"isError": true`.
 - **Read-only.** In the `read` run, run `drive.ts r nisse exec 'read it'`.
-  Exit 0, stdout `reading` and `read it`, stderr `› read(/etc/hostname)` and
+  Exit 0, stdout `reading` and `read it`, stderr `› read(/etc/hosts)` and
   no denial.
 - **Exec denies.** Run `drive.ts r nisse exec 'check it'`. Exit 0, stdout
   `checking` and `all done`, stderr `› bash(echo approved)` and
