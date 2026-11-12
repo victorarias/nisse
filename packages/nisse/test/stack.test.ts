@@ -769,6 +769,56 @@ test("answer-exec, wire-dropped: a nisse exec whose prompt waits, runs and ends 
   }).toEqual({ code: 0, stdout: "read them all\n" })
 }, 60_000)
 
+test("answer-exec, wire-dropped: a nisse exec dropped while an earlier prompt runs prints only its own answer", async () => {
+  const nisseHome = home()
+  const [first, last] = ["first", "last"].map((name) => join(nisseHome.dir, name))
+  for (const fifo of [first, last]) expect(Bun.spawnSync(["mkfifo", fifo!]).exitCode).toBe(0)
+  writeFileSync(join(nisseHome.dir, "note.txt"), "a note\n")
+  // Three runs in turn: one held at a gate, another's 60 reads while exec is stopped, then exec's, held at a gate.
+  const reads = Array.from({ length: 60 }, () => ({ tool: { name: "read", input: { path: "note.txt" } } }))
+  const script = [
+    { tool: { name: "bash", input: { command: `cat ${first}` } } },
+    { text: "the first gate opened" },
+    ...reads,
+    { text: "read them all" },
+    { tool: { name: "bash", input: { command: `cat ${last}` } } },
+    { text: "the last gate opened" },
+  ]
+  await using server = await runningServer(script, { home: nisseHome, connectionQueue: 16 })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: nisseHome.dir, approvals: "auto", id: "gated" }))
+    .result.conversation as string
+  const watch = watchView(client, conversation)
+  const waiting = (count: number) => (current: ViewWatch) =>
+    ((current.view().docs["pi.inbox"] as { items?: unknown[] } | undefined)?.items ?? []).length === count
+  await submit(client, conversation, "open the first gate")
+  await watch.until((current) => current.view().docs["pi.live"] !== undefined)
+  await submit(client, conversation, "read the note")
+  await watch.until(waiting(1))
+  const exec = nisse(["exec", "--auto", "--conversation", conversation, "open the last gate"], nisseEnv(nisseHome))
+  await watch.until(waiting(2))
+  exec.kill("SIGSTOP")
+  writeFileSync(first, "open\n")
+  // The first two runs ended, and exec's run waits at the last gate.
+  await watch.until((current) => runEnds(current.seen()).length === 2 && waiting(0)(current))
+  exec.kill("SIGCONT")
+  // exec watches again while its own run waits at the last gate, and shows that run's call.
+  const errors = exec.stderr.getReader()
+  let stderr = ""
+  while (!stderr.includes(`bash(cat ${last})`)) {
+    const { value, done } = await deadline(errors.read(), 20_000, "exec showed its own call")
+    if (done) break
+    stderr += new TextDecoder().decode(value)
+  }
+  writeFileSync(last, "open\n")
+  expect({
+    code: await deadline(exec.exited, 20_000, "exec finished"),
+    stdout: await new Response(exec.stdout).text(),
+  }).toEqual({ code: 0, stdout: "the last gate opened\n" })
+  expect(stderr).not.toContain("read(")
+  client.close()
+}, 60_000)
+
 test("answer-exec, wire-dropped: a nisse exec too slow for the run watches again when dropped, prints every call it missed, and exits 0", async () => {
   const nisseHome = home()
   const fifo = join(nisseHome.dir, "gate")

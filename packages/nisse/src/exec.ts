@@ -212,16 +212,13 @@ export const exec = Effect.fnUntraced(function* (
 
   const printer = new Printer()
   let submission: number | undefined
-  // Placed once a run holds the submission; the run's first input after that is the start of what this prompt sees,
-  // so a run that ends in the same commit as it is placed belongs to the input before.
+  // Placed at the prompt's own entry, which carries its requestId: what this prompt sees starts there, whatever earlier
+  // inputs ran, also while exec's watch was down.
   let placed = false
   let waited = false
   let withdrawn = false
-  let started = false
   let ended: RunEnd | undefined
   const onEntry = (entry: EntryRecord) => {
-    if (entry.kind === USER_KIND || entry.kind === "pi.user") started = true
-    if (!started) return
     if (entry.kind === "pi.assistant") {
       const message = entry.model?.[0] as Message | undefined
       if (!json) {
@@ -260,22 +257,20 @@ export const exec = Effect.fnUntraced(function* (
           ...(images.length === 0 ? {} : { images }),
         })).submission
         if (json) write(`${JSON.stringify(item)}\n`)
-        placed ||= liveOf(view)?.run?.inputs.includes(submission) === true
+        const taken = liveOf(view)?.run?.inputs.includes(submission) === true
         const waiting = queued(view, submission)
         for (const entry of added) {
-          // The input's own entry places it, also when the watch dropped while the run that took it came and went.
           if (entry.kind === USER_KIND && (entry.data as { requestId?: string } | undefined)?.requestId === requestId) {
             placed = true
-            started = true
           }
           if (placed && ended === undefined) onEntry(entry)
         }
-        // A queued input that leaves the queue without being placed was withdrawn, as an interrupt does.
-        if (!placed && waited && !waiting) withdrawn = true
+        // A queued input that leaves the queue without a run taking it was withdrawn, as an interrupt does.
+        if (!placed && !taken && waited && !waiting) withdrawn = true
         waited ||= waiting
         if (placed) {
           const live = liveOf(view)?.generation?.message
-          if (!json && started && ended === undefined && live !== undefined) printer.show(textOf(live))
+          if (!json && ended === undefined && live !== undefined) printer.show(textOf(live))
         }
         yield* deny(conversation, view)
         if (added.length > 0) yield* discover
