@@ -58,14 +58,29 @@
   "amended/harness-nested-tools.test.ts :: nested tool calls > rejects a nested call of an aborted caller and leaves no document for it": [
     "tool-execute-tool"
   ],
+  "amended/harness-reports.test.ts :: reports > tell extension, listener, wake, and timer failures from a failed Session": [
+    "report-kinds"
+  ],
   "amended/harness-scheduler-retention.test.ts :: scheduler retention > aborts work created in a forgotten conversation below an abort-marked owner before it runs": [
     "task-scheduling-ownership"
   ],
   "amended/harness-scheduler-retention.test.ts :: scheduler retention > holds a live owner for work later created in a forgotten conversation, loading its chain again": [
     "task-scheduling-ownership"
   ],
+  "amended/harness-scheduler-retention.test.ts :: scheduler retention > loads the chain of new work below a forgotten conversation before admitting it, and keeps the scope busy": [
+    "task-scheduling-ownership"
+  ],
   "amended/harness-scheduler-retention.test.ts :: scheduler retention > withdraws an input queued two ended levels below an owner whose intent appears later": [
     "task-scheduling-ownership"
+  ],
+  "amended/harness-sleep.test.ts :: sleeping tasks > resumes a due sleep with its timer without onWake, with background timers declined": [
+    "task-sleep"
+  ],
+  "amended/harness-sleep.test.ts :: sleeping tasks > sleeps without an invocation and resumes at its checkpoint once due": [
+    "task-sleep"
+  ],
+  "amended/harness-storage-failure.test.ts :: a failed Storage call > does not fail it for a read its caller cancelled": [
+    "session-failed"
   ],
   "amended/harness-storage-failure.test.ts :: listener and report errors > keeps feeding the other observers of a view when one throws": [
     "error-model"
@@ -106,8 +121,20 @@
   "amended/harness-view.test.ts :: conversation view > publishes one frame per touching commit, whose operations rebuild every revision": [
     "view-documents"
   ],
+  "amended/session-adoption.test.ts :: Session adoption after Storage stored a commit > discards the staged changes when Storage rejects before adoption": [
+    "commit-published-after-store"
+  ],
+  "amended/session-adoption.test.ts :: Session adoption after Storage stored a commit > fails the Session without discarding when Storage rejects after adoption": [
+    "commit-published-after-store"
+  ],
+  "amended/session-adoption.test.ts :: Session adoption after Storage stored a commit > takes the durability receipt inside the commit, and adopts once Storage resolved": [
+    "commit-published-after-store"
+  ],
   "amended/session-checkpoints-migrations.test.ts :: Session document migrations > writes the required base on the first successful transaction, then writes deltas": [
     "doc-migration"
+  ],
+  "amended/session-group-commit.test.ts :: group commit: a failure between two publications > checks the failure when a storage's scope runs a publication it deferred, not when it was asked to": [
+    "commit-atomic"
   ],
   "amended/session-watches.test.ts :: Session document watches > continues after the tracker cache unloads": [
     "doc-watch"
@@ -931,18 +958,12 @@
   "upstream/test/harness-blocked.test.ts :: tasks that cannot run > runs the abort handler of a task at the limit": [
     "task-restart-count"
   ],
-  "upstream/test/harness-blocked.test.ts :: tasks that cannot run > shows a task without a definition as blocked, and wakes the host once a registry change unblocks it": [
-    "task-blocked"
-  ],
   "upstream/test/harness-blocked.test.ts :: tasks that cannot run > shows an abandoned task waiting for its definition as blocked": [
     "task-blocked"
   ],
   "upstream/test/harness-blocked.test.ts :: tasks that cannot run > starts the count over when the task makes progress": [
     "task-restart-count",
     "run-crash-count-resets"
-  ],
-  "upstream/test/harness-blocked.test.ts :: tasks that cannot run > tells the graph and the host when a migration fails": [
-    "task-blocked"
   ],
   "upstream/test/harness-callers.test.ts :: who may call a tool > answers a model-issued call of a tool it was not offered as unavailable": [
     "tool-unavailable"
@@ -1608,9 +1629,6 @@
   "upstream/test/harness-group-commit.test.ts :: group commit: outcomes and publication through the Harness > finds the submission an unpublished commit admitted with the same request ID": [
     "submission-dedupe"
   ],
-  "upstream/test/harness-group-commit.test.ts :: group commit: outcomes and publication through the Harness > runs a wait continuation of one commit before the next commit of the same call is published": [
-    "commit-published-after-store"
-  ],
   "upstream/test/harness-group-commit.test.ts :: group commit: outcomes and publication through the Harness > signals an invocation when it closes during a call in flight, and stores that call before Storage closes": [
     "commit-published-after-store"
   ],
@@ -1623,28 +1641,16 @@
   "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > holds an owner whose end follows a creation below its child's pending end: live P, ending B, conversation C": [
     "task-scheduler"
   ],
-  "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > keeps the nodes a chain load installed for an unpublished creation through the sweep": [
-    "task-scheduler"
-  ],
-  "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > makes a reader of the roots wait for a creation under a root a pending end would unlist": [
-    "task-scheduler"
-  ],
   "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > refuses the second of two opposite waits admitted behind each other": [
     "task-scheduler"
   ],
   "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > reports a failed migration once although its reservation waits for an unpublished write of the task": [
     "task-scheduler"
   ],
-  "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > reserves the live work of the owner above an ancestor whose end is pending, for a creation below it": [
-    "task-scheduler"
-  ],
   "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > runs a migration once although its reservation waits for an unpublished write of the task": [
     "task-scheduler"
   ],
   "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > starts no invocation on a reservation before the reservation is published": [
-    "task-scheduler"
-  ],
-  "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > walks a creation's memberships past an ancestor whose pending end is unpublished": [
     "task-scheduler"
   ],
   "upstream/test/harness-hook-reads.test.ts :: entry reads for hooks and tasks > pages a task's conversation history by entry ID range": [
@@ -2449,12 +2455,6 @@
     "task-scheduling-ownership"
   ],
   "upstream/test/harness-sleep.test.ts :: sleeping tasks > counts neither a wait on a sleeping task nor an outcome held over one as active": [
-    "task-sleep"
-  ],
-  "upstream/test/harness-sleep.test.ts :: sleeping tasks > disarms an invocation's timers when it ends, and a late fire runs nothing": [
-    "task-sleep"
-  ],
-  "upstream/test/harness-sleep.test.ts :: sleeping tasks > disarms the sleep timer when the sleep is aborted and when the Harness closes": [
     "task-sleep"
   ],
   "upstream/test/harness-sleep.test.ts :: sleeping tasks > does not count a task without a definition as active": [
@@ -3979,9 +3979,6 @@
   "upstream/test/session-group-commit.test.ts :: group commit: a failure between two publications > checks the failure when a storage's scope runs a publication it deferred, not when it was asked to": [
     "commit-atomic"
   ],
-  "upstream/test/session-group-commit.test.ts :: group commit: a failure between two publications > publishes no part of a call after the Session fails in a continuation of an earlier part": [
-    "commit-atomic"
-  ],
   "upstream/test/session-group-commit.test.ts :: group commit: failures per part > rejects a refused part with its refusal, null included, and the parts after it with SessionFailed": [
     "commit-atomic"
   ],
@@ -4009,9 +4006,6 @@
   "upstream/test/session-group-commit.test.ts :: group commit: outcomes > delivers a read, a commit without writes, a callback error, and a deferred commit after an earlier commit": [
     "commit-atomic"
   ],
-  "upstream/test/session-group-commit.test.ts :: group commit: outcomes > makes every outcome after a fatal failure SessionFailed, and keeps the earlier ones": [
-    "commit-atomic"
-  ],
   "upstream/test/session-group-commit.test.ts :: group commit: randomized interleavings > stores, publishes, and reads only what an order of the commits implies (seed 1)": [
     "commit-atomic"
   ],
@@ -4025,12 +4019,6 @@
     "commit-atomic"
   ],
   "upstream/test/session-group-commit.test.ts :: group commit: randomized interleavings > stores, publishes, and reads only what an order of the commits implies (seed 99991)": [
-    "commit-atomic"
-  ],
-  "upstream/test/session-group-commit.test.ts :: group commit: the storage's publication scope > publishes each commit inside the storage's scope, the next only once one it runs later ran": [
-    "commit-atomic"
-  ],
-  "upstream/test/session-group-commit.test.ts :: group commit: the storage's publication scope > reports a scope that throws instead of running the publication, and publishes the commit": [
     "commit-atomic"
   ],
   "upstream/test/session-group-commit.test.ts :: group commit: upkeep through the writer > drains the calls in flight and stores held changes when it closes": [

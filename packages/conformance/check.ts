@@ -2,7 +2,7 @@
 // `bun run check` step: runs the suite in both modes and compares every test with its row in expected.json.
 //   bun check.ts                 against the Effect kernel through adapter/
 //   bun check.ts --target=reference   against the reference copy, compared with the committed baseline
-// Exit 1 on a mismatch, an unlisted test, or an exclusion citing an unknown decision.
+// Exit 1 on a mismatch, an unlisted test, a pending row, or an exclusion citing an unknown decision.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MODES, type Mode, type RunResult, root, runSuite } from "./run.ts";
@@ -10,6 +10,8 @@ import { MODES, type Mode, type RunResult, root, runSuite } from "./run.ts";
 type Row = string | Record<Mode, string>;
 interface Exclusions {
 	reviewed: { count: number };
+	// Exclusions added after the review, each under a decision the PR that added it names.
+	additions?: { by: string; tests: string[] }[];
 	decisions: Record<string, string>;
 	tests: { test: string; decision: string; reason: string }[];
 }
@@ -33,6 +35,9 @@ for (const entry of exclusions.tests) {
 for (const [id, row] of Object.entries(expected)) {
 	for (const mode of MODES) {
 		const state = stateOf(row, mode);
+		if (stateName(state) === "pending") {
+			problems.push(`${mode}: row is "${state}"; every row is pass, flaky, amended or excluded: ${id}`);
+		}
 		if (state.startsWith("amended ") && !existsSync(join(root, "amended", state.slice("amended ".length)))) {
 			problems.push(`row says "${state}" but that file does not exist: ${id}`);
 		}
@@ -43,6 +48,15 @@ for (const [id, row] of Object.entries(expected)) {
 }
 for (const id of excluded.keys()) {
 	if (expected[id] === undefined) problems.push(`exclusion has no row in expected.json: ${id}`);
+}
+const added = new Set((exclusions.additions ?? []).flatMap((addition) => addition.tests));
+for (const id of added) {
+	if (!excluded.has(id)) problems.push(`additions name a test exclusions.json does not exclude: ${id}`);
+}
+if (exclusions.tests.length !== exclusions.reviewed.count + added.size) {
+	problems.push(
+		`exclusions: ${exclusions.tests.length} excluded, but the review counted ${exclusions.reviewed.count} and additions name ${added.size}`,
+	);
 }
 
 const baseline = (mode: Mode): Record<string, string> => {
@@ -103,20 +117,15 @@ for (const mode of MODES) {
 		const state = stateName(stateOf(row, mode));
 		counts.set(state, (counts.get(state) ?? 0) + 1);
 	}
-	let pendingPassing = 0;
-	for (const [id, status] of result.tests) {
-		const row = expected[id];
-		if (row !== undefined && stateName(stateOf(row, mode)) === "pending" && status === "passed") pendingPassing++;
-	}
 	if (target === "reference") judgeReference(mode, result);
 	else {
 		judgeAdapter(mode, result);
 		judgeRunErrors(mode, result);
 	}
 	const summary = [...counts].sort().map(([s, n]) => `${s}=${n}`).join(" ");
-	console.log(`conformance ${target} ${mode}: ${result.tests.size} ran, ${result.unloaded.size} files did not load, ${result.suiteErrors.size} failed outside tests; rows: ${summary}; pending now passing: ${pendingPassing}`);
+	console.log(`conformance ${target} ${mode}: ${result.tests.size} ran, ${result.unloaded.size} files did not load, ${result.suiteErrors.size} failed outside tests; rows: ${summary}`);
 }
-console.log(`conformance exclusions: ${exclusions.tests.length} (reviewed: ${exclusions.reviewed.count})`);
+console.log(`conformance exclusions: ${exclusions.tests.length} (reviewed: ${exclusions.reviewed.count}, added since: ${added.size})`);
 
 if (problems.length > 0) {
 	console.error(`conformance: ${problems.length} problem(s):`);

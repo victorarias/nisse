@@ -34,7 +34,6 @@ time, and every connection sees it end as `succeeded`, `failed` or
   `"phase": "signed_out"`, so open TUIs show the provider signed out.
 - `signin-cannot` refuses an unknown provider, one with nothing to sign in to,
   and a method the provider does not offer.
-- `signin-real` [pending zero-pending] finishes a ChatGPT or Claude sign-in and names the account.
 
 ## How to get to it
 

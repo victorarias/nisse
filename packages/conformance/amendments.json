@@ -1209,5 +1209,68 @@
   "spec": "9.3",
   "rewrite": "Check one loader call and one result per shared load instead of the identity of the returned Promises.",
   "private": "Promise identity of concurrent calls; nisse's transcript returns Effects"
+ },
+ {
+  "test": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > takes the durability receipt inside the commit, and adopts once Storage resolved",
+  "owner": "zero-pending",
+  "spec": "4",
+  "rewrite": "Keep the storage call order and the published snapshot without spying on Transaction.adopt.",
+  "private": "Transaction.prototype.adopt"
+ },
+ {
+  "test": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > fails the Session without discarding when Storage rejects after adoption",
+  "owner": "zero-pending",
+  "spec": "10.1",
+  "rewrite": "Keep the rejection and the Session closed failed with that error without spying on Transaction.discard.",
+  "private": "Transaction.prototype.discard"
+ },
+ {
+  "test": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > discards the staged changes when Storage rejects before adoption",
+  "owner": "zero-pending",
+  "spec": "10.1",
+  "rewrite": "Keep the rejection and the Session closed failed with that error without spying on Transaction.discard.",
+  "private": "Transaction.prototype.discard"
+ },
+ {
+  "test": "upstream/test/session-group-commit.test.ts :: group commit: a failure between two publications > checks the failure when a storage's scope runs a publication it deferred, not when it was asked to",
+  "owner": "zero-pending",
+  "spec": "10.1",
+  "rewrite": "Fail the Session while a commit's storage call is held, then release it: nothing is published, the commit rejects SessionFailed with the first error, and a reopen recovers it.",
+  "private": "the storage's publishing scope (D5)"
+ },
+ {
+  "test": "upstream/test/harness-scheduler-retention.test.ts :: scheduler retention > loads the chain of new work below a forgotten conversation before admitting it, and keeps the scope busy",
+  "owner": "zero-pending",
+  "spec": "5.4",
+  "rewrite": "While the chain read is held, idle waits on the conversation and its parent; it resolves once the read and the work end.",
+  "private": "whether the commit waits for the chain load"
+ },
+ {
+  "test": "upstream/test/harness-storage-failure.test.ts :: a failed Storage call > does not fail it for a read its caller cancelled",
+  "owner": "zero-pending",
+  "spec": "10.1",
+  "rewrite": "Abort the caller while its read is held: the read rejects with the abort reason, and a later commit resolves.",
+  "private": "the Context Storage receives, which D6 removes from the port"
+ },
+ {
+  "test": "upstream/test/harness-sleep.test.ts :: sleeping tasks > sleeps without an invocation and resumes at its checkpoint once due",
+  "owner": "zero-pending",
+  "spec": "5.6",
+  "rewrite": "Drop onWake and its assertions; keep the stored sleep, inspect and graph states, wake(), early resumes running nothing, and one run at its time.",
+  "private": "onWake (D5)"
+ },
+ {
+  "test": "upstream/test/harness-sleep.test.ts :: sleeping tasks > resumes a due sleep with its timer without onWake, with background timers declined",
+  "owner": "zero-pending",
+  "spec": "5.6",
+  "rewrite": "Sleep on the real clock with no host timers: the kernel's own timer resumes the task.",
+  "private": "host setTimer declining (D5)"
+ },
+ {
+  "test": "upstream/test/harness-reports.test.ts :: reports > tell extension, listener, wake, and timer failures from a failed Session",
+  "owner": "zero-pending",
+  "spec": "10.1",
+  "rewrite": "Drop the onWake and setTimer reports; keep the extension, listener and storage_failed reports.",
+  "private": "onWake and host setTimer (D5)"
  }
 ]

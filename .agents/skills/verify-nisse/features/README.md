@@ -68,14 +68,13 @@ Each sub-feature id is one use case, and the map is what `bun run coverage`
 (part of `bun run check`) measures. A sub-feature line is:
 
 ```text
-- `fork-at-entry` [kernel, pending harness-views] one line on what it does
+- `fork-at-entry` [kernel] one line on what it does
 - `queue-show` shows a waiting prompt ...
 ```
 
-The bracket is optional. No bracket means a covered `client` use case. `kernel`
-marks one with no client path. `pending <child step>` names the step of the
-kernel rebuild that adds its test; remove it when the test lands. The check
-fails on a pending kernel use case that is already covered.
+The bracket is optional. No bracket means a `client` use case. `[kernel]`
+marks one with no client path. Every use case is covered; the check fails on
+one that is not, so a new feature adds its id and its test in the same change.
 
 - A test covers a use case by starting its title with the id:
   `test("fork-at-entry: a fork sees only entries up to its fork point", ...)`.
@@ -83,7 +82,7 @@ fails on a pending kernel use case that is already covered.
   test must name at least one known id. Skipped tests do not count.
 - A `client` use case needs a test in `packages/nisse/test` that names it.
 - A `kernel` use case needs a test that names it, or a mapped upstream row
-  settled to `pass`.
+  that is `pass`.
 - `use-cases.json` maps each `packages/conformance/expected.json` row to the
   use cases it proves, because upstream titles cannot change. Every row that
   is not excluded must be mapped.

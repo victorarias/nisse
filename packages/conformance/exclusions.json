@@ -125,7 +125,7 @@
    "reason": "pinned, no spec section backs it: PartialChanges from src/harness/partial-changes.ts: Recovery from a failed partial commit is a private class contract; a failed commit fails the Session publicly, so this path is unreachable through the API."
   },
   {
-   "test": "upstream/test/harness-registry-reader.test.ts :: Durable's views from other objects (slice 8 \u00a75, S1) > a follower of a contributed Harness fails when that Harness's Session closes, and follows the next one",
+   "test": "upstream/test/harness-registry-reader.test.ts :: Durable's views from other objects (slice 8 §5, S1) > a follower of a contributed Harness fails when that Harness's Session closes, and follows the next one",
    "decision": "D14",
    "reason": "needs chord's root host and facets, which D5's removal of the store adapter takes out"
   },
@@ -1605,22 +1605,22 @@
    "reason": "key-value store adapter"
   },
   {
-   "test": "upstream/test/store-storage.test.ts :: commits (slice 6b \u00a71.3, \u00a72.5) > counts four statements for an entry append and for a delta, with a host attached",
+   "test": "upstream/test/store-storage.test.ts :: commits (slice 6b §1.3, §2.5) > counts four statements for an entry append and for a delta, with a host attached",
    "decision": "D5",
    "reason": "key-value store adapter"
   },
   {
-   "test": "upstream/test/store-storage.test.ts :: commits (slice 6b \u00a71.3, \u00a72.5) > publishes each commit of a Session inside the attached host's batch, and plainly without a host",
+   "test": "upstream/test/store-storage.test.ts :: commits (slice 6b §1.3, §2.5) > publishes each commit of a Session inside the attached host's batch, and plainly without a host",
    "decision": "D5",
    "reason": "key-value store adapter"
   },
   {
-   "test": "upstream/test/store-storage.test.ts :: Durable's views as Chord sources on the store (slice 6b \u00a73) > a deferred Durable commit, then an immediate one, reach the followed document in order",
+   "test": "upstream/test/store-storage.test.ts :: Durable's views as Chord sources on the store (slice 6b §3) > a deferred Durable commit, then an immediate one, reach the followed document in order",
    "decision": "D5",
    "reason": "key-value store adapter"
   },
   {
-   "test": "upstream/test/store-storage.test.ts :: Durable's views as Chord sources on the store (slice 6b \u00a73) > a derive over the conversation view and the task graph: one frame per Durable commit, both views in one batch",
+   "test": "upstream/test/store-storage.test.ts :: Durable's views as Chord sources on the store (slice 6b §3) > a derive over the conversation view and the task graph: one frame per Durable commit, both views in one batch",
    "decision": "D5",
    "reason": "key-value store adapter"
   },
@@ -1635,7 +1635,7 @@
    "reason": "key-value store adapter"
   },
   {
-   "test": "upstream/test/store-storage.test.ts :: reads (slice 6b \u00a71.4, \u00a72.4) > a request error inside a multi-query read rejects that read only; the store goes on",
+   "test": "upstream/test/store-storage.test.ts :: reads (slice 6b §1.4, §2.4) > a request error inside a multi-query read rejects that read only; the store goes on",
    "decision": "D5",
    "reason": "key-value store adapter"
   },
@@ -1978,6 +1978,92 @@
    "test": "upstream/test/system-order-cache-e2e.test.ts :: Durable system message order e2e > keeps the prompt cache across a tool change only when the system message leads",
    "decision": "D8",
    "reason": "real Anthropic token and pi-ai's provider code (D8)"
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: outcomes > makes every outcome after a fatal failure SessionFailed, and keeps the earlier ones",
+   "decision": "D5",
+   "reason": "group commit: Asserts the parts of a call share one Storage.commit call; the rest is covered by the refused-part row."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: the storage's publication scope > publishes each commit inside the storage's scope, the next only once one it runs later ran",
+   "decision": "D5",
+   "reason": "group commit: Drives the storage's publishing scope, which went with group commit."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: the storage's publication scope > reports a scope that throws instead of running the publication, and publishes the commit",
+   "decision": "D5",
+   "reason": "group commit: Drives the storage's publishing scope, which went with group commit."
+  },
+  {
+   "test": "upstream/test/session-group-commit.test.ts :: group commit: a failure between two publications > publishes no part of a call after the Session fails in a continuation of an earlier part",
+   "decision": "D5",
+   "reason": "group commit: Needs two parts of one storage call published a macrotask apart."
+  },
+  {
+   "test": "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > makes a reader of the roots wait for a creation under a root a pending end would unlist",
+   "decision": "D5",
+   "reason": "group commit: Asserts a per-key gate for a creation admitted but not yet published; with one storage call at a time no job runs while a commit is unpublished."
+  },
+  {
+   "test": "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > walks a creation's memberships past an ancestor whose pending end is unpublished",
+   "decision": "D5",
+   "reason": "group commit: Asserts a per-key gate for a creation admitted but not yet published; with one storage call at a time no job runs while a commit is unpublished."
+  },
+  {
+   "test": "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > reserves the live work of the owner above an ancestor whose end is pending, for a creation below it",
+   "decision": "D5",
+   "reason": "group commit: Asserts a per-key gate for a creation admitted but not yet published; with one storage call at a time no job runs while a commit is unpublished."
+  },
+  {
+   "test": "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > keeps the nodes a chain load installed for an unpublished creation through the sweep",
+   "decision": "D14",
+   "reason": "pinned, no spec section backs it: SCHEDULER_INDEX_SIZES scheduler counters: Asserts private scheduler index sizes; the spec promises no size for these indexes."
+  },
+  {
+   "test": "upstream/test/harness-group-commit.test.ts :: group commit: outcomes and publication through the Harness > runs a wait continuation of one commit before the next commit of the same call is published",
+   "decision": "D5",
+   "reason": "group commit: Asserts spacing between two commits of one storage call."
+  },
+  {
+   "test": "upstream/test/harness-sleep.test.ts :: sleeping tasks > disarms the sleep timer when the sleep is aborted and when the Harness closes",
+   "decision": "D5",
+   "reason": "alarms: Observes the sleep timer through the host setTimer hook; the kernel arms it on Effect's Clock."
+  },
+  {
+   "test": "upstream/test/harness-sleep.test.ts :: sleeping tasks > disarms an invocation's timers when it ends, and a late fire runs nothing",
+   "decision": "D5",
+   "reason": "alarms: Observes runtime.setTimer through the host setTimer hook, which the kernel does not have."
+  },
+  {
+   "test": "upstream/test/harness-blocked.test.ts :: tasks that cannot run > tells the graph and the host when a migration fails",
+   "decision": "D5",
+   "reason": "alarms: Asserts the onWake call; the graph and inspect sides pass in other rows."
+  },
+  {
+   "test": "upstream/test/harness-blocked.test.ts :: tasks that cannot run > shows a task without a definition as blocked, and wakes the host once a registry change unblocks it",
+   "decision": "D5",
+   "reason": "alarms: Asserts the onWake call; blocked and unblocked by a registry change pass in other rows."
+  }
+ ],
+ "additions": [
+  {
+   "by": "zero-pending (s-zrwpy1)",
+   "decisions": "D5 and D14, as for the reviewed rows",
+   "tests": [
+    "upstream/test/session-group-commit.test.ts :: group commit: outcomes > makes every outcome after a fatal failure SessionFailed, and keeps the earlier ones",
+    "upstream/test/session-group-commit.test.ts :: group commit: the storage's publication scope > publishes each commit inside the storage's scope, the next only once one it runs later ran",
+    "upstream/test/session-group-commit.test.ts :: group commit: the storage's publication scope > reports a scope that throws instead of running the publication, and publishes the commit",
+    "upstream/test/session-group-commit.test.ts :: group commit: a failure between two publications > publishes no part of a call after the Session fails in a continuation of an earlier part",
+    "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > makes a reader of the roots wait for a creation under a root a pending end would unlist",
+    "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > walks a creation's memberships past an ancestor whose pending end is unpublished",
+    "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > reserves the live work of the owner above an ancestor whose end is pending, for a creation below it",
+    "upstream/test/harness-group-commit.test.ts :: group commit: scheduler regions > keeps the nodes a chain load installed for an unpublished creation through the sweep",
+    "upstream/test/harness-group-commit.test.ts :: group commit: outcomes and publication through the Harness > runs a wait continuation of one commit before the next commit of the same call is published",
+    "upstream/test/harness-sleep.test.ts :: sleeping tasks > disarms the sleep timer when the sleep is aborted and when the Harness closes",
+    "upstream/test/harness-sleep.test.ts :: sleeping tasks > disarms an invocation's timers when it ends, and a late fire runs nothing",
+    "upstream/test/harness-blocked.test.ts :: tasks that cannot run > tells the graph and the host when a migration fails",
+    "upstream/test/harness-blocked.test.ts :: tasks that cannot run > shows a task without a definition as blocked, and wakes the host once a registry change unblocks it"
+   ]
   }
  ]
 }
