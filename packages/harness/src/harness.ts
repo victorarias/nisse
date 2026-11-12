@@ -322,7 +322,15 @@ export const openHarness = <T extends ToolRegistration>(
         restartLimit: () => host.settings().restartLimit,
         limitsRestarts: (kind) => limitsRestarts(host.runTasks, kind),
         settleOutcome: (tx, record, outcome) =>
-          settleSchedulerOutcome(tx, record, outcome, host.runTasks, options.runEnded),
+          settleSchedulerOutcome(
+            tx,
+            record,
+            outcome,
+            host.runTasks,
+            options.runEnded,
+            host.settings().afterFailedRun,
+            options.inputWithdrawn,
+          ),
         withdrawInputs: (tx, conversationId) =>
           withdrawQueuedInputs(tx, conversationId, "aborted", options.inputWithdrawn),
         queuedInputs: (reads) => queuedConversations(reads),

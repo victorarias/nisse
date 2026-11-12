@@ -540,6 +540,44 @@ describe("runs", () => {
       }),
     )
   })
+
+  test("queue-run: an input queued behind a run whose task faults is withdrawn, unless afterFailedRun keeps it", async () => {
+    const FAULTY = "test.faulty-run"
+    for (const [afterFailedRun, queued] of [
+      ["keep", { status: "queued" }],
+      ["continue", { status: "unanswered", reason: "run_failed" }],
+      ["withdraw", { status: "unanswered", reason: "run_failed" }],
+    ] as const) {
+      await run(
+        Effect.gen(function* () {
+          // A run task whose phase throws once let go: the scheduler faults it, a fault no run task's own code ends.
+          const release = yield* Deferred.make<void>()
+          const Faulty = defineTask<Record<string, never>, { readonly phase: "run" }, null, TaskServices>({
+            name: FAULTY,
+            version: 1,
+            initial: () => ({ phase: "run" }),
+            phases: { run: () => Effect.andThen(Deferred.await(release), Effect.fail(new Error("phase broke"))) },
+            abort: (_task, runtime) =>
+              runtime.commit(() => Effect.succeed({ status: "terminal", outcome: { status: "aborted" } })),
+          })
+          const registry = createRegistry()
+          registry.install(defineExtension({ name: "runs", tasks: [Faulty] }))
+          const harness = yield* open(databasePath(), registry, {
+            settings: { afterFailedRun },
+            runTasks: { kinds: new Set([FAULTY]), choose: () => Faulty },
+          })
+          const root = yield* harness.root({})
+          const first = yield* root.submit({ type: "input", content: "first" })
+          const second = yield* root.submit({ type: "input", content: "second", whenBusy: "followUp" })
+          expect(yield* second.status).toMatchObject({ status: "queued" })
+          yield* Deferred.succeed(release, undefined)
+          expect(yield* first.wait).toMatchObject({ status: "unanswered", reason: "faulted" })
+          yield* harness.waitForIdle
+          expect(yield* second.status).toMatchObject(queued)
+        }),
+      )
+    }
+  })
 })
 
 describe("tasks", () => {

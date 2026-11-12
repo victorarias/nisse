@@ -432,6 +432,34 @@ test("answer-exec-fail: nisse exec exits 1 when an interrupt withdraws its queue
   client.close()
 }, 30_000)
 
+test("answer-exec: nisse exec whose prompt waits behind a run that fails prints its answer, instead of waiting for good", async () => {
+  const nisseHome = home()
+  const env = await scriptEnv(nisseHome, [
+    { text: "one two three four five six seven eight nine ten", delayMs: 300, fail: "provider went away" },
+    { text: "second answer" },
+  ])
+  await serving(env)
+  const client = await RawClient.connect(nisseHome.socket)
+  await client.call("conversation/start", { id: "shared", cwd: nisseHome.dir })
+  const view = watchView(client, "shared")
+  await view.until(() => true)
+  await submit(client, "shared", "count")
+  const exec = nisse(["exec", "-c", "shared", "second"], env)
+  const inbox = (watch: ViewWatch) => (watch.view().docs["pi.inbox"] as { items: Array<unknown> }).items
+  await view.until((watch) => inbox(watch).length === 1, 10_000)
+  const result = await finished(exec)
+  expect(result).toMatchObject({ code: 0, stdout: "second answer\n" })
+  expect(await transcriptOf(nisseHome, "shared")).toEqual([
+    "user: count",
+    "assistant: one two three four five six seven eight nine ten [error]",
+    "run_end: failed (provider went away)",
+    "user: second",
+    "assistant: second answer",
+    "run_end: answered",
+  ])
+  client.close()
+}, 30_000)
+
 test("mode-json, exec-json: nisse exec --json prints the view, then each commit's changes, until the run ends", async () => {
   const nisseHome = home()
   const result = await finished(nisse(["exec", "--json", "hello there"], await scriptEnv(nisseHome)))

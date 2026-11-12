@@ -93,6 +93,32 @@ test("queue-run: prompts sent while nisse is working wait and run in order, each
   client.close()
 })
 
+test("queue-run: a prompt sent while nisse works runs after the run fails, instead of waiting for another prompt", async () => {
+  await using server = await runningServer([
+    { text: "half an answer", delayMs: 100, fail: "provider went away" },
+    { text: "second answer" },
+  ])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "one")
+  await view.until(speaking)
+  await submit(client, conversation, "two")
+  // Queued behind the run that is about to fail, not started after it.
+  await view.until((watch) => (watch.view().docs["pi.inbox"] as { items: Array<unknown> }).items.length === 1)
+  await view.until(settled(2))
+  expect(transcript(view.view().entries)).toEqual([
+    "user: one",
+    "assistant: half an answer [error]",
+    "run_end: failed (provider went away)",
+    "user: two",
+    "assistant: second answer",
+    "run_end: answered",
+  ])
+  expect(view.view().docs["pi.inbox"]).toEqual({ items: [] })
+  client.close()
+})
+
 test("interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted", async () => {
   await using server = await runningServer([{ text: "one two three four five six seven eight", delayMs: 100 }])
   const client = await RawClient.connect(server.home.socket)
@@ -1126,6 +1152,69 @@ const gate = (name: string) => {
   }
 }
 const awaitGate = (name: string) => `Effect.promise(() => globalThis[${JSON.stringify(name)}])`
+
+/** A signal the extension gives the test: it calls the function the test put under `name`. */
+const signal = (name: string) => {
+  const given = Promise.withResolvers<void>()
+  ;(globalThis as Record<string, unknown>)[name] = given.resolve
+  return {
+    given: given.promise,
+    [Symbol.dispose]: () => delete (globalThis as Record<string, unknown>)[name],
+  }
+}
+
+/** A tool that runs until interrupted, then holds its abort open until the `release` gate opens. */
+const hold = `import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    tools.add(
+      Tool.make({
+        name: "Hold",
+        description: "Holds until interrupted, then until released",
+        input: Schema.Struct({}),
+        readOnly: true,
+        run: () =>
+          Effect.andThen(
+            Effect.sync(() => globalThis.holdStarted()),
+            Effect.never.pipe(
+              Effect.onInterrupt(() => Effect.andThen(Effect.sync(() => globalThis.holdAborting()), ${awaitGate("holdRelease")})),
+            ),
+          ),
+      }),
+    )
+  }),
+)`
+
+test("queue-run, interrupt-withdraw: a prompt sent after an interrupt, while the run still stops, runs once it stopped", async () => {
+  using started = signal("holdStarted")
+  using aborting = signal("holdAborting")
+  using release = gate("holdRelease")
+  const home = homeWithExtensions({ "hold.ts": hold })
+  await using server = await runningServer([{ tool: { name: "Hold", input: {} } }, { text: "late answer" }], { home })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, home.dir)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "go")
+  await deadline(started.given, 5000, "Hold started")
+  // The interrupt withdraws what waits now and answers once the run stopped, which the held tool delays.
+  const interrupted = client.call("conversation/interrupt", { conversation })
+  await deadline(aborting.given, 5000, "Hold interrupted")
+  await submit(client, conversation, "late")
+  release.open()
+  await interrupted
+  await view.until(settled(2))
+  expect(transcript(view.view().entries)).toEqual([
+    "user: go",
+    "assistant: ",
+    "run_end: interrupted (aborted)",
+    "user: late",
+    "assistant: late answer",
+    "run_end: answered",
+  ])
+  client.close()
+  rmSync(home.dir, { recursive: true })
+})
 
 const refusingAfter = (reason: string, loadsAfter?: string) => `import { Extension, Tool } from "@nisse/extension"
 import { Effect } from "effect"

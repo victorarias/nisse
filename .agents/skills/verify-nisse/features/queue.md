@@ -8,8 +8,9 @@ the order sent.
 
 - `queue-show` shows a waiting prompt as `queued · <text>` while the prompt
   panel is titled `QUEUE · tab`.
-- `queue-run` runs it after the current run ends and removes it from the
-  queue.
+- `queue-run` runs it after the current run ends, answered or failed, and
+  removes it from the queue. A run whose task faults on a bug withdraws the
+  prompts queued behind it instead, each marked `nisse.withdrawn`.
 - `queue-shared` shows the queue to a second client.
 - `queue-idempotent` queues a submission once however often its `requestId`
   is sent.
@@ -66,6 +67,14 @@ Preconditions:
   `pi.assistant` `You said: third` (the script has run out, so Nisse echoes)
   and `nisse.run_end`: `second` once, and an empty inbox.
 
+- **After a failure.** In a fresh run whose script is
+  `[{"text": "one two three four five six seven eight", "delayMs": 1000, "fail": "provider went away"}, {"text": "fast reply"}]`,
+  queue `second` behind `first` in the TUI as in **Queue a prompt**, then run
+  `drive.ts r tui wait --timeout 20000 'fast reply'`, `drive.ts r tui wait READY`,
+  `drive.ts r tui screen after-failure`. The screen shows the failed run's
+  `provider went away`, then `fast reply` answering `second`, and the queue is
+  empty.
+
 ## Contexts
 
 - **Second client.** The queue shows to every client.
@@ -76,11 +85,17 @@ Wire, `packages/nisse/test/wire.test.ts`:
 
 - queue-idempotent: submitting again with the same request id is answered once
 - queue-run: prompts sent while nisse is working wait and run in order, each to its own end
+- queue-run: a prompt sent while nisse works runs after the run fails, instead of waiting for another prompt
+- queue-run, interrupt-withdraw: a prompt sent after an interrupt, while the run still stops, runs once it stopped
 - submit-author, queue-shared: every client sees who wrote each prompt, while it waits and once it runs
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
 - queue-show: a prompt sent while nisse works waits in the queue, then runs
+
+Package, `packages/harness/test/harness.test.ts` (no wire test can make a run task fault):
+
+- queue-run: an input queued behind a run whose task faults is withdrawn, unless afterFailedRun keeps it
 
 Provider, `packages/nisse/test/claude.test.ts`:
 

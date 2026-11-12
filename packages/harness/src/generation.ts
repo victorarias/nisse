@@ -470,6 +470,8 @@ export const GenerationTask: Task<GenerationInput, GenerationCheckpoint, Generat
         checkpoint.phase === "tools" ? yield* readCalls(runtime, checkpoint.assistant, checkpoint.pending) : []
       yield* runtime.commit((tx) =>
         Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
+          // An input submitted after the abort withdrew the queue, before this commit, is queued behind the run.
+          const failure = yield* prepareFailure(tx, ctx)
           const live = yield* tx.doc(LiveDoc, conversationId)
           yield* convertPartial(tx, live, conversationId)
           for (const call of unstarted) {
@@ -481,7 +483,7 @@ export const GenerationTask: Task<GenerationInput, GenerationCheckpoint, Generat
             yield* appendToolResult(tx, conversationId, call, result, { timestamp: runtime.now() })
           }
           // In `finish` and `drain` the run answered already: it ends without a failure, its inputs stay `done`.
-          yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "aborted" }, api.runOwner)
+          yield* endFailedRun(tx, ctx, live, failure, { status: "unanswered", reason: "aborted" })
           return { status: "terminal", outcome: { status: "aborted" } }
         }),
       )

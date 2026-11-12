@@ -11,7 +11,8 @@ can interrupt any conversation's run.
 - `interrupt-withdraw` withdraws the prompts waiting in the queue: each leaves
   the queue without running, and the transcript gets a `nisse.withdrawn` entry
   naming its `requestId`, so a client that lost its watch learns the prompt's
-  fate from entries alone.
+  fate from entries alone. A prompt sent after the interrupt, while the run
+  still stops, waits and runs once it stopped.
 
 ## How to get to it
 
@@ -69,6 +70,7 @@ Wire, `packages/nisse/test/wire.test.ts`:
 
 - interrupt-wire: interrupting keeps what nisse already said and marks the run interrupted
 - interrupt-withdraw: interrupting withdraws the prompts that wait, and the transcript names each by its requestId
+- queue-run, interrupt-withdraw: a prompt sent after an interrupt, while the run still stops, runs once it stopped
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
