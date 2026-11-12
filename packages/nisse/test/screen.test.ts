@@ -314,11 +314,13 @@ test("signin-shared: an open TUI shows a sign-in another connection finished", a
   const auth = other.watch<AuthState>("auth/watch")
   const started = (await other.call("auth/start", { provider: "claude" })).result as AuthState
   await auth.until((states) => states.some((state) => state.phase === "waiting"))
-  await other.call("auth/respond", {
+  // Answered the moment the waiting state shows, as a fast client does.
+  const answered = await other.call("auth/respond", {
     provider: "claude",
     flow: started.flow,
     response: { _tag: "terminal_exited", success: true },
   })
+  expect(answered.result).toEqual({ accepted: true })
   await auth.until((states) => states.at(-1)?.phase === "succeeded", 30_000)
   other.close()
   await session.waitFor((screen) => /● claude +person@example\.com · Claude Max/.test(screen))
