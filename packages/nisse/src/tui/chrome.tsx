@@ -53,6 +53,8 @@ const promptKeys: Array<KeyBinding> = [
 /** The conversation as the chrome draws it. */
 export interface Screen {
   readonly id: string
+  /** The conversation it was forked from, and that one's title. */
+  readonly fork?: { readonly of: string; readonly title?: string | undefined } | undefined
   readonly cwd: string | undefined
   readonly model: ModelSelection | undefined
   readonly status: TreeStatus["status"]
@@ -166,6 +168,18 @@ const elapsed = (since: number | undefined, now: number) => {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`
 }
 
+/**
+ * Why a compaction failed, named once: the harness words a summarizer's failure `Summarization failed: <cause>`, which
+ * under `compaction failed` would say it twice.
+ */
+const compactionFailed = (error: string) => `compaction failed: ${error.replace(/^Summarization failed: /, "")}`
+
+/** `text` cut to `max` characters, ending in … when cut. */
+export const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
+
+/** The most of a conversation's title a line shows: a first prompt can be a pasted file. */
+export const TITLE_WIDTH = 40
+
 /** 1234 as 1.2k, 1234567 as 1.2M. */
 export const tokens = (count: number) =>
   count < 1000
@@ -232,15 +246,29 @@ const StatusBar = (props: { screen: Screen }) => {
   )
 }
 
+// Only the directory gives way when the row is too narrow: the rest says which conversation this is.
 const Header = (props: { screen: Screen }) => (
   <box flexDirection="row" height={1} backgroundColor={color.panel}>
-    <text fg={color.background} bg={color.cyan}>
+    <text fg={color.background} bg={color.cyan} flexShrink={0}>
       {" N I S S E ▓▒░"}
     </text>
-    <text fg={color.faint}> // </text>
-    <text fg={color.dim}>conversation </text>
-    <text fg={color.ink}>{props.screen.id}</text>
-    <Show when={props.screen.cwd}>{(cwd) => <text fg={color.dim}>{`  ${cwd()}`}</text>}</Show>
+    <text fg={color.faint} flexShrink={0}>
+      {" // "}
+    </text>
+    <text fg={color.dim} flexShrink={0}>
+      {"conversation "}
+    </text>
+    <text fg={color.ink} flexShrink={0}>
+      {props.screen.id}
+    </text>
+    <Show when={props.screen.fork}>
+      {(fork) => (
+        <text fg={color.violet} flexShrink={0}>
+          {`  ⑂ fork of ${fork().of}${fork().title === undefined ? "" : ` · ${fork().title}`}`}
+        </text>
+      )}
+    </Show>
+    <Show when={props.screen.cwd}>{(cwd) => <text fg={color.dim} flexShrink={1}>{`  ${cwd()}`}</text>}</Show>
   </box>
 )
 
@@ -391,7 +419,7 @@ export const Shell = (props: {
         <Show when={props.screen.live.compactionFailure}>
           {(failure) => (
             <text fg={color.yellow} marginLeft={1} flexShrink={0}>
-              {`✗ compaction failed: ${failure()}`}
+              {`✗ ${compactionFailed(failure())}`}
             </text>
           )}
         </Show>

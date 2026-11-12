@@ -9,6 +9,8 @@ import type {
   EntryId,
   EntryQuery,
   EntryRecord,
+  Page,
+  PageReader,
   ReadFailure,
   Session,
   TaskId,
@@ -108,7 +110,7 @@ export class ContextReads {
   /** `readContext`, with the newest entry known from commits. Keeps nothing. */
   read(conversationId: ConversationId, at?: EntryId): Effect.Effect<ContextView, ReadFailure> {
     return Effect.gen({ self: this }, function* () {
-      return yield* deriveContext(this.#session, conversationId, yield* this.#bounds(conversationId, at, false))
+      return yield* this.#start(conversationId, at, false, rangeQuery, deriveContext(conversationId))
     })
   }
 
@@ -121,40 +123,19 @@ export class ContextReads {
     conversationId: ConversationId,
     at?: EntryId,
   ): Effect.Effect<ContextView, ReadFailure> {
-    const read = Effect.gen({ self: this }, function* () {
+    const read = Effect.suspend(() => {
       const previous = this.#unexpired(conversationId)?.range
       const visible = at !== undefined && previous !== undefined && rangeEntry(previous, at) !== undefined
-      const bounds = yield* this.#bounds(conversationId, at, visible)
-      if (bounds === undefined) return emptyView()
-      freezeJson(bounds.head)
-      const current = at === undefined
-      let range: ContextRange
-      if (previous === undefined || previous.bounds.head?.id !== bounds.head?.id) {
-        const entries = yield* scanRange(this.#session, conversationId, rangeQuery(bounds))
-        range = deriveRange(bounds, freezeJson(entries), current)
-      } else if (bounds.tail === previous.bounds.tail) {
-        range = previous
-      } else if (bounds.tail < previous.bounds.tail) {
-        range = deriveRange(
-          bounds,
-          previous.entries.filter((entry) => entry.id <= bounds.tail),
-          false,
-        )
-      } else {
-        const minEntryId = (previous.bounds.tail + 1) as EntryId
-        const added = yield* scanRange(this.#session, conversationId, { minEntryId, maxEntryId: bounds.tail })
-        range = extendRange(previous, bounds, freezeJson(added), current)
-      }
-      // Entries committed while the scan ran beside the line are not in it: current only if none was.
-      if (range.current && this.#latest.get(conversationId) !== range.bounds.tail) range = { ...range, current: false }
-      this.#keep(reader, conversationId, range)
-      const { view } = range
-      return {
-        ...view,
-        entries: [...view.entries],
-        contributions: [...view.contributions],
-        messages: [...view.messages],
-      }
+      // What to scan: the whole range under a new head marker, else only the entries after the kept tail.
+      const plan = (bounds: ContextBounds) =>
+        previous === undefined || previous.bounds.head?.id !== bounds.head?.id
+          ? rangeQuery(bounds)
+          : bounds.tail > previous.bounds.tail
+            ? { minEntryId: (previous.bounds.tail + 1) as EntryId, maxEntryId: bounds.tail }
+            : undefined
+      return this.#start(conversationId, at, visible, plan, (start, page) =>
+        this.#rangeFor(reader, conversationId, at, previous, start, page),
+      )
     })
     return Effect.suspend(() => {
       const known = this.#readers.get(reader.taskId)
@@ -170,17 +151,70 @@ export class ContextReads {
     })
   }
 
+  /** The view of the range `start` gives, from `previous` and what `page` scans, kept for `reader`. */
+  #rangeFor(
+    reader: ContextReader,
+    conversationId: ConversationId,
+    at: EntryId | undefined,
+    previous: ContextRange | undefined,
+    start: ReadStart | undefined,
+    page: PageReader,
+  ): Effect.Effect<ContextView, ReadFailure> {
+    return Effect.gen({ self: this }, function* () {
+      if (start === undefined) return emptyView()
+      const { bounds } = start
+      freezeJson(bounds.head)
+      const current = at === undefined
+      let range: ContextRange
+      if (previous === undefined || previous.bounds.head?.id !== bounds.head?.id) {
+        const entries = yield* scanRange(page, conversationId, start.scan!)
+        range = deriveRange(bounds, freezeJson(entries), current)
+      } else if (bounds.tail === previous.bounds.tail) {
+        range = previous
+      } else if (bounds.tail < previous.bounds.tail) {
+        range = deriveRange(
+          bounds,
+          previous.entries.filter((entry) => entry.id <= bounds.tail),
+          false,
+        )
+      } else {
+        const added = yield* scanRange(page, conversationId, start.scan!)
+        range = extendRange(previous, bounds, freezeJson(added), current)
+      }
+      // Entries committed while the scan ran beside the line are not in it: current only if none was.
+      if (range.current && this.#latest.get(conversationId) !== range.bounds.tail) range = { ...range, current: false }
+      this.#keep(reader, conversationId, range)
+      const { view } = range
+      return {
+        ...view,
+        entries: [...view.entries],
+        contributions: [...view.contributions],
+        messages: [...view.messages],
+      }
+    })
+  }
+
   /** The bounds; the newest entry is known from commits, so this rarely reads Storage for it. */
-  #bounds(
+  #start<A>(
     conversationId: ConversationId,
     at: EntryId | undefined,
     visible: boolean,
-  ): Effect.Effect<ContextBounds | undefined, ReadFailure> {
-    return readBounds(this.#session, conversationId, at, visible, {
-      get: () => this.#latest.get(conversationId),
-      // On the line nothing unpublished appends to it: the probe holds until the next commit's entry.
-      set: (latest) => this.#remember(conversationId, latest),
-    })
+    plan: (bounds: ContextBounds) => ScanRange | undefined,
+    beside: (start: ReadStart | undefined, page: PageReader) => Effect.Effect<A, ReadFailure>,
+  ): Effect.Effect<A, ReadFailure> {
+    return readStart(
+      this.#session,
+      conversationId,
+      at,
+      visible,
+      plan,
+      {
+        get: () => this.#latest.get(conversationId),
+        // On the line nothing unpublished appends to it: the probe holds until the next commit's entry.
+        set: (latest) => this.#remember(conversationId, latest),
+      },
+      beside,
+    )
   }
 
   /**
@@ -331,54 +365,61 @@ export const readContext = (
   conversationId: ConversationId,
   at?: EntryId,
 ): Effect.Effect<ContextView, ReadFailure> =>
-  Effect.flatMap(readBounds(session, conversationId, at, false, undefined), (bounds) =>
-    deriveContext(session, conversationId, bounds),
-  )
+  readStart(session, conversationId, at, false, rangeQuery, undefined, deriveContext(conversationId))
 
-const deriveContext = (
-  session: Session,
-  conversationId: ConversationId,
-  bounds: ContextBounds | undefined,
-): Effect.Effect<ContextView, ReadFailure> =>
-  bounds === undefined
-    ? Effect.succeed(emptyView())
-    : Effect.map(
-        scanRange(session, conversationId, rangeQuery(bounds)),
-        (entries) => deriveRange(bounds, entries, false).view,
-      )
+const deriveContext =
+  (conversationId: ConversationId) =>
+  (start: ReadStart | undefined, page: PageReader): Effect.Effect<ContextView, ReadFailure> =>
+    start === undefined
+      ? Effect.succeed(emptyView())
+      : Effect.map(
+          scanRange(page, conversationId, start.scan!),
+          (entries) => deriveRange(start.bounds, entries, false).view,
+        )
+
+type ScanRange = Omit<EntryQuery, "conversationId">
+
+/** The bounds, and the range `plan` chose to scan for them. */
+type ReadStart = { readonly bounds: ContextBounds; readonly scan: ScanRange | undefined }
 
 /**
  * Reads the bounds in one step on the line: the newest entry (from `latest` when it knows it) or the visible cutoff
- * `at`, then the newest head marker at or before it. `visible` skips the check that `at` is visible.
+ * `at`, then the newest head marker at or before it. Then `beside` scans the range `plan` gives for them, page by page
+ * beside the line. `visible` skips the check that `at` is visible.
  */
-const readBounds = (
+const readStart = <A>(
   session: Session,
   conversationId: ConversationId,
   at: EntryId | undefined,
   visible: boolean,
+  plan: (bounds: ContextBounds) => ScanRange | undefined,
   latest: { get(): EntryId | null | undefined; set(latest: EntryId | null): void } | undefined,
-): Effect.Effect<ContextBounds | undefined, ReadFailure> =>
-  session.read((storage) =>
-    Effect.gen(function* () {
-      let tail: EntryId | undefined
-      if (at === undefined) {
-        const known = latest?.get()
-        if (known === undefined) {
-          const newest = yield* storage.scanEntries({ conversationId, order: "descending" }, 1, undefined)
-          tail = newest.items[0]?.id
-          latest?.set(tail ?? null)
+  beside: (start: ReadStart | undefined, page: PageReader) => Effect.Effect<A, ReadFailure>,
+): Effect.Effect<A, ReadFailure> =>
+  session.readBeside(
+    (storage) =>
+      Effect.gen(function* () {
+        let tail: EntryId | undefined
+        if (at === undefined) {
+          const known = latest?.get()
+          if (known === undefined) {
+            const newest = yield* storage.scanEntries({ conversationId, order: "descending" }, 1, undefined)
+            tail = newest.items[0]?.id
+            latest?.set(tail ?? null)
+          } else {
+            tail = known ?? undefined
+          }
+          if (tail === undefined) return undefined
         } else {
-          tail = known ?? undefined
+          if (!visible && (yield* storage.entry(conversationId, at)) === undefined) {
+            return yield* Effect.die(new Error(`Entry ${at} is not visible from conversation ${conversationId}`))
+          }
+          tail = at
         }
-        if (tail === undefined) return undefined
-      } else {
-        if (!visible && (yield* storage.entry(conversationId, at)) === undefined) {
-          return yield* Effect.die(new Error(`Entry ${at} is not visible from conversation ${conversationId}`))
-        }
-        tail = at
-      }
-      return { head: yield* storage.findLatestHeadMarker(conversationId, tail), tail }
-    }),
+        const bounds: ContextBounds = { head: yield* storage.findLatestHeadMarker(conversationId, tail), tail }
+        return { bounds, scan: plan(bounds) }
+      }),
+    beside,
   )
 
 function emptyView(): ContextView {
@@ -393,19 +434,19 @@ function rangeQuery(bounds: ContextBounds): Omit<EntryQuery, "conversationId"> {
 
 /** Visible entries within `range`, oldest first, read page by page beside the line: none of them changes. */
 const scanRange = (
-  session: Session,
+  page: PageReader,
   conversationId: ConversationId,
-  range: Omit<EntryQuery, "conversationId">,
+  range: ScanRange,
 ): Effect.Effect<EntryRecord[], ReadFailure> =>
   Effect.gen(function* () {
     const entries: EntryRecord[] = []
     let cursor: Cursor | undefined
     do {
-      const page = yield* session.readOffLine((storage) =>
+      const next: Page<EntryRecord> = yield* page((storage) =>
         storage.scanEntries({ conversationId, ...range }, SCAN_PAGE_SIZE, cursor),
       )
-      entries.push(...page.items)
-      cursor = page.next
+      entries.push(...next.items)
+      cursor = next.next
     } while (cursor !== undefined)
     return entries.reverse()
   })

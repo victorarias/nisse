@@ -8,7 +8,7 @@ Runs, requests and tools emit spans and metrics, and problems nobody asked about
 - `telemetry-metrics` [kernel] Metrics (R78-90): Dashboards
 - `telemetry-trace-carriers` [kernel] Trace carriers across calls (R78-90): One trace crosses tools and subagents
 - `telemetry-identity` [kernel] Identity on Context (R78-90): Actions are attributed to a user or service
-- `report-kinds` [kernel, pending harness-run-core] `onReport` kinds (§2.2, R214-222): Problems nobody asked about still reach someone
+- `report-kinds` [kernel] `onReport` kinds (§2.2, R214-222): Problems nobody asked about still reach someone
 - `report-crash-loop` [kernel] Crash-loop reports (R214-222): People learn a run was stopped for crashing
 - `harness-client-identity` [kernel] `HarnessOptions.identity` sets how model requests identify the app to providers, and `{ attribution: null }` sends none.
 

@@ -100,9 +100,17 @@ export const ViewChange = Schema.TaggedStruct("change", {
 export const ViewItem = Schema.Union([ViewStart, ViewChange])
 export type ViewItem = typeof ViewItem.Type
 
+// Every error says what went wrong in its `message`, which JSON-RPC carries as the error's message; a client shows it
+// as it is. The errors whose message follows from their fields write it themselves.
+
 export class NoSuchApproval extends Schema.TaggedError<NoSuchApproval>()("NoSuchApproval", {
   approval: Schema.String,
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly approval: string; readonly message?: string }) {
+    super({ ...props, message: props.message ?? `no call waits on approval ${props.approval}` })
+  }
+}
 
 /** The id a client chose cannot name a conversation: `message` says why. */
 export class InvalidConversationId extends Schema.TaggedError<InvalidConversationId>()("InvalidConversationId", {
@@ -112,16 +120,36 @@ export class InvalidConversationId extends Schema.TaggedError<InvalidConversatio
 /** The conversation's provider runs it inside its parent's run, so it takes input only through its parent. */
 export class TakesNoInput extends Schema.TaggedError<TakesNoInput>()("TakesNoInput", {
   conversation: Schema.String,
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly conversation: string; readonly message?: string }) {
+    super({
+      ...props,
+      message:
+        props.message ??
+        `conversation ${props.conversation} is a subagent its parent's provider runs; it takes input only through its parent`,
+    })
+  }
+}
 
 /** The entry is not one the conversation's transcript holds. */
 export class NoSuchEntry extends Schema.TaggedError<NoSuchEntry>()("NoSuchEntry", {
   entry: Schema.Int,
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly entry: number; readonly message?: string }) {
+    super({ ...props, message: props.message ?? `the conversation's transcript has no entry ${props.entry}` })
+  }
+}
 
 export class NoSuchConversation extends Schema.TaggedError<NoSuchConversation>()("NoSuchConversation", {
   conversation: Schema.String,
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly conversation: string; readonly message?: string }) {
+    super({ ...props, message: props.message ?? `no conversation ${props.conversation}` })
+  }
+}
 
 /** An attached image the server cannot decode or make fit the model's image limits; `message` says why. */
 export class UnreadableImage extends Schema.TaggedError<UnreadableImage>()("UnreadableImage", {
@@ -139,7 +167,17 @@ export class FellBehind extends Schema.TaggedError<FellBehind>()("FellBehind", {
   limit: Schema.Int.annotate({
     description: "The changes a watch may hold unread before it is dropped; watch again from the position you hold.",
   }),
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly limit: number; readonly message?: string }) {
+    super({
+      ...props,
+      message:
+        props.message ??
+        `the watch held ${props.limit} changes unread, its limit, and was dropped; watch again from the position you hold`,
+    })
+  }
+}
 
 /** Starts a new, empty context, the transcript kept. Behind a working run it waits in pi.inbox and applies at the run's next step. */
 /** The server opened its home read-only (`nisse serve --read-only`): it shows the home and changes nothing. */
@@ -165,7 +203,12 @@ export type Approvals = typeof Approvals.Type
 
 export class UnknownProvider extends Schema.TaggedError<UnknownProvider>()("UnknownProvider", {
   provider: Schema.String,
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly provider: string; readonly message?: string }) {
+    super({ ...props, message: props.message ?? `nisse has no provider named ${props.provider}` })
+  }
+}
 
 export class CannotSignIn extends Schema.TaggedError<CannotSignIn>()("CannotSignIn", {
   provider: Schema.String,
@@ -176,7 +219,15 @@ export class CannotSignIn extends Schema.TaggedError<CannotSignIn>()("CannotSign
 export class UnknownEffort extends Schema.TaggedError<UnknownEffort>()("UnknownEffort", {
   effort: Schema.String,
   efforts: Schema.Array(Schema.String),
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly effort: string; readonly efforts: ReadonlyArray<string>; readonly message?: string }) {
+    super({
+      ...props,
+      message: props.message ?? `nisse knows no effort named ${props.effort}; it knows ${props.efforts.join(", ")}`,
+    })
+  }
+}
 
 export const ModelSelection = Schema.Struct({
   provider: Schema.String,
@@ -305,6 +356,22 @@ export type Lineage = typeof Lineage.Type
 
 export const ConversationInfo = Schema.Struct({
   id: ConversationId,
+  number: Schema.Int.annotate({
+    description:
+      "The kernel's number for it, by which a view's parent and the task graph name it; the same as id when its client chose none.",
+  }),
+  title: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "What a person knows it by: a subagent's title, or else the first line of its first prompt. Absent before its first prompt.",
+    }),
+  ),
+  fork: Schema.optionalKey(
+    Schema.Struct({
+      of: ConversationId,
+      at: Schema.Int.annotate({ description: "The last entry it inherits." }),
+    }).annotate({ description: "The conversation it was forked from." }),
+  ),
   cwd: Schema.String,
   model: ModelSelection,
   approvals: Approvals,
@@ -593,7 +660,16 @@ export const WatchAuth = Rpc.make("auth/watch", {
 /** The conversation is working, and the call takes an idle one. */
 export class ConversationBusy extends Schema.TaggedError<ConversationBusy>()("ConversationBusy", {
   conversation: Schema.String,
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly conversation: string; readonly message?: string }) {
+    super({
+      ...props,
+      message:
+        props.message ?? `conversation ${props.conversation} is working; wait for its run to end, or interrupt it`,
+    })
+  }
+}
 
 /** The conversation cannot compact now: `message` says why, such as a provider that compacts by itself. */
 export class CannotCompact extends Schema.TaggedError<CannotCompact>()("CannotCompact", {
@@ -607,7 +683,12 @@ export class NothingToContinue extends Schema.TaggedError<NothingToContinue>()("
 
 export class NoSuchSubmission extends Schema.TaggedError<NoSuchSubmission>()("NoSuchSubmission", {
   submission: Schema.Int,
-}) {}
+  message: Schema.String,
+}) {
+  constructor(props: { readonly submission: number; readonly message?: string }) {
+    super({ ...props, message: props.message ?? `the conversation has no submission ${props.submission}` })
+  }
+}
 
 /** A person started a new context: an entry of this kind, `{ author }`, whose `model` carries the handoff, if any. */
 export const RESET_KIND = "pi.reset"

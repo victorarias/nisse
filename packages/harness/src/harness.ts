@@ -571,11 +571,16 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
 
   get inspect(): Effect.Effect<HarnessInspection, ReadFailure> {
     return Effect.gen({ self: this }, function* () {
-      const { scheduling, tasks } = yield* this.#tasks.inspect
-      const scan = (status: "queued" | "placed") =>
-        this.session.read((storage) => scanAll((cursor) => storage.scanSubmissions({ status }, SCAN_PAGE_SIZE, cursor)))
-      const submissions = [...(yield* scan("queued")), ...(yield* scan("placed"))].sort((a, b) => a.id - b.id)
-      return { scheduling, tasks, submissions }
+      // One job on the line: an inspect queued before close began reports it, and sees one committed state (spec 2.2).
+      return yield* this.session.read((storage) =>
+        Effect.gen({ self: this }, function* () {
+          const { scheduling, tasks } = yield* this.#tasks.inspectOnLine
+          const scan = (status: "queued" | "placed") =>
+            scanAll((cursor) => storage.scanSubmissions({ status }, SCAN_PAGE_SIZE, cursor))
+          const submissions = [...(yield* scan("queued")), ...(yield* scan("placed"))].sort((a, b) => a.id - b.id)
+          return { scheduling, tasks, submissions }
+        }),
+      )
     })
   }
 

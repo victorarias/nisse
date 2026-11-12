@@ -2,7 +2,7 @@
 // kernel's Effect and fails as upstream throws: kernel errors become the upstream classes, defects reject as thrown,
 // and an aborted context interrupts the call. What upstream adds around the kernel for hosts stays here: reports, the
 // microtask delay of commit observers, observer guards and the Promise watch handle.
-import { Cause, Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { Cause, Context as EffectContext, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import {
 	CommitRefused,
 	InvocationEnded,
@@ -114,9 +114,17 @@ function rejection(cause: Cause.Cause<unknown>, context: Context | undefined): u
  */
 function underCaller<A, E, R>(effect: Effect.Effect<A, E, R>, context: Context | undefined): Effect.Effect<A, E, R> {
 	const telemetry = context?.telemetry;
-	return telemetry === undefined || telemetry === NOOP_TELEMETRY_CONTEXT
-		? effect
-		: Effect.withParentSpan(effect, adopt(telemetry));
+	const traced =
+		telemetry === undefined || telemetry === NOOP_TELEMETRY_CONTEXT ? effect : Effect.withParentSpan(effect, adopt(telemetry));
+	return context === undefined ? traced : Effect.provideService(traced, CallerContext, context);
+}
+
+/** The chord Context of the call a kernel Effect runs for, so a document watch delivers its commit's Context. */
+const CallerContext = EffectContext.Reference<Context>("conformance/CallerContext", { defaultValue: () => BACKGROUND_CONTEXT });
+
+/** The Context of the commit a document change came from, without its cancellation. */
+function callerContext(change: { readonly context?: EffectContext.Context<never> }): Context {
+	return withoutAbortSignal(change.context === undefined ? BACKGROUND_CONTEXT : EffectContext.get(change.context, CallerContext));
 }
 
 /** Runs a kernel Effect as a Promise; aborting `context` interrupts it. */
@@ -414,7 +422,11 @@ class DocumentWatchHandle {
 					Effect.suspend(() => {
 						this.#value = call.value;
 						return Effect.tryPromise({
-							try: () => listener({ kind: "value", ...call }, withoutAbortSignal(BACKGROUND_CONTEXT)),
+							try: () =>
+								listener(
+									{ kind: "value", value: call.value, ops: call.ops, retired: call.retired },
+									callerContext(call),
+								),
 							catch: (error) => new ListenerFailed(error),
 						});
 					}),
@@ -601,7 +613,8 @@ export class SessionImpl {
 	 */
 	observeWith(attach: (observer: Any) => Effect.Effect<Any, unknown>, observer: Any, context: Context | undefined): Promise<Any> {
 		const kernelObserver = {
-			advance: (change: Any) => observer.advance({ kind: "value", ...change }, BACKGROUND_CONTEXT),
+			advance: (change: Any) =>
+				observer.advance({ kind: "value", value: change.value, ops: change.ops, retired: change.retired }, callerContext(change)),
 			end: (end: Any) => {
 				if (end.kind === "listener_error") this.report(end.error, { kind: "listener_error" }, BACKGROUND_CONTEXT);
 				contained(

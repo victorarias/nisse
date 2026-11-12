@@ -28,7 +28,7 @@ runs `/usage`, `/tasks` and `/help`.
 - `serve-read-only` The client path for Read-only open (R115-138, §2.2): Look at a session without running or changing anything
 - `session-clock` [kernel] Injected clock: Effect's `Clock`, or a `now` (R140-212): Tests and hosts control durable time
 - `provider-session-id` [kernel] Provider session id, stable per conversation (R115-138): Provider prompt caches keep hitting across requests
-- `session-clean-close` [kernel, pending harness-run-core] Explicit `Harness` close without counting a crash (§5.4): A clean shutdown leaves runs resumable without using up their restarts
+- `session-clean-close` [kernel] Explicit `Harness` close without counting a crash (§5.4): A clean shutdown leaves runs resumable without using up their restarts
 - `session-types` [kernel] The public types accept a run, a task and a document as written in the spec.
 - `conversation-abort` [kernel] `Conversation.abort()` withdraws queued inputs, keeps queued writes, aborts the current work and resolves once the conversation is idle.
 - `context-cancels-wait-only` [kernel] Cancelling a call's context stops only that wait, never the work.

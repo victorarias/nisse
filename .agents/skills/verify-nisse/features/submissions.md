@@ -24,7 +24,7 @@ never runs.
 - `submission-withdraw` [kernel] Withdraw a queued input, `Submission.abort` (R529-591): Take back a queued message before it runs
 - `withdraw-rpc` The client path for Withdraw a queued input, `Submission.abort` (R529-591): Take back a queued message before it runs
 - `submission-status` [kernel] `Submission.status`, `wait`, reacquire by id (R529-591): A client waits for its own input's outcome, also after reconnecting
-- `submission-in-commit` [kernel, pending harness-run-core] Submit inside a commit, `submit(tx, draft)` (R529-591, example 34): An extension starts a run atomically with its own write
+- `submission-in-commit` [kernel] Submit inside a commit, `submit(tx, draft)` (R529-591, example 34): An extension starts a run atomically with its own write
 - `submission-custom-entry` [kernel] Custom input entry (R529-591): A submission is a typed record, not only text
 - `submission-queue-modes` [kernel] `steeringMode`, `followUpMode`: all or one at a time (§6): Decide whether queued inputs land together or one per step
 - `submission-after-failed-run` [kernel] `afterFailedRun` (R214-222, §6): Decide what queued inputs do after a run fails

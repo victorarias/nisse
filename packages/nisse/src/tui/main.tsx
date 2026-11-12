@@ -15,6 +15,7 @@ import type { EntryRecord } from "@nisse/kernel"
 import {
   COMPACTION_KIND,
   CONFIGURED_KIND,
+  type ConversationInfo,
   type ModelSelection,
   type Outcome,
   PROTOCOL_VERSION,
@@ -27,7 +28,7 @@ import {
   MODEL_KIND,
   type View,
 } from "@nisse/protocol"
-import { Deferred, Effect, Fiber, Schedule, type Scope, Stream } from "effect"
+import { Cause, Deferred, Effect, Fiber, Schedule, type Scope, Stream } from "effect"
 import {
   type Accessor,
   createEffect,
@@ -48,6 +49,7 @@ import { Client, type StartOptions } from "../client.ts"
 import { attachmentsIn, imagesIn } from "../attach.ts"
 import { describeCall } from "./calls.ts"
 import {
+  clip,
   COMMANDS,
   type ConversationActions,
   type Notice,
@@ -57,6 +59,7 @@ import {
   Shell,
   showUntilDone,
   Tag,
+  TITLE_WIDTH,
   tokens,
 } from "./chrome.tsx"
 import { modelLabel } from "./setup.tsx"
@@ -800,13 +803,28 @@ type TaskGraph = {
   >
 }
 
-const taskLines = (graph: TaskGraph) => {
+/** A conversation as a person knows it: its id, and its title when it has one. */
+const conversationLabel = (info: ConversationInfo | undefined, number: number) =>
+  info === undefined
+    ? `conversation ${number}`
+    : `conversation ${info.id}${info.title === undefined ? "" : ` · ${clip(info.title, TITLE_WIDTH)}`}`
+
+/** The tasks under the conversation each works in, with `current`'s marked; `known` names conversations by number. */
+const taskLines = (graph: TaskGraph, known: ReadonlyMap<number, ConversationInfo>, current: string) => {
   const tasks = Object.entries(graph.tasks)
   if (tasks.length === 0) return ["nothing is running"]
-  return tasks.map(
-    ([id, task]) =>
-      `${id}  ${task.kind}  conversation ${task.conversationId}  ${task.state.status}${task.state.phase ? ` · ${task.state.phase}` : ""}${task.blocked === undefined ? "" : "  blocked"}`,
-  )
+  const byConversation = new Map<number, Array<string>>()
+  for (const [id, task] of tasks) {
+    const lines = byConversation.get(task.conversationId) ?? []
+    lines.push(
+      `  ${id}  ${task.kind}  ${task.state.status}${task.state.phase ? ` · ${task.state.phase}` : ""}${task.blocked === undefined ? "" : "  blocked"}`,
+    )
+    byConversation.set(task.conversationId, lines)
+  }
+  return [...byConversation].flatMap(([number, lines]) => {
+    const info = known.get(number)
+    return [`${conversationLabel(info, number)}${info?.id === current ? "  (this one)" : ""}`, ...lines]
+  })
 }
 
 /**
@@ -864,7 +882,9 @@ const conversationScreen = Effect.fnUntraced(function* (
     ? undefined
     : yield* client["conversation/start"]({ cwd: process.cwd(), ...options, ...(id === undefined ? {} : { id }) })
   const conversation = started?.conversation ?? id!
-  const info = (yield* client["conversation/list"]()).find((each) => each.id === conversation)
+  const conversations = yield* client["conversation/list"]()
+  const info = conversations.find((each) => each.id === conversation)
+  const forkOf = info?.fork && conversations.find((each) => each.id === info.fork!.of)
   const done = yield* Deferred.make<void, string>()
   const scope = yield* Effect.scope
 
@@ -965,19 +985,23 @@ const conversationScreen = Effect.fnUntraced(function* (
       Effect.ignore,
     ),
   )
-  /** A task, its notice once it ends: what it came to, or why it failed. */
-  const report = <A, E extends { readonly _tag: string; readonly message?: string }>(
-    effect: Effect.Effect<A, E>,
-    said: (value: A) => string | undefined,
-  ) =>
+  /** A task, its notice once it ends: what it came to, or why it failed, a defect the server sent included. */
+  const report = <A, E>(effect: Effect.Effect<A, E>, said: (value: A) => string | undefined) =>
     Effect.runFork(
       effect.pipe(
-        Effect.match({
+        Effect.matchCause({
           onSuccess: (value) => {
             const text = said(value)
             setNotice(text === undefined ? undefined : { text, warning: false })
           },
-          onFailure: (error) => setNotice({ text: error.message || error._tag, warning: true }),
+          onFailure: (cause) => {
+            const why: unknown = Cause.squash(cause)
+            const text =
+              typeof why === "object" && why !== null && "message" in why && typeof why.message === "string"
+                ? why.message
+                : String(why)
+            setNotice({ text, warning: true })
+          },
         }),
       ),
     )
@@ -985,6 +1009,10 @@ const conversationScreen = Effect.fnUntraced(function* (
   const status = () => (readOnly() ? "idle" : statusOf(root.docs()))
   const screen: Screen = {
     id: conversation,
+    fork: info?.fork && {
+      of: info.fork.of,
+      ...(forkOf?.title === undefined ? {} : { title: clip(forkOf.title, TITLE_WIDTH) }),
+    },
     get cwd() {
       return root.docs()["pi.agent"]?.cwd ?? info?.cwd
     },
@@ -1192,17 +1220,36 @@ const conversationScreen = Effect.fnUntraced(function* (
       }),
     tasks: () => {
       let graph: TaskGraph | undefined
+      // The graph names conversations by number; the list says what a person knows each by.
+      let known = new Map<number, ConversationInfo>()
+      const draw = () => {
+        if (graph !== undefined && untrack(panel)?.title === "TASKS")
+          setPanel({ title: "TASKS", lines: taskLines(graph, known, conversation) })
+      }
+      const listAgain = client["conversation/list"]().pipe(
+        Effect.tap((all) =>
+          Effect.sync(() => {
+            known = new Map(all.map((each) => [each.number, each]))
+            draw()
+          }),
+        ),
+        Effect.ignore,
+      )
       // Each watch starts from the whole graph, so one that fell behind or lost the server is simply watched again.
       const shown = Effect.runSync(
         Effect.forkIn(
           client["tasks/watch"]().pipe(
             Stream.runForEach((item) =>
-              Effect.sync(() => {
+              Effect.suspend(() => {
                 graph =
                   item._tag === "graph"
                     ? (item.graph as unknown as TaskGraph)
                     : (applyImmutable(graph, item.ops as ReadonlyArray<Op>) as TaskGraph)
-                if (untrack(panel)?.title === "TASKS") setPanel({ title: "TASKS", lines: taskLines(graph) })
+                // A conversation started since the list was read, such as a new subagent, is listed again before
+                // the graph is drawn, so the panel never shows it by number while its name is on the way.
+                return Object.values(graph.tasks).every((task) => known.has(task.conversationId))
+                  ? Effect.sync(draw)
+                  : listAgain
               }),
             ),
             Effect.retry({ schedule: Schedule.spaced(REWATCH_DELAY) }),

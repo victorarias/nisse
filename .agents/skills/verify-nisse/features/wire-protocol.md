@@ -19,6 +19,10 @@ leaves: the server logs no error for it.
   server's log, and other clients carry on.
 - `wire-unknown` says so when a client watches a conversation that does not
   exist.
+- `wire-errors` gives every error a readable `message`: a protocol error says
+  what went wrong in its own words, such as `no conversation nope`, and a call
+  the server cannot take (params that do not decode, a method it lacks, a
+  fault) says it in the fault's words; `data` keeps the cause.
 
 ## How to get to it
 
@@ -53,6 +57,15 @@ Preconditions:
   printed, `1`.
 - **Malformed.** Run `drive.ts r rpc initialize '{"client": "verify"}'`: exit
   1, and an `error` whose message names `version`.
+- **Errors.** With the server up, run
+  `drive.ts r rpc conversation/continue '{"conversation": "nope"}'`: an
+  `error` whose `message` is `no conversation nope` and whose `data` holds the
+  `NoSuchConversation` failure.
+  `drive.ts r rpc conversation/configure '{"conversation": "nope", "author": "ada", "maxTurns": 0}'`:
+  `"message": "Expected a value greater than or equal to 1\n  at [\"maxTurns\"]"`.
+  `drive.ts r rpc conversation/frobnicate '{}'`:
+  `"message": "Unknown request tag: conversation/frobnicate"`. No message is
+  JSON.
 - **Hang up.** In a run made with `--script` whose one step is a long `text`
   with `"delayMs": 10` (400 words), run `drive.ts r serve`,
   `drive.ts r tui start`, `drive.ts r tui wait READY`, `drive.ts r tui type go`,
@@ -77,6 +90,7 @@ Wire, `packages/nisse/test/wire.test.ts`:
 - wire-unknown: watching a conversation that does not exist says so
 - wire-initialize: a client is answered with the server's version and the protocol
 - wire-malformed: a call missing a field is answered with an error that names it, and the connection goes on
+- wire-errors: every error a call answers says what went wrong in its message, a fault included, and keeps the cause in its data
 
 Stack, `packages/nisse/test/stack.test.ts`:
 

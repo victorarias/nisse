@@ -652,7 +652,7 @@ const ask = async (session: Session, prompt: string, answer: string) => {
   await session.waitFor((screen) => screen.includes(answer) && screen.includes("READY"))
 }
 
-test("fork-rpc: /fork moves the screen to a new conversation that goes on from before the last prompt", async () => {
+test("fork-rpc, fork-shown: /fork moves the screen to a new conversation that goes on from before the last prompt, and its header says what it forked", async () => {
   const session = await open([{ text: "answer one" }, { text: "answer two" }, { text: "another way" }])
   await session.waitFor((screen) => screen.includes("READY"))
   await ask(session, "prompt one", "answer one")
@@ -663,6 +663,8 @@ test("fork-rpc: /fork moves the screen to a new conversation that goes on from b
     (screen) => screen.split("\n")[0] !== before && screen.includes("answer one") && screen.includes("READY"),
   )
   expect(forked).not.toContain("answer two")
+  const left = /conversation (\S+)/.exec(before)![1]
+  expect(forked.split("\n")[0]).toContain(`⑂ fork of ${left} · prompt one`)
   await ask(session, "prompt three", "another way")
   await quit(session)
 })
@@ -702,7 +704,8 @@ test("compact-rpc, compaction-live-status: /compact says when there is nothing t
   await submit(client, "talk", long)
   await view.until(settled(3), 10_000)
   session.type("/compact\r")
-  await session.waitFor((screen) => /compaction failed: .*the summary model is gone/.test(screen))
+  // The cause, named once: not "compaction failed: Summarization failed: ...".
+  await session.waitFor((screen) => screen.includes("✗ compaction failed: the summary model is gone"))
   client.close()
   await quit(session)
 })
@@ -769,14 +772,15 @@ test("usage-rpc, usage-context-live: the status bar counts tokens and the contex
   await quit(session)
 })
 
-test("task-graph-rpc: /tasks lists the work running now, and it empties once the work is done", async () => {
-  const session = await open([call("bash", { command: "echo hi" }), { text: "all done" }])
+test("task-graph-rpc: /tasks lists the work running now under the conversation it works in, by its id and first prompt, and it empties once the work is done", async () => {
+  const session = await open([call("bash", { command: "echo hi" }), { text: "all done" }], ["--conversation", "talk"])
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("check\r")
   await session.waitFor((screen) => screen.includes("allow this call?"))
   session.type("/tasks\r")
   const screen = await session.waitFor((screen) => screen.includes("TASKS") && screen.includes("pi.tool"))
   expect(screen).toContain("pi.generation")
+  expect(screen).toContain("conversation talk · check  (this one)")
   session.type("\x19")
   await session.waitFor((screen) => screen.includes("nothing is running"))
   session.type("\x1b")

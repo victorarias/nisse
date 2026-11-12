@@ -15,15 +15,16 @@ allowed test edits: the `gc` lookup, and the removed-backend edits in
 `bun run check` runs `bun packages/conformance/check.ts`: the suite in both modes
 (normal, and with every unattached document evicted after use) through
 `adapter/`. Every test is compared with its row in `expected.json`, and the check
-fails on a mismatch, a test with no row, or an exclusion citing an unknown
-decision. A mode still running after 600 s is killed, and the check fails naming
-the test files that started and never ended, and their tests when the workers
-reported them.
+fails on a mismatch, a test with no row, an exclusion citing an unknown
+decision, or an exclusion count other than the reviewed count plus the tests named under
+`additions` in `exclusions.json`. An exclusion added after the review goes under
+`additions`, citing a decision the PR names. A mode still running after 600 s is
+killed, and the check fails naming the test files that started and never ended,
+and their tests when the workers reported them.
 
 | Row                | Meaning                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------- |
 | `pass`             | must pass                                                                              |
-| `pending <child>`  | not judged yet; that child flips it to `pass` and `check` reports how many already pass |
 | `flaky <reason>`   | reported, never fails `check`                                                          |
 | `amended <file>`   | skipped; the rewrite in `amended/<file>` has its own row                               |
 | `excluded <D>`     | skipped; listed in `exclusions.json` with its decision                                 |
