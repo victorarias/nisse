@@ -269,10 +269,13 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
     abort: (_task, runtime) =>
       Effect.gen(function* () {
         const api = yield* TaskServices
+        const ctx = { runtime, api }
         yield* runtime.commit((tx) =>
           Effect.gen(function* (): Generator<Effect.Effect<any, any, never>, Next, never> {
+            // An input submitted after the abort withdrew the queue, before this commit, is queued behind the run.
+            const failure = yield* prepareFailure(tx, ctx)
             const live = yield* interruptCalls(tx, runtime)
-            yield* endRun(tx, live, runtime.taskId, { status: "unanswered", reason: "aborted" }, api.runOwner)
+            yield* endFailedRun(tx, ctx, live, failure, { status: "unanswered", reason: "aborted" })
             return { status: "terminal", outcome: { status: "aborted" } }
           }),
         )

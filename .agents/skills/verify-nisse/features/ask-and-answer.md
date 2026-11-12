@@ -87,7 +87,7 @@ Preconditions:
 - **Exec fails.** In the failing run, run `drive.ts r nisse exec go`. Exit 1,
   stdout `half an `, stderr `provider went away`. A prompt `exec` queued
   behind another run that an interrupt withdraws ends `exec` with exit 1 and
-  `the prompt was withdrawn before it ran, as an interrupt withdraws what waits`.
+  `the prompt was withdrawn before it ran`.
   `exec` learns this, and every other way its prompt ends, from the entries
   committed under its `requestId` (`nisse.user`, then that run's
   `nisse.run_end`, or `nisse.withdrawn`), also after it watches again.

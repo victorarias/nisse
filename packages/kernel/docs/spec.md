@@ -3013,8 +3013,10 @@ a run with its own turn budget.
 own inputs: `keep` (the default) leaves them queued; `continue` applies the
 final boundary, so the next run starts with them, as after an answer;
 `withdraw` settles them `unanswered` with reason `run_failed`, keeping queued
-writes. A run whose task is aborted keeps its inbox: a conversation abort or
-a cascade withdraws the queued inputs itself. A run whose task the scheduler
+writes. A run whose task is aborted does the same: a conversation abort or a
+cascade withdraws what is queued when it marks the task, and an input queued
+after that, while the abort handler still runs, follows `afterFailedRun` in the
+commit that ends the run. A run whose task the scheduler
 faults or orphans keeps its inbox under `keep` and withdraws its queued inputs
 with reason `run_failed` otherwise, keeping queued writes: the commit that ends
 it has written its task already, so it cannot read the head a final boundary

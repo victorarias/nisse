@@ -292,7 +292,7 @@ export const exec = Effect.fnUntraced(function* (
     Stream.runDrain,
     Effect.raceFirst(Deferred.await(failed)),
   )
-  if (withdrawn) note("the prompt was withdrawn before it ran, as an interrupt withdraws what waits")
+  if (withdrawn) note("the prompt was withdrawn before it ran")
   else if (ended === undefined) note("the server ended the watch before the run ended")
   return ended?.outcome === "answered"
 })
