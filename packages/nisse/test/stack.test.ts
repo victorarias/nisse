@@ -754,6 +754,9 @@ test("server-restart: nisse serve --restart replaces a server that took the home
   expect(Bun.spawnSync(["mkfifo", config]).exitCode).toBe(0)
   const first = nisse(["serve"], env)
   const held = await deadline(open(config, "w"), 10_000, "first server reading its config")
+  let released: Promise<void> | undefined
+  const release = () => (released ??= held.close())
+  await using _released = { [Symbol.asyncDispose]: release }
   writeFileSync(`${config}.next`, "")
   renameSync(`${config}.next`, config)
   const restart = nisse(["serve", "--restart"], env)
@@ -768,7 +771,7 @@ test("server-restart: nisse serve --restart replaces a server that took the home
   }
   // The restart found no server answering and waits for the home; only now does the first server go on to listen.
   await read(`waiting for the server that holds ${nisseHome.dir} to stop`)
-  await held.close()
+  await release()
   await read(`serving ${nisseHome.dir}`)
   expect(await deadline(first.exited, 5000, "first server exit")).toBe(0)
   expect(restart.exitCode).toBeNull()
