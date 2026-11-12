@@ -308,9 +308,9 @@ Claude Code configuration (`$CLAUDE_CONFIG_DIR`, or `~/.claude`). First run
 `claude` is `ready` with a version, and no account, since `drive.ts` runs
 under `USER=ada` (SKILL.md's First check says why). Otherwise stop and report what it shows. Give every
 `tui wait` `--timeout 120000` and every `watch --until` `--timeout 120000`.
-Keep `evidence/`. No step needs a person. Your own Claude Code settings do
-not apply (SKILL.md's Real accounts says why), so Claude Code's defaults
-decide: a `touch` asks, a `Read` does not.
+Keep `evidence/`. No step needs a person. The run leaves out your own Claude
+Code settings (SKILL.md's Real accounts says why), so Claude Code's defaults
+decide instead of them: a `touch` asks, a `Read` does not.
 
 - **Ask, allow, resume.** `drive.ts r tui start --provider claude`, send
   `Use the Bash tool to run exactly: touch /tmp/nisse-verify/r/touched  Then reply with one word: done`,
