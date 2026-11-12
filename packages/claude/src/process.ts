@@ -981,6 +981,11 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
               }
               if (!Array.isArray(message.message.content)) return undefined
               const bySubagent = message.parent_tool_use_id !== null
+              // An Agent call whose subagent handed back its report gets a placeholder as its result; the frame's
+              // `tool_use_result` holds the report, which the SDK's types do not declare yet. Keeping the report means
+              // a retelling of the conversation, to a new session or another provider, still has it.
+              const handback = (message as { tool_use_result?: { handbackReport?: { text?: string } } }).tool_use_result
+                ?.handbackReport?.text
               let anyResult = false
               for (const block of message.message.content) {
                 if (block.type !== "tool_result") continue
@@ -997,7 +1002,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 yield* recordResult(
                   owner,
                   call,
-                  textOf(block.content),
+                  handback || textOf(block.content),
                   block.is_error === true,
                   message.uuid && !bySubagent ? message.uuid : undefined,
                 )

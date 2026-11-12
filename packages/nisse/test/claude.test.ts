@@ -758,6 +758,8 @@ test("subagent-claude: a Claude subagent that hands back its report answers with
   await child.view.until(childEnded)
   // Claude Code 2.1.312 says the report was delivered elsewhere; the report itself is the SubagentHandback call's.
   expect(transcript(child.view.seen()).slice(-2)).toEqual(["assistant: noon in CET", "run_end: answered"])
+  // The parent's Agent call keeps the report too, so a retelling of the parent still has it.
+  expect(results(session.view.seen())).toEqual([expect.objectContaining({ text: "noon in CET", isError: false })])
 })
 
 /** Adds a read-only `Clock` tool, and removes Claude Code's `WebFetch` and nisse's `bash`. */
