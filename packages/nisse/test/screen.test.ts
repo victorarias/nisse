@@ -813,3 +813,23 @@ test("serve-read-only: under nisse serve --read-only the TUI shows a conversatio
   viewer.kill()
   await viewer.exited
 })
+
+test("server-restart, serve-read-only: an open TUI keeps drawing while nisse serve --restart replaces its server, read-only and back", async () => {
+  const nisseHome = home()
+  const session = await open([{ text: "answer one" }], ["--conversation", "talk"], nisseHome)
+  await session.waitFor((screen) => screen.includes("READY"))
+  await ask(session, "prompt one", "answer one")
+  // Replaces the server the TUI started; the TUI now shows a read-only home.
+  const env = await scriptEnv(nisseHome, [])
+  const viewer = await serving(env, undefined, ["serve", "--read-only", "--restart"])
+  await session.waitFor((screen) => screen.includes("READ ONLY"))
+  // And back to a server that writes: the TUI takes input again and draws what it sends.
+  const writer = await serving(env, undefined, ["serve", "--restart"])
+  await viewer.exited
+  await session.waitFor((screen) => !screen.includes("READ ONLY") && screen.includes("PROMPT"))
+  await ask(session, "prompt two", "You said: prompt two")
+  expect(session.screen()).toContain("answer one")
+  await quit(session)
+  writer.kill()
+  await writer.exited
+})
