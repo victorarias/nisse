@@ -819,6 +819,13 @@
   "private": "SessionImpl.documentCacheSizes; setDefaultDocumentRetention(); readOnLine()"
  },
  {
+  "test": "upstream/test/session-document-retention.test.ts :: document cache retention > gives the same views with documents evicted right after use as with documents kept",
+  "owner": "harness-run-core",
+  "spec": "4",
+  "rewrite": "Write each tool step once a view shows the last one, instead of 5 ms after it.",
+  "private": "timing: a tool progress commit within 5 ms"
+ },
+ {
   "test": "upstream/test/session-document-retention.test.ts :: document cache retention > keeps a reloaded newer version cached while an observer of the older one is attached",
   "owner": "kernel-documents",
   "spec": "4",

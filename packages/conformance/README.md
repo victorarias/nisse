@@ -18,7 +18,9 @@ allowed test edits: the `gc` lookup, and the removed-backend edits in
 fails on a mismatch, a test with no row, an exclusion citing an unknown
 decision, or an exclusion count other than the reviewed count plus the tests named under
 `additions` in `exclusions.json`. An exclusion added after the review goes under
-`additions`, citing a decision the PR names.
+`additions`, citing a decision the PR names. A mode still running after 600 s is
+killed, and the check fails naming the test files that started and never ended,
+and their tests when the workers reported them.
 
 | Row                | Meaning                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------- |

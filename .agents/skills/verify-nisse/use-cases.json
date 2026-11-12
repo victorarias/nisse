@@ -139,6 +139,9 @@
   "amended/session-checkpoints-migrations.test.ts :: Session document migrations > writes the required base on the first successful transaction, then writes deltas": [
     "doc-migration"
   ],
+  "amended/session-document-retention.test.ts :: document cache retention > gives the same views with documents evicted right after use as with documents kept": [
+    "doc-eviction"
+  ],
   "amended/session-group-commit.test.ts :: group commit: a failure between two publications > checks the failure when a storage's scope runs a publication it deferred, not when it was asked to": [
     "commit-atomic"
   ],
