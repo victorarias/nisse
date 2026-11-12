@@ -67,8 +67,8 @@ const rewatched = <A, E extends { readonly _tag: string }, R>(
     ),
   ) as Stream.Stream<A, Exclude<E, RpcClientError | FellBehind>, R>
 
-/** The entries of `conversation` after `after` up to `to`, oldest first, read page by page. */
-const missedEntries = (client: Client["Service"], conversation: string, after: number, to: number) =>
+/** The entries of `conversation` after `after` (from its start when undefined) up to `to`, oldest first, page by page. */
+const missedEntries = (client: Client["Service"], conversation: string, after: number | undefined, to: number) =>
   Effect.gen(function* () {
     const entries: Array<EntryRecord> = []
     let cursor: unknown
@@ -76,7 +76,7 @@ const missedEntries = (client: Client["Service"], conversation: string, after: n
       const page = yield* Effect.orDie(
         client["conversation/entries"]({
           conversation,
-          from: after + 1,
+          ...(after === undefined ? {} : { from: after + 1 }),
           to,
           order: "ascending",
           limit: MISSED_PAGE,
@@ -95,7 +95,7 @@ const missedEntries = (client: Client["Service"], conversation: string, after: n
  */
 const following = <E>(
   stream: Stream.Stream<ViewItem, E>,
-  missed: (after: number, to: number) => Effect.Effect<ReadonlyArray<EntryRecord>>,
+  missed: (after: number | undefined, to: number) => Effect.Effect<ReadonlyArray<EntryRecord>>,
 ) =>
   Stream.mapAccumEffect(
     stream,
@@ -103,8 +103,11 @@ const following = <E>(
     (state, item) =>
       Effect.gen(function* () {
         const view = item._tag === "view" ? item.view : applyImmutable(state.view, item.ops as ReadonlyArray<Op>)
+        // A watch opened again, whose window starts past the newest entry held, or past the start of a transcript that
+        // was empty when first watched.
+        const reopened = item._tag === "view" && state.view !== undefined
         const gap =
-          item._tag === "view" && state.newest !== undefined && view.before !== undefined && view.before > state.newest
+          reopened && view.before !== undefined && (state.newest === undefined || view.before > state.newest)
             ? yield* missed(state.newest, view.before)
             : []
         const added = [...gap, ...view.entries].filter((entry) => !state.held.has(entry.id))
