@@ -4,6 +4,7 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import * as Net from "node:net"
 import { applyImmutable, type Op } from "../../../packages/delta/src/delta/index.ts"
+import { bundledExecutable } from "../../../packages/claude/src/process.ts"
 import { signIn } from "../../../packages/nisse/test/support/openai.ts"
 
 const REPO = resolve(import.meta.dir, "../../..")
@@ -96,10 +97,7 @@ const fakes = (): Record<string, string> => ({
  * arguments, and the last one counts.
  */
 const writeRealClaude = () => {
-  const bundled = Bun.resolveSync(
-    `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`,
-    join(REPO, "packages/claude/src"),
-  )
+  const bundled = bundledExecutable()
   // `claude auth ...` takes no --setting-sources; signing in and out runs as the person's own Claude Code does.
   writeFileSync(
     realClaude,
