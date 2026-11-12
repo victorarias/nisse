@@ -2151,7 +2151,7 @@ test("withdraw-rpc: a queued prompt taken back never runs, and one already run c
   const first = (await submit(client, conversation, "one")).result as { submission: number }
   // The run waits on its approval, so "two" waits in the queue.
   const approval = await waitingApproval(view)
-  const second = (await submit(client, conversation, "two")).result as { submission: number }
+  const second = (await submit(client, conversation, "two", "two")).result as { submission: number }
   const inbox = () => (view.view().docs["pi.inbox"] as { items: Array<{ id: number }> }).items.map((item) => item.id)
   await view.until(() => inbox().includes(second.submission))
   const withdraw = (submission: number) => client.call("submission/withdraw", { conversation, submission })
@@ -2162,6 +2162,7 @@ test("withdraw-rpc: a queued prompt taken back never runs, and one already run c
   expect(transcript(view.seen())).toEqual([
     "user: one",
     "assistant: checking",
+    "withdrawn: two",
     "assistant: all done",
     "run_end: answered",
   ])
