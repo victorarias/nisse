@@ -46,7 +46,9 @@ on every provider; on Claude they reach Claude Code through the Agent SDK.
   `◆ <name>: <text>` in the TUI and printed to stderr by `nisse exec`.
 - `claude-extensions`: on Claude, an added tool is served from nisse's MCP
   server `nisse` (Claude calls `mcp__nisse__<name>`, the transcript says
-  `<name>`), a removed tool is passed to Claude Code as `--disallowedTools`,
+  `<name>`), a removed tool is passed to Claude Code as `--disallowedTools`
+  (nisse's `read`, `grep`, `glob`, `write`, `edit` and `bash` as Claude Code's
+  `Read`, `Grep`, `Glob`, `Write`, `Edit` and `Bash`; any other name as given),
   `execute.before` runs as Claude Code's `PreToolUse` hook (subagents' calls
   too), and `execute.after` sees Claude Code's results but can't change them:
   a change becomes the toast
@@ -442,6 +444,10 @@ Kernel wire, `packages/nisse/test/kernel/wire.test.ts`, on a server under `NISSE
 Kernel stack, `packages/nisse/test/kernel/stack.test.ts`, on a server under `NISSE_KERNEL=1`:
 
 - extensions-load: nisse extensions on the kernel lists each extension by its full path
+
+Kernel provider, `packages/nisse/test/kernel/claude.test.ts`, on a server under `NISSE_KERNEL=1`:
+
+- claude-extensions: a tool an extension removes is withheld from Claude Code, by Claude Code's name for nisse's own
 
 Kernel provider, `packages/nisse/test/kernel/openai.test.ts`, on a server under `NISSE_KERNEL=1`:
 

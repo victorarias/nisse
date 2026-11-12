@@ -100,6 +100,8 @@ export type ProcessContext = {
   readonly subagentTask: AnyTask<any>
   /** Extensions whose tools Claude Code has its own of; the rest reach it through nisse's MCP server. */
   readonly builtinExtensions: ReadonlySet<string>
+  /** Tool names extensions removed: nisse's own, which stand for Claude Code's, and Claude Code's by its names. */
+  readonly withheldTools: ReadonlyArray<string>
   /** The id of the conversation people started, for the `NISSE_ROOT_CONVERSATION` its commands see. */
   readonly rootConversation: string
 }
@@ -116,6 +118,15 @@ type UsageTotals = { input: number; output: number; cacheRead: number; cacheWrit
 export const DENIED = "the person did not allow this call"
 
 const OWN_TOOL = "mcp__nisse__"
+/** Claude Code's tool for each of nisse's built-in tools, which Claude Code is never offered. */
+const CLAUDE_TOOL: Readonly<Record<string, string>> = {
+  read: "Read",
+  grep: "Grep",
+  glob: "Glob",
+  write: "Write",
+  edit: "Edit",
+  bash: "Bash",
+}
 /** Claude Code's errors for a session it does not have, or a position its session does not hold (F12). */
 const SESSION_GONE = /No conversation found|No message found with message\.uuid/
 
@@ -258,6 +269,8 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           .flatMap((extension) => (extension.tools ?? []).map((tool) => tool.name)),
       )
       const own = new Map(agent.tools.filter((tool) => !builtin.has(tool.name)).map((tool) => [tool.name, tool]))
+      // Claude Code's own tools an extension removed, and the own tools, which it reaches only over MCP.
+      const withheld = [...new Set([...ctx.withheldTools.map((name) => CLAUDE_TOOL[name] ?? name), ...own.keys()])]
       const allToolHooks = agentHooks(agent, ToolTask.definition.name).map(({ extension, handlers }) => ({
         extension,
         handlers: handlers as Partial<ToolHooks>,
@@ -709,7 +722,7 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
           canUseTool,
           hooks,
           mcpServers,
-          ...(own.size === 0 ? {} : { disallowedTools: [...own.keys()] }),
+          ...(withheld.length === 0 ? {} : { disallowedTools: withheld }),
           settingSources: ["user", "project", "local"],
           extraArgs: { ...extraArgs(settings.args ?? []), "replay-user-messages": null },
           systemPrompt: {

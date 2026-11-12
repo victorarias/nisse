@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test"
 import { FakeClaude } from "../support/claude.ts"
 import type { AuthState, EntryRecord, ProviderSnapshot } from "@nisse/wire"
+import { homeWithExtensions } from "../support/extensions.ts"
 import { RawClient } from "../support/raw.ts"
 import {
   runEnds,
@@ -550,4 +551,33 @@ test("subagent-spawn: a Claude subagent is listed under its parent with the call
     selection: { provider: "claude", model: "haiku" },
   })
   expect(switched.error?.data[0]?.error?._tag).toBe("TakesNoInput")
+})
+
+/** Adds a read-only `Clock` tool, and removes Claude Code's `WebFetch` and nisse's `bash`. */
+const clockWithoutWeb = `import { Extension, Tool } from "@nisse/extension"
+import { Effect, Schema } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    tools.add(
+      Tool.make({
+        name: "Clock",
+        description: "The time in a zone",
+        input: Schema.Struct({ zone: Schema.String }),
+        readOnly: true,
+        run: ({ zone }) => Effect.succeed(Tool.ok("noon in " + zone)),
+      }),
+    )
+    tools.remove("WebFetch")
+    tools.remove("bash")
+  }),
+)`
+
+test("claude-extensions: a tool an extension removes is withheld from Claude Code, by Claude Code's name for nisse's own", async () => {
+  using claude = new FakeClaude("own_tool")
+  const home = homeWithExtensions({ "clock.ts": clockWithoutWeb })
+  await using session = await conversationWith(claude, {}, { home })
+  await session.submit("what time is it")
+  await session.view.until(settled(1))
+  expect(results(session.view.seen())).toEqual([expect.objectContaining({ text: "noon in CET", isError: false })])
+  expect(claude.spawns()[0]!["--disallowedTools"]).toBe("WebFetch,Bash,Clock")
 })

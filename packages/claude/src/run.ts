@@ -60,6 +60,8 @@ export interface ClaudeRunOptions {
   readonly settings: (provider: string) => ClaudeProcessSettings | undefined
   /** Extensions whose tools Claude Code has its own of, so nisse's MCP server leaves them out. */
   readonly builtinExtensions?: ReadonlySet<string>
+  /** Tool names extensions removed, whose Claude Code equivalents it is told not to use. */
+  readonly withheldTools?: () => ReadonlyArray<string>
 }
 
 const failed = (message: string, reason: string): Next => ({
@@ -245,6 +247,7 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
             links: shared.links,
             subagentTask: shared.subagent!,
             builtinExtensions: shared.options.builtinExtensions ?? new Set<string>(),
+            withheldTools: shared.options.withheldTools?.() ?? [],
             rootConversation: String(runtime.conversationId),
           }
           const { start, texts } = yield* opening(runtime, api, provider)
