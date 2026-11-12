@@ -521,6 +521,31 @@ test("subagent-types: an agent of a type gets its instructions and its model, an
   ])
 })
 
+test("subagent-types, code-mode-models: a code-mode model that can spawn is told the agent types, and its subagent at the depth limit is not", async () => {
+  await using fake = new FakeOpenAi()
+  const expected = fake.play("code_mode_subagent_of_a_type")
+  await using session = await conversationWith(fake, {
+    model: "gpt-6.1-sol",
+    cwd: (home) => {
+      write(
+        join(home, "claude", "agents", "reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews diffs\n---\nBe strict.",
+      )
+      return home
+    },
+  })
+  await session.submit("Get the diff reviewed.")
+  await session.view.until(settled(1), 20_000)
+  expectRequests(fake, expected)
+  const [parent, child] = [instructionsOf(fake, 0), instructionsOf(fake, 1)]
+  expect(parent).toContain(
+    "# Agent types\n\nThe agent types `spawn_agent` takes as `agent_type`:\n- reviewer: Reviews diffs",
+  )
+  expect(child).toContain("# You are a reviewer agent\n\nBe strict.")
+  expect(child).not.toContain("# Agent types")
+  expect(session.said().slice(-2)).toEqual(["assistant: Reviewed.", "run_end: answered"])
+})
+
 const focus = `import { Extension } from "@nisse/extension"
 import { Effect } from "effect"
 let asked = 0

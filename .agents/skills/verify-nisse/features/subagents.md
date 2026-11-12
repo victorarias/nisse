@@ -58,9 +58,10 @@ and nisse commits each into a conversation of its own the same way.
 - `subagent-types` reads agent types from `.claude/agents/*.md` from the
   directory up to the repository root, then Claude Code's config directory's
   `agents/` (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). A ChatGPT conversation
-  is told them under `# Agent types` and names one as `spawn_agent`'s
-  `agent_type`; an unknown one fails the call, naming the types there are.
-  A subagent offered no `spawn_agent` is told no types. The subagent's
+  that can call `spawn_agent`, directly or from a code mode script, is told
+  them under `# Agent types` and names one as `spawn_agent`'s `agent_type`;
+  an unknown one fails the call, naming the types there are. A subagent
+  without `spawn_agent` is told no types. The subagent's
   instructions end with `# You are a <name> agent` and the
   type's body, its `lineage` has `agentType`, its card reads
   `⧉ <name> (<agent type>)`, and it runs on the type's `model` when ChatGPT
