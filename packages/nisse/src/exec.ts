@@ -262,6 +262,9 @@ export const exec = Effect.fnUntraced(function* (
   ).pipe(
     Stream.tap(({ item, view, added }) =>
       Effect.gen(function* () {
+        // A view that comes after the submission was answered is a watch opened again: it was taken after the
+        // submission was committed, so it shows where the submission is now.
+        const reopened = item._tag === "view" && submission !== undefined
         // Submitted once the watch holds the view, so the watch covers the whole run.
         submission ??= (yield* reconnecting(
           client["conversation/submit"]({
@@ -281,8 +284,9 @@ export const exec = Effect.fnUntraced(function* (
           }
           if (placed && ended === undefined) onEntry(entry)
         }
-        // A queued input that leaves the queue without a run taking it was withdrawn, as an interrupt does.
-        if (!placed && !taken && waited && !waiting) withdrawn = true
+        // An input neither queued, taken by a run, nor in the transcript was withdrawn, as an interrupt does: once it
+        // was seen queued, or in a view opened after it was submitted.
+        if (!placed && !taken && !waiting && (waited || reopened)) withdrawn = true
         waited ||= waiting
         if (placed) {
           const live = liveOf(view)?.generation?.message
