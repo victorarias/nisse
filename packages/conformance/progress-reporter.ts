@@ -1,6 +1,7 @@
 // A vitest reporter that appends each test file's and test's start and end to CONFORMANCE_PROGRESS, so a run that
 // never finishes can name what was still running (run.ts reads it when the run writes no report). A file starts when
-// vitest hands it to a worker, an event of vitest's own process: a worker that blocks reports nothing more.
+// its worker begins collecting it, which the worker reports before importing the file, so a worker that then blocks
+// still shows its file. Test starts arrive in batches, so a test that blocks right away may not be listed.
 import { appendFileSync } from "node:fs";
 import type { Reporter, TestCase, TestModule } from "vitest/node";
 

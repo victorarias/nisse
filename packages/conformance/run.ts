@@ -1,6 +1,6 @@
 // Runs the suite on a target and returns one status per test. A tripwire ends a run that hangs: a run on the reference
 // copy takes about 25 s and one on the adapter 30 to 75 s, so 600 s means something is stuck. The run then fails naming
-// the test files and tests that started and never ended.
+// the test files, and the tests their workers reported, that started and never ended.
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { relativeFile, testId } from "./ids.ts";
