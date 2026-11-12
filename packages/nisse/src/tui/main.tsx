@@ -648,7 +648,11 @@ const EntryView = (props: {
           : [data.instructions === null ? "cleared the instructions" : `set the instructions: ${data.instructions}`]),
         ...(data.maxTurns === undefined
           ? []
-          : [data.maxTurns === null ? "removed the turn limit" : `limited runs to ${data.maxTurns} tool rounds`]),
+          : [
+              data.maxTurns === null
+                ? "removed the turn limit"
+                : `set the turn limit to ${data.maxTurns} ${data.maxTurns === 1 ? "turn" : "turns"}`,
+            ]),
       ]
       return (
         <text fg={color.dim} marginTop={1} marginLeft={2}>
@@ -958,7 +962,8 @@ const conversationScreen = Effect.fnUntraced(function* (
         }),
       ),
     )
-  const status = () => statusOf(root.docs())
+  // A read-only server runs nothing, so a run it shows in flight is not working.
+  const status = () => (readOnly ? "idle" : statusOf(root.docs()))
   const screen: Screen = {
     id: conversation,
     get cwd() {

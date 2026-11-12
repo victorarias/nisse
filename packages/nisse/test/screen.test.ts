@@ -722,7 +722,7 @@ test("configure-rpc, run-turn-limit: /instructions and /max-turns show who chang
   session.type("/instructions answer in French\r")
   await session.waitFor((screen) => screen.includes("set the instructions: answer in French"))
   session.type("/max-turns 1\r")
-  await session.waitFor((screen) => screen.includes("limited runs to 1 tool rounds"))
+  await session.waitFor((screen) => screen.includes("set the turn limit to 1 turn"))
   session.type("/max-turns zero\r")
   await session.waitFor((screen) => screen.includes("max turns takes a whole number 1 or more, got zero"))
   session.type("loop\r")

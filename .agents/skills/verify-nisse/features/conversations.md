@@ -1,13 +1,18 @@
 # Conversations and forks
 
-A conversation is created with its settings, listed, reopened, owned by a task or another conversation, and forked at any entry.
+A conversation is created with its settings, listed, reopened, owned by a task
+or another conversation, and forked at any entry. `/fork` in the TUI forks the
+conversation from before the last prompt a person typed and moves the screen
+to the fork, a new conversation with the same model, settings and approvals,
+so the prompt can be tried another way. `conversation/fork` forks at any
+entry, with a chosen id. The conversation it left is unchanged.
 
 ## Sub-features
 
 - `conversation-options` [kernel] Create a conversation with options (§2.2): Start with model, instructions, tools, extensions and limits
 - `conversation-owner` [kernel] Ownership kinds (§2, §3): A conversation is owned by a task or another conversation, and goes away with it
 - `fork-at-entry` [kernel] Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
-- `fork-rpc` [pending surface-conversations] The client path for Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
+- `fork-rpc` The client path for Fork at any entry (R716-723, §3.7): Try another direction from an earlier point
 - `fork-document-policy` [kernel] Fork document policies: asOf, current, initial (§3.7): Each kind of state chooses what a fork inherits
 - `fork-provider-identity` [kernel] Each fork has its own provider session identity (§3.7, R716): Forks don't collide in provider session or cache
 - `conversation-list` [kernel] Conversation list (§2.2): Find conversations
@@ -18,17 +23,56 @@ A conversation is created with its settings, listed, reopened, owned by a task o
 
 ### People
 
-None yet.
+- Type `/fork` in the TUI's prompt and press `⏎`.
 
 ### Agents
 
-- Not reachable yet: `fork-rpc` lands with `surface-conversations`, which adds its entry point and recipe.
+- Call `conversation/fork` with `conversation`, `at` (the last entry the fork inherits) and an optional `id`.
+
+## Driving it with drive.ts
+
+Preconditions:
+
+- A fresh run with no script, `drive.ts r up`: nisse echoes `You said: <prompt>`.
+
+- **Fork from the TUI.** Run `drive.ts r tui start --conversation talk`,
+  `drive.ts r tui wait READY`, send `prompt one` and then `prompt two`
+  (`tui type`, `tui key Enter`, `tui wait 'You said: <prompt>'`,
+  `tui wait READY`), and `drive.ts r tui screen before-fork`. Type `/fork`,
+  press `Enter`, and `drive.ts r tui wait --gone 'prompt two'`: the title bar
+  now names a new conversation, such as `conversation 25`, and the transcript
+  holds `prompt one` and `You said: prompt one` only. Send `prompt three`:
+  `You said: prompt three` under them. `drive.ts r tui stop` ends with
+  `resume with: nisse --conversation <the fork's id>`, and
+  `drive.ts r tui start --conversation talk` still shows `prompt two` and its
+  answer.
+- **The fork's view.** `drive.ts r watch <fork id> --save fork-view`:
+  `"conversation": {"id": <fork>, "parent": {"conversationId": <talk's number>, "at": <the first run_end's id>}}`,
+  and the inherited entries keep `"conversationId"` of `talk`.
+- **Fork over the wire.** Take the first `nisse.run_end`'s id from
+  `drive.ts r watch talk --save talk-view`, then
+  `drive.ts r rpc conversation/fork '{"conversation": "talk", "at": <id>, "id": "other-way"}'`:
+  `"result": {"conversation": "other-way"}`.
+  `drive.ts r watch other-way --submit 'prompt four' --until run_end --save other-way`:
+  the first exchange, then `prompt four` and `You said: prompt four`.
+  `drive.ts r rpc conversation/context '{"conversation": "other-way"}'` lists
+  only those entries. Without `id` the answer is a new number. The same `id`
+  again fails `InvalidConversationId` (`other-way already names a conversation`),
+  and `"at": 9999` fails `NoSuchEntry`.
 
 ## Sources
 
 Feature ledger area C: spec §2, §2.2, §3.7; README More Conversations and Forks; examples 02-forks, 03-owned-conversations, 07-harness-conversations.
 
 ## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- fork-rpc: a fork goes on from an earlier entry with only what came before it, and the conversation it left is unchanged
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- fork-rpc: /fork moves the screen to a new conversation that goes on from before the last prompt
 
 Package, `packages/harness/test/harness.test.ts`:
 
@@ -38,4 +82,8 @@ Package, `packages/harness/test/harness.test.ts`:
 
 ## Gotchas
 
-None recorded yet.
+- `/fork` names the fork by number, so its title bar shows `conversation <n>`
+  and nothing on screen says which conversation it came from; the view's
+  `parent` does.
+- In a conversation with nothing in it, `/fork` shows `✗ nothing to fork yet`
+  above the prompt.

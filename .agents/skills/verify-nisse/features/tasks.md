@@ -1,6 +1,11 @@
 # Task kernel
 
-Durable work is a task with phases and checkpoints, scheduled across restarts, waiting on other tasks, sleeping, and ending with a stored outcome.
+Durable work is a task with phases and checkpoints, scheduled across restarts,
+waiting on other tasks, sleeping, and ending with a stored outcome. `/tasks` in
+the TUI opens a live `TASKS` panel of the work running now in every
+conversation, one line per task with its id, kind, conversation, status and
+phase, and `nothing is running` once it is done. `tasks/watch` streams the same
+graph to a client.
 
 ## Sub-features
 
@@ -34,7 +39,7 @@ Durable work is a task with phases and checkpoints, scheduled across restarts, w
 - `task-children-from-tools` [kernel] Child tasks from tools (R772-797): A tool fans out durable work
 - `task-builtin` [kernel] Built-in tasks `pi.generation`, `pi.tool`, `pi.compaction` (§8.3, §8.4, §8.7): The agent loop is observable and restartable by the same rules
 - `task-graph` [kernel] Task graph view (R799-814, §9.4): See and draw all work and its dependencies
-- `task-graph-rpc` [pending surface-conversations] The client path for Task graph view (R799-814, §9.4): See and draw all work and its dependencies
+- `task-graph-rpc` The client path for Task graph view (R799-814, §9.4): See and draw all work and its dependencies
 - `task-tool-rounds` [kernel] Tool rounds as tasks (§8.5): A round finishes or restarts as a unit
 - `task-scheduling-ownership` [kernel, pending harness-tools] Scheduling ownership on one process (§5.4): Restart picks up exactly the unfinished work
 - `task-memory-bounded` [kernel] The scheduler's memory and the cost of each task follow the work alive, not how deep its ownership chain runs, and work that ended leaves nothing behind.
@@ -44,17 +49,51 @@ Durable work is a task with phases and checkpoints, scheduled across restarts, w
 
 ### People
 
-None yet.
+- Type `/tasks` in the TUI's prompt and press `⏎`; `esc` closes the panel.
 
 ### Agents
 
-- Not reachable yet: `task-graph-rpc` lands with `surface-conversations`, which adds its entry point and recipe.
+- Call `tasks/watch`, a stream: first the graph of the home's live tasks, then each commit's changes to it.
+
+## Driving it with drive.ts
+
+Preconditions:
+
+- A fresh run whose script is
+  `[{"tool": {"name": "bash", "input": {"command": "echo hi"}}}, {"text": "all done"}]`,
+  `drive.ts r up --script s.json`, then
+  `drive.ts r tui start --conversation talk` and `drive.ts r tui wait READY`.
+
+- **Nothing running.** Type `/tasks` and `Enter`,
+  `drive.ts r tui wait 'nothing is running'`: the `TASKS   esc  close` panel
+  over `nothing is running`. `drive.ts r rpc tasks/watch` prints the stream's
+  first chunk, `{"_tag": "graph", "graph": {"tasks": {}}}`. Press `Escape`.
+- **Work waiting on a person.** Type `check` and `Enter`,
+  `drive.ts r tui wait 'allow this call?'`, then `/tasks` and `Enter`,
+  `drive.ts r tui wait pi.tool`: two lines such as
+  `14  pi.generation  conversation 4  waiting · tools` and
+  `17  pi.tool  conversation 4  running · call`. `drive.ts r rpc tasks/watch`
+  answers both, the generation's `state`
+  `{"status": "waiting", "phase": "tools", "on": [<the tool's id>], ...}`.
+- **It empties live.** With the panel open, press `drive.ts r tui key C-y`
+  and `drive.ts r tui wait 'nothing is running'`: the panel followed the work
+  to its end without being reopened. `Escape` shows the call
+  `✓ allowed by ada`, `hi` and `all done`; `rpc tasks/watch` answers an empty
+  graph again.
 
 ## Sources
 
 Feature ledger area R: spec §2.2, §5, §7.1, §8.3, §8.4, §8.5, §8.7, §9.4; README Sleeping and Waking Up, Failures and Recovery, Work at the end of a run, Child Tasks, Task Graph; examples 11-tasks, 12-recovery, 23-child-tasks.
 
 ## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- task-graph-rpc: a client watches the home's live work, a run and the call it waits on, until it is done
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- task-graph-rpc: /tasks lists the work running now, and it empties once the work is done
 
 Package, `packages/harness/test/harness.test.ts`:
 
@@ -76,4 +115,9 @@ Package, `packages/kernel/test/tasks.test.ts`:
 
 ## Gotchas
 
-None recorded yet.
+- `drive.ts r rpc tasks/watch` prints only the stream's first chunk, the graph
+  as it is now; call it again to see it later. The TUI panel is the live view.
+- The panel names conversations by number (`conversation 4`), even one opened
+  as `talk`.
+- The panel covers the transcript and the `allow this call?` line, but `^Y`
+  and `^N` still answer the call.

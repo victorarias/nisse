@@ -629,6 +629,10 @@ export const Fork = Rpc.make("conversation/fork", {
   error: Schema.Union([ReadOnlyServer, NoSuchConversation, NoSuchEntry, InvalidConversationId, TakesNoInput]),
 })
 
+/**
+ * Starts a new, empty context, the transcript kept. Behind a working run it waits in pi.inbox and applies at the run's
+ * next step.
+ */
 export const Reset = Rpc.make("conversation/reset", {
   payload: {
     conversation: ConversationId,
@@ -640,7 +644,10 @@ export const Reset = Rpc.make("conversation/reset", {
   error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput]),
 })
 
-/** Summarizes the context now. pi.live's `compactions` shows it running and `compactionFailure` why one failed; its pi.compaction entry replaces what it summarized. */
+/**
+ * Summarizes the context now. pi.live's `compactions` shows it running and `compactionFailure` why one failed; its
+ * pi.compaction entry replaces what it summarized.
+ */
 export const Compact = Rpc.make("conversation/compact", {
   payload: {
     conversation: ConversationId,
@@ -665,7 +672,6 @@ export const Continue = Rpc.make("conversation/continue", {
   error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, ConversationBusy]),
 })
 
-/** Changes the conversation's settings from its next model request on. */
 export const Withdraw = Rpc.make("submission/withdraw", {
   payload: {
     conversation: ConversationId,
@@ -679,6 +685,7 @@ export const Withdraw = Rpc.make("submission/withdraw", {
   error: Schema.Union([ReadOnlyServer, NoSuchConversation, NoSuchSubmission]),
 })
 
+/** Changes the conversation's settings from its next model request on. */
 export const Configure = Rpc.make("conversation/configure", {
   payload: {
     conversation: ConversationId,

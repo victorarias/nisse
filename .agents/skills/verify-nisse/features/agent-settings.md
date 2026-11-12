@@ -1,12 +1,18 @@
 # Per-conversation agent and settings
 
-A conversation's configuration is durable, forkable and watchable, and harness settings change without a restart.
+A conversation's configuration is durable, forkable and watchable, and harness
+settings change without a restart. `/instructions [text]` and
+`/max-turns [n]` in the TUI, or `conversation/configure`, change a
+conversation's instructions and turn limit from its next model request on. Each
+change is a `nisse.configured` entry every client draws as
+`◆ <author> set the instructions: <text>`, `◆ <author> set the turn limit to <n> turns`,
+`cleared the instructions` or `removed the turn limit`.
 
 ## Sub-features
 
 - `agent-document` [kernel] `pi.agent` document holding a conversation's configuration (R380-404): Configuration is durable, forkable, watchable
 - `agent-instructions` [kernel] `configure()`: instructions change later (R380-404): Change the brief without restarting
-- `configure-rpc` [pending surface-conversations] The client path for `configure()`: instructions change later (R380-404): Change the brief without restarting
+- `configure-rpc` The client path for `configure()`: instructions change later (R380-404): Change the brief without restarting
 - `agent-cwd` [kernel] `configure()`: working directory change (R380-404): Move a conversation to another directory
 - `agent-model` [kernel] `configure()`: model (R380-404): Switch model mid-conversation
 - `agent-thinking` [kernel] `configure()`: thinking level (R380-404): Change reasoning depth
@@ -25,17 +31,62 @@ A conversation's configuration is durable, forkable and watchable, and harness s
 
 ### People
 
-None yet.
+- Type `/instructions <text>` (or `/instructions` alone to clear them) in the TUI's prompt and press `⏎`.
+- Type `/max-turns <n>` (or `/max-turns` alone for no limit) and press `⏎`.
 
 ### Agents
 
-- Not reachable yet: `configure-rpc` lands with `surface-conversations`, which adds its entry point and recipe.
+- Call `conversation/configure` with `conversation`, `author`, and `instructions` and/or `maxTurns`; `null` clears either.
+
+## Driving it with drive.ts
+
+Preconditions:
+
+- A fresh run with no script, `drive.ts r up`, then
+  `drive.ts r tui start --conversation talk` and `drive.ts r tui wait READY`.
+
+- **Set from the TUI.** Type `/instructions answer in French` and `Enter`,
+  `drive.ts r tui wait 'set the instructions'`; type `/max-turns 3` and
+  `Enter`, `drive.ts r tui wait 'set the turn limit'`. The transcript shows
+  `◆ ada set the instructions: answer in French` and
+  `◆ ada set the turn limit to 3 turns`. Type `/max-turns zero` and `Enter`:
+  `✗ max turns takes a whole number 1 or more, got zero` above the prompt, and
+  nothing is committed.
+- **The model is told.** Send `one` and wait for `You said: one` and `READY`.
+  `drive.ts r rpc conversation/context '{"conversation": "talk"}'`: a message
+  whose `sections` hold
+  `"instructions": "<instructions>\nanswer in French\n</instructions>"`.
+- **Clear over the wire.** Run
+  `drive.ts r rpc conversation/configure '{"conversation": "talk", "author": "bo", "instructions": null, "maxTurns": null}'`:
+  `"result": null`, and the TUI draws
+  `◆ bo cleared the instructions and removed the turn limit`. Send `two`:
+  `conversation/context` now ends with a message whose `sections` hold
+  `"instructions": null`. `drive.ts r watch talk --save configured` holds
+  three `nisse.configured` entries:
+  `{"author": "ada", "instructions": "answer in French"}`,
+  `{"author": "ada", "maxTurns": 3}` and
+  `{"author": "bo", "instructions": null, "maxTurns": null}`.
+  `"maxTurns": 0` fails with a message that holds
+  `Expected a value greater than or equal to 1` and `maxTurns`.
+- **The limit ends a run.** See [Run limits and resilience](./run-resilience.md).
+
+## Contexts
+
+- **Second client.** A change made over the wire shows in the TUI as its author's.
 
 ## Sources
 
 Feature ledger area H: spec §2.2, §3.7, §8.2, §8.5; README Per-Conversation Agent, Settings; example 06-configuration.
 
 ## Tests
+
+Wire, `packages/nisse/test/wire.test.ts`:
+
+- configure-rpc, run-turn-limit: changed instructions reach the model and the transcript says who changed them; a turn limit ends a looping run by name
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- configure-rpc, run-turn-limit: /instructions and /max-turns show who changed what, and a looping run ends naming the limit
 
 Package, `packages/harness/test/harness.test.ts`:
 
@@ -46,4 +97,7 @@ Package, `packages/harness/test/harness.test.ts`:
 
 ## Gotchas
 
-None recorded yet.
+- The scripted model echoes whatever its instructions say; judge the
+  instructions by `conversation/context`, not by the answer.
+- The TUI has no command that shows the current instructions or limit; the
+  newest `nisse.configured` entry for each is the current value.

@@ -89,7 +89,9 @@ Nisse has no long-lived dev server to keep up. The first `nisse exec` or TUI
 start launches the home's server in the background, and it exits 30 s after its
 last subscription closes and its last run settles. Start it yourself with `drive.ts r1 serve` when a journey
 needs it running first: before any `rpc` or `watch`, and to kill it on purpose.
-`serve` returns once the server holds the home's lock, and prints its pid.
+`serve` returns once the server holds the home's lock, and prints its pid;
+extra arguments go to `nisse serve`, such as `--read-only`, or `--restart` to
+replace the server that runs now.
 
 The TUI is ready when its status bar shows `READY`:
 
@@ -151,7 +153,10 @@ to settle and stops it, and the next client starts one on the new code.
   `conversation/submit`, `conversation/interrupt`, `approval/resolve`,
   `conversation/select_model`, `skills/list`, `providers/list`,
   `models/list`, `auth/start`, `auth/respond`, `auth/cancel`, `auth/logout`,
-  `extensions/list`, `extensions/reload` and `server/stop`.
+  `extensions/list`, `extensions/reload`, `server/stop`, `conversation/fork`,
+  `conversation/reset`, `conversation/compact`, `conversation/continue`,
+  `submission/withdraw`, `conversation/configure`, `conversation/context`,
+  `usage/get` and `tasks/watch` (a stream: `rpc` prints its first chunk).
   `conversation/list` and `server/stop` take no params. `providers/list` and
   `models/list` take an object, at least `'{}'`; `skills/list` takes
   `{"conversation": "<id>"}`.
