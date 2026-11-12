@@ -749,6 +749,17 @@ test("claude-extensions: an extension's tool runs for Claude's subagents, in the
   expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: noon in CET", "run_end: answered"])
 })
 
+test("subagent-claude: a Claude subagent that hands back its report answers with the report, not Claude Code's placeholder", async () => {
+  using claude = new FakeClaude("subagent_own_tool")
+  await using session = await conversationWith(claude, {}, { home: homeWithExtensions({ "clock.ts": clock }) })
+  await session.submit("ask a subagent the time in CET")
+  const child = await subagentOf(session)
+  await session.view.until(settled(1))
+  await child.view.until(childEnded)
+  // Claude Code 2.1.312 says the report was delivered elsewhere; the report itself is the SubagentHandback call's.
+  expect(transcript(child.view.seen()).slice(-2)).toEqual(["assistant: noon in CET", "run_end: answered"])
+})
+
 /** Adds a read-only `Clock` tool, and removes Claude Code's `WebFetch` and nisse's `bash`. */
 const clockWithoutWeb = `import { Extension, Tool } from "@nisse/extension"
 import { Effect, Schema } from "effect"

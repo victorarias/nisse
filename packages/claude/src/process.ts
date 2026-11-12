@@ -1022,13 +1022,17 @@ export const converse = (ctx: ProcessContext, start: Start, opening: ReadonlyArr
                 const child = children.get(message.tool_use_id)
                 if (child !== undefined) {
                   const status = endings[message.status as keyof typeof endings] ?? "failed"
+                  // A subagent that hands back its report through `SubagentHandback` leaves only a placeholder in
+                  // `summary`; the report is `handback_report`, which the SDK's types do not declare yet.
+                  const handback = (message as { handback_report?: { text?: string } }).handback_report?.text
+                  const summary = handback || message.summary
                   // Claude Code reports a subagent's final answer only here, so it becomes the answer in its conversation.
-                  if (status === "completed" && message.summary) {
-                    yield* recordText(child, message.summary, `${message.task_id}/summary`, undefined)
+                  if (status === "completed" && summary) {
+                    yield* recordText(child, summary, `${message.task_id}/summary`, undefined)
                   }
                   yield* Deferred.succeed(ctx.links.link(child.task).ended, {
                     status,
-                    ...(message.summary === undefined ? {} : { summary: message.summary }),
+                    ...(summary === undefined ? {} : { summary }),
                   })
                 }
               }
