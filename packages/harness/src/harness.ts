@@ -63,7 +63,7 @@ import { BUILTIN_TASKS } from "./builtin.ts"
 import { createCompaction } from "./compaction.ts"
 import { ContextReads } from "./context.ts"
 import { ProviderDoc } from "./documents.ts"
-import { InboxDoc, withdrawQueuedInputs } from "./inbox.ts"
+import { InboxDoc, type InputWithdrawnHook, withdrawQueuedInputs } from "./inbox.ts"
 import {
   GENERATION_RUNS,
   limitsRestarts,
@@ -161,6 +161,8 @@ export type HarnessOptions<T extends ToolRegistration = ToolRegistration> = {
   readonly onReport?: (report: Report) => void
   /** Runs in the commit that ends a run, whatever ended it. */
   readonly runEnded?: RunEndedHook
+  /** Runs in every commit that withdraws a queued input, whatever withdrew it. */
+  readonly inputWithdrawn?: InputWithdrawnHook
   /** Conversation documents of the host's that the conversation view carries beside the built-in ones. */
   readonly viewDocs?: readonly AnyDocToken[]
   /** The host's run tasks besides `pi.generation`, and which one an agent's model runs on. */
@@ -321,7 +323,8 @@ export const openHarness = <T extends ToolRegistration>(
         limitsRestarts: (kind) => limitsRestarts(host.runTasks, kind),
         settleOutcome: (tx, record, outcome) =>
           settleSchedulerOutcome(tx, record, outcome, host.runTasks, options.runEnded),
-        withdrawInputs: (tx, conversationId) => withdrawQueuedInputs(tx, conversationId),
+        withdrawInputs: (tx, conversationId) =>
+          withdrawQueuedInputs(tx, conversationId, "aborted", options.inputWithdrawn),
         queuedInputs: (reads) => queuedConversations(reads),
         report: (error, report, snapshot, span) => host.report(error, host.taskReport(report, snapshot), span),
         readOnly: options.readOnly === true,
@@ -416,6 +419,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       this.#options.readOnly === true ? Effect.void : scheduler.resume,
       telemetry,
       this.runTasks,
+      this.#options.inputWithdrawn,
     )
     return this
   }
@@ -720,6 +724,7 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       models: () => this.models(),
       env: runtime.guard(this.#env(conversationId)),
       runOwner: { conversationId, runEnded: this.#options.runEnded },
+      inputWithdrawn: this.#options.inputWithdrawn,
       runTasks: this.runTasks,
       hooks: {
         each: (name, invoke) =>

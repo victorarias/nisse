@@ -10,6 +10,7 @@ import {
   TOAST_KIND,
   USER_KIND,
   type View,
+  WITHDRAWN_KIND,
   type ViewItem,
 } from "@nisse/protocol"
 import { Deferred, Effect, Schedule, type Scope, Stream } from "effect"
@@ -21,7 +22,7 @@ import { describeCall } from "./tui/calls.ts"
 
 type Block = { readonly type: string; readonly text?: string; readonly name?: string; readonly arguments?: unknown }
 type Message = { readonly content?: ReadonlyArray<Block> | string }
-type Live = { readonly run?: { readonly inputs: ReadonlyArray<number> }; readonly generation?: { message?: Message } }
+type Live = { readonly generation?: { message?: Message } }
 type Request = { readonly tool: string; readonly arguments: unknown; readonly answer?: unknown }
 
 const write = (text: string) => process.stdout.write(text)
@@ -36,11 +37,6 @@ const textOf = (message: Message | undefined) =>
     .join("")
 
 const liveOf = (view: View) => view.docs["pi.live"] as Live | undefined
-
-const queued = (view: View, submission: number) =>
-  (view.docs["pi.inbox"] as { items?: ReadonlyArray<{ id: number }> } | undefined)?.items?.some(
-    (item) => item.id === submission,
-  ) === true
 
 const requestsOf = (view: View) =>
   Object.entries((view.docs["nisse.approvals"] as { requests?: Record<string, Request> } | undefined)?.requests ?? {})
@@ -225,14 +221,22 @@ export const exec = Effect.fnUntraced(function* (
   )
 
   const printer = new Printer()
-  let submission: number | undefined
-  // Placed at the prompt's own entry, which carries its requestId: what this prompt sees starts there, whatever earlier
-  // inputs ran, also while exec's watch was down.
+  const images = imagesIn(prompt, process.cwd())
+  const requestId = crypto.randomUUID()
+  let submitted = false
+  // The prompt's fate is read from the entries committed under its requestId, which every watch, reopened or not, is
+  // handed in order: its nisse.user entry places it, and what follows is its run until the run's nisse.run_end; a
+  // nisse.withdrawn entry says it was withdrawn before it ran.
   let placed = false
-  let waited = false
   let withdrawn = false
   let ended: RunEnd | undefined
+  const ours = (entry: EntryRecord) => (entry.data as { requestId?: string } | undefined)?.requestId === requestId
   const onEntry = (entry: EntryRecord) => {
+    if (!placed) {
+      if (entry.kind === WITHDRAWN_KIND && ours(entry)) withdrawn = true
+      placed = entry.kind === USER_KIND && ours(entry)
+      return
+    }
     if (entry.kind === "pi.assistant") {
       const message = entry.model?.[0] as Message | undefined
       if (!json) {
@@ -254,43 +258,30 @@ export const exec = Effect.fnUntraced(function* (
     }
   }
 
-  const images = imagesIn(prompt, process.cwd())
-  const requestId = crypto.randomUUID()
   yield* following(
     rewatched(() => client["conversation/watch"]({ conversation })),
     (after, to) => missedEntries(client, conversation, after, to),
   ).pipe(
     Stream.tap(({ item, view, added }) =>
       Effect.gen(function* () {
-        // A view that comes after the submission was answered is a watch opened again: it was taken after the
-        // submission was committed, so it shows where the submission is now.
-        const reopened = item._tag === "view" && submission !== undefined
-        // Submitted once the watch holds the view, so the watch covers the whole run.
-        submission ??= (yield* reconnecting(
-          client["conversation/submit"]({
-            conversation,
-            requestId,
-            author: userName(),
-            text: prompt,
-            ...(images.length === 0 ? {} : { images }),
-          }),
-        )).submission
-        if (json) write(`${JSON.stringify(item)}\n`)
-        const taken = liveOf(view)?.run?.inputs.includes(submission) === true
-        const waiting = queued(view, submission)
-        for (const entry of added) {
-          if (entry.kind === USER_KIND && (entry.data as { requestId?: string } | undefined)?.requestId === requestId) {
-            placed = true
-          }
-          if (placed && ended === undefined) onEntry(entry)
+        // Submitted once the watch holds the view, so the entries it is handed from then on cover the whole run.
+        if (!submitted) {
+          yield* reconnecting(
+            client["conversation/submit"]({
+              conversation,
+              requestId,
+              author: userName(),
+              text: prompt,
+              ...(images.length === 0 ? {} : { images }),
+            }),
+          )
+          submitted = true
         }
-        // An input neither queued, taken by a run, nor in the transcript was withdrawn, as an interrupt does: once it
-        // was seen queued, or in a view opened after it was submitted.
-        if (!placed && !taken && !waiting && (waited || reopened)) withdrawn = true
-        waited ||= waiting
-        if (placed) {
+        if (json) write(`${JSON.stringify(item)}\n`)
+        for (const entry of added) if (ended === undefined && !withdrawn) onEntry(entry)
+        if (placed && ended === undefined && !json) {
           const live = liveOf(view)?.generation?.message
-          if (!json && ended === undefined && live !== undefined) printer.show(textOf(live))
+          if (live !== undefined) printer.show(textOf(live))
         }
         yield* deny(conversation, view)
         if (added.length > 0) yield* discover

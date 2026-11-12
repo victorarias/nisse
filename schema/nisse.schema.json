@@ -276,7 +276,7 @@
           },
           "requestId": {
             "type": "string",
-            "description": "Submitting again with the same id is answered once. The input's nisse.user entry keeps it in its data."
+            "description": "Submitting again with the same id is answered once. The input's nisse.user entry keeps it in its data, or its nisse.withdrawn entry when it is withdrawn before it runs."
           },
           "author": {
             "type": "string",
@@ -479,7 +479,7 @@
                         },
                         "kind": {
                           "type": "string",
-                          "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call."
+                          "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call, nisse.withdrawn which input was withdrawn before it ran."
                         },
                         "model": {
                           "type": "array"
@@ -634,7 +634,7 @@
                 },
                 "kind": {
                   "type": "string",
-                  "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call."
+                  "description": "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call, nisse.withdrawn which input was withdrawn before it ran."
                 },
                 "model": {
                   "type": "array"

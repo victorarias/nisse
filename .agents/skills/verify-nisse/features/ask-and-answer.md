@@ -88,6 +88,9 @@ Preconditions:
   stdout `half an `, stderr `provider went away`. A prompt `exec` queued
   behind another run that an interrupt withdraws ends `exec` with exit 1 and
   `the prompt was withdrawn before it ran, as an interrupt withdraws what waits`.
+  `exec` learns this, and every other way its prompt ends, from the entries
+  committed under its `requestId` (`nisse.user`, then that run's
+  `nisse.run_end`, or `nisse.withdrawn`), also after it watches again.
 - **Wire.** Run `drive.ts r serve`, then
   `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` and take its `id`, then
   `drive.ts r watch <id> --submit 'tell me about the queue and the steering' --until run_end --save wire`.
@@ -122,6 +125,7 @@ Stack, `packages/nisse/test/stack.test.ts`:
 - mode-print, answer-exec-fail: nisse exec exits 1 and says why when the run fails
 - answer-exec-fail: nisse exec exits 1 when an interrupt withdraws its queued prompt, instead of waiting for good
 - answer-exec, wire-dropped: a nisse exec whose prompt waits, runs and ends while exec is dropped still prints the answer and exits 0
+- answer-exec-fail, wire-dropped: a nisse exec dropped while an interrupt withdraws its queued prompt exits 1 and says so
 - answer-exec, wire-dropped: a nisse exec dropped while an earlier prompt runs prints only its own answer
 - answer-exec, wire-dropped: a nisse exec too slow for the run watches again when dropped, prints every call it missed, and exits 0
 

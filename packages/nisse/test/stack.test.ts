@@ -769,6 +769,44 @@ test("answer-exec, wire-dropped: a nisse exec whose prompt waits, runs and ends 
   }).toEqual({ code: 0, stdout: "read them all\n" })
 }, 60_000)
 
+test("answer-exec-fail, wire-dropped: a nisse exec dropped while an interrupt withdraws its queued prompt exits 1 and says so", async () => {
+  const nisseHome = home()
+  writeFileSync(join(nisseHome.dir, "note.txt"), "a note\n")
+  // The first run talks slowly while exec's prompt queues; once it is withdrawn, another run commits more than exec's
+  // watch holds, so exec, stopped, is dropped and learns the prompt's fate from what it missed.
+  const reads = Array.from({ length: 60 }, () => ({ tool: { name: "read", input: { path: "note.txt" } } }))
+  const script = [
+    { text: "one two three four five six seven eight nine ten", delayMs: 300 },
+    ...reads,
+    { text: "read them all" },
+  ]
+  await using server = await runningServer(script, { home: nisseHome, connectionQueue: 16 })
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = (await client.call("conversation/start", { cwd: nisseHome.dir, approvals: "auto", id: "busy" }))
+    .result.conversation as string
+  const watch = watchView(client, conversation)
+  await submit(client, conversation, "count")
+  await watch.until((current) => current.view().docs["pi.live"] !== undefined)
+  const exec = nisse(["exec", "--auto", "--conversation", conversation, "never runs"], nisseEnv(nisseHome))
+  const waiting = (current: ViewWatch) =>
+    ((current.view().docs["pi.inbox"] as { items?: unknown[] } | undefined)?.items ?? []).length === 1
+  await watch.until(waiting)
+  exec.kill("SIGSTOP")
+  await client.call("conversation/interrupt", { conversation })
+  await watch.until(settled(1))
+  await submit(client, conversation, "read the note")
+  await watch.until(settled(2))
+  client.close()
+  exec.kill("SIGCONT")
+  const result = {
+    code: await deadline(exec.exited, 20_000, "exec finished"),
+    stdout: await new Response(exec.stdout).text(),
+    stderr: await new Response(exec.stderr).text(),
+  }
+  expect(result).toMatchObject({ code: 1, stdout: "" })
+  expect(result.stderr).toContain("the prompt was withdrawn before it ran")
+}, 60_000)
+
 test("answer-exec, wire-dropped: a nisse exec dropped while an earlier prompt runs prints only its own answer", async () => {
   const nisseHome = home()
   const [first, last] = ["first", "last"].map((name) => join(nisseHome.dir, name))

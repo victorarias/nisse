@@ -5,6 +5,7 @@ import type { ScriptStep } from "@nisse/models"
 import {
   type EntryRecord,
   RUN_END_KIND,
+  WITHDRAWN_KIND,
   USER_KIND,
   type RunEnd,
   type View,
@@ -194,6 +195,7 @@ export const transcript = (entries: ReadonlyArray<EntryRecord>) =>
       const end = entry.data as RunEnd
       return [`run_end: ${end.outcome}${end.message ? ` (${end.message})` : ""}`]
     }
+    if (entry.kind === WITHDRAWN_KIND) return [`withdrawn: ${(entry.data as { requestId: string }).requestId}`]
     return []
   })
 
@@ -204,7 +206,7 @@ export const submit = (
   client: RawClient,
   conversation: string,
   text: string,
-  requestId = crypto.randomUUID(),
+  requestId: string = crypto.randomUUID(),
   author = "ada",
   steer = false,
 ) => client.call("conversation/submit", { conversation, requestId, author, text, ...(steer ? { steer } : {}) })

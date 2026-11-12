@@ -720,7 +720,8 @@ export const endFailedRun = (
   Effect.gen(function* () {
     const { conversationId } = ctx.runtime
     yield* endRun(tx, live, ctx.runtime.taskId, end, ctx.api.runOwner)
-    if (failure.policy === "withdraw") yield* withdrawQueuedInputs(tx, conversationId, "run_failed")
+    if (failure.policy === "withdraw")
+      yield* withdrawQueuedInputs(tx, conversationId, "run_failed", ctx.api.inputWithdrawn)
     if (failure.boundary === undefined) return
     const { users, first } = yield* applyBoundary(tx, failure.boundary, "final", ctx.runtime.now())
     if (users.length > 0) {

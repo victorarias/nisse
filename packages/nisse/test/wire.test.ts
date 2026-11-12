@@ -110,6 +110,28 @@ test("interrupt-wire: interrupting keeps what nisse already said and marks the r
   client.close()
 })
 
+test("interrupt-withdraw: interrupting withdraws the prompts that wait, and the transcript names each by its requestId", async () => {
+  await using server = await runningServer([{ text: "one two three four five six seven eight", delayMs: 100 }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client)
+  const view = watchView(client, conversation)
+  await submit(client, conversation, "count")
+  await view.until(speaking)
+  await submit(client, conversation, "then this", "waiting-1")
+  await submit(client, conversation, "and this", "waiting-2")
+  await client.call("conversation/interrupt", { conversation })
+  await view.until(settled(1))
+  const said = transcript(view.view().entries)
+  expect(said[0]).toBe("user: count")
+  // The interrupt withdraws what waits before the run it stops ends.
+  expect(said.slice(1).filter((line) => !line.startsWith("assistant"))).toEqual([
+    "withdrawn: waiting-1",
+    "withdrawn: waiting-2",
+    "run_end: interrupted (aborted)",
+  ])
+  client.close()
+})
+
 test("answer-failed: a model failure is recorded after what was said and the conversation goes idle", async () => {
   await using server = await runningServer([{ text: "half", fail: "provider went away" }])
   const client = await RawClient.connect(server.home.socket)
