@@ -71,6 +71,13 @@ Preconditions:
   `main.ts serve --restart`. Then stop it with
   `drive.ts r rpc server/stop`; the `--restart` command ends with exit 0 and
   stderr `nisse 0.1.0 serving /tmp/nisse-verify/r/home`.
+- **Restart under an open TUI.** Run `drive.ts r tui start --conversation talk`,
+  `drive.ts r tui wait READY`, send `one` and wait for `You said: one`. Run
+  `drive.ts r serve --restart`, then type `two` and `Enter`:
+  `drive.ts r tui wait 'You said: two'`. The TUI watches the new server and
+  draws what it answers. Repeat `drive.ts r serve --restart`, adding
+  `--read-only` every other time: each prints `serving` and the TUI shows
+  `READ ONLY` or `PROMPT` to match.
 - **Restart waits for runs.** In a run whose script is
   `[{"text": "one two three four five six seven eight", "delayMs": 300}]`,
   run `drive.ts r serve`, then `drive.ts r nisse exec count &` and, a second
@@ -82,6 +89,7 @@ Preconditions:
 ## Contexts
 
 - **Running work.** `serve --restart` and `server/stop` wait for runs to settle.
+- **Open clients.** A stop ends every open call and watch the way a lost connection does, so an open TUI watches the next server. A client that loses its server starts one, and while `serve --restart` replaces the server, the one the client started gives way (`another server already serves` in the home's `nisse.log`), so the restart always becomes the home's server.
 
 ## Tests
 
@@ -93,6 +101,10 @@ Wire, `packages/nisse/test/wire.test.ts`:
 - server-stop, child-tools: stopping the server lets a working subagent finish and report first
 - server-stop: stopping the server answers the caller, then the server exits
 - server-stop: stopping the server while nisse answers lets the answer finish first
+
+Screen, `packages/nisse/test/screen.test.ts`:
+
+- server-restart, serve-read-only: an open TUI keeps drawing while nisse serve --restart replaces its server, read-only and back
 
 Stack, `packages/nisse/test/stack.test.ts`:
 

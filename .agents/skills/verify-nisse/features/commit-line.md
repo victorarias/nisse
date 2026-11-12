@@ -80,7 +80,9 @@ Preconditions:
   `drive.ts r nisse exec hi` exits 1 with the same line on stderr.
   `usage/get` and `conversation/list` answer.
 - **Back to writable.** `drive.ts r serve --restart` replaces the read-only
-  server, and `initialize` answers `"readOnly": false`.
+  server, and `initialize` answers `"readOnly": false`. A TUI left open
+  across the switch drops `READ ONLY` for `PROMPT`, and a switch the other
+  way brings `READ ONLY` back.
   `drive.ts r watch talk --until run_end --timeout 30000 --save resumed`: the
   run left in flight resumes and ends `answered`. A restarted server starts
   its script over, so the answer is `answer one`.
@@ -106,6 +108,7 @@ Provider, `packages/nisse/test/openai.test.ts`:
 Screen, `packages/nisse/test/screen.test.ts`:
 
 - serve-read-only: under nisse serve --read-only the TUI shows a conversation and runs commands, but keeps a typed message unsent and says why
+- server-restart, serve-read-only: an open TUI keeps drawing while nisse serve --restart replaces its server, read-only and back
 
 Package, `packages/harness/test/harness.test.ts`:
 
@@ -145,8 +148,3 @@ Package, `packages/kernel/test/session.test.ts`:
 
 - A commit observer's `advance` runs on the mutation line, before the commit resolves: it should only capture what it needs, because anything slow there delays every commit.
 - A commit's callback runs on the line too. Code after `session.commit` returns runs later, on the caller's fiber, so it never delays the next commit.
-- A TUI left open while `serve --restart` replaces its server keeps drawing
-  the old server's state: after a switch from read-only it still shows
-  `READ ONLY`, and a prompt typed into an open TUI after any `serve --restart`
-  is committed but never drawn. Stop the TUI and start it again after a
-  restart.
