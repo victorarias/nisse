@@ -42,11 +42,12 @@ export function renderSystemMessageUpdate(message: SystemMessage): string {
 }
 
 /**
- * `text.slice(start, end)` as a string of its own. V8 represents a slice of 13 or more characters as a view that keeps
- * all of `text` alive, so a short excerpt kept from a large text (a 500-character error message cut from a megabyte
- * response body) would keep the whole text alive as long as the excerpt lives. Appending a character and slicing it off
- * again makes V8 copy just the slice.
+ * `text.slice(start, end)` as a string of its own. A slice is a view that keeps all of `text` alive, so a short excerpt
+ * kept from a large text (a 500-character error message cut from a megabyte response body) would keep the whole text
+ * alive as long as the excerpt lives. Under JavaScriptCore neither concatenation nor `normalize()` copies a slice:
+ * 1,000 slices of a string growing to 100 KB retain 52 MB that way and 0.2 MB through `structuredClone`, which copies
+ * the characters.
  */
 export function ownedSlice(text: string, start: number, end = text.length): string {
-  return `${text.slice(start, end)} `.slice(0, -1)
+  return structuredClone(text.slice(start, end))
 }

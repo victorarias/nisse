@@ -754,7 +754,7 @@ describe("task documents", () => {
         const ended = yield* Deferred.make<void>()
         yield* Effect.forkScoped(
           Effect.ensuring(
-            Stream.runForEach(watch.changes, (change) => Queue.offer(seen, change)),
+            Stream.runForEach(watch.changes, ({ value, ops, retired }) => Queue.offer(seen, { value, ops, retired })),
             Deferred.succeed(ended, undefined),
           ),
         )

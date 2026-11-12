@@ -2,7 +2,7 @@
 // kernel's Effect and fails as upstream throws: kernel errors become the upstream classes, defects reject as thrown,
 // and an aborted context interrupts the call. What upstream adds around the kernel for hosts stays here: reports, the
 // microtask delay of commit observers, observer guards and the Promise watch handle.
-import { Cause, Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { Cause, Context as EffectContext, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import {
 	CommitRefused,
 	InvocationEnded,
@@ -114,10 +114,13 @@ function rejection(cause: Cause.Cause<unknown>, context: Context | undefined): u
  */
 function underCaller<A, E, R>(effect: Effect.Effect<A, E, R>, context: Context | undefined): Effect.Effect<A, E, R> {
 	const telemetry = context?.telemetry;
-	return telemetry === undefined || telemetry === NOOP_TELEMETRY_CONTEXT
-		? effect
-		: Effect.withParentSpan(effect, adopt(telemetry));
+	const traced =
+		telemetry === undefined || telemetry === NOOP_TELEMETRY_CONTEXT ? effect : Effect.withParentSpan(effect, adopt(telemetry));
+	return context === undefined ? traced : Effect.provideService(traced, CallerContext, context);
 }
+
+/** The chord Context of the call a kernel Effect runs for, so a document watch delivers its commit's Context. */
+const CallerContext = EffectContext.Reference<Context>("conformance/CallerContext", { defaultValue: () => BACKGROUND_CONTEXT });
 
 /** Runs a kernel Effect as a Promise; aborting `context` interrupts it. */
 export function run<A>(effect: Effect.Effect<A, unknown>, context?: Context): Promise<A> {
@@ -414,7 +417,13 @@ class DocumentWatchHandle {
 					Effect.suspend(() => {
 						this.#value = call.value;
 						return Effect.tryPromise({
-							try: () => listener({ kind: "value", ...call }, withoutAbortSignal(BACKGROUND_CONTEXT)),
+							try: () =>
+								listener(
+									{ kind: "value", value: call.value, ops: call.ops, retired: call.retired },
+									withoutAbortSignal(
+										call.context === undefined ? BACKGROUND_CONTEXT : EffectContext.get(call.context, CallerContext),
+									),
+								),
 							catch: (error) => new ListenerFailed(error),
 						});
 					}),

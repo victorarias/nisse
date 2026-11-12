@@ -196,6 +196,11 @@ export interface TaskScheduler {
     { readonly scheduling: "paused" | "running" | "closing"; readonly tasks: readonly TaskInspection[] },
     ReadFailure
   >
+  /** `inspect`'s body, to run inside a read already on the line, such as one that also scans submissions. */
+  readonly inspectOnLine: Effect.Effect<
+    { readonly scheduling: "paused" | "running" | "closing"; readonly tasks: readonly TaskInspection[] },
+    ReadFailure
+  >
   /** For tests that bound memory: what the scheduler indexes hold. */
   readonly indexSizes: {
     readonly live: number
@@ -678,20 +683,22 @@ class Scheduler<Svc> implements TaskScheduler {
   }
 
   get inspect() {
-    return this.#session.read(() =>
-      Effect.gen({ self: this }, function* () {
-        yield* this.#loadChains()
-        const snapshot = this.#snapshotOrUndefined()
-        const tasks: TaskInspection[] = []
-        for (const { record } of this.#live.values()) tasks.push({ record, state: this.#inspectTask(record, snapshot) })
-        const scheduling = this.#closing
-          ? ("closing" as const)
-          : this.#enabled
-            ? ("running" as const)
-            : ("paused" as const)
-        return { scheduling, tasks }
-      }),
-    )
+    return this.#session.read(() => this.inspectOnLine)
+  }
+
+  get inspectOnLine() {
+    return Effect.gen({ self: this }, function* () {
+      yield* this.#loadChains()
+      const snapshot = this.#snapshotOrUndefined()
+      const tasks: TaskInspection[] = []
+      for (const { record } of this.#live.values()) tasks.push({ record, state: this.#inspectTask(record, snapshot) })
+      const scheduling = this.#closing
+        ? ("closing" as const)
+        : this.#enabled
+          ? ("running" as const)
+          : ("paused" as const)
+      return { scheduling, tasks }
+    })
   }
 
   get indexSizes() {

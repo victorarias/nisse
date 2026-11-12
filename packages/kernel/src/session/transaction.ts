@@ -3,7 +3,7 @@
 // Derived from pi-durable's `src/session/transaction.ts` and `src/session/forks.ts` at 7d073328e (MIT, see LICENSE).
 import { type Change, type Draft, type Op, type Prepared, type Tracker, track } from "@nisse/delta"
 import { copyJson } from "@nisse/delta/json"
-import { Cause, Deferred, Effect, Queue } from "effect"
+import { Cause, Deferred, Effect, Queue, type Tracer } from "effect"
 import {
   type AnyDocDefinition,
   type AnyDocToken,
@@ -117,6 +117,8 @@ export interface Tx {
    * the first one (`ReadAfterWrite`), so code that reads tables inside a caller's commit checks it up front.
    */
   readonly hasTableWrite: boolean
+  /** The span of the commit's caller, which the callback runs for on the Session line; `undefined` without one. */
+  readonly span: Tracer.AnySpan | undefined
   conversation(id: ConversationId): Effect.Effect<ConversationRecord | undefined, StorageError>
   entry(id: EntryId): Effect.Effect<EntryRecord | undefined, ReadError>
   /** Undefined when the entry is absent or has another kind. */
@@ -263,6 +265,8 @@ export type TransactionHost = {
   readonly conversationCreated?: (tx: Tx, record: ConversationRecord) => Effect.Effect<void, unknown>
   /** The carrier of the span the commit was made in, which tasks it creates inherit; `undefined` without one. */
   readonly trace: () => TelemetryCarrier | undefined
+  /** The span the commit was made in. */
+  readonly span: Tracer.AnySpan | undefined
 }
 
 /** A new task's `trace` and `links`: given, inherited from the commit's span when omitted, or none for `"root"`. */
@@ -429,6 +433,10 @@ export class Transaction implements Tx {
 
   constructor(host: TransactionHost) {
     this.#host = host
+  }
+
+  get span(): Tracer.AnySpan | undefined {
+    return this.#host.span
   }
 
   // Table reads
