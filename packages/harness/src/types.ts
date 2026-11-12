@@ -354,6 +354,11 @@ export type ToolExecutionResult = {
   /** Spend of the execution itself, such as a model call; stored on the result and in `pi.usage.tools`. */
   readonly usage?: Usage
   readonly control?: ToolControl
+  /**
+   * Set on the result an `afterTool` hook is given when the model gets it as it is, such as the result of a tool Claude
+   * Code runs and keeps: a hook's change to it does not reach the model.
+   */
+  readonly final?: true
 }
 
 /**

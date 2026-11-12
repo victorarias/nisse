@@ -2,7 +2,14 @@
 // Claude Code played by the fake `claude` replaying a recorded process per spawn.
 import { expect, test } from "bun:test"
 import { FakeClaude } from "./support/claude.ts"
-import type { AuthState, EntryRecord, ProviderModels, ProviderSnapshot } from "@nisse/protocol"
+import {
+  type AuthState,
+  type EntryRecord,
+  type ProviderModels,
+  type ProviderSnapshot,
+  STATUS_LINES_KIND,
+  TOAST_KIND,
+} from "@nisse/protocol"
 import { homeWithExtensions } from "./support/extensions.ts"
 import { RawClient } from "./support/raw.ts"
 import {
@@ -717,6 +724,68 @@ test("claude-extensions: an extension's rewrite of a call is what Claude Code ru
       hookEventName: "PreToolUse",
       updatedInput: { command: "echo rewritten", description: "Print the word original" },
     },
+  ])
+})
+
+/** Sets a status line and toasts after each call. */
+const tell = `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.after", (call) =>
+    Effect.gen(function* () {
+      yield* call.conversation.status(\`last ran \${call.tool}\`)
+      yield* call.conversation.toast(\`\${call.tool} finished\`)
+    }),
+  ),
+)`
+
+/** Puts every result in capitals. */
+const shout = `import { Extension } from "@nisse/extension"
+import { Effect } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.hook("execute.after", (call) =>
+    Effect.sync(() => {
+      call.outcome.output = call.outcome.output.toUpperCase()
+    }),
+  ),
+)`
+
+const toasts = (entries: ReadonlyArray<EntryRecord>) =>
+  entries.filter((entry) => entry.kind === TOAST_KIND).map((entry) => entry.data as { extension: string; text: string })
+
+test("claude-extensions: an extension's execute.after runs after Claude's calls, and its status line and toast show", async () => {
+  using claude = new FakeClaude("bash_hook_rewritten")
+  await using session = await conversationWith(
+    claude,
+    {},
+    { home: homeWithExtensions({ "guard.ts": guard, "tell.ts": tell }) },
+  )
+  await session.submit("echo it")
+  await session.view.until(settled(1))
+  expect(toasts(session.view.seen())).toEqual([{ extension: "tell", text: "Bash finished" }])
+  expect(session.view.view().docs[STATUS_LINES_KIND]).toEqual({ lines: { tell: "last ran Bash" } })
+})
+
+test("claude-extensions: execute.after changes what Claude reads, and a change Claude Code drops is toasted", async () => {
+  using claude = new FakeClaude("read_after_hooked")
+  await using session = await conversationWith(claude, {}, { home: homeWithExtensions({ "shout.ts": shout }) })
+  await session.submit("read it, then echo")
+  await session.view.until(settled(1))
+  const entries = session.view.seen()
+  expect(results(entries).map((result) => result.text)).toEqual(["1\tTHE GNOME LIVES UNDER THE FLOOR\n2\t", "quiet"])
+  // The fake replays its recorded results, so what reached Claude Code is nisse's answer to the Read's hook.
+  const after = claude.hookAnswers().filter((output) => output.hookEventName === "PostToolUse")
+  expect(after).toEqual([
+    {
+      hookEventName: "PostToolUse",
+      updatedToolOutput: expect.objectContaining({
+        file: expect.objectContaining({ content: "THE GNOME LIVES UNDER THE FLOOR\n" }),
+      }),
+    },
+  ])
+  // Claude Code keeps Bash's own result, so the extension hears its change did not reach Claude.
+  expect(toasts(entries)).toEqual([
+    { extension: "shout", text: "execute.after changed Bash's result, but the model gets Bash's own result" },
   ])
 })
 
