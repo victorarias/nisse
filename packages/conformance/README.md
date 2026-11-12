@@ -16,7 +16,8 @@ allowed test edits: the `gc` lookup, and the removed-backend edits in
 (normal, and with every unattached document evicted after use) through
 `adapter/`. Every test is compared with its row in `expected.json`, and the check
 fails on a mismatch, a test with no row, or an exclusion citing an unknown
-decision.
+decision. A mode still running after 600 s is killed, and the check fails naming
+the test files and tests that started and never ended.
 
 | Row                | Meaning                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------- |

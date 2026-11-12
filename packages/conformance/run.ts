@@ -1,5 +1,6 @@
 // Runs the suite on a target and returns one status per test. A tripwire ends a run that hangs: a run on the reference
-// copy takes about 25 s, so 600 s means something is stuck.
+// copy takes about 25 s and one on the adapter 30 to 75 s, so 600 s means something is stuck. The run then fails naming
+// the test files and tests that started and never ended.
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { relativeFile, testId } from "./ids.ts";
@@ -38,23 +39,49 @@ export async function runSuite(targetPath: string, mode: Mode, label: string): P
 	linkSource(target);
 	mkdirSync(join(root, "results"), { recursive: true });
 	const outputFile = join(root, "results", `${label}-${mode}.json`);
+	const progressFile = join(root, "results", `${label}-${mode}.progress`);
 	rmSync(outputFile, { force: true });
-	const env: Record<string, string | undefined> = { ...process.env, CONFORMANCE_TARGET: target };
+	rmSync(progressFile, { force: true });
+	const env: Record<string, string | undefined> = {
+		...process.env,
+		CONFORMANCE_TARGET: target,
+		CONFORMANCE_PROGRESS: progressFile,
+	};
 	if (mode === "evict") env.PI_DURABLE_DOCUMENT_RETENTION_MS = "0";
 	else delete env.PI_DURABLE_DOCUMENT_RETENTION_MS;
-	const proc = Bun.spawn(["bun", "--bun", VITEST, "run", "--reporter=json", `--outputFile=${outputFile}`], {
+	const reporters = ["--reporter=json", `--outputFile.json=${outputFile}`, "--reporter=./progress-reporter.ts"];
+	const proc = Bun.spawn(["bun", "--bun", VITEST, "run", ...reporters], {
 		cwd: root,
 		env,
 		stdout: Bun.file(join(root, "results", `${label}-${mode}.log`)),
 		stderr: Bun.file(join(root, "results", `${label}-${mode}.err`)),
 	});
-	const deadline = setTimeout(() => proc.kill("SIGKILL"), DEADLINE_MS);
+	let killed = false;
+	const deadline = setTimeout(() => {
+		killed = true;
+		proc.kill("SIGKILL");
+	}, DEADLINE_MS);
 	const code = await proc.exited;
 	clearTimeout(deadline);
 	if (!existsSync(outputFile) || lstatSync(outputFile).size === 0) {
-		throw new Error(`conformance: vitest wrote no report (exit ${code}), see results/${label}-${mode}.err; a run past ${DEADLINE_MS} ms is killed`);
+		const why = killed ? `still running after ${DEADLINE_MS} ms, killed` : `exit ${code}`;
+		throw new Error(
+			`conformance: ${mode}: vitest wrote no report (${why}), see results/${label}-${mode}.err; unfinished:${unfinished(progressFile)}`,
+		);
 	}
 	return readReport(outputFile);
+}
+
+/** The test files and tests progress-reporter.ts saw start and not end, one per line. */
+function unfinished(progressFile: string): string {
+	if (!existsSync(progressFile)) return " nothing started";
+	const running = new Set<string>();
+	for (const line of readFileSync(progressFile, "utf8").split("\n")) {
+		const [event, what] = line.split("\t");
+		if (event === "start") running.add(what!);
+		else if (event === "end") running.delete(what!);
+	}
+	return running.size === 0 ? " none" : [...running].map((what) => `\n  ${what}`).join("");
 }
 
 function readReport(path: string): RunResult {
