@@ -1485,6 +1485,8 @@ test("subagent-interrupt: interrupting a conversation stops the runs of its suba
 
 type Listed = {
   id: string
+  number: number
+  title?: string
   cwd: string
   model: { provider: string; model?: string; effort?: string }
   approvals: string
@@ -1532,6 +1534,8 @@ test("subagent-spawn, subagent-model: conversation/list shows each subagent with
   expect(listed).toEqual([
     {
       id: "lead",
+      number: expect.any(Number),
+      title: "delegate",
       cwd: server.home.dir,
       model: { provider: "script", model: "script" },
       approvals: "ask",
@@ -1540,6 +1544,8 @@ test("subagent-spawn, subagent-model: conversation/list shows each subagent with
     },
     {
       id: spawned(view, "/root/same"),
+      number: Number(spawned(view, "/root/same")),
+      title: "same",
       cwd: server.home.dir,
       model: { provider: "script", model: "script" },
       approvals: "ask",
@@ -1548,6 +1554,8 @@ test("subagent-spawn, subagent-model: conversation/list shows each subagent with
     },
     {
       id: spawned(view, "/root/other"),
+      number: Number(spawned(view, "/root/other")),
+      title: "other",
       cwd: server.home.dir,
       model: { provider: "script", model: "script-code-mode" },
       approvals: "ask",
@@ -1688,6 +1696,29 @@ test("wire-malformed: a call missing a field is answered with an error that name
   await submit(client, conversation, "hi")
   await view.until(settled(1))
   expect(transcript(view.view().entries)).toEqual(["user: hi", "assistant: fine", "run_end: answered"])
+  client.close()
+})
+
+test("wire-errors: every error a call answers says what went wrong in its message, a fault included, and keeps the cause in its data", async () => {
+  await using server = await runningServer([{ text: "fine" }])
+  const client = await RawClient.connect(server.home.socket)
+  const conversation = await start(client, server.home.dir)
+  const replies = {
+    noConversation: await client.call("conversation/continue", { conversation: "nope" }),
+    noSubmission: await client.call("submission/withdraw", { conversation, submission: 9999 }),
+    noEntry: await client.call("conversation/fork", { conversation, at: 9999 }),
+    badParams: await client.call("conversation/configure", { conversation, author: "ada", maxTurns: 0 }),
+    noMethod: await client.call("conversation/frobnicate", {}),
+  }
+  expect(Object.fromEntries(Object.entries(replies).map(([name, reply]) => [name, reply.error?.message]))).toEqual({
+    noConversation: "no conversation nope",
+    noSubmission: "the conversation has no submission 9999",
+    noEntry: "the conversation's transcript has no entry 9999",
+    badParams: 'Expected a value greater than or equal to 1\n  at ["maxTurns"]',
+    noMethod: "Unknown request tag: conversation/frobnicate",
+  })
+  expect(errorTag(replies.noConversation)).toBe("NoSuchConversation")
+  expect(replies.badParams.error?.data).toEqual([{ _tag: "Die", defect: expect.stringContaining("maxTurns") }])
   client.close()
 })
 
@@ -2000,7 +2031,7 @@ const liveOf = (watch: ViewWatch) =>
       }
     | undefined
 
-test("fork-rpc: a fork goes on from an earlier entry with only what came before it and the settings as they are now, and the conversation it left is unchanged", async () => {
+test("fork-rpc, fork-shown: a fork goes on from an earlier entry with only what came before it and the settings as they are now, the list says what it forked, and the conversation it left is unchanged", async () => {
   await using server = await runningServer([{ text: "a" }, { text: "b" }, { text: "c" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
@@ -2018,6 +2049,16 @@ test("fork-rpc: a fork goes on from an earlier entry with only what came before 
   await opened(fork)
   expect(fork.view().conversation.parent).toEqual({ conversationId: Number(conversation), at: firstEnd })
   expect(fork.view().docs["pi.agent"]).toMatchObject({ instructions: "be brief", maxTurns: 3 })
+  const listed = (await client.call("conversation/list")).result as Array<{
+    id: string
+    fork?: unknown
+    title?: string
+  }>
+  expect(listed.find((each) => each.id === "other-way")).toMatchObject({
+    fork: { of: conversation, at: firstEnd },
+    title: "one",
+  })
+  expect(listed.find((each) => each.id === conversation)!.fork).toBe(undefined)
   await submit(client, "other-way", "three")
   await fork.until(settled(2))
   expect(transcript(fork.seen())).toEqual([
@@ -2240,10 +2281,11 @@ test("usage-rpc, usage-per-model, usage-total: a client reads the tokens each co
   client.close()
 })
 
-test("task-graph-rpc: a client watches the home's live work, a run and the call it waits on, until it is done", async () => {
+test("task-graph-rpc: a client watches the home's live work, a run and the call it waits on, until it is done, and the list names the conversation each works in", async () => {
   await using server = await runningServer(ECHO)
   const client = await RawClient.connect(server.home.socket)
-  const conversation = await start(client, server.home.dir)
+  const conversation = (await client.call("conversation/start", { cwd: server.home.dir, id: "talk" })).result
+    .conversation as string
   const view = watchView(client, conversation)
   type Graph = { tasks: Record<string, { kind: string; conversationId: number; state: { status: string } }> }
   const watch = client.watch<{ _tag: "graph"; graph: Graph } | { _tag: "change"; ops: ReadonlyArray<Op> }>(
@@ -2265,7 +2307,16 @@ test("task-graph-rpc: a client watches the home's live work, a run and the call 
   await watch.until(() => Object.values(current().tasks).some((task) => task.kind === "pi.tool"))
   const kinds = Object.values(current().tasks).map((task) => [task.kind, task.state.status])
   expect(kinds).toContainEqual(["pi.generation", "waiting"])
-  expect(Object.values(current().tasks).every((task) => task.conversationId === Number(conversation))).toBe(true)
+  // The graph names a conversation by its number, which the list joins to the id and title a person knows.
+  const listed = (await client.call("conversation/list")).result as Array<{
+    id: string
+    number: number
+    title?: string
+  }>
+  const working = new Set(Object.values(current().tasks).map((task) => task.conversationId))
+  expect([...working].map((number) => listed.find((each) => each.number === number))).toEqual([
+    expect.objectContaining({ id: "talk", title: "check it" }),
+  ])
   const approval = Object.keys((view.view().docs["nisse.approvals"] as { requests: object }).requests)[0]!
   await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
   await view.until(settled(1))

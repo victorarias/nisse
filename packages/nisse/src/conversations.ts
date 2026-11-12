@@ -3,7 +3,7 @@
 // lineage of the conversation they run in.
 import { ApprovalsDoc, type Harness, SubagentOriginDoc } from "@nisse/harness"
 import { type ConversationId, type ConversationRecord, type Cursor, type EntryId } from "@nisse/kernel"
-import { type ConversationInfo, type Lineage, type RunEnd, type TreeStatus } from "@nisse/protocol"
+import { type ConversationInfo, type Lineage, type RunEnd, type TreeStatus, USER_KIND } from "@nisse/protocol"
 import { Effect } from "effect"
 import { ConversationIdsDoc } from "./ids.ts"
 import { selectionOf } from "./providers.ts"
@@ -71,6 +71,27 @@ export const saidBefore = (harness: Harness, id: ConversationId, end: EntryId) =
     return undefined
   })
 
+/** The first line of the conversation's first prompt, inherited ones included; `undefined` before one. */
+const firstPrompt = (harness: Harness, id: ConversationId) =>
+  Effect.gen(function* () {
+    const conversation = yield* Effect.orDie(harness.conversation(id))
+    if (conversation === undefined) return undefined
+    let cursor: Cursor | undefined
+    do {
+      const page = yield* Effect.orDie(conversation.entries({ order: "ascending" }, SCAN_PAGE, cursor))
+      for (const entry of page.items) {
+        if (entry.kind !== USER_KIND) continue
+        // What the person typed is the first text; the skills it named follow as text of their own.
+        const content = (entry.model?.[0] as { content?: string | Array<{ type: string; text?: string }> } | undefined)
+          ?.content
+        const typed = typeof content === "string" ? content : content?.find((block) => block.type === "text")?.text
+        return (typed ?? "").trim().split("\n")[0]
+      }
+      cursor = page.next
+    } while (cursor !== undefined)
+    return undefined
+  })
+
 /** How the run ended at the `nisse.run_end` entry `end`, with the last thing the model said. */
 export const endedAt = (harness: Harness, id: ConversationId, end: { id: EntryId; data?: unknown }) =>
   Effect.gen(function* () {
@@ -98,8 +119,15 @@ const info = (harness: Harness, conversation: ConversationRecord): Effect.Effect
     const ended = yield* lastEnded(harness, conversation.id)
     // A subagent's instructions are nisse's, naming its task; only those a client started a conversation with show.
     const instructions = lineage === undefined ? agent.instructions : undefined
+    const title = lineage?.title ?? (yield* firstPrompt(harness, conversation.id))
+    const parent = conversation.parent
     return {
       id: yield* wireId(harness, conversation.id),
+      number: Number(conversation.id),
+      ...(title === undefined || title === "" ? {} : { title }),
+      ...(parent === undefined
+        ? {}
+        : { fork: { of: yield* wireId(harness, parent.conversationId), at: Number(parent.at) } }),
       cwd: agent.cwd ?? "",
       model: selectionOf(agent),
       approvals: approvals?.auto === true ? "auto" : "ask",

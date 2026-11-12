@@ -6,7 +6,8 @@ or `conversation/compact` summarizes the context now: every TUI shows
 `◆ compacting` in its status bar while it runs, then `◆ compacted the context`
 in the transcript. A context still within what a summary keeps answers
 `nothing to compact: the context is short enough already`, and a failed
-compaction shows `✗ compaction failed: <why>` above the prompt.
+compaction shows `✗ compaction failed: <why>` above the prompt, its cause named
+once.
 
 ## Sub-features
 
@@ -79,8 +80,8 @@ Preconditions:
   `drive.ts r rpc conversation/compact '{"conversation": "talk", "instructions": "keep the numbers"}'`:
   `"outcome": "failed", "message": "Summarization failed: the summary model is gone"`,
   and the TUI shows
-  `✗ compaction failed: Summarization failed: the summary model is gone`
-  above the prompt. It stays there after the next run and in a TUI opened
+  `✗ compaction failed: the summary model is gone` above the prompt: the
+  harness's `Summarization failed:` is not repeated under it. It stays there after the next run and in a TUI opened
   anew.
 
 ## Contexts

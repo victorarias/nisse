@@ -3,9 +3,13 @@
 Durable work is a task with phases and checkpoints, scheduled across restarts,
 waiting on other tasks, sleeping, and ending with a stored outcome. `/tasks` in
 the TUI opens a live `TASKS` panel of the work running now in every
-conversation, one line per task with its id, kind, conversation, status and
-phase, and `nothing is running` once it is done. `tasks/watch` streams the same
-graph to a client.
+conversation, `nothing is running` once it is done. Tasks are grouped under the
+conversation they work in, named as a person knows it,
+`conversation <id> · <its first prompt>` (a subagent's title in place of the
+prompt), with `(this one)` after the conversation on screen; under it, one line
+per task with its id, kind, status and phase. `tasks/watch` streams the same
+graph to a client, which names conversations by number; `conversation/list`
+gives each conversation's `number` beside its `id` and `title`.
 
 ## Sub-features
 
@@ -70,11 +74,13 @@ Preconditions:
   first chunk, `{"_tag": "graph", "graph": {"tasks": {}}}`. Press `Escape`.
 - **Work waiting on a person.** Type `check` and `Enter`,
   `drive.ts r tui wait 'allow this call?'`, then `/tasks` and `Enter`,
-  `drive.ts r tui wait pi.tool`: two lines such as
-  `14  pi.generation  conversation 4  waiting · tools` and
-  `17  pi.tool  conversation 4  running · call`. `drive.ts r rpc tasks/watch`
-  answers both, the generation's `state`
+  `drive.ts r tui wait pi.tool`: `conversation talk · check  (this one)` over
+  two lines such as `14  pi.generation  waiting · tools` and
+  `17  pi.tool  running · call`. `drive.ts r rpc tasks/watch`
+  answers both, with `"conversationId"` the number, and the generation's `state`
   `{"status": "waiting", "phase": "tools", "on": [<the tool's id>], ...}`.
+  `drive.ts r rpc conversation/list` joins that number to `talk`:
+  `"id": "talk", "number": <it>, "title": "check"`.
 - **It empties live.** With the panel open, press `drive.ts r tui key C-y`
   and `drive.ts r tui wait 'nothing is running'`: the panel followed the work
   to its end without being reopened. `Escape` shows the call
@@ -89,11 +95,11 @@ Feature ledger area R: spec §2.2, §5, §7.1, §8.3, §8.4, §8.5, §8.7, §9.4
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- task-graph-rpc: a client watches the home's live work, a run and the call it waits on, until it is done
+- task-graph-rpc: a client watches the home's live work, a run and the call it waits on, until it is done, and the list names the conversation each works in
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- task-graph-rpc: /tasks lists the work running now, and it empties once the work is done
+- task-graph-rpc: /tasks lists the work running now under the conversation it works in, by its id and first prompt, and it empties once the work is done
 
 Package, `packages/harness/test/harness.test.ts`:
 
@@ -117,7 +123,8 @@ Package, `packages/kernel/test/tasks.test.ts`:
 
 - `drive.ts r rpc tasks/watch` prints only the stream's first chunk, the graph
   as it is now; call it again to see it later. The TUI panel is the live view.
-- The panel names conversations by number (`conversation 4`), even one opened
-  as `talk`.
+- A conversation the panel has not listed yet, such as a subagent started a
+  moment ago, shows as `conversation <number>` until the list is read again,
+  which the panel does as soon as the graph names it.
 - The panel covers the transcript and the `allow this call?` line, but `^Y`
   and `^N` still answer the call.
