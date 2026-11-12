@@ -21,25 +21,29 @@ const STOPPED = "the server stopped before this sign-in finished"
 const stored = (states: { readonly [provider: string]: JsonObject }) =>
   Object.values(states) as unknown as ReadonlyArray<AuthState>
 
-/** Opens the home's sign-in log, ending the sign-ins a previous server left unfinished. */
-export const committedSignIns = (harness: Harness): Effect.Effect<SignInLog> =>
+/**
+ * Opens the home's sign-in log, ending the sign-ins a previous server left unfinished. Read-only, it changes nothing,
+ * and its watch shows the sign-ins as they were.
+ */
+export const committedSignIns = (harness: Harness, readOnly: boolean): Effect.Effect<SignInLog> =>
   Effect.gen(function* () {
     const { session } = harness
-    yield* Effect.orDie(
-      session.commit((tx) =>
-        Effect.map(tx.doc(SignInsDoc), (doc) => {
-          for (const state of stored(doc.states)) {
-            if (!authEnded(state.phase))
-              doc.states[state.provider] = {
-                provider: state.provider,
-                flow: state.flow,
-                phase: "failed",
-                message: STOPPED,
-              }
-          }
-        }),
-      ),
-    )
+    if (!readOnly)
+      yield* Effect.orDie(
+        session.commit((tx) =>
+          Effect.map(tx.doc(SignInsDoc), (doc) => {
+            for (const state of stored(doc.states)) {
+              if (!authEnded(state.phase))
+                doc.states[state.provider] = {
+                  provider: state.provider,
+                  flow: state.flow,
+                  phase: "failed",
+                  message: STOPPED,
+                }
+            }
+          }),
+        ),
+      )
     return {
       record: (state) =>
         Effect.orDie(
@@ -53,7 +57,10 @@ export const committedSignIns = (harness: Harness): Effect.Effect<SignInLog> =>
       watch: Stream.unwrap(
         Effect.gen(function* () {
           const watch = yield* Effect.orDie(session.watchDoc(SignInsDoc))
-          if (watch === undefined) return Stream.die(new Error("nisse.sign_ins is created when the server opens"))
+          if (watch === undefined) {
+            if (readOnly) return Stream.empty
+            return Stream.die(new Error("nisse.sign_ins is created when the server opens"))
+          }
           let seen = new Map(stored(watch.value.states).map((state) => [state.provider, JSON.stringify(state)]))
           const changed = (states: { readonly [provider: string]: JsonObject }) => {
             const now = new Map(stored(states).map((state) => [state.provider, JSON.stringify(state)]))

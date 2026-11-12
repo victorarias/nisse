@@ -60,7 +60,7 @@ const testProviders = (
 
 export const runningServer = async (
   script: ReadonlyArray<ScriptStep> = [],
-  options: ServerOptions & { readonly connectionQueue?: number } = {},
+  options: ServerOptions & { readonly connectionQueue?: number; readonly readOnly?: boolean } = {},
 ) => {
   const home = options.home ?? tempHome()
   const scope = Effect.runSync(Scope.make())
@@ -71,6 +71,7 @@ export const runningServer = async (
         idleGrace: "1 hour",
         providers: testProviders(home, script, options),
         ...(options.connectionQueue === undefined ? {} : { connectionQueue: options.connectionQueue }),
+        ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
       }).pipe(Layer.provide(recorder)),
       scope,
     ),

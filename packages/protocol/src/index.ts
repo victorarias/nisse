@@ -142,9 +142,20 @@ export class FellBehind extends Schema.TaggedError<FellBehind>()("FellBehind", {
 }) {}
 
 /** Starts a new, empty context, the transcript kept. Behind a working run it waits in pi.inbox and applies at the run's next step. */
+/** The server opened its home read-only (`nisse serve --read-only`): it shows the home and changes nothing. */
+export class ReadOnlyServer extends Schema.TaggedError<ReadOnlyServer>()("ReadOnlyServer", {
+  message: Schema.String,
+}) {}
+
 export const Initialize = Rpc.make("initialize", {
   payload: { client: Schema.String, version: Schema.String, protocol: Schema.Int },
-  success: Schema.Struct({ version: Schema.String, protocol: Schema.Int }),
+  success: Schema.Struct({
+    version: Schema.String,
+    protocol: Schema.Int,
+    readOnly: Schema.Boolean.annotate({
+      description: "The server shows its home and changes nothing: calls that would change it fail ReadOnlyServer.",
+    }),
+  }),
 })
 
 export const Approvals = Schema.Literals(["ask", "auto"]).annotate({
@@ -210,7 +221,7 @@ export const StartConversation = Rpc.make("conversation/start", {
         "The model it runs, defaults applied, with the provider's default model when none was named; for an id that names one, that conversation's.",
     }),
   }),
-  error: Schema.Union([InvalidConversationId, UnknownProvider, UnknownEffort]),
+  error: Schema.Union([ReadOnlyServer, InvalidConversationId, UnknownProvider, UnknownEffort]),
 })
 
 /** An image a person attaches to their input. */
@@ -245,7 +256,7 @@ export const Submit = Rpc.make("conversation/submit", {
     ),
   },
   success: Schema.Struct({ submission: Schema.Int }),
-  error: Schema.Union([NoSuchConversation, TakesNoInput, UnreadableImage]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, UnreadableImage]),
 })
 
 export const Watch = Rpc.make("conversation/watch", {
@@ -257,7 +268,7 @@ export const Watch = Rpc.make("conversation/watch", {
 
 export const Interrupt = Rpc.make("conversation/interrupt", {
   payload: { conversation: ConversationId.annotate({ description: "Stops its run; what was said stays." }) },
-  error: NoSuchConversation,
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation]),
 })
 
 export const ResolveApproval = Rpc.make("approval/resolve", {
@@ -274,7 +285,7 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
       description: "False when another answer came first, or the call is no longer waiting: the first answer counts.",
     }),
   }),
-  error: Schema.Union([NoSuchConversation, NoSuchApproval]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, NoSuchApproval]),
 })
 
 export const Lineage = Schema.Struct({
@@ -327,7 +338,7 @@ export const SelectModel = Rpc.make("conversation/select_model", {
     author: Schema.String.annotate({ description: "Who switched it; the transcript names them." }),
     selection: ModelSelection,
   },
-  error: Schema.Union([NoSuchConversation, UnknownProvider, UnknownEffort, TakesNoInput]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, UnknownProvider, UnknownEffort, TakesNoInput]),
 })
 
 export const Skill = Schema.Struct({ name: Schema.String, description: Schema.String, path: Schema.String })
@@ -555,7 +566,7 @@ export const ListModels = Rpc.make("models/list", {
 export const StartAuth = Rpc.make("auth/start", {
   payload: { provider: Schema.String, method: Schema.optionalKey(AuthMethod) },
   success: AuthState.annotate({ description: "The sign-in; the one already running for this provider, if any." }),
-  error: Schema.Union([UnknownProvider, CannotSignIn]),
+  error: Schema.Union([ReadOnlyServer, UnknownProvider, CannotSignIn]),
 })
 
 export const RespondAuth = Rpc.make("auth/respond", {
@@ -571,7 +582,7 @@ export const CancelAuth = Rpc.make("auth/cancel", {
 export const Logout = Rpc.make("auth/logout", {
   payload: { provider: Schema.String },
   success: ProviderSnapshot,
-  error: Schema.Union([UnknownProvider, CannotSignIn]),
+  error: Schema.Union([ReadOnlyServer, UnknownProvider, CannotSignIn]),
 })
 
 export const WatchAuth = Rpc.make("auth/watch", {
@@ -615,7 +626,7 @@ export const Fork = Rpc.make("conversation/fork", {
       description: "The fork: a conversation of its own, on the same model, settings and approvals.",
     }),
   }),
-  error: Schema.Union([NoSuchConversation, NoSuchEntry, InvalidConversationId, TakesNoInput]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, NoSuchEntry, InvalidConversationId, TakesNoInput]),
 })
 
 export const Reset = Rpc.make("conversation/reset", {
@@ -626,7 +637,7 @@ export const Reset = Rpc.make("conversation/reset", {
       Schema.String.annotate({ description: "The first message of the new context, such as a brief of the work." }),
     ),
   },
-  error: Schema.Union([NoSuchConversation, TakesNoInput]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput]),
 })
 
 /** Summarizes the context now. pi.live's `compactions` shows it running and `compactionFailure` why one failed; its pi.compaction entry replaces what it summarized. */
@@ -644,14 +655,14 @@ export const Compact = Rpc.make("conversation/compact", {
     }),
     message: Schema.optionalKey(Schema.String.annotate({ description: "Why it failed." })),
   }).annotate({ description: "How the compaction ended; the call answers once it has." }),
-  error: Schema.Union([NoSuchConversation, TakesNoInput, CannotCompact]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, CannotCompact]),
 })
 
 /** Starts a run with no new input, such as after one failed. */
 export const Continue = Rpc.make("conversation/continue", {
   payload: { conversation: ConversationId },
   success: Schema.Struct({ submission: Schema.Int }),
-  error: Schema.Union([NoSuchConversation, TakesNoInput, ConversationBusy]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, ConversationBusy]),
 })
 
 /** Changes the conversation's settings from its next model request on. */
@@ -665,7 +676,7 @@ export const Withdraw = Rpc.make("submission/withdraw", {
       description: "already_placed: the run took it in already; settled: its run ended.",
     }),
   }),
-  error: Schema.Union([NoSuchConversation, NoSuchSubmission]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, NoSuchSubmission]),
 })
 
 export const Configure = Rpc.make("conversation/configure", {
@@ -684,7 +695,7 @@ export const Configure = Rpc.make("conversation/configure", {
       }),
     ),
   },
-  error: Schema.Union([NoSuchConversation, TakesNoInput]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput]),
 })
 
 export const UsageTotals = Schema.Struct({

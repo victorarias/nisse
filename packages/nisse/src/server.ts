@@ -35,6 +35,7 @@ import { fromProviders, type Models } from "@nisse/models"
 import type { ImageProcessor } from "@nisse/tools"
 import { createNodePhotonImages } from "@nisse/tools/images/node"
 import {
+  ReadOnlyServer,
   CannotCompact,
   CONFIGURED_KIND,
   ConversationBusy,
@@ -104,10 +105,12 @@ export type KernelHarnessService = {
   /** Prepares the images `read` returns and people attach. */
   readonly images: ImageProcessor
   readonly models: Models
+  /** Opened read-only: it shows the home and changes nothing. */
+  readonly readOnly: boolean
 }
 
 export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
-  static readonly layer = (home: Home) =>
+  static readonly layer = (home: Home, readOnly: boolean) =>
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
@@ -169,16 +172,18 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
               runTasks: claudeRuns.runTasks,
               // A prompt queued behind a run that fails runs next, as one queued behind an answer does.
               settings: { afterFailedRun: "continue" },
+              readOnly,
             }),
           ),
           (harness) => Effect.ignore(harness.close),
         )
-        for (const [id, stops] of yield* countStops(harness)) stoppedTooOften.set(id, stops)
+        // Read-only, nothing runs, so no run counts a stop.
+        if (!readOnly) for (const [id, stops] of yield* countStops(harness)) stoppedTooOften.set(id, stops)
         const status = yield* followTreeStatus(harness)
         // Loaded before anything runs, so the extensions guard the calls a restart resumes.
         const extensions = yield* openExtensions(home, registry, base, () => harness)
         removedTools = extensions.removed
-        return { home, harness, stoppedTooOften, extensions, status, images, models }
+        return { home, harness, stoppedTooOften, extensions, status, images, models, readOnly }
       }).pipe(Effect.orDie),
     )
 }
@@ -194,10 +199,10 @@ const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
 
 const Handlers = NisseRpcs.toLayer(
   Effect.gen(function* () {
-    const { home, harness, stoppedTooOften, extensions, status, images, models } = yield* KernelHarness
+    const { home, harness, stoppedTooOften, extensions, status, images, models, readOnly } = yield* KernelHarness
     const connectionQueue = yield* ConnectionQueue
     const providers = yield* Providers
-    const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness))
+    const setup = yield* Setup.make(providers.instances, yield* committedSignIns(harness, readOnly))
     const lifetime = yield* Lifetime
     // Keeps the server up while the harness has work, such as a run a submission started or a crash left.
     const scope = yield* Effect.scope
@@ -226,7 +231,19 @@ const Handlers = NisseRpcs.toLayer(
           return yield* admitted
         }),
       )
-    yield* heldUntilIdle(Effect.orDie(harness.resume))
+    /** Refuses a call that would change the home when the server opened it read-only. */
+    const writable = readOnly
+      ? Effect.fail(
+          new ReadOnlyServer({
+            message: `the server opened ${home.dir} read-only, so it changes nothing; stop it and run nisse serve to make changes`,
+          }),
+        )
+      : Effect.void
+    const writing =
+      <P, A, E, R>(handler: (payload: P) => Effect.Effect<A, E, R>) =>
+      (payload: P) =>
+        Effect.andThen(writable, handler(payload))
+    if (!readOnly) yield* heldUntilIdle(Effect.orDie(harness.resume))
     // Ends each run the server stopped during too often; its run_end says restart_limit.
     for (const id of stoppedTooOften.keys()) {
       yield* heldUntilIdle(
@@ -274,6 +291,7 @@ const Handlers = NisseRpcs.toLayer(
       ask: ModelAsk,
     ) =>
       Effect.gen(function* () {
+        yield* writable
         const last = yield* Effect.orDie(harness.session.snapshot(LastModelDoc))
         const { selection, instance } = yield* providers.choose(cwd, ask, last?.selection)
         const model = yield* agentModel(selection, instance)
@@ -392,7 +410,7 @@ const Handlers = NisseRpcs.toLayer(
       )
 
     return NisseRpcs.of({
-      initialize: () => Effect.succeed({ version: VERSION, protocol: PROTOCOL_VERSION }),
+      initialize: () => Effect.succeed({ version: VERSION, protocol: PROTOCOL_VERSION, readOnly }),
       "conversation/start": ({ cwd, id, approvals, instructions, ...ask }) =>
         Effect.gen(function* () {
           if (id === undefined) return yield* startConversation(cwd, undefined, approvals, instructions, ask)
@@ -416,7 +434,7 @@ const Handlers = NisseRpcs.toLayer(
             }),
           )
         }),
-      "conversation/submit": ({ conversation: id, requestId, author, text, images: attaching = [], steer }) =>
+      "conversation/submit": writing(({ conversation: id, requestId, author, text, images: attaching = [], steer }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
           const agent = yield* agentOf(conversation)
@@ -447,8 +465,9 @@ const Handlers = NisseRpcs.toLayer(
           )
           return { submission: submission.id }
         }),
+      ),
       "conversation/list": () => listConversations(harness),
-      "conversation/select_model": ({ conversation: id, author, selection }) =>
+      "conversation/select_model": writing(({ conversation: id, author, selection }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
           const instance = providers.instances.get(selection.provider)
@@ -469,6 +488,7 @@ const Handlers = NisseRpcs.toLayer(
             ),
           )
         }),
+      ),
       "skills/list": ({ conversation: id }) =>
         Effect.map(Effect.flatMap(find(id), agentOf), (agent) => [...skillsOf(home, providers.instances, agent)]),
       "conversation/entries": ({ conversation: id, from, to, order, limit, cursor }) =>
@@ -504,15 +524,17 @@ const Handlers = NisseRpcs.toLayer(
           return { messages: context.messages, entries: context.entries.map((record) => Number(record.id)) }
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),
-      "conversation/fork": ({ conversation, at, id }) =>
+      "conversation/fork": writing(({ conversation, at, id }) =>
         id === undefined
           ? fork(conversation, at, undefined)
           : choosing.withPermits(1)(Effect.andThen(freshChoice(id), fork(conversation, at, id))),
-      "conversation/reset": ({ conversation: id, author, handoff }) =>
+      ),
+      "conversation/reset": writing(({ conversation: id, author, handoff }) =>
         Effect.flatMap(takingInput(id), (conversation) =>
           heldUntilIdle(Effect.orDie(conversation.reset(handoff, { author }))),
         ),
-      "conversation/compact": ({ conversation: id, instructions }) =>
+      ),
+      "conversation/compact": writing(({ conversation: id, instructions }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
           const task = yield* heldUntilIdle(
@@ -536,7 +558,8 @@ const Handlers = NisseRpcs.toLayer(
           if (outcome.status === "aborted") return { outcome: "stopped" as const }
           return { outcome: "failed" as const, message: outcome.error?.message ?? outcome.reason ?? outcome.status }
         }),
-      "conversation/continue": ({ conversation: id }) =>
+      ),
+      "conversation/continue": writing(({ conversation: id }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
           const submission = yield* heldUntilIdle(
@@ -553,7 +576,8 @@ const Handlers = NisseRpcs.toLayer(
           )
           return { submission: submission.id }
         }),
-      "submission/withdraw": ({ conversation: id, submission }) =>
+      ),
+      "submission/withdraw": writing(({ conversation: id, submission }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
           const result = yield* Effect.orDie(
@@ -562,7 +586,8 @@ const Handlers = NisseRpcs.toLayer(
           if (result === "not_found") return yield* new NoSuchSubmission({ submission })
           return { result: result === "aborted" ? ("withdrawn" as const) : result }
         }),
-      "conversation/configure": ({ conversation: id, author, instructions, maxTurns }) =>
+      ),
+      "conversation/configure": writing(({ conversation: id, author, instructions, maxTurns }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
           const change = {
@@ -578,6 +603,7 @@ const Handlers = NisseRpcs.toLayer(
             ),
           )
         }),
+      ),
       "usage/get": ({ conversation: id }) =>
         id === undefined
           ? Effect.orDie(harness.usage)
@@ -587,9 +613,10 @@ const Handlers = NisseRpcs.toLayer(
               return usage ?? { models: {}, tools: {} }
             }),
       "tasks/watch": () => watchTasks,
-      "conversation/interrupt": ({ conversation: id }) =>
+      "conversation/interrupt": writing(({ conversation: id }) =>
         Effect.flatMap(find(id), (conversation) => Effect.orDie(interruptTree(harness, conversation.id))),
-      "approval/resolve": ({ conversation: id, approval, author, allow }) =>
+      ),
+      "approval/resolve": writing(({ conversation: id, approval, author, allow }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
           const answered = yield* Effect.orDie(
@@ -600,6 +627,7 @@ const Handlers = NisseRpcs.toLayer(
           if (answered === "unknown") return yield* Effect.fail(new NoSuchApproval({ approval }))
           return { accepted: answered === "accepted" }
         }),
+      ),
       "status/watch": () => Stream.unwrap(Effect.as(lifetime.hold, status.watch(connectionQueue))),
       "extensions/list": () => extensions.list,
       "extensions/reload": () => extensions.reload,
@@ -607,11 +635,11 @@ const Handlers = NisseRpcs.toLayer(
       "server/stop": () => Effect.andThen(Effect.ignore(quiet), afterReply(lifetime.stop)),
       "providers/list": ({ refresh }) => setup.providers(refresh ?? false),
       "models/list": ({ refresh }) => setup.models(refresh ?? false),
-      "auth/start": ({ provider, method }) => setup.start(provider, method),
+      "auth/start": writing(({ provider, method }) => setup.start(provider, method)),
       "auth/respond": ({ provider, flow, response }) =>
         Effect.map(setup.respond(provider, flow, response), (accepted) => ({ accepted })),
       "auth/cancel": ({ provider, flow }) => Effect.map(setup.cancel(provider, flow), (accepted) => ({ accepted })),
-      "auth/logout": ({ provider }) => setup.logout(provider),
+      "auth/logout": writing(({ provider }) => setup.logout(provider)),
       "auth/watch": () => Stream.unwrap(Effect.as(lifetime.hold, setup.watch)),
     })
   }),
@@ -629,6 +657,8 @@ const afterReply = (effect: Effect.Effect<void>) =>
 
 export interface ServerOptions {
   readonly idleGrace: Duration.Input
+  /** Show the home and change nothing: no run resumes, and calls that would change it are refused. */
+  readonly readOnly?: boolean
   readonly providers: ProviderOptions
   readonly connectionQueue?: number
 }
@@ -640,7 +670,7 @@ export const serverLayer = (home: Home, options: ServerOptions) =>
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(RpcSerialization.layerNdJsonRpc()),
     Layer.provide(homeSocketServer(home.socket)),
-    Layer.provideMerge(KernelHarness.layer(home)),
+    Layer.provideMerge(KernelHarness.layer(home, options.readOnly === true)),
     Layer.provideMerge(Providers.layer(options.providers)),
     Layer.provideMerge(Lifetime.layer(options.idleGrace)),
   )

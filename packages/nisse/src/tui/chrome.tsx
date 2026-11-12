@@ -59,6 +59,8 @@ export interface Screen {
   readonly workingSince: number | undefined
   /** Its parent's provider runs it, so it takes input only through its parent. */
   readonly hosted: boolean
+  /** The server opened its home read-only: it takes no input, and only the commands that read work. */
+  readonly readOnly: boolean
   readonly statusLines: Readonly<Record<string, string>>
   /** Nothing to show yet: the splash shows instead of the transcript. */
   readonly empty: boolean
@@ -261,7 +263,9 @@ const Prompt = (props: {
     if (text.trim() === "") return
     input.clear()
     const typed = /^\/([a-z-]+)(?:\s+([\s\S]*))?$/.exec(text.trim())
-    if (text.trim() === "/model") props.openPicker()
+    if (props.screen.readOnly) {
+      if (typed) props.command(typed[1]!, typed[2]?.trim() ?? "")
+    } else if (text.trim() === "/model") props.openPicker()
     else if (props.setup.signIn?.interaction?._tag === "browser") props.pasteCallback(text.trim())
     else if (typed && props.command(typed[1]!, typed[2]?.trim() ?? "")) return
     else props.submit(text)
@@ -274,11 +278,13 @@ const Prompt = (props: {
       title={
         props.screen.hosted
           ? " INPUT GOES THROUGH ITS PARENT "
-          : props.screen.status === "idle"
-            ? " PROMPT "
-            : props.steer
-              ? " STEER · tab "
-              : " QUEUE · tab "
+          : props.screen.readOnly
+            ? " READ ONLY "
+            : props.screen.status === "idle"
+              ? " PROMPT "
+              : props.steer
+                ? " STEER · tab "
+                : " QUEUE · tab "
       }
       titleColor={color.magenta}
       flexDirection="column"
@@ -296,7 +302,11 @@ const Prompt = (props: {
           textColor={color.ink}
           focusedTextColor={color.ink}
           placeholder={
-            props.screen.hosted ? "Claude Code runs this subagent; talk to it through its parent" : "type a message"
+            props.screen.hosted
+              ? "Claude Code runs this subagent; talk to it through its parent"
+              : props.screen.readOnly
+                ? "the server shows this home read-only and takes no input; /usage, /tasks and /help still work"
+                : "type a message"
           }
           placeholderColor={color.faint}
           keyBindings={promptKeys}

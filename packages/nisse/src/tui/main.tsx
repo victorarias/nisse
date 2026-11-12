@@ -17,6 +17,7 @@ import {
   CONFIGURED_KIND,
   type ModelSelection,
   type Outcome,
+  PROTOCOL_VERSION,
   RESET_KIND,
   RUN_END_KIND,
   type RunEnd,
@@ -41,6 +42,7 @@ import {
   untrack,
 } from "solid-js"
 import { userName } from "../author.ts"
+import { VERSION } from "../version.ts"
 import { mailPayload } from "../agents.ts"
 import { Client, type StartOptions } from "../client.ts"
 import { attachmentsIn, imagesIn } from "../attach.ts"
@@ -839,6 +841,7 @@ const conversationScreen = Effect.fnUntraced(function* (
   prompt: string | undefined,
 ) {
   const client = yield* Client
+  const { readOnly } = yield* client.initialize({ client: "nisse", version: VERSION, protocol: PROTOCOL_VERSION })
   // A number names a conversation the server numbered; any other id is one a client chose, and starting with it
   // opens that conversation or starts it.
   const numbered = id !== undefined && /^\d+$/.test(id)
@@ -971,6 +974,7 @@ const conversationScreen = Effect.fnUntraced(function* (
       return workingSince()
     },
     hosted: info?.lineage !== undefined && info.lineage.task === undefined,
+    readOnly,
     get statusLines() {
       return root.docs()[STATUS_LINES_KIND]?.lines ?? {}
     },

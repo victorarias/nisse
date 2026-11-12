@@ -785,3 +785,25 @@ test("commands-help: /help lists every command with what it does, and escape goe
   await session.waitFor((screen) => !screen.includes("COMMANDS"))
   await quit(session)
 })
+
+test("serve-read-only: under nisse serve --read-only the TUI shows a conversation, says it is read-only, and sends nothing", async () => {
+  const nisseHome = home()
+  const first = await open([{ text: "answer one" }], ["--conversation", "talk"], nisseHome)
+  await first.waitFor((screen) => screen.includes("READY"))
+  await ask(first, "prompt one", "answer one")
+  await quit(first)
+  // Replaces the server the first TUI started, once it stops.
+  const env = await scriptEnv(nisseHome, [])
+  const viewer = await serving(env, undefined, ["serve", "--read-only", "--restart"])
+  const session = screenSession(["--conversation", "talk"], env)
+  await session.waitFor((screen) => screen.includes("READ ONLY") && screen.includes("answer one"))
+  session.type("prompt two\r")
+  session.type("/help\r")
+  await session.waitFor((screen) => screen.includes("COMMANDS"))
+  session.type("\x1b")
+  await session.waitFor((screen) => !screen.includes("COMMANDS"))
+  expect(session.screen()).not.toContain("prompt two")
+  await quit(session)
+  viewer.kill()
+  await viewer.exited
+})

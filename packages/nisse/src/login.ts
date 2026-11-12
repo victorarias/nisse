@@ -5,6 +5,7 @@ import {
   type AuthState,
   type CannotSignIn,
   type ProviderSnapshot,
+  type ReadOnlyServer,
   type UnknownProvider,
 } from "@nisse/protocol"
 import { createInterface } from "node:readline"
@@ -17,7 +18,7 @@ export interface SignInClient {
   readonly "auth/start": (payload: {
     readonly provider: string
     readonly method?: AuthMethod
-  }) => Effect.Effect<{ readonly flow: string }, UnknownProvider | CannotSignIn | RpcClientError>
+  }) => Effect.Effect<{ readonly flow: string }, UnknownProvider | CannotSignIn | ReadOnlyServer | RpcClientError>
   readonly "auth/respond": (payload: {
     readonly provider: string
     readonly flow: string
@@ -29,7 +30,7 @@ export interface SignInClient {
   }) => Effect.Effect<unknown, unknown>
   readonly "auth/logout": (payload: {
     readonly provider: string
-  }) => Effect.Effect<ProviderSnapshot, UnknownProvider | CannotSignIn | RpcClientError>
+  }) => Effect.Effect<ProviderSnapshot, UnknownProvider | CannotSignIn | ReadOnlyServer | RpcClientError>
   readonly "auth/watch": () => Stream.Stream<AuthState, RpcClientError>
 }
 
@@ -139,6 +140,11 @@ export const login = Effect.fnUntraced(function* (client: SignInClient, provider
           Effect.succeed(undefined),
         ),
       UnknownProvider: () => Effect.succeed(undefined),
+      ReadOnlyServer: (error) =>
+        Effect.andThen(
+          Effect.sync(() => say(error.message)),
+          Effect.succeed(undefined),
+        ),
     }),
   )
   if (!started) return false
@@ -159,6 +165,7 @@ export const logout = Effect.fnUntraced(function* (client: SignInClient, provide
     Effect.catchTags({
       CannotSignIn: (error) => Effect.sync(() => (say(error.message), false)),
       UnknownProvider: () => Effect.sync(() => (say(`no provider named ${provider}`), false)),
+      ReadOnlyServer: (error) => Effect.sync(() => (say(error.message), false)),
     }),
   )
 })

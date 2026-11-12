@@ -36,11 +36,16 @@
             "type": "integer",
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
+          },
+          "readOnly": {
+            "type": "boolean",
+            "description": "The server shows its home and changes nothing: calls that would change it fail ReadOnlyServer."
           }
         },
         "required": [
           "version",
-          "protocol"
+          "protocol",
+          "readOnly"
         ],
         "additionalProperties": true
       },
@@ -127,6 +132,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/InvalidConversationIdEncoded"
           },
@@ -341,6 +349,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
@@ -777,6 +788,9 @@
       "error": {
         "anyOf": [
           {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
           {
@@ -853,7 +867,14 @@
         "type": "null"
       },
       "error": {
-        "$ref": "#/$defs/NoSuchConversationEncoded"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
+            "$ref": "#/$defs/NoSuchConversationEncoded"
+          }
+        ]
       },
       "stream": false
     },
@@ -898,6 +919,9 @@
       "error": {
         "anyOf": [
           {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
           {
@@ -941,6 +965,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
@@ -996,6 +1023,9 @@
       "error": {
         "anyOf": [
           {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
           {
@@ -1038,6 +1068,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
@@ -1092,6 +1125,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
@@ -1150,6 +1186,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
@@ -1657,6 +1696,9 @@
       },
       "error": {
         "anyOf": [
+          {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
           {
             "$ref": "#/$defs/NoSuchConversationEncoded"
           },
@@ -2227,6 +2269,9 @@
       "error": {
         "anyOf": [
           {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
             "$ref": "#/$defs/UnknownProviderEncoded"
           },
           {
@@ -2429,6 +2474,9 @@
       "error": {
         "anyOf": [
           {
+            "$ref": "#/$defs/ReadOnlyServerEncoded"
+          },
+          {
             "$ref": "#/$defs/UnknownProviderEncoded"
           },
           {
@@ -2561,6 +2609,25 @@
     }
   },
   "$defs": {
+    "ReadOnlyServerEncoded": {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "enum": [
+            "ReadOnlyServer"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "message"
+      ],
+      "additionalProperties": true
+    },
     "InvalidConversationIdEncoded": {
       "type": "object",
       "properties": {

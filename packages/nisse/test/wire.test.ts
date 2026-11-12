@@ -338,7 +338,7 @@ test("wire-initialize: a client is answered with the server's version and the pr
   await using server = await runningServer()
   const client = await RawClient.connect(server.home.socket)
   const reply = await client.call("initialize", { client: "test", version: "0", protocol: PROTOCOL_VERSION })
-  expect(reply.result).toEqual({ version: VERSION, protocol: PROTOCOL_VERSION })
+  expect(reply.result).toEqual({ version: VERSION, protocol: PROTOCOL_VERSION, readOnly: false })
   client.close()
 })
 
@@ -2267,4 +2267,65 @@ test("run-retry-live: a provider hiccup shows its retry and when it comes, and s
   await view.until(settled(1))
   expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
   client.close()
+})
+
+test("serve-read-only: a read-only server shows a home's conversations without resuming the run left in flight, and refuses every change by name", async () => {
+  const home = tempHome()
+  const slow = { text: "one two three four five six seven eight", delayMs: 200 }
+  let conversation = ""
+  {
+    await using writable = await runningServer([slow], { home })
+    const client = await RawClient.connect(writable.home.socket)
+    conversation = await start(client, home.dir)
+    const view = watchView(client, conversation)
+    await submit(client, conversation, "count")
+    await view.until(speaking)
+    client.close()
+  }
+  {
+    await using viewer = await runningServer([slow], { home, readOnly: true })
+    const client = await RawClient.connect(viewer.home.socket)
+    expect(
+      (await client.call("initialize", { client: "test", version: "0", protocol: PROTOCOL_VERSION })).result,
+    ).toEqual({
+      version: VERSION,
+      protocol: PROTOCOL_VERSION,
+      readOnly: true,
+    })
+    const view = watchView(client, conversation)
+    await opened(view)
+    const said = transcript(view.seen())
+    expect(said).toEqual(["user: count"])
+    expect((view.view().docs["pi.live"] as { run?: unknown }).run).toBeDefined()
+    expect(((await client.call("conversation/list")).result as Array<{ id: string }>).map((each) => each.id)).toEqual([
+      conversation,
+    ])
+    const refused = await Promise.all([
+      client.call("conversation/start", { cwd: home.dir }),
+      submit(client, conversation, "more"),
+      client.call("conversation/interrupt", { conversation }),
+      client.call("conversation/reset", { conversation, author: "bo" }),
+      client.call("conversation/configure", { conversation, author: "bo", maxTurns: 2 }),
+      client.call("conversation/fork", { conversation, at: view.seen()[0]!.id }),
+    ])
+    expect(refused.map(errorTag)).toEqual(Array(refused.length).fill("ReadOnlyServer"))
+    expect(JSON.stringify(refused[0]!.error)).toContain("read-only")
+    // Nothing runs: the answer the run was writing does not grow while the viewer serves.
+    const reading = await client.call("usage/get", {})
+    expect(reading.error).toBe(undefined)
+    expect(view.items.length).toBe(1)
+    client.close()
+  }
+  {
+    await using resumed = await runningServer([slow], { home })
+    const client = await RawClient.connect(resumed.home.socket)
+    const view = watchView(client, conversation)
+    await view.until(settled(1), 10_000)
+    // What the first server had said when it closed stays, cut off, before the answer.
+    const resumedSaid = transcript(view.seen())
+    expect(resumedSaid[0]).toBe("user: count")
+    expect(resumedSaid.slice(-2)).toEqual(["assistant: one two three four five six seven eight", "run_end: answered"])
+    client.close()
+  }
+  rmSync(home.dir, { recursive: true, force: true })
 })
