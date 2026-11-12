@@ -427,6 +427,7 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - claude-extensions: an extension's rewrite of a call is what Claude Code runs and what the transcript shows
 - claude-extensions: an extension's hooks reach the calls of Claude's subagents, in the subagent's conversation
 - claude-extensions: an extension's tool runs for Claude's subagents, in the subagent's conversation
+- claude-extensions: a tool an extension removes is withheld from Claude Code, by Claude Code's name for nisse's own
 
 Package, `packages/claude/test/claude.test.ts`:
 
