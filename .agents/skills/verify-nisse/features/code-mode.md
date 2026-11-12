@@ -49,7 +49,7 @@ Start the TUI on a code-mode-only model, such as `nisse --provider openai --mode
 Preconditions: a fresh run for each group, `drive.ts r down` after.
 
 - **A script's calls ask.** Write a script step file such as
-  `[{"tool":{"name":"codemode","input":{"code":"text(await tools.bash({ command: \"echo hi\" }))\ntext(JSON.stringify((await searchTools(\"shell\")).map(t => t.name)))"}}},{"text":"done"}]`,
+  `[{"tool":{"name":"codemode","input":{"code":"text(await tools.bash({ command: \"echo hi\" }))\ntext(JSON.stringify((await searchTools(\"bash\")).map(t => t.name)))"}}},{"text":"done"}]`,
   then `drive.ts r up --script <file>`, `drive.ts r serve`,
   `drive.ts r rpc conversation/start '{"cwd":"/tmp/nisse-verify/r","model":"script-code-mode"}'`
   and `drive.ts r watch <id> --submit 'go' --save ask` (it returns once the run waits):

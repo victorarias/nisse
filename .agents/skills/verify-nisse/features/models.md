@@ -51,7 +51,8 @@ Preconditions:
   instead, as it says.
 
 - **List.** Run `drive.ts r serve` and `drive.ts r rpc models/list '{}'`: one
-  entry per provider. `script` has `"defaultModel": "script"`; `claude` has
+  entry per provider. `script` has `"defaultModel": "script"` and the models
+  `script` and `script-code-mode` ("Script in code mode"); `claude` has
   no `defaultModel` and Claude Code's models, `sonnet`, `fable`, `opus` and
   `haiku`, each with `"efforts": ["low", "medium", "high", "xhigh", "max"]`;
   `openai` has `"defaultModel": "gpt-5.5"` and the list nisse ships, from
@@ -59,11 +60,12 @@ Preconditions:
 - **Pick.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`: the
   status bar ends `script · script  nisse <version>`. Type `/model`, press `Enter`,
   `drive.ts r tui wait ' MODEL '`, `drive.ts r tui screen models`: the
-  `MODEL` panel lists `script · Script`, `claude · its own choice`,
+  `MODEL` panel lists `script · Script`, `script · Script in code mode`,
+  `claude · its own choice`,
   `claude · Sonnet`, `claude · Fable`, `claude · Opus`, `claude · Haiku`,
   then `openai · GPT-6.1-Sol` down to `openai · GPT-5.5`, over
   `↑↓  model   ←→  effort   ⏎  switch   esc  close`. Press
-  `drive.ts r tui key Down Down Right` and
+  `drive.ts r tui key Down Down Down Right` and
   `drive.ts r tui wait 'claude · Sonnet ‹ low ›'`. Press `Enter` and
   `drive.ts r tui wait 'switched to'`: `◆ ada switched to claude · sonnet · low`
   in the transcript and `claude · sonnet · low` in the status bar.
@@ -189,8 +191,8 @@ Save `evidence/` with each run. Before a later `rpc`, if `drive.ts r doctor`
 shows `none running`, run `drive.ts r serve` again.
 
 - **To Claude.** `drive.ts r up --real-claude`. First check:
-  `drive.ts r serve` and `drive.ts r rpc providers/list '{}'` list `claude`
-  as `"status": "ready"` with your account; otherwise stop and report what
+  `drive.ts r serve` and `drive.ts r rpc providers/list '{}' --timeout 60000`
+  list `claude` as `"status": "ready"` with a version; otherwise stop and report what
   it shows. Run the three commands of **Switch providers**: the second
   `exec` exits 0 with stdout `pelican`. Run
   `drive.ts r tui start --conversation <id>`,

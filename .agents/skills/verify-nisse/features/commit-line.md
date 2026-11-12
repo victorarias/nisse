@@ -68,7 +68,9 @@ Preconditions:
   `the server shows this home read-only and takes no input; /usage, /tasks and /help still work`.
   Type `prompt two` and `Enter`: it stays in the prompt, unsent, and
   `✗ this server is read-only and sends nothing; stop it and run nisse serve to send`
-  shows above it. `/reset` is refused by name and nothing is committed.
+  shows above it. `/reset` is refused with the server's `ReadOnlyServer` line,
+  `✗ the server opened /tmp/nisse-verify/r/home read-only, so it changes nothing; …`,
+  and nothing is committed.
   `/usage` opens the `USAGE` panel. The status bar shows no compacting or
   retry for a run the first server left in flight.
 - **Refusals.** Each of `conversation/start`, `conversation/submit`,
@@ -83,9 +85,10 @@ Preconditions:
   server, and `initialize` answers `"readOnly": false`. A TUI left open
   across the switch drops `READ ONLY` for `PROMPT`, and a switch the other
   way brings `READ ONLY` back.
-  `drive.ts r watch talk --until run_end --timeout 30000 --save resumed`: the
-  run left in flight resumes and ends `answered`. A restarted server starts
-  its script over, so the answer is `answer one`.
+  The run left in flight resumes and can end before a watch connects, so read
+  the first view of `drive.ts r watch talk --save resumed`: it holds the
+  aborted partial, then `answer one` (a restarted server starts its script
+  over) and a `nisse.run_end` `answered`.
 
 ## Contexts
 

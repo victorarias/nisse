@@ -212,8 +212,8 @@ the skill's [Real accounts](../SKILL.md#real-accounts). Give every
   write `[providers.claude-own]` with `driver = "claude"` and
   `args = ["--add-dir", "/tmp/nisse-verify/r"]` to the home's
   `config.toml`. Run `drive.ts r serve` and
-  `drive.ts r rpc providers/list '{}'`: `claude` and `claude-own` are both
-  `ready` with your account; otherwise stop and report what it shows. Run
+  `drive.ts r rpc providers/list '{}' --timeout 60000`: `claude` and
+  `claude-own` are both `ready`; otherwise stop and report what it shows. Run
   `drive.ts r nisse exec --provider claude-own 'Reply with one word: ok'`:
   stdout `ok`, exit 0.
 - **openai-work from a saved sign-in.** In a run made with plain
@@ -252,13 +252,15 @@ the skill's [Real accounts](../SKILL.md#real-accounts). Give every
   config_dir = "/tmp/nisse-verify/r3/claude-alt"
   ```
 
-  Run `drive.ts r3 serve` and `drive.ts r3 rpc providers/list '{}'`:
+  Run `drive.ts r3 serve` and
+  `drive.ts r3 rpc providers/list '{}' --timeout 60000`:
   `claude-alt` is `signed_out`, its login kept in the empty
   `/tmp/nisse-verify/r3/claude-alt`. Run
   `drive.ts r3 tui start login claude-alt`; the person finishes Claude Code's
-  sign-in. `drive.ts r3 tui stop` shows `signed in to claude-alt as <account>`,
+  sign-in. `drive.ts r3 tui stop` shows `signed in to claude-alt` (with
+  `as <account>` when Claude Code names one),
   `/tmp/nisse-verify/r3/claude-alt` holds that login, and `providers/list`
-  shows `claude-alt` `ready` with it while `claude` keeps your own. Where
+  shows `claude-alt` `ready` while `claude` stays `ready`. Where
   Claude Code is signed in by its environment, as in a hosted session,
   `claude-alt` is `ready` from the start and there is nothing to sign in to;
   report that instead.

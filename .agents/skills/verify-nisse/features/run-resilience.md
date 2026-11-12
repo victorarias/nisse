@@ -50,7 +50,7 @@ Preconditions:
   `drive.ts r tui wait READY`.
 
 - **Turn limit.** Type `/max-turns 1` and `Enter`,
-  `drive.ts r tui wait 'limited runs'`, then type `loop` and `Enter`,
+  `drive.ts r tui wait 'set the turn limit'` (`◆ ada set the turn limit to 1 turn`), then type `loop` and `Enter`,
   `drive.ts r tui wait 'turn limit'` and `drive.ts r tui wait READY`: under
   `NISSE`, `▸ bash(echo again)` and `again`, then
   `✗ reached the turn limit of 1 turn`. `drive.ts r watch talk --save turn-limit`

@@ -35,7 +35,7 @@ run, instead of waiting for the run to end.
 Preconditions:
 
 - A run whose script is
-  `[{"text": "slow one two three four five six seven eight", "delayMs": 500, "tool": {"name": "read", "input": {"path": "/etc/hostname"}}}, {"text": "steered reply"}]`.
+  `[{"text": "slow one two three four five six seven eight", "delayMs": 500, "tool": {"name": "read", "input": {"path": "/etc/hosts"}}}, {"text": "steered reply"}]`.
 
 - **Steer.** Run `drive.ts r tui start`, `drive.ts r tui wait READY`,
   `drive.ts r tui type first`, `drive.ts r tui key Enter`,
@@ -46,7 +46,7 @@ Preconditions:
   `steering · go left`, and the `STEER · tab` panel.
 - **Placed.** Run `drive.ts r tui wait --timeout 20000 'steered reply'`,
   `drive.ts r tui wait READY`, `drive.ts r tui screen steered`. Under `NISSE`
-  the slow text and `▸ read(/etc/hostname)`, then `ADA` over `go left`, then
+  the slow text and `▸ read(/etc/hosts)`, then `ADA` over `go left`, then
   `NISSE` over `steered reply`.
 - **Committed.** Run `drive.ts r rpc conversation/list` for the `<id>` and
   `drive.ts r watch <id> --save steered`. The view's entries run `nisse.user`
@@ -202,7 +202,12 @@ Package, `packages/claude/test/claude.test.ts`:
 What the recordings do not show is a real model acting on a steer. Follow
 SKILL.md's "Real accounts" first, and run the first check before any step.
 
-- **Claude.** Start with `drive.ts r up --real-claude`. Run
+- **Claude.** Precondition: a Claude Code whose user settings would ask
+  before running `touch`. Nisse starts Claude Code with
+  `--setting-sources=user,project,local`, so a `defaultMode` such as `auto` or
+  an allow rule in your `~/.claude/settings.json` runs the command without
+  `allow this call?`; report that setting instead of driving the step.
+  Start with `drive.ts r up --real-claude`. Run
   `drive.ts r tui start --provider claude`, wait for `READY`, and type
   ``Run the bash command `touch /tmp/nisse-verify/r/steered.txt` with the Bash tool, then reply with exactly: done``.
   At `allow this call?` press `Tab`, type
