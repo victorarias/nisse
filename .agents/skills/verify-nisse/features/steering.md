@@ -202,12 +202,7 @@ Package, `packages/claude/test/claude.test.ts`:
 What the recordings do not show is a real model acting on a steer. Follow
 SKILL.md's "Real accounts" first, and run the first check before any step.
 
-- **Claude.** Precondition: a Claude Code whose user settings would ask
-  before running `touch`. Nisse starts Claude Code with
-  `--setting-sources=user,project,local`, so a `defaultMode` such as `auto` or
-  an allow rule in your `~/.claude/settings.json` runs the command without
-  `allow this call?`; report that setting instead of driving the step.
-  Start with `drive.ts r up --real-claude`. Run
+- **Claude.** Start with `drive.ts r up --real-claude`. Run
   `drive.ts r tui start --provider claude`, wait for `READY`, and type
   ``Run the bash command `touch /tmp/nisse-verify/r/steered.txt` with the Bash tool, then reply with exactly: done``.
   At `allow this call?` press `Tab`, type

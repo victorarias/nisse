@@ -569,11 +569,7 @@ Claude, in a run made with `drive.ts r up --real-claude`:
   reports only a placeholder (`This agent's report was delivered to you as a
 message...`) as its summary; neither the card nor the subagent shows that
   placeholder.
-- **A subagent asks.** Precondition: a Claude Code whose user settings would
-  ask before running `touch`. Nisse starts Claude Code with
-  `--setting-sources=user,project,local`, so a `defaultMode` such as `auto` or
-  an allow rule in your `~/.claude/settings.json` runs the command without
-  asking; report that setting instead of driving the step. Send
+- **A subagent asks.** Send
   `Use the Task tool to start a general-purpose subagent that runs exactly: touch /tmp/nisse-verify/r/sub-made with the Bash tool. Then reply with one word: done`,
   wait for `waiting on you`: the card shows `allow Bash(touch /tmp/nisse-verify/r/sub-made)?`.
   Press `C-y` and wait for `READY`: the card reads `done`, and
