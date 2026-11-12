@@ -66,7 +66,7 @@ Wire, `packages/nisse/test/wire.test.ts`:
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- reset-rpc, reset-handoff: /reset draws a new context with its handoff, and the model goes on from the handoff alone
+- reset-rpc, reset-handoff: /reset draws a new context with its handoff, and the conversation goes on after it
 
 Package, `packages/harness/test/harness.test.ts`:
 

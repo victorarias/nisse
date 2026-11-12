@@ -67,4 +67,7 @@ Screen, `packages/nisse/test/screen.test.ts`:
 
 - A command's argument is the rest of the line: `/reset` with no text resets
   without a handoff, and `/instructions` alone clears them.
-- A mistyped command reaches the model as a prompt, with no warning.
+- A mistyped command reaches the model as a prompt, with no warning, and so
+  does a command that takes nothing (`/help`, `/fork`, `/continue`,
+  `/withdraw`, `/usage`, `/tasks`) typed with text after it: `/continue the
+story` is a prompt.

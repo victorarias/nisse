@@ -651,7 +651,7 @@ test("fork-rpc: /fork moves the screen to a new conversation that goes on from b
   await quit(session)
 })
 
-test("reset-rpc, reset-handoff: /reset draws a new context with its handoff, and the model goes on from the handoff alone", async () => {
+test("reset-rpc, reset-handoff: /reset draws a new context with its handoff, and the conversation goes on after it", async () => {
   const session = await open([{ text: "answer one" }])
   await session.waitFor((screen) => screen.includes("READY"))
   await ask(session, "prompt one", "answer one")
@@ -691,9 +691,11 @@ test("compact-rpc, compaction-live-status: /compact says when there is nothing t
   await quit(session)
 })
 
-test("continue-rpc: /continue goes on after a failed run with no new input", async () => {
+test("continue-rpc: /continue goes on after a failed run with no new input, and says why when there is nothing to go on with", async () => {
   const session = await open([{ fail: "provider went away" }, { text: "back on it" }])
   await session.waitFor((screen) => screen.includes("READY"))
+  session.type("/continue\r")
+  await session.waitFor((screen) => screen.includes("no run has ended here yet"))
   session.type("hi\r")
   await session.waitFor((screen) => screen.includes("provider went away") && screen.includes("READY"))
   session.type("/continue\r")
@@ -702,15 +704,17 @@ test("continue-rpc: /continue goes on after a failed run with no new input", asy
 })
 
 test("withdraw-rpc: /withdraw takes back the queued prompt before it runs", async () => {
-  const session = await open([{ text: "slow one two three four five", delayMs: 300 }])
+  const session = await open([call("bash", { command: "echo hi" }), { text: "all done" }])
   await session.waitFor((screen) => screen.includes("READY"))
   session.type("first\r")
-  await session.waitFor((screen) => screen.includes("WORKING") && screen.includes("slow"))
+  // The run waits on its approval, so "second" waits in the queue.
+  await session.waitFor((screen) => screen.includes("allow this call?"))
   session.type("second\r")
   await session.waitFor((screen) => screen.includes("queued · second"))
   session.type("/withdraw\r")
   await session.waitFor((screen) => screen.includes("withdrew: second") && !screen.includes("queued · second"))
-  const screen = await session.waitFor((screen) => screen.includes("five") && screen.includes("READY"))
+  session.type("\x19")
+  const screen = await session.waitFor((screen) => screen.includes("all done") && screen.includes("READY"))
   expect(screen).not.toContain("You said: second")
   await quit(session)
 })
@@ -786,7 +790,7 @@ test("commands-help: /help lists every command with what it does, and escape goe
   await quit(session)
 })
 
-test("serve-read-only: under nisse serve --read-only the TUI shows a conversation, says it is read-only, and sends nothing", async () => {
+test("serve-read-only: under nisse serve --read-only the TUI shows a conversation and runs commands, but keeps a typed message unsent and says why", async () => {
   const nisseHome = home()
   const first = await open([{ text: "answer one" }], ["--conversation", "talk"], nisseHome)
   await first.waitFor((screen) => screen.includes("READY"))
@@ -797,12 +801,14 @@ test("serve-read-only: under nisse serve --read-only the TUI shows a conversatio
   const viewer = await serving(env, undefined, ["serve", "--read-only", "--restart"])
   const session = screenSession(["--conversation", "talk"], env)
   await session.waitFor((screen) => screen.includes("READ ONLY") && screen.includes("answer one"))
-  session.type("prompt two\r")
   session.type("/help\r")
   await session.waitFor((screen) => screen.includes("COMMANDS"))
   session.type("\x1b")
   await session.waitFor((screen) => !screen.includes("COMMANDS"))
-  expect(session.screen()).not.toContain("prompt two")
+  session.type("prompt two\r")
+  const refused = await session.waitFor((screen) => screen.includes("read-only and sends nothing"))
+  // Still in the prompt, not in the transcript.
+  expect(refused).toMatch(/❯ prompt two/)
   await quit(session)
   viewer.kill()
   await viewer.exited

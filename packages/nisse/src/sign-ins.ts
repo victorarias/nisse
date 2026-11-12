@@ -58,7 +58,8 @@ export const committedSignIns = (harness: Harness, readOnly: boolean): Effect.Ef
         Effect.gen(function* () {
           const watch = yield* Effect.orDie(session.watchDoc(SignInsDoc))
           if (watch === undefined) {
-            if (readOnly) return Stream.empty
+            // Never signed in here, and read-only nothing will: the watch shows no sign-ins and stays open.
+            if (readOnly) return Stream.never
             return Stream.die(new Error("nisse.sign_ins is created when the server opens"))
           }
           let seen = new Map(stored(watch.value.states).map((state) => [state.provider, JSON.stringify(state)]))

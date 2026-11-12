@@ -64,8 +64,11 @@ Preconditions:
   status bar at `READY`, since nothing runs, and the prompt panel titled
   `READ ONLY` reading
   `the server shows this home read-only and takes no input; /usage, /tasks and /help still work`.
-  Type `prompt two` and `Enter`, and `/reset` and `Enter`: nothing is drawn or
-  committed. `/usage` opens the `USAGE` panel.
+  Type `prompt two` and `Enter`: it stays in the prompt, unsent, and
+  `✗ this server is read-only and sends nothing; stop it and run nisse serve to send`
+  shows above it. `/reset` is refused by name and nothing is committed.
+  `/usage` opens the `USAGE` panel. The status bar shows no compacting or
+  retry for a run the first server left in flight.
 - **Refusals.** Each of `conversation/start`, `conversation/submit`,
   `conversation/interrupt`, `conversation/reset`, `conversation/configure`,
   `conversation/fork`, `conversation/compact`, `conversation/continue`,
@@ -96,7 +99,7 @@ Wire, `packages/nisse/test/wire.test.ts`:
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- serve-read-only: under nisse serve --read-only the TUI shows a conversation, says it is read-only, and sends nothing
+- serve-read-only: under nisse serve --read-only the TUI shows a conversation and runs commands, but keeps a typed message unsent and says why
 
 Package, `packages/harness/test/harness.test.ts`:
 

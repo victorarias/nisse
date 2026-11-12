@@ -261,11 +261,15 @@ const Prompt = (props: {
     if (!input || props.screen.hosted) return
     const text = input.plainText
     if (text.trim() === "") return
-    input.clear()
     const typed = /^\/([a-z-]+)(?:\s+([\s\S]*))?$/.exec(text.trim())
     if (props.screen.readOnly) {
-      if (typed) props.command(typed[1]!, typed[2]?.trim() ?? "")
-    } else if (text.trim() === "/model") props.openPicker()
+      // Only commands run on a read-only server; anything else stays typed, and submit says why.
+      if (typed && props.command(typed[1]!, typed[2]?.trim() ?? "")) input.clear()
+      else props.submit(text)
+      return
+    }
+    input.clear()
+    if (text.trim() === "/model") props.openPicker()
     else if (props.setup.signIn?.interaction?._tag === "browser") props.pasteCallback(text.trim())
     else if (typed && props.command(typed[1]!, typed[2]?.trim() ?? "")) return
     else props.submit(text)

@@ -600,6 +600,11 @@ export class CannotCompact extends Schema.TaggedError<CannotCompact>()("CannotCo
   message: Schema.String,
 }) {}
 
+/** `conversation/continue` has nothing to go on with: no run has ended, or the last one answered. */
+export class NothingToContinue extends Schema.TaggedError<NothingToContinue>()("NothingToContinue", {
+  message: Schema.String,
+}) {}
+
 export class NoSuchSubmission extends Schema.TaggedError<NoSuchSubmission>()("NoSuchSubmission", {
   submission: Schema.Int,
 }) {}
@@ -665,11 +670,11 @@ export const Compact = Rpc.make("conversation/compact", {
   error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, CannotCompact]),
 })
 
-/** Starts a run with no new input, such as after one failed. */
+/** Starts a run with no new input after one that did not answer: it failed, was interrupted or hit a limit. */
 export const Continue = Rpc.make("conversation/continue", {
   payload: { conversation: ConversationId },
   success: Schema.Struct({ submission: Schema.Int }),
-  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, ConversationBusy]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, ConversationBusy, NothingToContinue]),
 })
 
 export const Withdraw = Rpc.make("submission/withdraw", {

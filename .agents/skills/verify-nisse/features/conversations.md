@@ -3,8 +3,9 @@
 A conversation is created with its settings, listed, reopened, owned by a task
 or another conversation, and forked at any entry. `/fork` in the TUI forks the
 conversation from before the last prompt a person typed and moves the screen
-to the fork, a new conversation with the same model, settings and approvals,
-so the prompt can be tried another way. `conversation/fork` forks at any
+to the fork, a new conversation with the same model, settings and approvals
+as the conversation has now (not as they were at the fork's entry), so the
+prompt can be tried another way. `conversation/fork` forks at any
 entry, with a chosen id. The conversation it left is unchanged.
 
 ## Sub-features
@@ -68,7 +69,7 @@ Feature ledger area C: spec §2, §2.2, §3.7; README More Conversations and For
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- fork-rpc: a fork goes on from an earlier entry with only what came before it, and the conversation it left is unchanged
+- fork-rpc: a fork goes on from an earlier entry with only what came before it and the settings as they are now, and the conversation it left is unchanged
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
@@ -85,5 +86,7 @@ Package, `packages/harness/test/harness.test.ts`:
 - `/fork` names the fork by number, so its title bar shows `conversation <n>`
   and nothing on screen says which conversation it came from; the view's
   `parent` does.
-- In a conversation with nothing in it, `/fork` shows `✗ nothing to fork yet`
-  above the prompt.
+- `/fork` refuses with a notice above the prompt instead of forking somewhere
+  else: `✗ nothing to fork yet: no prompt has been sent` in a new
+  conversation, and `… is not loaded; scroll up to it and fork again` when
+  the last prompt, or the entry before it, is above the loaded transcript.

@@ -2000,7 +2000,7 @@ const liveOf = (watch: ViewWatch) =>
       }
     | undefined
 
-test("fork-rpc: a fork goes on from an earlier entry with only what came before it, and the conversation it left is unchanged", async () => {
+test("fork-rpc: a fork goes on from an earlier entry with only what came before it and the settings as they are now, and the conversation it left is unchanged", async () => {
   await using server = await runningServer([{ text: "a" }, { text: "b" }, { text: "c" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
@@ -2010,11 +2010,14 @@ test("fork-rpc: a fork goes on from an earlier entry with only what came before 
   await submit(client, conversation, "two")
   await view.until(settled(2))
   const firstEnd = view.seen().find((entry) => entry.kind === RUN_END_KIND)!.id
+  // Changed after the fork's entry, and still what the fork runs with.
+  await client.call("conversation/configure", { conversation, author: "bo", instructions: "be brief", maxTurns: 3 })
   const forked = await client.call("conversation/fork", { conversation, at: firstEnd, id: "other-way" })
   expect(forked.result).toEqual({ conversation: "other-way" })
   const fork = watchView(client, "other-way")
   await opened(fork)
   expect(fork.view().conversation.parent).toEqual({ conversationId: Number(conversation), at: firstEnd })
+  expect(fork.view().docs["pi.agent"]).toMatchObject({ instructions: "be brief", maxTurns: 3 })
   await submit(client, "other-way", "three")
   await fork.until(settled(2))
   expect(transcript(fork.seen())).toEqual([
@@ -2109,21 +2112,31 @@ test("compact-rpc, compaction-live-status: compacting shows live, then a summary
   client.close()
 })
 
-test("continue-rpc: a conversation whose run failed goes on with no new input, and one that works is refused by name", async () => {
-  await using server = await runningServer([{ fail: "provider went away" }, { text: "back on it now", delayMs: 100 }])
+test("continue-rpc: a conversation whose run failed goes on with no new input; one that works, never ran or answered is refused by name", async () => {
+  await using server = await runningServer([
+    { fail: "provider went away" },
+    { text: "back on it", tool: { name: "bash", input: { command: "echo held" } } },
+    { text: "back on it now" },
+  ])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
   const view = watchView(client, conversation)
+  const go = () => client.call("conversation/continue", { conversation })
+  expect(errorTag(await go())).toBe("NothingToContinue")
   await submit(client, conversation, "hi")
   await view.until(settled(1))
-  expect((await client.call("conversation/continue", { conversation })).error).toBe(undefined)
-  await view.until(speaking)
-  expect(errorTag(await client.call("conversation/continue", { conversation }))).toBe("ConversationBusy")
+  expect((await go()).error).toBe(undefined)
+  // The run waits on its approval, so it is still working when continue is asked again.
+  const approval = await waitingApproval(view)
+  expect(errorTag(await go())).toBe("ConversationBusy")
+  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: true })
   await view.until(settled(2))
+  expect(errorTag(await go())).toBe("NothingToContinue")
   expect(transcript(view.seen())).toEqual([
     "user: hi",
     "assistant:  [error]",
     "run_end: failed (provider went away)",
+    "assistant: back on it",
     "assistant: back on it now",
     "run_end: answered",
   ])
@@ -2131,20 +2144,27 @@ test("continue-rpc: a conversation whose run failed goes on with no new input, a
 })
 
 test("withdraw-rpc: a queued prompt taken back never runs, and one already run cannot be", async () => {
-  await using server = await runningServer([{ text: "the first answer", delayMs: 100 }])
+  await using server = await runningServer(ECHO)
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
   const view = watchView(client, conversation)
   const first = (await submit(client, conversation, "one")).result as { submission: number }
-  await view.until(speaking)
+  // The run waits on its approval, so "two" waits in the queue.
+  const approval = await waitingApproval(view)
   const second = (await submit(client, conversation, "two")).result as { submission: number }
   const inbox = () => (view.view().docs["pi.inbox"] as { items: Array<{ id: number }> }).items.map((item) => item.id)
   await view.until(() => inbox().includes(second.submission))
   const withdraw = (submission: number) => client.call("submission/withdraw", { conversation, submission })
   expect((await withdraw(second.submission)).result).toEqual({ result: "withdrawn" })
   expect(inbox()).not.toContain(second.submission)
+  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: true })
   await view.until(settled(1))
-  expect(transcript(view.seen())).toEqual(["user: one", "assistant: the first answer", "run_end: answered"])
+  expect(transcript(view.seen())).toEqual([
+    "user: one",
+    "assistant: checking",
+    "assistant: all done",
+    "run_end: answered",
+  ])
   expect((await withdraw(first.submission)).result).toEqual({ result: "settled" })
   expect(errorTag(await withdraw(9999))).toBe("NoSuchSubmission")
   client.close()
@@ -2257,12 +2277,12 @@ test("run-retry-live: a provider hiccup shows its retry and when it comes, and s
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
   const view = watchView(client, conversation)
-  const before = Date.now()
   await submit(client, conversation, "hi")
   await view.until((current) => liveOf(current)?.generation?.retry !== undefined)
   const retry = liveOf(view)!.generation!.retry!
   expect(retry.error).toContain("503")
-  expect(retry.at).toBeGreaterThan(before)
+  // When the retry comes is still ahead when a client first sees it.
+  expect(retry.at).toBeGreaterThan(Date.now())
   await client.call("conversation/interrupt", { conversation })
   await view.until(settled(1))
   expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
@@ -2273,59 +2293,72 @@ test("serve-read-only: a read-only server shows a home's conversations without r
   const home = tempHome()
   const slow = { text: "one two three four five six seven eight", delayMs: 200 }
   let conversation = ""
-  {
-    await using writable = await runningServer([slow], { home })
-    const client = await RawClient.connect(writable.home.socket)
-    conversation = await start(client, home.dir)
-    const view = watchView(client, conversation)
-    await submit(client, conversation, "count")
-    await view.until(speaking)
-    client.close()
+  try {
+    {
+      await using writable = await runningServer([slow], { home })
+      const client = await RawClient.connect(writable.home.socket)
+      conversation = await start(client, home.dir)
+      const view = watchView(client, conversation)
+      await submit(client, conversation, "count")
+      await view.until(speaking)
+      client.close()
+    }
+    {
+      // Had the viewer resumed the run, it would answer with this at once.
+      await using viewer = await runningServer([{ text: "answered by the viewer" }], { home, readOnly: true })
+      const client = await RawClient.connect(viewer.home.socket)
+      expect(
+        (await client.call("initialize", { client: "test", version: "0", protocol: PROTOCOL_VERSION })).result,
+      ).toEqual({
+        version: VERSION,
+        protocol: PROTOCOL_VERSION,
+        readOnly: true,
+      })
+      const view = watchView(client, conversation)
+      await opened(view)
+      const said = transcript(view.seen())
+      expect(said).toEqual(["user: count"])
+      expect((view.view().docs["pi.live"] as { run?: unknown }).run).toBeDefined()
+      expect(((await client.call("conversation/list")).result as Array<{ id: string }>).map((each) => each.id)).toEqual(
+        [conversation],
+      )
+      const refused = await Promise.all([
+        client.call("conversation/start", { cwd: home.dir }),
+        submit(client, conversation, "more"),
+        client.call("conversation/interrupt", { conversation }),
+        client.call("conversation/reset", { conversation, author: "bo" }),
+        client.call("conversation/configure", { conversation, author: "bo", maxTurns: 2 }),
+        client.call("conversation/fork", { conversation, at: view.seen()[0]!.id }),
+        client.call("conversation/select_model", {
+          conversation,
+          author: "bo",
+          selection: { provider: "script", model: "script" },
+        }),
+        client.call("conversation/compact", { conversation }),
+        client.call("conversation/continue", { conversation }),
+        client.call("submission/withdraw", { conversation, submission: 1 }),
+        client.call("approval/resolve", { conversation, approval: "1", author: "bo", allow: true }),
+        client.call("auth/start", { provider: "openai" }),
+        client.call("auth/logout", { provider: "openai" }),
+      ])
+      expect(refused.map(errorTag)).toEqual(Array(refused.length).fill("ReadOnlyServer"))
+      expect(JSON.stringify(refused[0]!.error)).toContain("read-only")
+      expect((await client.call("usage/get", {})).error).toBe(undefined)
+      client.close()
+    }
+    {
+      await using resumed = await runningServer([slow], { home })
+      const client = await RawClient.connect(resumed.home.socket)
+      const view = watchView(client, conversation)
+      await view.until(settled(1), 10_000)
+      // What the first server had said when it closed stays, cut off, before the answer.
+      const resumedSaid = transcript(view.seen())
+      expect(resumedSaid[0]).toBe("user: count")
+      expect(resumedSaid.slice(-2)).toEqual(["assistant: one two three four five six seven eight", "run_end: answered"])
+      expect(resumedSaid.join("\n")).not.toContain("answered by the viewer")
+      client.close()
+    }
+  } finally {
+    rmSync(home.dir, { recursive: true, force: true })
   }
-  {
-    await using viewer = await runningServer([slow], { home, readOnly: true })
-    const client = await RawClient.connect(viewer.home.socket)
-    expect(
-      (await client.call("initialize", { client: "test", version: "0", protocol: PROTOCOL_VERSION })).result,
-    ).toEqual({
-      version: VERSION,
-      protocol: PROTOCOL_VERSION,
-      readOnly: true,
-    })
-    const view = watchView(client, conversation)
-    await opened(view)
-    const said = transcript(view.seen())
-    expect(said).toEqual(["user: count"])
-    expect((view.view().docs["pi.live"] as { run?: unknown }).run).toBeDefined()
-    expect(((await client.call("conversation/list")).result as Array<{ id: string }>).map((each) => each.id)).toEqual([
-      conversation,
-    ])
-    const refused = await Promise.all([
-      client.call("conversation/start", { cwd: home.dir }),
-      submit(client, conversation, "more"),
-      client.call("conversation/interrupt", { conversation }),
-      client.call("conversation/reset", { conversation, author: "bo" }),
-      client.call("conversation/configure", { conversation, author: "bo", maxTurns: 2 }),
-      client.call("conversation/fork", { conversation, at: view.seen()[0]!.id }),
-    ])
-    expect(refused.map(errorTag)).toEqual(Array(refused.length).fill("ReadOnlyServer"))
-    expect(JSON.stringify(refused[0]!.error)).toContain("read-only")
-    // Nothing runs: the answer the run was writing does not grow while the viewer serves.
-    const reading = await client.call("usage/get", {})
-    expect(reading.error).toBe(undefined)
-    expect(view.items.length).toBe(1)
-    client.close()
-  }
-  {
-    await using resumed = await runningServer([slow], { home })
-    const client = await RawClient.connect(resumed.home.socket)
-    const view = watchView(client, conversation)
-    await view.until(settled(1), 10_000)
-    // What the first server had said when it closed stays, cut off, before the answer.
-    const resumedSaid = transcript(view.seen())
-    expect(resumedSaid[0]).toBe("user: count")
-    expect(resumedSaid.slice(-2)).toEqual(["assistant: one two three four five six seven eight", "run_end: answered"])
-    client.close()
-  }
-  rmSync(home.dir, { recursive: true, force: true })
 })

@@ -814,15 +814,20 @@ const taskLines = (graph: TaskGraph) => {
  * came after it, or before an answer that reports usage.
  */
 const contextUsed = (items: ReadonlyArray<TranscriptItem>) => {
-  for (const item of items.toReversed()) {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!
     if (item.kind !== "entry") continue
     if (item.entry.kind === RESET_KIND || item.entry.kind === COMPACTION_KIND) return undefined
     if (item.entry.kind !== "pi.assistant") continue
-    const usage = (messageOf(item.entry) as { usage?: Usage } | undefined)?.usage
-    if (usage !== undefined && usage.totalTokens > 0) return usage.totalTokens
+    // A provider that does not count, such as Claude Code, reports zero.
+    const total = (messageOf(item.entry) as { usage?: Usage } | undefined)?.usage?.totalTokens ?? 0
+    return total > 0 ? total : undefined
   }
   return undefined
 }
+
+/** Commands that take nothing after their name: given more, the text goes to the model as typed. */
+const TAKES_NOTHING = new Set(["help", "fork", "continue", "withdraw", "usage", "tasks"])
 
 /** The subagents `followed`'s entries started. */
 const subagentsOf = (followed: Followed) =>
@@ -997,10 +1002,11 @@ const conversationScreen = Effect.fnUntraced(function* (
     },
     get live() {
       const live = root.docs()["pi.live"]
+      // A read-only server works on nothing, so it is neither compacting nor retrying.
       return {
-        compacting: (live?.compactions?.length ?? 0) > 0,
+        compacting: !readOnly && (live?.compactions?.length ?? 0) > 0,
         compactionFailure: live?.compactionFailure?.error,
-        retry: live?.generation?.retry,
+        retry: readOnly ? undefined : live?.generation?.retry,
       }
     },
     get usage() {
@@ -1021,6 +1027,11 @@ const conversationScreen = Effect.fnUntraced(function* (
   const actions: ConversationActions = {
     // While the server is away the prompt is sent again under the same request id, which the server answers once.
     submit: (text, steer) => {
+      if (readOnly)
+        return setNotice({
+          text: "this server is read-only and sends nothing; stop it and run nisse serve to send",
+          warning: true,
+        })
       setNotice(undefined)
       const images = imagesIn(text, screen.cwd ?? process.cwd())
       const payload = {
@@ -1055,7 +1066,7 @@ const conversationScreen = Effect.fnUntraced(function* (
       Effect.runFork(client["conversation/select_model"]({ conversation, author: userName(), selection })),
     command: (name, argument) => {
       const run = commands[name]
-      if (run === undefined) return false
+      if (run === undefined || (argument !== "" && TAKES_NOTHING.has(name))) return false
       setNotice(undefined)
       run(argument)
       return true
@@ -1084,12 +1095,24 @@ const conversationScreen = Effect.fnUntraced(function* (
   const commands: Readonly<Record<string, (argument: string) => void>> = {
     help: () => setPanel({ title: "COMMANDS", lines: COMMANDS.map(([command, what]) => `${command}  ${what}`) }),
     fork: () => {
-      // Before the last prompt a person typed, so they can try it another way; with none, at the newest entry.
-      const entries = root.items().flatMap((item) => (item.kind === "entry" ? [item.entry] : []))
-      const last = entries.findLastIndex((entry) => entry.kind === USER_KIND || entry.kind === "pi.user")
-      const at = (last > 0 ? entries[last - 1] : entries.at(-1))?.id
-      if (at === undefined) return setNotice({ text: "nothing to fork yet", warning: true })
-      report(client["conversation/fork"]({ conversation, at: Number(at) }), (forked) => {
+      // Just before the last prompt a person typed, so they can try it another way.
+      const items = root.items()
+      const last = items.findLastIndex(
+        (item) => item.kind === "entry" && (item.entry.kind === USER_KIND || item.entry.kind === "pi.user"),
+      )
+      const before = last > 0 ? items[last - 1] : undefined
+      if (before?.kind !== "entry") {
+        const text =
+          last === -1
+            ? items[0]?.kind === "earlier"
+              ? "the last prompt is not loaded; scroll up to it and fork again"
+              : "nothing to fork yet: no prompt has been sent"
+            : before === undefined
+              ? "nothing comes before the first prompt to fork from"
+              : "the entry before the last prompt is not loaded; scroll up to it and fork again"
+        return setNotice({ text, warning: true })
+      }
+      report(client["conversation/fork"]({ conversation, at: Number(before.entry.id) }), (forked) => {
         next = forked.conversation
         Effect.runFork(Deferred.succeed(done, undefined))
         return undefined
@@ -1150,18 +1173,23 @@ const conversationScreen = Effect.fnUntraced(function* (
       }),
     tasks: () => {
       let graph: TaskGraph | undefined
-      const shown = Effect.runFork(
-        client["tasks/watch"]().pipe(
-          Stream.runForEach((item) =>
-            Effect.sync(() => {
-              graph =
-                item._tag === "graph"
-                  ? (item.graph as unknown as TaskGraph)
-                  : (applyImmutable(graph, item.ops as ReadonlyArray<Op>) as TaskGraph)
-              if (untrack(panel)?.title === "TASKS") setPanel({ title: "TASKS", lines: taskLines(graph) })
-            }),
+      // Each watch starts from the whole graph, so one that fell behind or lost the server is simply watched again.
+      const shown = Effect.runSync(
+        Effect.forkIn(
+          client["tasks/watch"]().pipe(
+            Stream.runForEach((item) =>
+              Effect.sync(() => {
+                graph =
+                  item._tag === "graph"
+                    ? (item.graph as unknown as TaskGraph)
+                    : (applyImmutable(graph, item.ops as ReadonlyArray<Op>) as TaskGraph)
+                if (untrack(panel)?.title === "TASKS") setPanel({ title: "TASKS", lines: taskLines(graph) })
+              }),
+            ),
+            Effect.retry({ schedule: Schedule.spaced(REWATCH_DELAY) }),
+            Effect.ignore,
           ),
-          Effect.ignore,
+          scope,
         ),
       )
       setPanel({ title: "TASKS", lines: ["loading"] })

@@ -2,8 +2,10 @@
 
 Every input handed to a conversation is admitted by written rules,
 deduplicated, placed at a defined boundary, and ends with a recorded fate.
-`/continue` or `conversation/continue` starts a run with no new input, such as
-after one failed, and the model goes on from where it was. `/withdraw` takes
+`/continue` or `conversation/continue` starts a run with no new input after
+one that did not answer (it failed, was interrupted or hit a limit), and the
+model goes on from where it was; with no run ended yet, or after one that
+answered, it is refused `NothingToContinue` with a message saying why. `/withdraw` takes
 back the newest prompt waiting in the queue, shown as `withdrew: <text>`, and
 `submission/withdraw` takes back any queued submission; a withdrawn prompt
 never runs.
@@ -64,6 +66,11 @@ Preconditions:
   and while it streams run
   `drive.ts r rpc conversation/continue '{"conversation": "talk"}'`: it fails
   `ConversationBusy`.
+- **Nothing to continue.** In a new conversation type `/continue` and `Enter`:
+  `✗ no run has ended here yet; send a message to start one` shows above the
+  prompt. After an answered run,
+  `drive.ts r rpc conversation/continue '{"conversation": "talk"}'` fails
+  `NothingToContinue`, `the last run answered; send a message to go on`.
 - **Withdraw from the TUI.** While `first` still streams, type `second` and
   `Enter`, `drive.ts r tui wait 'queued · second'`, then type `/withdraw` and
   `Enter`: `drive.ts r tui wait 'withdrew: second'` shows
@@ -85,12 +92,12 @@ Feature ledger area F: spec §6, §8.2; README Busy Conversations, Failures and 
 
 Wire, `packages/nisse/test/wire.test.ts`:
 
-- continue-rpc: a conversation whose run failed goes on with no new input, and one that works is refused by name
+- continue-rpc: a conversation whose run failed goes on with no new input; one that works, never ran or answered is refused by name
 - withdraw-rpc: a queued prompt taken back never runs, and one already run cannot be
 
 Screen, `packages/nisse/test/screen.test.ts`:
 
-- continue-rpc: /continue goes on after a failed run with no new input
+- continue-rpc: /continue goes on after a failed run with no new input, and says why when there is nothing to go on with
 - withdraw-rpc: /withdraw takes back the queued prompt before it runs
 
 Package, `packages/harness/test/harness.test.ts`:

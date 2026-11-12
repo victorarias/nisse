@@ -5,6 +5,7 @@ import { CodemodeSandbox } from "@nisse/codemode/sandbox"
 import { LocalExecutionEnv } from "@nisse/env/local"
 import {
   answerApproval,
+  AgentDoc,
   ApprovalsDoc,
   approveAutomatically,
   CompactionRefused,
@@ -39,6 +40,7 @@ import {
   CannotCompact,
   CONFIGURED_KIND,
   ConversationBusy,
+  NothingToContinue,
   FellBehind,
   NoSuchSubmission,
   type TaskGraphItem,
@@ -72,7 +74,7 @@ import { VERSION } from "./version.ts"
 import { chosenNumber, ConversationIdsDoc, kernelNumber, refusedChoice } from "./ids.ts"
 import { agentModel, Providers, LastModelDoc, selectionOf } from "./providers.ts"
 import { countStops, restartLimitMessage } from "./restarts.ts"
-import { endRun, switchModel, writeRunEnd } from "./run-end.ts"
+import { endRun, LastRunEndDoc, switchModel, writeRunEnd } from "./run-end.ts"
 import { committedSignIns } from "./sign-ins.ts"
 import { codeModeTools, nisseTools } from "./tools/index.ts"
 import { attachedImages } from "./images.ts"
@@ -352,9 +354,8 @@ const Handlers = NisseRpcs.toLayer(
       Effect.gen(function* () {
         const refused = refusedChoice(id)
         if (refused !== undefined) return yield* new InvalidConversationId({ message: refused })
-        const taken = chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id)
-        const numbered = kernelNumber(id)
-        if (taken !== undefined || (numbered !== undefined && (yield* Effect.orDie(harness.conversation(numbered)))))
+        // refusedChoice refuses every all-digit id, so only a chosen id can be taken.
+        if (chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id) !== undefined)
           return yield* new InvalidConversationId({ message: `${id} already names a conversation` })
       })
 
@@ -365,11 +366,18 @@ const Handlers = NisseRpcs.toLayer(
         const visible = yield* Effect.orDie(harness.session.read((storage) => storage.entry(conversation.id, entry)))
         if (visible === undefined) return yield* new NoSuchEntry({ entry: at })
         const auto = (yield* Effect.orDie(harness.session.snapshot(ApprovalsDoc, conversation.id)))?.auto === true
+        // The fork goes on with the settings as they are now, not as they were at `at`.
+        const settings = yield* Effect.orDie(harness.session.snapshot(AgentDoc, conversation.id))
         const forked = yield* Effect.orDie(
           conversation.fork(entry, {
             ownership: { kind: "ownerless" },
             init: (tx, created) =>
               Effect.gen(function* () {
+                if (settings !== undefined) {
+                  const agent = yield* tx.doc(AgentDoc, created)
+                  for (const key of Object.keys(agent)) delete agent[key as keyof typeof agent]
+                  Object.assign(agent, structuredClone(settings))
+                }
                 if (auto) yield* approveAutomatically(tx, created)
                 if (chosen !== undefined) (yield* tx.doc(ConversationIdsDoc)).ids[chosen] = Number(created)
               }),
@@ -562,6 +570,11 @@ const Handlers = NisseRpcs.toLayer(
       "conversation/continue": writing(({ conversation: id }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
+          const last = (yield* Effect.orDie(harness.session.snapshot(LastRunEndDoc, conversation.id)))?.end?.data
+          if (last === undefined)
+            return yield* new NothingToContinue({ message: "no run has ended here yet; send a message to start one" })
+          if (last.outcome === "answered")
+            return yield* new NothingToContinue({ message: "the last run answered; send a message to go on" })
           const submission = yield* heldUntilIdle(
             conversation.submit({ type: "continue" }).pipe(
               Effect.catchIf(
