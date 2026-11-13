@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
+import { homedir, userInfo } from "node:os"
 import { join, resolve } from "node:path"
 import * as Net from "node:net"
 import { applyImmutable, type Op } from "../../../packages/delta/src/delta/index.ts"
@@ -95,13 +95,16 @@ const fakes = (): Record<string, string> => ({
  * `defaultMode` and allow rules would run calls a step waits to see asked about, and Claude Code withdraws a question
  * one of them answers. The sign-in is not a setting, so it stays. Nisse's own `--setting-sources` comes first in the
  * arguments, and the last one counts.
+ *
+ * It runs as the person's own `USER`, not the run's `ada`: on macOS Claude Code finds its sign-in in the keychain by
+ * `USER`, and under another name it signs in without the subscription and writes only 5-minute prompt cache.
  */
 const writeRealClaude = () => {
   const bundled = bundledExecutable()
   // `claude auth ...` takes no --setting-sources; signing in and out runs as the person's own Claude Code does.
   writeFileSync(
     realClaude,
-    `#!/bin/sh\n[ "$1" = auth ] && exec '${bundled}' "$@"\nexec '${bundled}' "$@" --setting-sources=project\n`,
+    `#!/bin/sh\nexport USER='${userInfo().username}'\n[ "$1" = auth ] && exec '${bundled}' "$@"\nexec '${bundled}' "$@" --setting-sources=project\n`,
   )
   chmodSync(realClaude, 0o755)
 }

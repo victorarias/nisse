@@ -240,10 +240,11 @@ holding the account drives it cold, like this.
   `apiKeyHelper` or an `env` block, does not reach the run.
 - **First check.** Before any step, `drive.ts r serve` and
   `drive.ts r rpc providers/list '{}'`: the provider is `ready`. ChatGPT names
-  your account; Claude shows its version and names no account, because
-  `drive.ts` runs everything with `USER=ada` and under that user Claude Code
-  reports only `{"apiProvider": "firstParty"}` as its account (under your own
-  `USER` the same probe names your email and plan). A real
+  your account; Claude shows its version and names your account and plan.
+  `drive.ts` runs everything else with `USER=ada`, but runs Claude Code under
+  your own `USER`: on macOS Claude Code finds its sign-in in the keychain by
+  `USER`, and under another name it signs in without your subscription, names
+  no account, and writes only 5-minute prompt cache. A real
   Claude's probe can outlast the helper's 5 s default, so with
   `--real-claude` pass `--timeout 60000` to that `rpc`. Otherwise stop and
   report what it shows.
