@@ -305,8 +305,8 @@ model following the prompt. Follow the skill's
 `drive.ts r up --real-claude`, whose Claude Code sessions land in your own
 Claude Code configuration (`$CLAUDE_CONFIG_DIR`, or `~/.claude`). First run
 `drive.ts r serve` and `drive.ts r rpc providers/list '{}' --timeout 60000`:
-`claude` is `ready` with a version, and no account, since `drive.ts` runs
-under `USER=ada` (SKILL.md's First check says why). Otherwise stop and report what it shows. Give every
+`claude` is `ready` with a version and your account and plan (SKILL.md's
+First check says why that matters). Otherwise stop and report what it shows. Give every
 `tui wait` `--timeout 120000` and every `watch --until` `--timeout 120000`.
 Keep `evidence/`. No step needs a person. The run leaves out your own Claude
 Code settings (SKILL.md's Real accounts says why), so Claude Code's defaults
