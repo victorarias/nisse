@@ -22,7 +22,7 @@ import {
   UsageDoc,
   UserEntry,
 } from "@nisse/harness"
-import { claudeRunTasks } from "../src/index.ts"
+import { type ClaudeProcessesOptions, claudeRunTasks, makeClaudeProcesses } from "../src/index.ts"
 
 const FIXTURES = join(import.meta.dir, "../../../fixtures/claude")
 const FAKE = join(import.meta.dir, "../../nisse/test/support/fake-claude")
@@ -72,13 +72,17 @@ const open = (
   claude: Fake,
   extensions: ReadonlyArray<Parameters<ReturnType<typeof createRegistry>["install"]>[0]>,
   reports: Array<unknown> = [],
+  processes: ClaudeProcessesOptions = {},
 ) =>
   Effect.gen(function* () {
     // The fake writes the conversation's directory into its recorded paths as given; on macOS /tmp is /private/tmp.
     const dir = realpathSync(mkdtempSync("/tmp/nisse-harness-"))
     dirs.push(dir)
     const registry = createRegistry()
-    const tasks = claudeRunTasks({ settings: (provider) => (provider === "claude" ? claude.settings : undefined) })
+    const tasks = claudeRunTasks({
+      settings: (provider) => (provider === "claude" ? claude.settings : undefined),
+      processes: yield* makeClaudeProcesses(processes),
+    })
     registry.install(defineExtension({ name: "claude", tasks: [tasks.run, tasks.subagent] }))
     for (const extension of extensions) registry.install(extension)
     const harness = yield* Effect.acquireRelease(
@@ -379,7 +383,7 @@ test("image-tool-result: an image an extension tool returns reaches Claude Code 
   expect(JSON.stringify(reply)).toContain(JSON.stringify([{ type: "text", text: "noon in CET" }, picture]))
 })
 
-test("claude-resume: an edit to the context starts a fresh session told the edited conversation", async () => {
+test("claude-live, claude-resume: an edit to the context closes the live process and starts a fresh session told the edited conversation", async () => {
   const claude = fake("text", "text")
   await run(
     Effect.gen(function* () {
@@ -405,6 +409,32 @@ test("claude-resume: an edit to the context starts a fresh session told the edit
     .flatMap((entry) => entry.received.message.content.map((part: { text: string }) => part.text))
   expect(told.join("\n")).not.toContain("a secret to forget")
   expect(told.at(-1)).toBe("Reply with exactly: fixture text ok")
+})
+
+test("claude-live: a reset between runs closes the live process, and the next run starts a fresh session", async () => {
+  const claude = fake("text", "text")
+  await run(
+    Effect.gen(function* () {
+      const { harness, cwd } = yield* open(claude, [])
+      const conversation = yield* start(harness, cwd)
+      yield* ask(conversation, "a secret to forget")
+      yield* conversation.submit({
+        type: "write",
+        entry: { kind: ResetEntry.kind, head: "self", model: [{ role: "user", content: "start over", timestamp: 0 }] },
+      })
+      yield* ask(conversation, "Reply with exactly: fixture text ok")
+    }),
+  )
+  const [before, after] = spawns(claude)
+  expect(after!.some((arg) => arg.startsWith("--resume"))).toBe(false)
+  expect(after!.find((arg) => arg.startsWith("--session-id"))).not.toBe(
+    before!.find((arg) => arg.startsWith("--session-id")),
+  )
+  const told = claude
+    .log()
+    .filter((entry) => entry.received?.type === "user" && entry.spawn === 1)
+    .flatMap((entry) => entry.received.message.content.map((part: { text: string }) => part.text))
+  expect(told).toEqual(["start over", "Reply with exactly: fixture text ok"])
 })
 
 test("claude-read: parallel calls of one response are each committed with the result Claude Code returned", async () => {
@@ -493,11 +523,12 @@ test("claude-resume: a fork of a Claude conversation forks Claude Code's session
   expect(second!.find((arg) => arg.startsWith("--session-id"))).not.toBe(`--session-id=${session}`)
 })
 
-test("claude-resume: what each run spent is added to the conversation's usage, once", async () => {
+test("claude-resume: what each run spent is added to the conversation's usage, once, when each run starts its own process", async () => {
   const claude = fake("died_while_idle")
   const usage = await run(
     Effect.gen(function* () {
-      const { harness, cwd } = yield* open(claude, [])
+      // No live process: the recording's two runs each started one.
+      const { harness, cwd } = yield* open(claude, [], [], { idle: 0 })
       const conversation = yield* start(harness, cwd)
       yield* ask(conversation, "Remember the word PLUM. Reply with exactly: noted")
       yield* ask(conversation, "Which word did I ask you to remember? Reply with that word only.")
@@ -515,7 +546,7 @@ test("claude-resume: what each run spent is added to the conversation's usage, o
   expect(usage["claude/claude-haiku-5-5"]!.cost.total).toBeCloseTo(0.00291112, 10)
 })
 
-test("claude-model: after a switch to another Claude model, the next run resumes the same session on it", async () => {
+test("claude-model, claude-live: after a switch to another Claude model, the next run starts a process that resumes the same session on it", async () => {
   const claude = fake("switch_model")
   await run(
     Effect.gen(function* () {
@@ -559,7 +590,7 @@ const scripted = (conversation: Conversation, text: string) =>
     }),
   )
 
-test("claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session", async () => {
+test("claude-switch, claude-live: switching to Claude from another provider retells the conversation to a new Claude Code session", async () => {
   const claude = fake("handoff")
   const question = "Which word did I ask you to remember? Reply with just the word."
   const last = "What was the last thing I said before this message? Reply with just that word."

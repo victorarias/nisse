@@ -43,6 +43,8 @@ export interface ServerOptions {
   readonly openai?: (home: Home) => (id: string) => OpenAiOptions
   readonly claude?: ClaudeProcessSettings
   readonly config?: HomeConfig
+  /** How long a Claude Code process stays live after its run; 0 closes it when the run ends. */
+  readonly claudeIdle?: Duration.Input
 }
 
 /** The providers a test's server has: `script` playing `script` and preferred, then those `options` configure. */
@@ -72,6 +74,7 @@ export const runningServer = async (
         providers: testProviders(home, script, options),
         ...(options.connectionQueue === undefined ? {} : { connectionQueue: options.connectionQueue }),
         ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+        ...(options.claudeIdle === undefined ? {} : { claudeIdle: options.claudeIdle }),
       }).pipe(Layer.provide(recorder)),
       scope,
     ),
@@ -93,6 +96,7 @@ export const servingUntilIdle = async (
   home: Home,
   idleGrace: Duration.Input,
   script: ReadonlyArray<ScriptStep> = [],
+  options: ServerOptions = {},
 ) => {
   const listening = Promise.withResolvers<void>()
   const exited = Effect.runPromise(
@@ -100,7 +104,16 @@ export const servingUntilIdle = async (
       const lifetime = yield* Lifetime
       listening.resolve()
       yield* lifetime.ended
-    }).pipe(Effect.provide(serverLayer(home, { idleGrace, providers: testProviders(home, script) })), Effect.scoped),
+    }).pipe(
+      Effect.provide(
+        serverLayer(home, {
+          idleGrace,
+          providers: testProviders(home, script, options),
+          ...(options.claudeIdle === undefined ? {} : { claudeIdle: options.claudeIdle }),
+        }),
+      ),
+      Effect.scoped,
+    ),
   )
   await Promise.race([listening.promise, exited])
   return { exited }

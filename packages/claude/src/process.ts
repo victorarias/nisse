@@ -8,6 +8,7 @@ import {
   type HookEvent,
   type Options,
   query,
+  type SDKMessage,
   type SDKUserMessage,
   type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk"
@@ -59,8 +60,15 @@ export type ProcessConfig = {
 }
 
 export interface ClaudeProcess {
-  /** Serves the run `run`: sends it `opening`, then hands every frame to it until the run ends. */
+  /**
+   * Serves the run `run`: sends it `opening`, then hands every frame to it until the run ends. A process that exits
+   * before Claude Code took the opening ends the run `exited`.
+   */
   readonly serve: (run: RunContext, opening: ReadonlyArray<Said>) => Effect.Effect<Ended, unknown>
+  /** Background work Claude Code started and has not said ended: a background command or subagent (D6). */
+  readonly busy: boolean
+  /** Reads ahead while no run is served, and completes once the process has exited. */
+  readonly exited: Effect.Effect<void>
 }
 
 /** One model's running totals in one Claude Code process, as it reports them (`modelUsage`). */
@@ -122,11 +130,53 @@ const userMessage = (parts: ReadonlyArray<Said>, priority?: "next"): SDKUserMess
   ...(priority ? { priority } : {}),
 })
 
+/** What a process is started with that it cannot change once it runs. */
+const spawnedWith = (config: ProcessConfig) => {
+  const { agent } = config
+  // Own tools: those of extensions other than nisse's built-in ones, offered to Claude Code over MCP.
+  const builtin = new Set(
+    agent.extensions
+      .filter((extension) => config.builtinExtensions.has(extension.name))
+      .flatMap((extension) => (extension.tools ?? []).map((tool) => tool.name)),
+  )
+  const own = new Map<string, OwnTool>(
+    agent.tools.filter((tool) => !builtin.has(tool.name)).map((tool) => [tool.name, tool]),
+  )
+  return {
+    modelId: agent.model?.modelId ?? "",
+    effort: agent.thinkingLevel === "off" || agent.thinkingLevel === undefined ? undefined : agent.thinkingLevel,
+    own,
+    // Claude Code's own tools an extension removed, and the own tools, which it reaches only over MCP.
+    withheld: [...new Set([...config.withheldTools.map((name) => CLAUDE_TOOL[name] ?? name), ...own.keys()])],
+  }
+}
+
+/**
+ * The process key: what a process of `config` is spawned with, which a live one cannot change. A run whose key
+ * differs from its live process's gets a new process. The model and effort are in it until a live process can switch
+ * them.
+ */
+export const processKey = (config: ProcessConfig) => {
+  const { modelId, effort, own, withheld } = spawnedWith(config)
+  return JSON.stringify({
+    provider: config.agent.model?.provider,
+    settings: config.settings,
+    cwd: config.agent.cwd,
+    maxTurns: config.agent.maxTurns,
+    modelId,
+    effort,
+    own: [...own.values()].map(({ name, description, parameters }) => ({ name, description, parameters })),
+    withheld,
+    afterHooks: toolHooksOf(config.agent).after.length > 0,
+    rootConversation: config.rootConversation,
+  })
+}
+
 /** Starts a Claude Code process at `start`; it is closed with the scope. */
 export const openProcess = (config: ProcessConfig, start: Start) =>
   Effect.gen(function* () {
     const { agent, settings } = config
-    const modelId = agent.model?.modelId ?? ""
+    const { modelId, effort, own, withheld } = spawnedWith(config)
     const serial = yield* Semaphore.make(1)
     const inbox = new Inbox<SDKUserMessage>()
     const awaitingReplay = new Set<string>()
@@ -139,18 +189,10 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
     let serving: Serving | undefined
     /** The last run it served, whose subagents end with the process. */
     let served: Serving | undefined
-
-    // Own tools: those of extensions other than nisse's built-in ones, offered to Claude Code over MCP.
-    const builtin = new Set(
-      agent.extensions
-        .filter((extension) => config.builtinExtensions.has(extension.name))
-        .flatMap((extension) => (extension.tools ?? []).map((tool) => tool.name)),
-    )
-    const own = new Map<string, OwnTool>(
-      agent.tools.filter((tool) => !builtin.has(tool.name)).map((tool) => [tool.name, tool]),
-    )
-    // Claude Code's own tools an extension removed, and the own tools, which it reaches only over MCP.
-    const withheld = [...new Set([...config.withheldTools.map((name) => CLAUDE_TOOL[name] ?? name), ...own.keys()])]
+    /** The tasks Claude Code started and has not said ended. */
+    const tasks = new Set<string>()
+    /** Frames read while no run was served, or reads still waiting, in order: the next run gets them first. */
+    const ahead: Array<Promise<IteratorResult<SDKMessage, unknown>>> = []
 
     const controller = yield* Effect.acquireRelease(
       Effect.sync(() => new AbortController()),
@@ -189,7 +231,6 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
               })),
             }),
           }
-    const effort = agent.thinkingLevel === "off" || agent.thinkingLevel === undefined ? undefined : agent.thinkingLevel
     const settingSources: SettingSource[] = ["user", "project", "local"]
     const env = {
       ...claudeEnvironment(settings.env),
@@ -234,6 +275,7 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
       const message = userMessage(parts, priority)
       awaitingReplay.add(message.uuid!)
       inbox.push(message)
+      return message.uuid!
     }
 
     /** What each model spent since the previous result; a total that went down started over, as after `/clear`. */
@@ -295,6 +337,33 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
     }
 
     const iterator = messages[Symbol.asyncIterator]()
+    /** The next frame, or how the process ended: `done`, with the error its end raised if it raised one. */
+    const read = () =>
+      iterator.next().then(
+        (result) => result,
+        (error: unknown) => ({ done: true as const, value: error }),
+      )
+    const pull = () => ahead.shift() ?? read()
+    const exited = Effect.gen(function* () {
+      for (;;) {
+        const next = read()
+        ahead.push(next)
+        if ((yield* Effect.promise(() => next)).done) return
+      }
+    })
+
+    /** Tracks Claude Code's tasks, which end the process when its run ends with one still working (D6). */
+    const track = (message: SDKMessage) => {
+      if (message.type !== "system") return
+      if (message.subtype === "task_started") tasks.add(message.task_id)
+      else if (message.subtype === "task_notification") tasks.delete(message.task_id)
+      else if (
+        message.subtype === "task_updated" &&
+        ["completed", "failed", "killed"].includes(message.patch.status!)
+      ) {
+        tasks.delete(message.task_id)
+      }
+    }
 
     const serve = (run: RunContext, opening: ReadonlyArray<Said>) =>
       Effect.scoped(
@@ -315,26 +384,21 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
                 serving = undefined
               }),
           )
-          send(opening)
+          const opened = send(opening)
           for (;;) {
-            const next = yield* Effect.tryPromise({
-              try: () => iterator.next(),
-              catch: (error) => error,
-            }).pipe(
-              Effect.catch((error) =>
-                signal.aborted
-                  ? Effect.interrupt
-                  : Effect.succeed({
-                      done: true as const,
-                      value: failure(`Claude Code stopped: ${error instanceof Error ? error.message : String(error)}`),
-                    }),
-              ),
-            )
+            const next = yield* Effect.promise(pull)
             if (next.done) {
               if (signal.aborted) return yield* Effect.interrupt
-              return next.value ?? failure("Claude Code exited before the turn finished")
+              const error = next.value
+              const message =
+                error === undefined
+                  ? "Claude Code exited before the turn finished"
+                  : `Claude Code stopped: ${error instanceof Error ? error.message : String(error)}`
+              // Claude Code never took the opening, so nothing of the run reached it.
+              return awaitingReplay.has(opened) ? ({ _tag: "exited", message } as const) : failure(message)
             }
             const message = next.value
+            track(message)
             const ended = yield* serial.withPermits(1)(
               Effect.suspend(() => {
                 if (resetting && "session_id" in message && message.session_id && message.session_id !== session) {
@@ -355,5 +419,11 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
         }),
       )
 
-    return { serve } satisfies ClaudeProcess
+    return {
+      serve,
+      get busy() {
+        return tasks.size > 0
+      },
+      exited,
+    } satisfies ClaudeProcess
   })

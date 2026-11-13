@@ -41,8 +41,9 @@ import {
 import type { Message } from "@nisse/models"
 import { Deferred, Effect } from "effect"
 import { SubagentLinks } from "./links.ts"
-import { type ClaudeProcessSettings, openProcess, type ProcessConfig, type Start } from "./process.ts"
-import { history, INTERRUPTED, JOINING, type Said, unseen } from "./retell.ts"
+import { type ClaudeProcessSettings, openProcess, type ProcessConfig, processKey, type Start } from "./process.ts"
+import type { ClaudeProcesses, Openings } from "./processes.ts"
+import { history, INTERRUPTED, JOINING, unseen } from "./retell.ts"
 import type { ClaudeRunCheckpoint, Ended, RunContext } from "./serving.ts"
 import { ClaudeSessionDoc } from "./session.ts"
 
@@ -66,6 +67,8 @@ export interface ClaudeRunOptions {
   readonly withheldTools?: () => ReadonlyArray<string>
   /** The conversation's title, which names a fresh session so Claude Code does not ask a model for one. */
   readonly title?: (conversation: ConversationId) => Effect.Effect<string | undefined>
+  /** The live processes the runs lease, from `makeClaudeProcesses`. */
+  readonly processes: ClaudeProcesses
 }
 
 const failed = (message: string, reason: string): Next => ({
@@ -132,6 +135,20 @@ const continuable = (entries: readonly EntryRecord[], provider: string) =>
     })
   })
 
+/**
+ * What a live process that has seen the entries through `seen` is told: what came after them, or `undefined` when
+ * they changed the context it holds, as for a resume (F12).
+ */
+const afterSeen = (runtime: Runtime, provider: string, seen: number) =>
+  Effect.map(entriesAfter(runtime, seen), (missed) => {
+    if (!continuable(missed, provider)) return undefined
+    const told = unseen(missed)
+    return told.length === 0 ? [CONTINUE] : told
+  })
+
+/** The id of the conversation's newest entry. */
+const newest = (runtime: Runtime) => Effect.map(runtime.entries({}, 1), (page) => Number(page.items[0]?.id ?? 0))
+
 /** Where Claude Code's session starts for this run, and what it is told first. */
 const opening = (runtime: Runtime, api: TaskApi, provider: string, title: Title) =>
   Effect.gen(function* () {
@@ -166,9 +183,26 @@ const fresh = (runtime: Runtime, api: TaskApi, title: Title) =>
     return { start, texts: joins ? [JOINING, ...told] : told }
   })
 
-/** Serves the run with one Claude Code process started at `start` and told `texts` first, closed when the run ends. */
-const converse = (config: ProcessConfig, run: RunContext, start: Start, texts: ReadonlyArray<Said>) =>
-  Effect.scoped(Effect.flatMap(openProcess(config, start), (process) => process.serve(run, texts)))
+/**
+ * Serves the run with the conversation's live process, or a new one `openings` starts. A run that answers leaves the
+ * process live, having seen every entry before the run's end, unless Claude Code still has background work (D6).
+ */
+const converse = <E>(shared: Shared, config: ProcessConfig, run: RunContext, openings: Openings<E>) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { runtime } = run
+      const lease = yield* shared.options.processes.lease(
+        runtime.conversationId,
+        processKey(config),
+        openings,
+        (start) => openProcess(config, start),
+      )
+      const ended = yield* lease.process.serve(run, lease.texts)
+      // Read before the run's end commits, which may start the next run with inputs the process has not seen.
+      if (ended._tag === "answered" && !ended.turnLimit && !lease.process.busy) lease.keep(yield* newest(runtime))
+      return { ended, live: lease.live }
+    }),
+  )
 
 /** Ends the run as `ended` says. */
 const finish = (ctx: RunCtx & { readonly runtime: Runtime }, ended: Ended) =>
@@ -199,7 +233,7 @@ const finish = (ctx: RunCtx & { readonly runtime: Runtime }, ended: Ended) =>
         return { status: "terminal", outcome: { status: "completed", result: {} } }
       }
       const [reason, detail] =
-        ended._tag === "failed"
+        ended._tag === "failed" || ended._tag === "exited"
           ? (["model_error", ended.message] as const)
           : ended._tag === "gone"
             ? (["model_error", "Claude Code lost its session twice"] as const)
@@ -241,10 +275,10 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
           const api = yield* TaskServices
           const ctx = { runtime, api }
           if (cutOffTooOften(task, api.settings().restartLimit)) return yield* endCutOff(ctx, task)
-          // No process outlives an invocation: a call the last one left without a result was cut off, whether by a crash
-          // or by a stop, which the kernel does not count as a restart.
-          const live = yield* runtime.snapshot(LiveDoc, runtime.conversationId)
-          if (live?.generation !== undefined || live?.tools?.some((slot) => slot.entry === undefined)) {
+          // A call the last invocation left without a result was cut off, whether by a crash or by a stop, which the
+          // kernel does not count as a restart; either ended its process.
+          const slots = yield* runtime.snapshot(LiveDoc, runtime.conversationId)
+          if (slots?.generation !== undefined || slots?.tools?.some((slot) => slot.entry === undefined)) {
             yield* runtime.commit((tx) => Effect.as(interruptCalls(tx, runtime), undefined as never))
           }
           const agent = yield* api.agent
@@ -262,8 +296,13 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
           }
           const run: RunContext = { runtime, api, agent, links: shared.links, subagentTask: shared.subagent! }
           const title: Title = shared.options.title ?? (() => Effect.succeed(undefined))
-          const { start, texts } = yield* opening(runtime, api, provider, title)
-          let ended = yield* converse(config, run, start, texts)
+          const cold = () => opening(runtime, api, provider, title)
+          let { ended, live } = yield* converse(shared, config, run, {
+            live: (seen) => afterSeen(runtime, provider, seen),
+            cold,
+          })
+          // A live process lost while it waited costs a cold start and nothing else (D1).
+          if (ended._tag === "exited" && live) ended = (yield* converse(shared, config, run, { cold })).ended
           if (ended._tag === "gone") {
             // The session is gone, or no longer holds the position (F12): start over, told the conversation.
             yield* runtime.commit((tx) =>
@@ -272,8 +311,7 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
                 return undefined as never
               }),
             )
-            const again = yield* fresh(runtime, api, title)
-            ended = yield* converse(config, run, again.start, again.texts)
+            ended = (yield* converse(shared, config, run, { cold: () => fresh(runtime, api, title) })).ended
           }
           return yield* finish(ctx, ended)
         }),

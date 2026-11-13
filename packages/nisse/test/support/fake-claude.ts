@@ -50,7 +50,11 @@ const spawn = Number(readFileSync(counterFile, { encoding: "utf8", flag: "a+" })
 writeFileSync(counterFile, String(spawn + 1))
 
 const log = (entry: unknown) => append(probe ? { probe: spawn, ...(entry as object) } : { spawn, ...(entry as object) })
-log({ argv, rootConversation: process.env.NISSE_ROOT_CONVERSATION, env: claudeEnv() })
+log({ argv, rootConversation: process.env.NISSE_ROOT_CONVERSATION, env: claudeEnv(), pid: process.pid })
+process.on("SIGTERM", () => {
+  log({ exited: "SIGTERM" })
+  process.exit(143)
+})
 
 const segments: Array<Array<any>> = []
 let playing = false
@@ -118,7 +122,10 @@ const receive = async (wanted: (frame: any) => boolean) => {
       })
       continue
     }
-    if (ended) process.exit(0)
+    if (ended) {
+      log({ exited: "stdin closed" })
+      process.exit(0)
+    }
     await new Promise<void>((resolve) => (wake = resolve))
   }
 }

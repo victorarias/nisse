@@ -70,6 +70,18 @@ export class FakeClaude {
       )
   }
 
+  /** The process id of each spawn, in order. */
+  pids(): Array<number> {
+    return this.log()
+      .filter((entry) => entry.argv && entry.probe === undefined)
+      .map((entry) => entry.pid)
+  }
+
+  /** Whether spawn `spawn` exited because nisse closed its input or ended it. */
+  exited(spawn: number) {
+    return this.log().some((entry) => entry.spawn === spawn && entry.exited !== undefined)
+  }
+
   probes() {
     return this.log().filter((entry) => entry.argv && entry.probe !== undefined).length
   }
