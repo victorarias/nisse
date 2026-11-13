@@ -1,8 +1,9 @@
 // The live Claude Code processes of a server, one per conversation at most (D1). A run leases its conversation's
 // process; when the run ends well, the process stays live for the next run until it has served no run for the idle
-// period (D2). A live process is a cache of `claude.session`: losing one costs a cold start and nothing else.
+// period (D2). A live process is a cache of `claude.session`: losing one costs a cold start and nothing else. A live
+// process with a long context compacts shortly before the prompt cache of its last request expires, then closes (D7).
 import type { ConversationId } from "@nisse/kernel"
-import { Duration, Effect, Exit, Fiber, Scope } from "effect"
+import { Clock, Duration, Effect, Exit, Fiber, Scope } from "effect"
 import type { ClaudeProcess, Selection, Start } from "./process.ts"
 import type { Said } from "./retell.ts"
 
@@ -16,6 +17,16 @@ export const IDLE_RELEASE: Duration.Input = "30 minutes"
  */
 export const STOP_TIMEOUT: Duration.Input = "5 seconds"
 
+/**
+ * How long before the cache expires an idle conversation starts its compaction. Claude Code sends the summary request
+ * about 10 ms after it is sent `/compact`, on a context of 242,713 tokens, and a request's time is taken when its
+ * response starts, which trails the request by seconds on an uncached context (s-ze9kas, `compact-lead.ts`).
+ */
+export const IDLE_COMPACTION_LEAD: Duration.Input = "2 minutes"
+
+/** The smallest context an idle conversation compacts; Claude Code's own idle compaction and t3code use it (F10). */
+export const IDLE_COMPACTION_THRESHOLD = 200_000
+
 export interface ClaudeProcessesOptions {
   /** Default `IDLE_RELEASE`; 0 closes each process when its run ends. */
   readonly idle?: Duration.Input
@@ -23,6 +34,13 @@ export interface ClaudeProcessesOptions {
   readonly stop?: Duration.Input
   /** Held from each process's open to its close, so the server outlives its live processes (D3). */
   readonly hold?: Effect.Effect<void, never, Scope.Scope>
+  /**
+   * Starts the conversation's compaction, whose run leases its live process. Without it no conversation compacts
+   * while idle.
+   */
+  readonly compact?: (conversation: ConversationId) => Effect.Effect<void, unknown>
+  /** What the live processes keep time by: the time of each request and the idle waits. Default the fiber's. */
+  readonly clock?: Clock.Clock
 }
 
 /** What a run tells its process first, whether it found one live or starts one. */
@@ -65,13 +83,19 @@ type Live = {
   readonly scope: Scope.Closeable
   seen: number
   idle?: Fiber.Fiber<void>
+  /** Its idle compaction started: the next lease ends the idle spell, and the process with it. */
+  compacting?: true
 }
+
+const TTL_MILLIS = { "5m": 5 * 60_000, "1h": 60 * 60_000 } as const
 
 /** The server's live processes; closing the scope closes every one, as a server stop does (D3). */
 export const makeClaudeProcesses = (options: ClaudeProcessesOptions = {}) =>
   Effect.gen(function* () {
     const scope = yield* Effect.scope
+    const clock = options.clock ?? (yield* Clock.Clock)
     const idle = options.idle ?? IDLE_RELEASE
+    const lead = Duration.toMillis(Duration.fromInputUnsafe(IDLE_COMPACTION_LEAD))
     const live = new Map<ConversationId, Live>()
     let closed = false
     yield* Effect.addFinalizer(() =>
@@ -89,13 +113,43 @@ export const makeClaudeProcesses = (options: ClaudeProcessesOptions = {}) =>
         return Scope.close(one.scope, Exit.void)
       })
 
-    /** Makes `one` the conversation's live process until its next lease, its idle period, or its exit. */
+    /** How long until `one` compacts: its last request's cache expiry less the lead, when its context is long (D7). */
+    const compactsIn = (one: Live) => {
+      const last = one.process.lastRequest
+      if (options.compact === undefined || last?.ttl === undefined || last.context < IDLE_COMPACTION_THRESHOLD) {
+        return undefined
+      }
+      return Math.max(0, last.at + TTL_MILLIS[last.ttl] - lead - clock.currentTimeMillisUnsafe())
+    }
+
+    /**
+     * Makes `one` the conversation's live process until its next lease, its idle period, or its exit. A process with a
+     * long context waits for its compaction instead, past the idle period, and its next lease is its last (D7).
+     */
     const keep = (conversation: ConversationId, one: Live) =>
       Effect.gen(function* () {
-        if (closed || Duration.isZero(Duration.fromInputUnsafe(idle))) return yield* Scope.close(one.scope, Exit.void)
+        if (closed || one.compacting || Duration.isZero(Duration.fromInputUnsafe(idle))) {
+          return yield* Scope.close(one.scope, Exit.void)
+        }
         live.set(conversation, one)
+        const due = compactsIn(one)
+        const spell =
+          due === undefined
+            ? Effect.sleep(idle)
+            : Effect.gen(function* () {
+                yield* Effect.sleep(due)
+                one.compacting = true
+                const started = yield* options.compact!(conversation).pipe(
+                  Effect.as(true),
+                  Effect.catchCause(() => Effect.succeed(false)),
+                )
+                // The compaction's run has the idle period to lease the process; one that did not start ends the spell.
+                if (started) yield* Effect.sleep(idle)
+              })
         one.idle = yield* Effect.forkIn(
-          Effect.andThen(Effect.raceFirst(Effect.sleep(idle), one.process.exited), close(conversation, one)),
+          Effect.andThen(Effect.raceFirst(spell, one.process.exited), close(conversation, one)).pipe(
+            Effect.provideService(Clock.Clock, clock),
+          ),
           scope,
         )
       })
@@ -129,7 +183,9 @@ export const makeClaudeProcesses = (options: ClaudeProcessesOptions = {}) =>
             const { start, texts } = yield* openings.cold()
             const processScope = yield* Scope.make()
             if (options.hold !== undefined) yield* Scope.provide(options.hold, processScope)
-            const process = yield* Scope.provide(open(start), processScope)
+            const process = yield* Scope.provide(open(start), processScope).pipe(
+              Effect.provideService(Clock.Clock, clock),
+            )
             const one: Live = { key, process, scope: processScope, seen: 0 }
             return { one, texts, live: false, kept: false }
           }),

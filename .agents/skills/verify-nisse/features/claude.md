@@ -15,7 +15,10 @@ Code how it is signed in and which models it offers without asking Claude
 anything. A Claude Code that
 cannot sign in ends the run failed with Claude Code's own message. When
 Claude Code compacts its own context, nisse keeps Claude's summary as a
-compaction; `/clear` starts a new context in nisse's transcript too.
+compaction; `/clear` starts a new context in nisse's transcript too. A
+conversation past 200,000 tokens that sits idle compacts two minutes before
+its prompt cache would expire, so the person who comes back does not pay to
+read the whole context again.
 
 ## Sub-features
 
@@ -39,7 +42,17 @@ compaction; `/clear` starts a new context in nisse's transcript too.
   does not end its turn within 5 seconds is closed, and the next run resumes,
   told which calls were cut off.
 - `claude-idle-release` closes a live process after 30 minutes without a run;
-  the next run starts one that resumes the session.
+  the next run starts one that resumes the session. A process that waits to
+  compact (`claude-idle-compaction`) stays past the 30 minutes.
+- `claude-idle-compaction` compacts an idle conversation whose last request
+  had a context of 200,000 tokens or more: two minutes before the prompt
+  cache that request read or wrote expires, nisse sends `/compact` as the
+  conversation's input, by `nisse`, to the live process. The run commits
+  Claude's summary as a compaction, then the process closes. A run that
+  starts first moves the compaction to its own cache's expiry; a conversation
+  that is busy then is not compacted. `claude_idle_compaction = false` in
+  `config.toml` turns it off. Claude Code's own idle compaction is always off
+  in nisse's sessions (`"idleCompaction": false`).
 - `claude-resume` continues Claude Code's session in each run that starts a
   process: after an idle release, after the process exited, and after the
   server restarted.
@@ -93,6 +106,13 @@ compaction; `/clear` starts a new context in nisse's transcript too.
 - Run `nisse exec --provider claude '<prompt>'`, with `--auto` to allow calls, and `--model` and `--effort` to choose the model.
 - Call `conversation/start` with `"provider": "claude"`.
 - Switch a conversation to Claude, or to another Claude model, with `conversation/select_model`.
+
+### Triggers
+
+- A conversation idle until two minutes before its prompt cache expires,
+  with a context of 200,000 tokens or more, compacts (`claude-idle-compaction`).
+  The cache lasts 1 hour on a subscription sign-in and 5 minutes on an API key,
+  as the last request's usage says.
 
 ## Driving it with drive.ts
 
@@ -267,8 +287,8 @@ Preconditions:
   `settings.json` in an empty folder, then run
   `CLAUDE_CONFIG_DIR=<folder> drive.ts r nisse exec --provider claude 'Reply with exactly: fixture text ok'`:
   the log's spawn argv holds `--settings` followed by
-  `{"env":{"ENABLE_TOOL_SEARCH":"true"}}`. With `"false"` there, or no
-  `env`, the argv holds no `--settings`.
+  `{"env":{"ENABLE_TOOL_SEARCH":"true"},"idleCompaction":false}`. With
+  `"false"` there, or no `env`, `--settings` is only `{"idleCompaction":false}`.
 - **Stop keeps the process** (`stop_keeps_process`). Run
   `drive.ts r tui start --provider claude --auto`, `drive.ts r tui wait READY`,
   type
@@ -282,6 +302,17 @@ Preconditions:
   the answer `interrupted`. The log has one `"spawn"` line, a received
   `"subtype":"interrupt"` request and no `"exited"` line, and the second user
   message holds only the question.
+- **Idle compaction** (`idle_compaction_5m`). Its one run reports a context
+  of 226,830 tokens written to the 5-minute cache, so nisse compacts about 3
+  minutes after it. Run
+  `drive.ts r nisse exec --provider claude 'Reply with exactly: one'`: stdout
+  `one`. Take the id from `drive.ts r rpc conversation/list`, then
+  `drive.ts r watch <id> --until pi.compaction --timeout 300000 --save idle-compaction`:
+  within about 3 minutes of the answer, a `nisse.user` entry `/compact` with
+  `"author": "nisse"`, then a `pi.compaction` holding Claude's summary. The log's `"spawn": 0` argv holds
+  `--settings {"idleCompaction":false}`, it received `/compact` as its second
+  user message, and it then has an `"exited"` line: the process closed after
+  the compaction, long before the 30 minutes.
 - **Sign-in error** (`auth_failed`). Run
   `drive.ts r nisse exec --provider claude hello`: exit 1, empty stdout,
   stderr `Invalid API key · Please run /login`.
@@ -295,7 +326,7 @@ Preconditions:
   session sets (`claude-environment`). Its `ANTHROPIC` and `CCR` variables
   still reach Claude Code, so start a real-account run without them.
 - **Server restart.** A stop closes the live processes; the next run resumes Claude Code's session where Nisse's transcript ends.
-- **No client.** A live process keeps the server up until it is released, 30 minutes after the conversation's last run, so `nisse exec` and attn, which hold no watch, still find it.
+- **No client.** A live process keeps the server up until it is released, 30 minutes after the conversation's last run, so `nisse exec` and attn, which hold no watch, still find it. One that waits to compact keeps it up until its compaction ends.
 
 ## Tests
 
@@ -314,6 +345,9 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - claude-session-gone: when Claude Code lost the session, a fresh one is given the conversation so far
 - claude-live: the next run reaches the Claude Code process that served the last one, told only its prompt, and what the process spent counts once
 - claude-idle-release: a live Claude Code process closes after the idle period, and the next run resumes its session
+- claude-idle-compaction: an idle Claude conversation past 200,000 tokens compacts once, two minutes before its prompt cache expires, then its process closes
+- claude-idle-compaction: a conversation whose last request wrote the 5-minute cache compacts three minutes into its pause
+- claude-idle-compaction, claude-idle-release: a short context, or claude_idle_compaction = false, closes after the idle period without compacting
 - server-idle-exit, claude-idle-release: a live Claude Code process keeps the server up after its client leaves, until the process closes
 - server-stop, claude-live: stopping the server closes its live Claude Code processes at once
 - claude-sign-in-error: a signed-out Claude Code fails the run with its own words
@@ -366,6 +400,10 @@ Package, `packages/claude/test/claude.test.ts`:
   A prompt sent to a live process past its recording stalls.
 - Every Claude run keeps the server up for 30 minutes after it: end a journey
   with `drive.ts r rpc server/stop`, or `down`.
+- `idle_compaction` and `idle_compaction_5m` reach their long context through
+  50,000 filler words of start instructions, cut from the recordings: the fake
+  does not compare what nisse sends. Their compaction comes 58 and 3 minutes
+  after the last run, by the time of the request.
 - The `resume_after_kill` recording expected
   `...was cut off: interrupted: nisse stopped while this ran; it may or may not have taken effect`;
   nisse now sends `...was cut off: interrupted; it may or may not have taken effect`.

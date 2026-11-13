@@ -62,7 +62,20 @@ import {
   type ViewItem,
   type Window,
 } from "@nisse/protocol"
-import { Cause, Console, Context, type Duration, Effect, Exit, Layer, Queue, Scope, Semaphore, Stream } from "effect"
+import {
+  Cause,
+  type Clock,
+  Console,
+  Context,
+  type Duration,
+  Effect,
+  Exit,
+  Layer,
+  Queue,
+  Scope,
+  Semaphore,
+  Stream,
+} from "effect"
 import * as RpcServer from "effect/rpc/RpcServer"
 import type { ModelAsk } from "./config.ts"
 import type { ProviderOptions } from "./providers.ts"
@@ -113,21 +126,21 @@ export type KernelHarnessService = {
 }
 
 export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
-  static readonly layer = (
-    home: Home,
-    readOnly: boolean,
-    claudeIdle: Duration.Input | undefined,
-    claudeStop: Duration.Input | undefined,
-  ) =>
+  static readonly layer = (home: Home, readOnly: boolean, live: ClaudeLiveOptions) =>
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
         const { instances, agents, claude, agentTypes } = yield* Providers
         const lifetime = yield* Lifetime
+        // An idle conversation compacts by sending Claude Code `/compact` as its input, so the summary is committed by a
+        // run; a conversation that is busy again by then refuses it and goes on.
+        let compactIdle = (_conversation: ConversationId): Effect.Effect<void, unknown> => Effect.void
         // Opened before the harness, so a server stop closes the live Claude Code processes after the runs (D3).
         const processes = yield* makeClaudeProcesses({
-          ...(claudeIdle === undefined ? {} : { idle: claudeIdle }),
-          ...(claudeStop === undefined ? {} : { stop: claudeStop }),
+          ...(live.idle === undefined ? {} : { idle: live.idle }),
+          ...(live.clock === undefined ? {} : { clock: live.clock }),
+          ...(live.idleCompaction ? { compact: (conversation) => compactIdle(conversation) } : {}),
+          ...(live.stop === undefined ? {} : { stop: live.stop }),
           hold: lifetime.hold,
         })
         const stoppedTooOften = new Map<ConversationId, number>()
@@ -194,6 +207,18 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           ),
           (harness) => Effect.ignore(harness.close),
         )
+        compactIdle = (conversation) =>
+          Effect.flatMap(harness.conversation(conversation), (handle) => {
+            if (handle === undefined) return Effect.fail(new Error(`conversation ${conversation} is gone`))
+            const requestId = crypto.randomUUID()
+            return handle.submit({
+              type: "input",
+              content: [{ type: "text", text: "/compact" }],
+              requestId,
+              entry: { kind: USER_KIND, data: { author: "nisse", requestId } },
+              whenBusy: "reject",
+            })
+          })
         // Read-only, nothing runs, so no run counts a stop.
         if (!readOnly) for (const [id, stops] of yield* countStops(harness)) stoppedTooOften.set(id, stops)
         const status = yield* followTreeStatus(harness)
@@ -686,6 +711,18 @@ const afterReply = (effect: Effect.Effect<void>) =>
     }),
   )
 
+/** How the server's live Claude Code processes wait for their conversation's next run. */
+export interface ClaudeLiveOptions {
+  /** How long a Claude Code process stays live for its conversation's next run; default `IDLE_RELEASE`. */
+  readonly idle?: Duration.Input
+  /** How long a stopped run waits for Claude Code to end its turn before closing its process; default `STOP_TIMEOUT`. */
+  readonly stop?: Duration.Input
+  /** What the live processes keep time by; default the server's clock. Tests advance one. */
+  readonly clock?: Clock.Clock
+  /** An idle conversation with a long context compacts before its prompt cache expires: `claude_idle_compaction`. */
+  readonly idleCompaction: boolean
+}
+
 export interface ServerOptions {
   /** How long the server outlives its last watch, run and live Claude Code process. */
   readonly idleGrace: Duration.Input
@@ -693,6 +730,8 @@ export interface ServerOptions {
   readonly claudeIdle?: Duration.Input
   /** How long a stopped run waits for Claude Code to end its turn before closing its process; default `STOP_TIMEOUT`. */
   readonly claudeStop?: Duration.Input
+  /** What the live Claude Code processes keep time by; default the server's clock. Tests advance one. */
+  readonly claudeClock?: Clock.Clock
   /** Show the home and change nothing: no run resumes, and calls that would change it are refused. */
   readonly readOnly?: boolean
   readonly providers: ProviderOptions
@@ -706,7 +745,14 @@ export const serverLayer = (home: Home, options: ServerOptions) =>
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(readableNdJsonRpc),
     Layer.provide(homeSocketServer(home.socket)),
-    Layer.provideMerge(KernelHarness.layer(home, options.readOnly === true, options.claudeIdle, options.claudeStop)),
+    Layer.provideMerge(
+      KernelHarness.layer(home, options.readOnly === true, {
+        ...(options.claudeIdle === undefined ? {} : { idle: options.claudeIdle }),
+        ...(options.claudeStop === undefined ? {} : { stop: options.claudeStop }),
+        ...(options.claudeClock === undefined ? {} : { clock: options.claudeClock }),
+        idleCompaction: options.providers.config.claude_idle_compaction !== false,
+      }),
+    ),
     Layer.provideMerge(
       Providers.layer(
         options.readOnly === true

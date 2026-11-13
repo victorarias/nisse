@@ -14,7 +14,7 @@ import {
 } from "@nisse/protocol"
 import type { ClaudeProcessSettings } from "@nisse/claude"
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
-import { type Duration, Effect, Exit, Layer, Logger, Scope } from "effect"
+import { type Clock, type Duration, Effect, Exit, Layer, Logger, Scope } from "effect"
 import type { HomeConfig } from "../../src/config.ts"
 import { homeAt, type Home } from "../../src/home.ts"
 import { openAiOptions, type OpenAiOptions, type ProviderOptions } from "../../src/providers.ts"
@@ -46,6 +46,8 @@ export interface ServerOptions {
   /** How long a Claude Code process stays live after its run; 0 closes it when the run ends. */
   readonly claudeIdle?: Duration.Input
   readonly claudeStop?: Duration.Input
+  /** The clock the live Claude Code processes keep time by, which the test advances. */
+  readonly claudeClock?: Clock.Clock
 }
 
 /** The providers a test's server has: `script` playing `script` and preferred, then those `options` configure. */
@@ -77,6 +79,7 @@ export const runningServer = async (
         ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
         ...(options.claudeIdle === undefined ? {} : { claudeIdle: options.claudeIdle }),
         ...(options.claudeStop === undefined ? {} : { claudeStop: options.claudeStop }),
+        ...(options.claudeClock === undefined ? {} : { claudeClock: options.claudeClock }),
       }).pipe(Layer.provide(recorder)),
       scope,
     ),
