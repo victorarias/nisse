@@ -77,7 +77,7 @@ export class FakeClaude {
       .map((entry) => entry.pid)
   }
 
-  /** Whether spawn `spawn` exited because nisse closed its input. */
+  /** Whether spawn `spawn` exited because nisse closed its input or ended it. */
   exited(spawn: number) {
     return this.log().some((entry) => entry.spawn === spawn && entry.exited !== undefined)
   }

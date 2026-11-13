@@ -79,7 +79,7 @@ Preconditions:
   past 30 s, since the process is live. Run `drive.ts r rpc server/stop`:
   `doctor` shows `none running`, and
   `/tmp/nisse-verify/r/evidence/fake-claude/log.ndjson` ends with
-  `{"spawn":0,"exited":"stdin closed"}`.
+  a `{"spawn":0,"exited":...}` line.
 - **Restart.** Run `drive.ts r serve` and note the pid, then
   `drive.ts r nisse serve --restart &`. `nisse` runs the new server in the
   foreground, so the command keeps going. Run `drive.ts r doctor` until the

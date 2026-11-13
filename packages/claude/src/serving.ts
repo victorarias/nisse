@@ -53,7 +53,7 @@ export type Ended =
   | { readonly _tag: "answered"; readonly answer: EntryId | undefined; readonly turnLimit: boolean }
   | { readonly _tag: "gone" }
   | { readonly _tag: "failed"; readonly message: string }
-  /** The process exited before it sent the run a frame: a live process lost while idle, or one that never started. */
+  /** The process exited before Claude Code took the run's opening: a live process lost while idle, or one that never started. */
   | { readonly _tag: "exited"; readonly message: string }
   /** A reset was queued while the run worked: the run ends before it, and the next run starts in its context. */
   | { readonly _tag: "reset" }

@@ -62,7 +62,7 @@ export type ProcessConfig = {
 export interface ClaudeProcess {
   /**
    * Serves the run `run`: sends it `opening`, then hands every frame to it until the run ends. A process that exits
-   * before it sends a frame ends the run `exited`.
+   * before Claude Code took the opening ends the run `exited`.
    */
   readonly serve: (run: RunContext, opening: ReadonlyArray<Said>) => Effect.Effect<Ended, unknown>
   /** Background work Claude Code started and has not said ended: a background command or subagent (D6). */
@@ -275,6 +275,7 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
       const message = userMessage(parts, priority)
       awaitingReplay.add(message.uuid!)
       inbox.push(message)
+      return message.uuid!
     }
 
     /** What each model spent since the previous result; a total that went down started over, as after `/clear`. */
@@ -383,8 +384,7 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
                 serving = undefined
               }),
           )
-          send(opening)
-          let heard = false
+          const opened = send(opening)
           for (;;) {
             const next = yield* Effect.promise(pull)
             if (next.done) {
@@ -394,9 +394,9 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
                 error === undefined
                   ? "Claude Code exited before the turn finished"
                   : `Claude Code stopped: ${error instanceof Error ? error.message : String(error)}`
-              return heard ? failure(message) : ({ _tag: "exited", message } as const)
+              // Claude Code never took the opening, so nothing of the run reached it.
+              return awaitingReplay.has(opened) ? ({ _tag: "exited", message } as const) : failure(message)
             }
-            heard = true
             const message = next.value
             track(message)
             const ended = yield* serial.withPermits(1)(

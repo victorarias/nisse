@@ -145,7 +145,7 @@ Preconditions:
 - **Resume** (`died_while_idle`). Run
   `drive.ts r nisse exec --provider claude 'Remember the word PLUM. Reply with exactly: noted'`:
   stdout `noted`. Run `drive.ts r rpc server/stop`, which closes the live
-  process (the log's `{"spawn":0,"exited":"stdin closed"}`), `drive.ts r serve`, and
+  process (the log gains a `{"spawn":0,"exited":...}` line), `drive.ts r serve`, and
   take the id from `drive.ts r rpc conversation/list`. Run
   `drive.ts r nisse exec --conversation <id> 'Which word did I ask you to remember? Reply with that word only.'`:
   exit 0, stdout `PLUM`. The log's `"spawn": 1` argv has
