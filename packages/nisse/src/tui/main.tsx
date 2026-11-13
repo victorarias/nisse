@@ -1202,7 +1202,11 @@ const conversationScreen = Effect.fnUntraced(function* (
     compact: (instructions) => {
       setNotice({ text: "compacting", warning: false })
       report(
-        client["conversation/compact"]({ conversation, ...(instructions === "" ? {} : { instructions }) }),
+        client["conversation/compact"]({
+          conversation,
+          author: userName(),
+          ...(instructions === "" ? {} : { instructions }),
+        }),
         (ended) =>
           // A failure shows from the live state, which every client sees.
           ended.outcome === "nothing_to_compact"

@@ -4,6 +4,7 @@ import { readFileSync, rmSync, watch } from "node:fs"
 import { join } from "node:path"
 import type { ScriptStep } from "@nisse/models"
 import type { AuthState } from "@nisse/protocol"
+import { FakeClaude } from "./support/claude.ts"
 import { FakeOpenAi, signIn } from "./support/openai.ts"
 import { deadline, RawClient } from "./support/raw.ts"
 import { scriptEnv, runningServer, serving, settled, start, submit, watchView, tempHome } from "./support/server.ts"
@@ -760,6 +761,26 @@ test("compact-rpc, compaction-live-status: /compact says when there is nothing t
   // The cause, named once: not "compaction failed: Summarization failed: ...".
   await session.waitFor((screen) => screen.includes("✗ compaction failed: the summary model is gone"))
   client.close()
+  await quit(session)
+})
+
+test("compact-rpc, claude-compact: /compact in a Claude conversation sends Claude Code /compact as the person's input, and shows the compaction", async () => {
+  using claude = new FakeClaude("compaction_resume")
+  const nisseHome = home()
+  // A run resumes at the position only when no process stayed live, as in the recording.
+  await using _server = await runningServer([], { home: nisseHome, claude: claude.options, claudeIdle: 0 })
+  const session = await open([], ["--provider", "claude"], nisseHome)
+  await session.waitFor((screen) => screen.includes("READY"))
+  const client = await RawClient.connect(nisseHome.socket)
+  const conversation = ((await client.call("conversation/list")).result as Array<{ id: string }>)[0]!.id
+  const view = watchView(client, conversation)
+  session.type("Remember the word PLUM. Reply with exactly: noted\r")
+  await view.until(settled(1))
+  client.close()
+  session.type("/compact\r")
+  const screen = await session.waitFor((screen) => screen.includes("compacted the context") && screen.includes("READY"))
+  expect(screen).not.toContain("nothing to compact")
+  expect(claude.userTexts(1)).toEqual([["/compact"]])
   await quit(session)
 })
 

@@ -9,6 +9,14 @@ in the transcript. A context still within what a summary keeps answers
 compaction shows `✗ compaction failed: <why>` above the prompt, its cause named
 once.
 
+A Claude conversation compacts the same way, from the same command and call:
+Claude Code runs its loop, so nisse sends it `/compact [instructions]` as the
+conversation's input, named for whoever asked, and Claude Code writes the
+summary that becomes the `◆ compacted the context` entry. Behind a run in
+flight that input queues, and the call answers once its run ends. The idle
+compaction (`claude-idle-compaction`) sends the same input by `nisse`, and
+skips a conversation that is busy again.
+
 ## Sub-features
 
 - `compaction-manual` [kernel] Manual compact (R606-657, §8.7): Shrink context on demand
@@ -37,7 +45,7 @@ once.
 
 ### Agents
 
-- Call `conversation/compact` with `conversation` and optional `instructions`; it answers once the compaction ends, with `outcome` `compacted`, `nothing_to_compact`, `failed` (with a `message`) or `stopped`.
+- Call `conversation/compact` with `conversation`, `author` and optional `instructions`; it answers once the compaction ends, with `outcome` `compacted`, `nothing_to_compact`, `failed` (with a `message`) or `stopped`. On Claude, `compacted` means the `/compact` run committed a `pi.compaction` entry, `nothing_to_compact` that it answered without one, and `stopped` that the input was withdrawn or its run stopped.
 
 ### Triggers
 
@@ -78,12 +86,27 @@ Preconditions:
   from the context and still on the screen.
 - **A failed compaction.** Submit the long text a third time and wait for
   `answer three` and `READY`. Run
-  `drive.ts r rpc conversation/compact '{"conversation": "talk", "instructions": "keep the numbers"}'`:
+  `drive.ts r rpc conversation/compact '{"conversation": "talk", "author": "ada", "instructions": "keep the numbers"}'`:
   `"outcome": "failed", "message": "Summarization failed: the summary model is gone"`,
   and the TUI shows
   `✗ compaction failed: the summary model is gone` above the prompt: the
   harness's `Summarization failed:` is not repeated under it. It stays there after the next run and in a TUI opened
   anew.
+
+- **Compact a Claude conversation.** In a fresh run,
+  `drive.ts r up --fake-claude idle_compaction`, then
+  `drive.ts r tui start --provider claude --conversation talk`,
+  `drive.ts r tui wait READY`. Type `Reply with exactly: one`, `Enter`, wait
+  for `READY`; the same with `Reply with exactly: two`. Type `/compact` and
+  `Enter`, `drive.ts r tui wait 'compacted the context'`: `/compact` under
+  `ADA`, then `◆ compacted the context`. The fake's log shows `/compact` as
+  the process's third user message. Over the wire, in another fresh run with
+  the same recording, `conversation/start` `talk` with `"provider": "claude"`,
+  submit the two prompts, then
+  `drive.ts r rpc conversation/compact '{"conversation": "talk", "author": "ada", "instructions": "keep the numbers"}'`:
+  `"outcome": "compacted"`, the log's third user message is
+  `/compact keep the numbers`, and the transcript holds that `nisse.user` by
+  `ada`, then a `pi.compaction`.
 
 ## Contexts
 
@@ -104,6 +127,14 @@ Wire, `packages/nisse/test/wire.test.ts`:
 Screen, `packages/nisse/test/screen.test.ts`:
 
 - compact-rpc, compaction-live-status: /compact says when there is nothing to compact, shows a compaction running, and why one failed
+
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- compact-rpc, claude-compact: conversation/compact compacts a Claude conversation by sending Claude Code /compact with the instructions, and answers once it has
+
+Screen, `packages/nisse/test/screen.test.ts`, on the fake `claude`:
+
+- compact-rpc, claude-compact: /compact in a Claude conversation sends Claude Code /compact as the person's input, and shows the compaction
 
 Provider, `packages/nisse/test/openai.test.ts`:
 

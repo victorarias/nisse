@@ -8,10 +8,10 @@ import {
   AgentDoc,
   ApprovalsDoc,
   approveAutomatically,
-  CompactionRefused,
   configure,
   ConversationBusy as BusyConversation,
   type Conversation,
+  type Submission,
   type ConversationView,
   type ConversationWindow,
   createRegistry,
@@ -38,7 +38,6 @@ import type { ImageProcessor } from "@nisse/tools"
 import { createNodePhotonImages } from "@nisse/tools/images/node"
 import {
   ReadOnlyServer,
-  CannotCompact,
   CONFIGURED_KIND,
   ConversationBusy,
   NothingToContinue,
@@ -57,6 +56,7 @@ import {
   UnknownProvider,
   type EntryRecord as WireEntry,
   USER_KIND,
+  COMPACTION_KIND,
   WITHDRAWN_KIND,
   type View,
   type ViewItem,
@@ -132,8 +132,8 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
       Effect.gen(function* () {
         const { instances, agents, claude, agentTypes } = yield* Providers
         const lifetime = yield* Lifetime
-        // An idle conversation compacts by sending Claude Code `/compact` as its input, so the summary is committed by a
-        // run; a conversation that is busy again by then refuses it and goes on.
+        // An idle conversation compacts as a person's compact does, by its `/compact` input; one that is busy again by
+        // then refuses it and goes on.
         let compactIdle = (_conversation: ConversationId): Effect.Effect<void, unknown> => Effect.void
         // Opened before the harness, so a server stop closes the live Claude Code processes after the runs (D3).
         const processes = yield* makeClaudeProcesses({
@@ -210,14 +210,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         compactIdle = (conversation) =>
           Effect.flatMap(harness.conversation(conversation), (handle) => {
             if (handle === undefined) return Effect.fail(new Error(`conversation ${conversation} is gone`))
-            const requestId = crypto.randomUUID()
-            return handle.submit({
-              type: "input",
-              content: [{ type: "text", text: "/compact" }],
-              requestId,
-              entry: { kind: USER_KIND, data: { author: "nisse", requestId } },
-              whenBusy: "reject",
-            })
+            return compactInRun(handle, { author: "nisse", whenBusy: "reject" })
           })
         // Read-only, nothing runs, so no run counts a stop.
         if (!readOnly) for (const [id, stops] of yield* countStops(harness)) stoppedTooOften.set(id, stops)
@@ -229,6 +222,47 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
       }).pipe(Effect.orDie),
     )
 }
+
+/**
+ * Compacts a conversation whose provider runs its own loop, such as Claude Code: its `/compact` input starts a run in
+ * which the provider summarizes its context, committed as a pi.compaction entry. `whenBusy` defaults to queueing.
+ */
+const compactInRun = (
+  conversation: Conversation,
+  request: { readonly author: string; readonly instructions?: string; readonly whenBusy?: "reject" },
+) => {
+  const requestId = crypto.randomUUID()
+  const text = request.instructions === undefined ? "/compact" : `/compact ${request.instructions}`
+  return conversation.submit({
+    type: "input",
+    content: [{ type: "text", text }],
+    requestId,
+    entry: { kind: USER_KIND, data: { author: request.author, requestId } },
+    ...(request.whenBusy === undefined ? {} : { whenBusy: request.whenBusy }),
+  })
+}
+
+/** How the run of a `/compact` input ended, as `conversation/compact` answers. */
+const compactionOfRun = (conversation: Conversation, submission: Submission) =>
+  Effect.gen(function* () {
+    const settled = yield* submission.wait
+    if (settled.type !== "input") return yield* Effect.die(new Error(`a /compact input settled as a ${settled.type}`))
+    if (settled.status === "unanswered") {
+      // Withdrawn while queued, or its run stopped.
+      if (settled.reason === "aborted") return { outcome: "stopped" as const }
+      const message = typeof settled.detail === "string" ? settled.detail : settled.reason
+      return { outcome: "failed" as const, message }
+    }
+    // The run's entries run from its input to its answer; the provider's summary is among them when it compacted.
+    const span = Number(settled.answer) - Number(settled.entry) + 1
+    const entries = yield* conversation.entries(
+      { minEntryId: settled.entry, maxEntryId: settled.answer, order: "ascending" },
+      span,
+    )
+    return entries.items.some((entry) => entry.kind === COMPACTION_KIND)
+      ? { outcome: "compacted" as const }
+      : { outcome: "nothing_to_compact" as const }
+  })
 
 const toWindow = (window: Window | undefined): ConversationWindow | undefined =>
   window === undefined
@@ -582,21 +616,19 @@ const Handlers = NisseRpcs.toLayer(
           heldUntilIdle(Effect.orDie(conversation.reset(handoff, { author }))),
         ),
       ),
-      "conversation/compact": writing(({ conversation: id, instructions }) =>
+      "conversation/compact": writing(({ conversation: id, author, instructions }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
-          const task = yield* heldUntilIdle(
-            conversation.compact(instructions).pipe(
-              Effect.catchIf(
-                (error) => error instanceof CompactionRefused,
-                (error) => Effect.fail(new CannotCompact({ message: (error as CompactionRefused).message })),
+          if (harness.runTasks.choose((yield* agentOf(conversation)).model) !== undefined) {
+            // A person's compact queues behind a run in flight, as the same text typed would.
+            const submission = yield* heldUntilIdle(
+              Effect.orDie(
+                compactInRun(conversation, { author, ...(instructions === undefined ? {} : { instructions }) }),
               ),
-              Effect.catchIf(
-                (error) => !(error instanceof CannotCompact),
-                (error) => Effect.die(error),
-              ),
-            ),
-          )
+            )
+            return yield* Effect.orDie(compactionOfRun(conversation, submission))
+          }
+          const task = yield* heldUntilIdle(Effect.orDie(conversation.compact(instructions)))
           const outcome = (yield* Effect.orDie(harness.waitForTask(task))).state.outcome
           if (outcome.status === "completed") {
             // The summary is placed as a write; a compaction that found nothing to summarize places none.

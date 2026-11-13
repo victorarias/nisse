@@ -46,8 +46,9 @@ read the whole context again.
   compact (`claude-idle-compaction`) stays past the 30 minutes.
 - `claude-idle-compaction` compacts an idle conversation whose last request
   had a context of 200,000 tokens or more: two minutes before the prompt
-  cache that request read or wrote expires, nisse sends `/compact` as the
-  conversation's input, by `nisse`, to the live process. The run commits
+  cache that request read or wrote expires, nisse compacts it as
+  `conversation/compact` does, sending `/compact` as the conversation's input,
+  by `nisse`, to the live process. The run commits
   Claude's summary as a compaction, then the process closes. A run that
   starts first moves the compaction to its own cache's expiry; a conversation
   that is busy then is not compacted. `claude_idle_compaction = false` in
@@ -78,7 +79,10 @@ read the whole context again.
   about 64,000 characters, with `(N entries left out here)` between them.
 - `claude-sign-in` runs `claude auth login`, in [Sign-in](./sign-in.md).
 - `claude-compact` keeps Claude Code's own compaction, from `/compact` or its
-  own threshold, as a compaction entry holding Claude's summary. A later run
+  own threshold, as a compaction entry holding Claude's summary. The TUI's
+  `/compact [instructions]` and `conversation/compact` reach it by sending
+  `/compact [instructions]` as the input of whoever asked, in
+  [Compaction](./compaction.md). A later run
   whose position the compaction dropped gets a fresh session told the
   conversation, as `claude-session-gone` does.
 - `claude-clear` keeps Claude Code's `/clear` as a reset: a new context in the
@@ -359,6 +363,7 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - claude-resume: a run that answered before the server stopped is not run again
 - claude-read: a skill Claude Code runs shows as its call and result, and Claude answers from it
 - claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account
+- compact-rpc, claude-compact: conversation/compact compacts a Claude conversation by sending Claude Code /compact with the instructions, and answers once it has
 - claude-compact, claude-session-gone: a resume at a position Claude Code compacted away starts a fresh session told the conversation
 - claude-clear: /clear starts a new context in the transcript, and the next run starts a Claude Code session without it
 - claude-auto: in a conversation started without asking, a call Claude Code would ask about runs, allowed for it
