@@ -6,7 +6,7 @@ import { Console, Effect, Schedule, Schema } from "effect"
 
 export interface Home {
   readonly dir: string
-  /** The kernel's database. A `store.sqlite` an earlier sigma left beside it is ignored. */
+  /** The kernel's database. */
   readonly database: string
   readonly socket: string
   readonly lock: string

@@ -151,7 +151,7 @@ test("openai-tools, telemetry-identity: a call the person denies reaches the mod
     allow: false,
   })
   await session.view.until(settled(1))
-  // The recording's result is an earlier sigma's wording; the harness words a denial its own way.
+  // The recording's result is an earlier version's wording; the harness words a denial its own way.
   const denied = (expected[1] as { input: Array<{ output?: string }> }).input[3]!
   denied.output = "<harness>\n[error] denied by ada: the person did not allow this call\n</harness>"
   expectRequests(fake, expected)

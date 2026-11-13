@@ -3,17 +3,7 @@ import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { applyImmutable, type Op } from "@sigma/delta"
 import { PROTOCOL_VERSION, type View, type ViewItem } from "@sigma/protocol"
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  watch,
-  writeFileSync,
-} from "node:fs"
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs"
 import { open, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
@@ -118,20 +108,6 @@ test("idle-server: a server with no run in flight uses no CPU", async () => {
   expect(Math.round((cpuSeconds(server.pid) - before) * 100)).toBeLessThanOrEqual(2)
   client.close()
 }, 20_000)
-
-test("server-old-home: a home an earlier sigma used still starts, and its old stores are left as they were", async () => {
-  const sigmaHome = home()
-  // The Rust version's store, then the TypeScript version's before the kernel.
-  const old = ["sigma.sqlite", "store.sqlite"].map((name) => join(sigmaHome.dir, name))
-  mkdirSync(sigmaHome.dir, { recursive: true })
-  for (const path of old) writeFileSync(path, `an earlier sigma's ${path}`)
-  await serving(await scriptEnv(sigmaHome))
-  const client = await RawClient.connect(sigmaHome.socket)
-  await start(client)
-  for (const path of old) expect(readFileSync(path, "utf8")).toBe(`an earlier sigma's ${path}`)
-  expect(existsSync(sigmaHome.database)).toBe(true)
-  client.close()
-})
 
 test("wire-schema: sigma schema prints the protocol's schema, the one committed beside the code", async () => {
   const printed = sigma(["schema"], await scriptEnv(home()))

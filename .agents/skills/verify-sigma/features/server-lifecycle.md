@@ -25,9 +25,6 @@ running server once its runs settle.
 - `server-restart` replaces the running server with `sigma serve --restart`
   once its runs settle. A server a client starts meanwhile gives way to it,
   even one that was already waiting for the old server's home.
-- `server-old-home` keeps working in a home an earlier Sigma used: its
-  older databases, such as `sigma.sqlite`, stay as they were, and this Sigma uses
-  `kernel.sqlite` beside them.
 
 ## How to get to it
 
@@ -142,7 +139,6 @@ Screen, `packages/sigma/test/screen.test.ts`:
 Stack, `packages/sigma/test/stack.test.ts`:
 
 - server-stop: sigma serve answers server/stop, then exits 0
-- server-old-home: a home an earlier sigma used still starts, and its old stores are left as they were
 - mode-print, answer-exec, server-on-demand: sigma exec starts a server, prints the answer and exits 0
 - server-restart: sigma serve --restart replaces the running server once its run settles
 - server-restart: sigma exec waiting on a run that serve --restart lets finish prints the answer and exits 0
@@ -157,8 +153,6 @@ Stack, `packages/sigma/test/stack.test.ts`:
 - A server started with `drive.ts r serve` also exits 30 s after it goes idle.
   Start it just before the journey needs it. A Claude run keeps it up for
   30 minutes: stop it with `drive.ts r rpc server/stop`.
-- `server-old-home` is covered by its stack test only: making a Rust home by
-  hand is not a user path `drive.ts` can drive.
 - The idle exit is the one journey that waits on time; give `doctor` 40 s.
 - `rpc server/stop` with a run still working waits for it, so the call times
   out after 5 s; start the stop once the run has ended.
