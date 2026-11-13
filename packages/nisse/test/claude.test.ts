@@ -1,6 +1,8 @@
 // Claude Code: a real server in process, driven as a raw JSON-RPC client, with
 // Claude Code played by the fake `claude` replaying a recorded process per spawn.
 import { expect, test } from "bun:test"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import {
   type AuthState,
@@ -858,4 +860,97 @@ test("claude-extensions: a tool an extension removes is withheld from Claude Cod
   await session.view.until(settled(1))
   expect(results(session.view.seen())).toEqual([expect.objectContaining({ text: "noon in CET", isError: false })])
   expect(claude.spawns()[0]!["--disallowedTools"]).toBe("WebFetch,Bash,Clock")
+})
+
+/** What a Claude Code session sets for the commands it runs, a server among them: the names Claude Code 2.1.312 sets. */
+const HOST_SESSION: Record<string, string> = {
+  AI_AGENT: "claude-code_2-1-312_agent",
+  CLAUDECODE: "1",
+  CLAUDE_AGENT_SDK_VERSION: "0.0.1-host",
+  CLAUDE_CODE_BRIDGE_SESSION_ID: "host-bridge",
+  CLAUDE_CODE_CHILD_SESSION: "1",
+  CLAUDE_CODE_ENTRYPOINT: "cli",
+  CLAUDE_CODE_EXECPATH: "/host/claude",
+  CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/host.sock",
+  CLAUDE_CODE_MESSAGING_TOKEN: "host-token",
+  CLAUDE_CODE_SESSION_ATTENDED: "1",
+  CLAUDE_CODE_SESSION_ID: "host-session",
+  CLAUDE_EFFORT: "high",
+  CLAUDE_PID: "4242",
+}
+
+/** The test's in-process server runs as if started from a shell inside a Claude Code session, until disposed. */
+const insideClaudeCode = () => {
+  const before = Object.fromEntries(Object.keys(HOST_SESSION).map((name) => [name, process.env[name]]))
+  Object.assign(process.env, HOST_SESSION)
+  return {
+    [Symbol.dispose]: () => {
+      for (const [name, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    },
+  }
+}
+
+test("claude-environment: a server started inside a Claude Code session hands none of that session's variables to the Claude Code it starts, and the provider's own environment still arrives", async () => {
+  using _host = insideClaudeCode()
+  using claude = new FakeClaude("models", "text")
+  await using session = await conversationWith(claude)
+  await session.client.call("providers/list", {})
+  await session.submit("Reply with exactly: fixture text ok")
+  await session.view.until(settled(1))
+  await session.client.call("auth/logout", { provider: "claude" })
+
+  const started = claude.log().filter((entry) => entry.env !== undefined)
+  const kind = (entry: { probe?: number; auth?: unknown }) =>
+    entry.auth !== undefined ? "auth" : entry.probe !== undefined ? "probe" : "spawn"
+  expect(new Set(started.map(kind))).toEqual(new Set(["probe", "spawn", "auth"]))
+  // The SDK names its own spawns `sdk-ts` and its version; nothing may carry the host session's values.
+  const inherited = (entry: { env: Record<string, string> }) =>
+    Object.keys(HOST_SESSION).filter((name) => entry.env[name] === HOST_SESSION[name])
+  expect(started.map((entry) => ({ [kind(entry)]: inherited(entry) }))).toEqual(
+    started.map((entry) => ({ [kind(entry)]: [] })),
+  )
+  expect(started.map((entry) => entry.env.FAKE_CLAUDE_DIR)).toEqual(started.map(() => claude.dir))
+  expect(started.find((entry) => kind(entry) === "spawn")!.env.CLAUDE_CODE_ENTRYPOINT).toBe("sdk-ts")
+})
+
+test("claude-title: a fresh Claude Code session is named after the conversation's first prompt, so Claude Code asks no model for a name", async () => {
+  using claude = new FakeClaude("text")
+  await using session = await conversationWith(claude)
+  await session.submit("Reply with exactly: fixture text ok\nand nothing more")
+  await session.view.until(settled(1))
+  const initialize = claude.log().find((entry) => entry.initialize)?.initialize
+  expect(initialize.title).toBe("Reply with exactly: fixture text ok")
+})
+
+test("claude-tool-search: tool search set to auto in the person's Claude Code settings is turned on for nisse's sessions, and any other value is left alone", async () => {
+  for (const [value, expected] of [
+    ["auto", "true"],
+    ["auto:10", "true"],
+    ["auto:250", undefined],
+    ["false", undefined],
+    [undefined, undefined],
+  ] as const) {
+    using claude = new FakeClaude("text")
+    const config = join(claude.dir, "config")
+    mkdirSync(config)
+    writeFileSync(
+      join(config, "settings.json"),
+      JSON.stringify(value === undefined ? {} : { env: { ENABLE_TOOL_SEARCH: value } }),
+    )
+    const options = { ...claude.options, env: { ...claude.options.env, CLAUDE_CONFIG_DIR: config } }
+    await using server = await runningServer([], { claude: options })
+    const client = await RawClient.connect(server.home.socket)
+    const conversation = (await client.call("conversation/start", { cwd: server.home.dir, provider: "claude" })).result
+      .conversation as string
+    const view = watchView(client, conversation)
+    await submit(client, conversation, "Reply with exactly: fixture text ok", crypto.randomUUID(), "ada")
+    await view.until(settled(1))
+    client.close()
+    const argv: Array<string> = claude.log().find((entry) => entry.argv && entry.probe === undefined).argv
+    const settings = argv.includes("--settings") ? JSON.parse(argv[argv.indexOf("--settings") + 1]!) : undefined
+    expect({ value, override: settings?.env?.ENABLE_TOOL_SEARCH }).toEqual({ value, override: expected })
+  }
 })

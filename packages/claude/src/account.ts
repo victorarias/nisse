@@ -4,6 +4,7 @@ import { query, type AccountInfo, type ModelInfo as ClaudeModel } from "@anthrop
 import { type Health, type ModelInfo, type ProviderAccount, ProviderError } from "@nisse/models"
 import { tmpdir } from "node:os"
 import { Effect, Semaphore } from "effect"
+import { claudeEnvironment } from "./environment.ts"
 import { Inbox } from "./inbox.ts"
 import { bundledExecutable, type ClaudeProcessSettings } from "./process.ts"
 
@@ -85,7 +86,7 @@ const probe = (options: ProbeOptions): Effect.Effect<Probed> =>
           abort.abort()
         }),
     )
-    const env = { ...process.env, ...options.env, ENABLE_CLAUDEAI_MCP_SERVERS: "false" }
+    const env = { ...claudeEnvironment(options.env), ENABLE_CLAUDEAI_MCP_SERVERS: "false" }
     const started = query({
       prompt: inbox,
       options: {
@@ -148,7 +149,7 @@ export const claudeAccount = (settings: ClaudeProcessSettings): ProviderAccount 
       try: async () => {
         const child = Bun.spawn([executable, ...args], {
           cwd: tmpdir(),
-          env: { ...process.env, ...env },
+          env: claudeEnvironment(env),
           stdin: "ignore",
           stdout: "ignore",
           stderr: "pipe",

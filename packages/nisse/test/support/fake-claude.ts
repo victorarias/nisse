@@ -16,8 +16,12 @@ const append = (entry: unknown) => {
   pings?.write("\n")
 }
 
+/** The variables this process started with that name Claude Code or this fake; the rest of the environment stays out of the log. */
+const claudeEnv = () =>
+  Object.fromEntries(Object.entries(process.env).filter(([name]) => /^(CLAUDE|AI_AGENT|FAKE_CLAUDE)/.test(name)))
+
 if (argv[0] === "auth") {
-  append({ auth: argv.slice(1) })
+  append({ auth: argv.slice(1), env: claudeEnv() })
   if (process.env.FAKE_CLAUDE_AUTH_ASKS) {
     process.stdout.write("fake claude asks for a code: ")
     for await (const line of console) {
@@ -46,7 +50,7 @@ const spawn = Number(readFileSync(counterFile, { encoding: "utf8", flag: "a+" })
 writeFileSync(counterFile, String(spawn + 1))
 
 const log = (entry: unknown) => append(probe ? { probe: spawn, ...(entry as object) } : { spawn, ...(entry as object) })
-log({ argv, rootConversation: process.env.NISSE_ROOT_CONVERSATION })
+log({ argv, rootConversation: process.env.NISSE_ROOT_CONVERSATION, env: claudeEnv() })
 
 const segments: Array<Array<any>> = []
 let playing = false
