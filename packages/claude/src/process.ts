@@ -9,11 +9,13 @@ import {
   type Options,
   query,
   type SDKUserMessage,
+  type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk"
 import type { Agent } from "@nisse/harness"
 import type { Usage } from "@nisse/models"
 import { Effect, Semaphore } from "effect"
 import { z } from "zod"
+import { claudeEnvironment, toolSearchSettings } from "./environment.ts"
 import { Inbox } from "./inbox.ts"
 import type { Said } from "./retell.ts"
 import {
@@ -38,7 +40,8 @@ export interface ClaudeProcessSettings {
 
 /** Where a process starts in Claude Code's session. */
 export type Start =
-  | { readonly _tag: "fresh"; readonly session: string }
+  /** A new session, named `title` so Claude Code does not ask a model for a name. */
+  | { readonly _tag: "fresh"; readonly session: string; readonly title?: string }
   | { readonly _tag: "resume"; readonly session: string; readonly at: string }
   /** A fork of a conversation whose parent held the session: a new session continuing the parent's at `at`. */
   | { readonly _tag: "fork"; readonly from: string; readonly at: string; readonly session: string }
@@ -187,6 +190,13 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
             }),
           }
     const effort = agent.thinkingLevel === "off" || agent.thinkingLevel === undefined ? undefined : agent.thinkingLevel
+    const settingSources: SettingSource[] = ["user", "project", "local"]
+    const env = {
+      ...claudeEnvironment(settings.env),
+      NISSE_ROOT_CONVERSATION: config.rootConversation,
+      CLAUDE_AGENT_SDK_CLIENT_APP: "nisse",
+    }
+    const toolSearch = yield* toolSearchSettings(agent.cwd, settingSources, env)
     const messages = query({
       prompt: inbox,
       options: {
@@ -197,23 +207,21 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
         hooks,
         mcpServers,
         ...(withheld.length === 0 ? {} : { disallowedTools: withheld }),
-        settingSources: ["user", "project", "local"],
+        settingSources,
+        ...(toolSearch === undefined ? {} : { settings: toolSearch }),
         extraArgs: { ...extraArgs(settings.args ?? []), "replay-user-messages": null },
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
           ...(agent.instructions === undefined ? {} : { append: agent.instructions }),
         },
-        env: {
-          ...process.env,
-          ...settings.env,
-          NISSE_ROOT_CONVERSATION: config.rootConversation,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "nisse",
-        },
+        env,
         ...(modelId === "" ? {} : { model: modelId }),
         ...(effort === undefined ? {} : { effort: effort as EffortLevel }),
         ...(agent.maxTurns === undefined ? {} : { maxTurns: agent.maxTurns }),
-        ...(start._tag === "fresh" ? { sessionId: start.session } : {}),
+        ...(start._tag === "fresh"
+          ? { sessionId: start.session, ...(start.title === undefined ? {} : { title: start.title }) }
+          : {}),
         ...(start._tag === "resume" ? { resume: start.session, resumeSessionAt: start.at } : {}),
         ...(start._tag === "fork"
           ? { resume: start.from, resumeSessionAt: start.at, forkSession: true, sessionId: start.session }

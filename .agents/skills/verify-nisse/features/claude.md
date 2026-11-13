@@ -51,6 +51,15 @@ compaction; `/clear` starts a new context in nisse's transcript too.
 - `claude-clear` keeps Claude Code's `/clear` as a reset: a new context in the
   transcript, and the next run starts a Claude Code session without the old
   one.
+- `claude-environment` starts every Claude Code process, a run's, the probe's
+  and `claude auth`'s, without the variables a host Claude Code session sets,
+  so a server started inside Claude Code does not pass on that session's
+  identity; a provider instance's own `env` still arrives.
+- `claude-title` names a fresh Claude Code session after the conversation's
+  title, so Claude Code asks no model for one.
+- `claude-tool-search` turns Claude Code's tool search on for nisse's
+  sessions when the person's Claude Code settings say `ENABLE_TOOL_SEARCH`
+  `auto` or `auto:N` (N from 0 to 100), and leaves any other value alone.
 
 ## How to get to it
 
@@ -218,6 +227,20 @@ Preconditions:
   `(One turn of the conversation is left out here.)` where nisse now sends
   `(3 entries left out here)`. The fake does not compare, so the log shows
   what nisse sends today.
+- **Environment and title** (`text`). From a shell inside a Claude Code
+  session (`echo $CLAUDECODE` prints `1`), run
+  `drive.ts r nisse exec --provider claude 'Reply with exactly: fixture text ok'`:
+  stdout `fixture text ok`. The log's spawn line's `env` holds
+  `"CLAUDE_CODE_ENTRYPOINT":"sdk-ts"` and none of `CLAUDECODE`,
+  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_PID` or
+  `AI_AGENT`, and its `initialize` holds
+  `"title":"Reply with exactly: fixture text ok"`.
+- **Tool search** (`text`). Write `{"env":{"ENABLE_TOOL_SEARCH":"auto"}}` to
+  `settings.json` in an empty folder, then run
+  `CLAUDE_CONFIG_DIR=<folder> drive.ts r nisse exec --provider claude 'Reply with exactly: fixture text ok'`:
+  the log's spawn argv holds `--settings` followed by
+  `{"env":{"ENABLE_TOOL_SEARCH":"true"}}`. With `"false"` there, or no
+  `env`, the argv holds no `--settings`.
 - **Sign-in error** (`auth_failed`). Run
   `drive.ts r nisse exec --provider claude hello`: exit 1, empty stdout,
   stderr `Invalid API key · Please run /login`.
@@ -227,7 +250,9 @@ Preconditions:
 - **Subagents.** A Claude subagent is listed by `conversation/list` with its
   `lineage` (no `task`), and `conversation/submit` or
   `conversation/select_model` on it answers `TakesNoInput`.
-- **Inside an agent.** Start the run's server without the session's `CLAUDE`, `ANTHROPIC` and `CCR` variables.
+- **Inside an agent.** Nisse leaves out the variables a host Claude Code
+  session sets (`claude-environment`). Its `ANTHROPIC` and `CCR` variables
+  still reach Claude Code, so start a real-account run without them.
 - **Server restart.** The run resumes Claude Code's session where Nisse's transcript ends.
 
 ## Tests
@@ -257,6 +282,9 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - claude-health: Claude Code says once how it is signed in and which models it offers, without asking Claude anything
 - claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session
 - claude-switch: retelling a long conversation to Claude keeps its first prompt and the one being answered
+- claude-environment: a server started inside a Claude Code session hands none of that session's variables to the Claude Code it starts, and the provider's own environment still arrives
+- claude-title: a fresh Claude Code session is named after the conversation's first prompt, so Claude Code asks no model for a name
+- claude-tool-search: tool search set to auto in the person's Claude Code settings is turned on for nisse's sessions, and any other value is left alone
 
 Package, `packages/claude/test/claude.test.ts`:
 
@@ -351,6 +379,11 @@ decide instead of them: a `touch` asks, a `Read` does not.
   `Remember the word lantern.`, switch to `claude` `haiku`, and submit
   `Which word did I ask you to remember? Reply with just the word.`: the
   answer is `lantern`.
+- **Title.** `drive.ts r nisse exec --provider claude 'Reply with one word: ok'`:
+  the newest session file under your Claude Code configuration's `projects/`
+  holds a `custom-title` line with `"customTitle":"Reply with one word: ok"`
+  and no `ai-title` line, which Claude Code writes after asking a model for a
+  name.
 - **Sign-in error.** In a second run, `drive.ts r2 up --real-claude`, run
   `ANTHROPIC_API_KEY=sk-ant-not-a-key drive.ts r2 nisse exec --provider claude hi`,
   which starts the server with that key: exit 1 and Claude Code's own message,

@@ -12,7 +12,8 @@ harness with, which choose `claude.run` for a model whose provider `options.sett
   without results; no process outlives an invocation, and a stop is not counted as a restart. It then picks where
   Claude Code's session starts: a resume at the conversation's position, a fork of it when the position belongs to the
   conversation this one forked from, or a fresh session when there is none, another provider's Claude Code held it, or
-  a reset, a compaction or another model's answer came after it. A session Claude Code no longer has, or no longer
+  a reset, a compaction or another model's answer came after it. A fresh session is named with the conversation's title, which
+  `ClaudeRunOptions.title` gives, so Claude Code does not ask a model for one. A session Claude Code no longer has, or no longer
   holds the position of (as after its compaction), is dropped and the run starts over in a fresh one, once. The
   `claude.subagent` task holds the run of a hosted subagent's conversation until Claude Code says the subagent ended.
 - `src/process.ts`: one Claude Code process, started through the Claude Agent SDK at a resume, a fork or a fresh
@@ -26,6 +27,9 @@ harness with, which choose `claude.run` for a model whose provider `options.sett
   PostToolUse: Claude Code takes a changed result only for `Read`, so another tool's change is reported. Steers placed
   at a round of results are sent with priority `next`. Claude Code's compaction is kept as a compaction entry holding
   its summary, `/clear` as a reset. The subagents a run hosts end with the process.
+- `src/environment.ts`: how every Claude Code process starts, a run's, the account probe's and `claude auth`'s: the
+  server's environment without the variables a host Claude Code session sets, then the provider instance's `env`. A
+  run's settings also turn tool search on where the person's Claude Code settings leave it at `auto`.
 - `src/session.ts`: `claude.session`, the conversation's position in Claude Code's session: the session, the newest
   message nisse committed, and the newest entry Claude Code was shown. Rewindable, so a fork sees it as of its fork.
 - `src/retell.ts`: what a session is told of the conversation: the entries a resumed one missed, or, for a fresh one,

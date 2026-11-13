@@ -82,7 +82,7 @@ import { agentTools, type AgentTypes, interruptTree } from "./agents.ts"
 import { type Extensions, openExtensions, StatusLinesDoc } from "./extensions/index.ts"
 import { followTreeStatus, type TreeStatuses } from "./status.ts"
 import { skillsOf, userInput, workspaceInstructions } from "./workspace.ts"
-import { lineageOf, listConversations, wireId } from "./conversations.ts"
+import { lineageOf, listConversations, titleOf, wireId } from "./conversations.ts"
 import { readableNdJsonRpc } from "./wire-errors.ts"
 
 /**
@@ -142,6 +142,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           settings: (provider) => claude.get(provider),
           builtinExtensions: new Set(base.map((extension) => extension.name)),
           withheldTools: () => removedTools(),
+          title: (conversation) => titleOf(harness, conversation),
         })
         registry.install({ name: "claude", tasks: [claudeRuns.run, claudeRuns.subagent] })
         // A run ended for the limit was aborted; its run_end says why.

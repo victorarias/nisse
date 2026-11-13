@@ -99,6 +99,16 @@ const firstPrompt = (harness: Harness, id: ConversationId) =>
     return undefined
   })
 
+/** What a person knows the conversation by: a subagent's title, or else the first line of its first prompt. */
+const titled = (harness: Harness, id: ConversationId, lineage: Lineage | undefined) =>
+  Effect.map(lineage === undefined ? firstPrompt(harness, id) : Effect.succeed(lineage.title), (title) =>
+    title === "" ? undefined : title,
+  )
+
+/** The conversation's title, as `conversation/list` shows it; `undefined` before its first prompt. */
+export const titleOf = (harness: Harness, id: ConversationId) =>
+  Effect.flatMap(lineageOf(harness, id), (lineage) => titled(harness, id, lineage))
+
 /** How the run ended at the `nisse.run_end` entry `end`, with the last thing the model said. */
 export const endedAt = (harness: Harness, id: ConversationId, end: { id: EntryId; data?: unknown }) =>
   Effect.gen(function* () {
@@ -126,12 +136,12 @@ const info = (harness: Harness, conversation: ConversationRecord): Effect.Effect
     const ended = yield* lastEnded(harness, conversation.id)
     // A subagent's instructions are nisse's, naming its task; only those a client started a conversation with show.
     const instructions = lineage === undefined ? agent.instructions : undefined
-    const title = lineage?.title ?? (yield* firstPrompt(harness, conversation.id))
+    const title = yield* titled(harness, conversation.id, lineage)
     const parent = conversation.parent
     return {
       id: yield* wireId(harness, conversation.id),
       number: Number(conversation.id),
-      ...(title === undefined || title === "" ? {} : { title }),
+      ...(title === undefined ? {} : { title }),
       ...(parent === undefined
         ? {}
         : { fork: { of: yield* wireId(harness, parent.conversationId), at: Number(parent.at) } }),

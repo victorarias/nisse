@@ -25,6 +25,7 @@ import {
   TaskServices,
 } from "@nisse/harness"
 import {
+  type ConversationId,
   defineTask,
   type AnyTask,
   type EntryId,
@@ -63,6 +64,8 @@ export interface ClaudeRunOptions {
   readonly builtinExtensions?: ReadonlySet<string>
   /** Tool names extensions removed, whose Claude Code equivalents it is told not to use. */
   readonly withheldTools?: () => ReadonlyArray<string>
+  /** The conversation's title, which names a fresh session so Claude Code does not ask a model for one. */
+  readonly title?: (conversation: ConversationId) => Effect.Effect<string | undefined>
 }
 
 const failed = (message: string, reason: string): Next => ({
@@ -130,7 +133,7 @@ const continuable = (entries: readonly EntryRecord[], provider: string) =>
   })
 
 /** Where Claude Code's session starts for this run, and what it is told first. */
-const opening = (runtime: Runtime, api: TaskApi, provider: string) =>
+const opening = (runtime: Runtime, api: TaskApi, provider: string, title: Title) =>
   Effect.gen(function* () {
     const current = (yield* runtime.snapshot(ClaudeSessionDoc, runtime.conversationId))?.current
     if (current !== undefined && current.provider === provider) {
@@ -145,18 +148,22 @@ const opening = (runtime: Runtime, api: TaskApi, provider: string) =>
         return { start, texts }
       }
     }
-    return yield* fresh(runtime, api)
+    return yield* fresh(runtime, api, title)
   })
 
 /** A new session, told the conversation's context; one that already has answers is told it joins it. */
-const fresh = (runtime: Runtime, api: TaskApi) =>
-  Effect.map(api.context(runtime.conversationId), ({ messages }) => {
+const fresh = (runtime: Runtime, api: TaskApi, title: Title) =>
+  Effect.gen(function* () {
+    const { messages } = yield* api.context(runtime.conversationId)
+    const named = yield* title(runtime.conversationId)
     const told = history(messages as Message[])
     const joins = messages.some((message) => message.role !== "user")
-    return {
-      start: { _tag: "fresh", session: crypto.randomUUID() } as Start,
-      texts: joins ? [JOINING, ...told] : told,
+    const start: Start = {
+      _tag: "fresh",
+      session: crypto.randomUUID(),
+      ...(named === undefined || named === "" ? {} : { title: named }),
     }
+    return { start, texts: joins ? [JOINING, ...told] : told }
   })
 
 /** Serves the run with one Claude Code process started at `start` and told `texts` first, closed when the run ends. */
@@ -219,6 +226,8 @@ const endCutOff = (ctx: RunCtx & { readonly runtime: Runtime }, task: Running) =
     }),
   )
 
+type Title = NonNullable<ClaudeRunOptions["title"]>
+
 type Shared = { readonly options: ClaudeRunOptions; readonly links: SubagentLinks; subagent?: AnyTask<TaskServices> }
 
 const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheckpoint, ClaudeRunResult, TaskServices> =>
@@ -252,7 +261,8 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
             rootConversation: String(runtime.conversationId),
           }
           const run: RunContext = { runtime, api, agent, links: shared.links, subagentTask: shared.subagent! }
-          const { start, texts } = yield* opening(runtime, api, provider)
+          const title: Title = shared.options.title ?? (() => Effect.succeed(undefined))
+          const { start, texts } = yield* opening(runtime, api, provider, title)
           let ended = yield* converse(config, run, start, texts)
           if (ended._tag === "gone") {
             // The session is gone, or no longer holds the position (F12): start over, told the conversation.
@@ -262,7 +272,7 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
                 return undefined as never
               }),
             )
-            const again = yield* fresh(runtime, api)
+            const again = yield* fresh(runtime, api, title)
             ended = yield* converse(config, run, again.start, again.texts)
           }
           return yield* finish(ctx, ended)
