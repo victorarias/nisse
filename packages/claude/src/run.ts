@@ -40,8 +40,9 @@ import {
 import type { Message } from "@nisse/models"
 import { Deferred, Effect } from "effect"
 import { SubagentLinks } from "./links.ts"
-import { type ClaudeProcessSettings, type ClaudeRunCheckpoint, converse, type Ended, type Start } from "./process.ts"
-import { history, INTERRUPTED, JOINING, unseen } from "./retell.ts"
+import { type ClaudeProcessSettings, openProcess, type ProcessConfig, type Start } from "./process.ts"
+import { history, INTERRUPTED, JOINING, type Said, unseen } from "./retell.ts"
+import type { ClaudeRunCheckpoint, Ended, RunContext } from "./serving.ts"
 import { ClaudeSessionDoc } from "./session.ts"
 
 export const CLAUDE_RUN_KIND = "claude.run"
@@ -158,6 +159,10 @@ const fresh = (runtime: Runtime, api: TaskApi) =>
     }
   })
 
+/** Serves the run with one Claude Code process started at `start` and told `texts` first, closed when the run ends. */
+const converse = (config: ProcessConfig, run: RunContext, start: Start, texts: ReadonlyArray<Said>) =>
+  Effect.scoped(Effect.flatMap(openProcess(config, start), (process) => process.serve(run, texts)))
+
 /** Ends the run as `ended` says. */
 const finish = (ctx: RunCtx & { readonly runtime: Runtime }, ended: Ended) =>
   ctx.runtime.commit((tx) =>
@@ -239,19 +244,16 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
           if (settings === undefined) {
             return yield* finish(ctx, { _tag: "failed", message: `Claude Code does not serve provider ${provider}` })
           }
-          const processCtx = {
-            runtime,
-            api,
+          const config: ProcessConfig = {
             agent,
             settings,
-            links: shared.links,
-            subagentTask: shared.subagent!,
             builtinExtensions: shared.options.builtinExtensions ?? new Set<string>(),
             withheldTools: shared.options.withheldTools?.() ?? [],
             rootConversation: String(runtime.conversationId),
           }
+          const run: RunContext = { runtime, api, agent, links: shared.links, subagentTask: shared.subagent! }
           const { start, texts } = yield* opening(runtime, api, provider)
-          let ended = yield* converse(processCtx, start, texts)
+          let ended = yield* converse(config, run, start, texts)
           if (ended._tag === "gone") {
             // The session is gone, or no longer holds the position (F12): start over, told the conversation.
             yield* runtime.commit((tx) =>
@@ -261,7 +263,7 @@ const makeRunTask = (shared: Shared): Task<Record<string, never>, ClaudeRunCheck
               }),
             )
             const again = yield* fresh(runtime, api)
-            ended = yield* converse(processCtx, again.start, again.texts)
+            ended = yield* converse(config, run, again.start, again.texts)
           }
           return yield* finish(ctx, ended)
         }),
