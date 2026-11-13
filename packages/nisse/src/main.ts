@@ -309,7 +309,7 @@ const nisse = Command.make(
     )
   }),
 ).pipe(
-  Command.withDescription("A durable, multiplayer coding agent"),
+  Command.withDescription("A durable coding agent that many clients share"),
   Command.withSubcommands([serveCommand, execCommand, loginCommand, logoutCommand, extensionsCommand, schemaCommand]),
 )
 
