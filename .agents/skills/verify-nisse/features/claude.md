@@ -4,7 +4,7 @@ A conversation started with `--provider claude` is answered by Claude Code
 through the Claude Agent SDK, with Claude Code's own tools and session. Nisse
 shows Claude's calls under `NISSE`, asks a person before the calls Claude Code
 would ask about, keeps a conversation's Claude Code process for its next run
-for 30 minutes, resumes Claude Code's session where nisse's transcript ends
+for 30 minutes, keeps it through a stop, resumes Claude Code's session where nisse's transcript ends
 when it starts a new process, and after a crash tells Claude which calls were
 cut off. When Claude Code has
 lost the session, or a conversation is switched to Claude from another
@@ -31,7 +31,13 @@ compaction; `/clear` starts a new context in nisse's transcript too.
   hands it the next run, told only what came after what it has seen. An edit,
   a reset, another provider's answer, a change of tools, or clearing the model
   or effort between runs closes it, and the next run starts a process at the
-  position. So does a run that is stopped, fails, or leaves background work running.
+  position. So does a run that fails or leaves background work running.
+- `claude-stop` interrupts Claude Code's turn when a run is stopped, records
+  the cut-off calls as interrupted, and keeps the process live once Claude
+  Code ended the turn. The next prompt goes to that process, told nothing
+  about the cut-off calls, since its session holds the stop. A process that
+  does not end its turn within 5 seconds is closed, and the next run resumes,
+  told which calls were cut off.
 - `claude-idle-release` closes a live process after 30 minutes without a run;
   the next run starts one that resumes the session.
 - `claude-resume` continues Claude Code's session in each run that starts a
@@ -263,6 +269,19 @@ Preconditions:
   the log's spawn argv holds `--settings` followed by
   `{"env":{"ENABLE_TOOL_SEARCH":"true"}}`. With `"false"` there, or no
   `env`, the argv holds no `--settings`.
+- **Stop keeps the process** (`stop_keeps_process`). Run
+  `drive.ts r tui start --provider claude --auto`, `drive.ts r tui wait READY`,
+  type
+  ``Run the bash command `echo started > started.txt && python3 -c 'import time; time.sleep(120)'` with the Bash tool. Then reply with exactly: slept``
+  and `Enter`, `drive.ts r tui wait 'Bash(echo started'`, then `Escape`,
+  `drive.ts r tui wait 'may or may not'`, `drive.ts r tui wait READY`. Type
+  `Did your last Bash call finish? Reply with exactly one word: finished or interrupted`
+  and `Enter`, `drive.ts r tui wait READY`,
+  `drive.ts r tui screen stopped`: under the call,
+  `interrupted; it may or may not have taken effect`, `◆ interrupted`, then
+  the answer `interrupted`. The log has one `"spawn"` line, a received
+  `"subtype":"interrupt"` request and no `"exited"` line, and the second user
+  message holds only the question.
 - **Sign-in error** (`auth_failed`). Run
   `drive.ts r nisse exec --provider claude hello`: exit 1, empty stdout,
   stderr `Invalid API key · Please run /login`.
@@ -301,6 +320,8 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - claude-model: the conversation's model and effort reach Claude Code
 - claude-model, claude-live: a switch of model and effort reaches the live Claude Code process, and clearing the effort resumes the session in a new one
 - claude-cut-off: a run cut off by a server stop resumes, and Claude Code is told which call was cut off
+- claude-stop, claude-live: stopping a run mid-call interrupts Claude Code's turn, and the next prompt goes to the same process, told only that prompt
+- claude-stop, claude-resume: a Claude Code process that does not end its turn after a stop is closed, and the next run resumes, told which call was cut off
 - claude-resume: a run that answered before the server stopped is not run again
 - claude-read: a skill Claude Code runs shows as its call and result, and Claude answers from it
 - claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a terminal with the provider's environment, then names the account
@@ -392,6 +413,22 @@ decide instead of them: a `touch` asks, a `Read` does not.
   and `drive.ts r tui wait READY`: the call's result
   `interrupted; it may or may not have taken effect`, then `resumed ok`.
   `drive.ts r watch <id> --save cut-off` holds one `Bash` call, not two.
+- **Stop keeps the process.** `drive.ts r tui start --provider claude --model haiku --auto`, send
+  `Use the Bash tool to run exactly: echo started > /tmp/nisse-verify/r/started && python3 -c 'import time; time.sleep(120)'  Then reply with exactly: slept`,
+  wait for `Bash(echo started` and for `/tmp/nisse-verify/r/started`, and
+  note the `claude` pid under the server (`pgrep -P <server pid> -l`).
+  `Escape`, wait for `may or may not` and `READY`: the call's result
+  `interrupted; it may or may not have taken effect` and `◆ interrupted`,
+  the same `claude` pid, and no child under it. Send
+  `Did your last Bash call finish? Reply with exactly one word: finished or interrupted`:
+  `interrupted`, still the same pid. The session file under your Claude Code
+  configuration's `projects/` holds Claude Code's own rejected result and
+  `[Request interrupted by user for tool use]`, then the question alone, and
+  the question's request reads the earlier requests' cache. Stopping a
+  foreground subagent's Bash call and stopping Claude mid-text keep the pid
+  the same way; the subagent's conversation ends `interrupted`, and after a
+  text stop the session holds the cut-off text and
+  `[Request interrupted by user]`.
 - **Health and model.** `drive.ts r rpc providers/list '{}' --timeout 60000`:
   `claude` `ready` with the Claude Code version installed now.
   `drive.ts r rpc models/list '{}'` lists today's models.

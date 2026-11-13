@@ -14,7 +14,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk"
 import type { Agent } from "@nisse/harness"
 import type { Usage } from "@nisse/models"
-import { Effect, Semaphore } from "effect"
+import { type Duration, Effect, Option, Semaphore } from "effect"
 import { z } from "zod"
 import { claudeEnvironment, toolSearchSettings } from "./environment.ts"
 import { Inbox } from "./inbox.ts"
@@ -81,6 +81,12 @@ export interface ClaudeProcess {
    * not to the person's settings, so a run that clears either needs a new process (D4).
    */
   readonly canSelect: (selection: Selection) => boolean
+  /**
+   * Stops the turn of the run it served (D5): interrupts Claude Code and reads its frames, handing them to no run, until
+   * the turn's result. Succeeds with whether the process can serve another run: it ended the turn within `within`, with
+   * nothing left queued and no background work. A stopped run's subagents end with the turn.
+   */
+  readonly stop: (within: Duration.Input) => Effect.Effect<boolean>
   /** Background work Claude Code started and has not said ended: a background command or subagent (D6). */
   readonly busy: boolean
   /** Reads ahead while no run is served, and completes once the process has exited. */
@@ -357,7 +363,13 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
         (result) => result,
         (error: unknown) => ({ done: true as const, value: error }),
       )
-    const pull = () => ahead.shift() ?? read()
+    /** The next frame, which stays first in `ahead` until it arrived, so a reader interrupted while it waits loses none. */
+    const pull = Effect.gen(function* () {
+      if (ahead.length === 0) ahead.push(read())
+      const next = yield* Effect.promise(() => ahead[0]!)
+      ahead.shift()
+      return next
+    })
     const exited = Effect.gen(function* () {
       for (;;) {
         const next = read()
@@ -396,24 +408,34 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
         }
       })
 
+    /**
+     * What every frame tells the process, whether or not a run is served: its session, its tasks and its replays.
+     * Returns whether the frame is for the run: a replay of a message nisse sent is not.
+     */
+    const observe = (message: SDKMessage) => {
+      track(message)
+      if (resetting && "session_id" in message && message.session_id && message.session_id !== session) {
+        session = message.session_id
+        resetting = false
+      }
+      if (message.type === "user" && "isReplay" in message && message.isReplay) {
+        awaitingReplay.delete(message.uuid)
+        return false
+      }
+      // `/clear`: the session goes on under the id the next frames carry (F13).
+      if (message.type === "conversation_reset") resetting = true
+      return true
+    }
+
     const serve = (run: RunContext, opening: ReadonlyArray<Said>) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const { signal } = run.runtime
           const now = makeServing(run, view)
           serving = served = now
-          // The run's abort stops the process.
-          yield* Effect.acquireRelease(
+          yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
-              const stop = () => controller.abort()
-              signal.addEventListener("abort", stop, { once: true })
-              return stop
+              serving = undefined
             }),
-            (stop) =>
-              Effect.sync(() => {
-                signal.removeEventListener("abort", stop)
-                serving = undefined
-              }),
           )
           const switched = yield* Effect.result(select(selectionOf(run.agent)))
           // Nothing of the run reached Claude Code yet, so a process that cannot switch costs a cold start.
@@ -425,9 +447,8 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
           }
           const opened = send(opening)
           for (;;) {
-            const next = yield* Effect.promise(pull)
+            const next = yield* pull
             if (next.done) {
-              if (signal.aborted) return yield* Effect.interrupt
               const error = next.value
               const message =
                 error === undefined
@@ -437,30 +458,33 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
               return awaitingReplay.has(opened) ? ({ _tag: "exited", message } as const) : failure(message)
             }
             const message = next.value
-            track(message)
             const ended = yield* serial.withPermits(1)(
-              Effect.suspend(() => {
-                if (resetting && "session_id" in message && message.session_id && message.session_id !== session) {
-                  session = message.session_id
-                  resetting = false
-                }
-                if (message.type === "user" && "isReplay" in message && message.isReplay) {
-                  awaitingReplay.delete(message.uuid)
-                  return Effect.succeed(undefined)
-                }
-                // `/clear`: the session goes on under the id the next frames carry (F13).
-                if (message.type === "conversation_reset") resetting = true
-                return now.handle(message)
-              }),
+              Effect.suspend(() => (observe(message) ? now.handle(message) : Effect.succeed(undefined))),
             )
             if (ended !== undefined) return ended
           }
         }),
       )
 
+    const stop = (within: Duration.Input) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => messages.interrupt().catch(() => undefined))
+        for (;;) {
+          const next = yield* pull
+          if (next.done) return false
+          observe(next.value)
+          if (next.value.type === "result") return awaitingReplay.size === 0 && tasks.size === 0
+        }
+      }).pipe(
+        Effect.timeoutOption(within),
+        Effect.map(Option.getOrElse(() => false)),
+        Effect.tap(() => served?.end ?? Effect.void),
+      )
+
     return {
       serve,
       canSelect,
+      stop,
       get busy() {
         return tasks.size > 0
       },

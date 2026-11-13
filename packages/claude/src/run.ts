@@ -50,7 +50,7 @@ import {
   type Start,
 } from "./process.ts"
 import type { ClaudeProcesses, Openings } from "./processes.ts"
-import { history, INTERRUPTED, JOINING, unseen } from "./retell.ts"
+import { history, INTERRUPTED, JOINING, textOf, unseen } from "./retell.ts"
 import type { ClaudeRunCheckpoint, Ended, RunContext } from "./serving.ts"
 import { ClaudeSessionDoc } from "./session.ts"
 
@@ -143,13 +143,25 @@ const continuable = (entries: readonly EntryRecord[], provider: string) =>
   })
 
 /**
+ * Whether `entry` is what a stop recorded of the turn it cut off: the text Claude was writing, or a call's result. A live
+ * process kept through a stop ended that turn itself, and its session holds both (F14).
+ */
+const stopped = (entry: EntryRecord) =>
+  (entry.model ?? []).every((message) => {
+    const said = message as { role?: string; stopReason?: string; content?: unknown }
+    if (said.role === "assistant") return said.stopReason === "aborted"
+    return said.role === "toolResult" && textOf(said.content) === INTERRUPTED
+  }) && (entry.model?.length ?? 0) > 0
+
+/**
  * What a live process that has seen the entries through `seen` is told: what came after them, or `undefined` when
- * they changed the context it holds, as for a resume (F12).
+ * they changed the context it holds, as for a resume (F12). What a stop recorded is not told: only a stop the process
+ * itself went through leaves it after `seen`, since any other cut-off ends the process.
  */
 const afterSeen = (runtime: Runtime, provider: string, seen: number) =>
   Effect.map(entriesAfter(runtime, seen), (missed) => {
     if (!continuable(missed, provider)) return undefined
-    const told = unseen(missed)
+    const told = unseen(missed.filter((entry) => !stopped(entry)))
     return told.length === 0 ? [CONTINUE] : told
   })
 
@@ -192,7 +204,8 @@ const fresh = (runtime: Runtime, api: TaskApi, title: Title) =>
 
 /**
  * Serves the run with the conversation's live process, or a new one `openings` starts. A run that answers leaves the
- * process live, having seen every entry before the run's end, unless Claude Code still has background work (D6).
+ * process live, having seen every entry before the run's end, unless Claude Code still has background work (D6). A
+ * stopped run leaves it live too, once Claude Code ended the turn it cut off (D5).
  */
 const converse = <E>(shared: Shared, config: ProcessConfig, run: RunContext, openings: Openings<E>) =>
   Effect.scoped(
@@ -205,7 +218,16 @@ const converse = <E>(shared: Shared, config: ProcessConfig, run: RunContext, ope
         openings,
         (start) => openProcess(config, start),
       )
-      const ended = yield* lease.process.serve(run, lease.texts)
+      const ended = yield* lease.process.serve(run, lease.texts).pipe(
+        // The run's commits are refused from here, but it still reads.
+        Effect.onInterrupt(() =>
+          Effect.ignore(
+            Effect.gen(function* () {
+              if (yield* lease.process.stop(shared.options.processes.stopWithin)) lease.keep(yield* newest(runtime))
+            }),
+          ),
+        ),
+      )
       // Read before the run's end commits, which may start the next run with inputs the process has not seen.
       if (ended._tag === "answered" && !ended.turnLimit && !lease.process.busy) lease.keep(yield* newest(runtime))
       return { ended, live: lease.live }
