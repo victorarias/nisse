@@ -1,7 +1,7 @@
 // Claude Code: a real server in process, driven as a raw JSON-RPC client, with
 // Claude Code played by the fake `claude` replaying a recorded process per spawn.
 import { expect, test } from "bun:test"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import {
@@ -13,12 +13,14 @@ import {
   TOAST_KIND,
 } from "@nisse/protocol"
 import { homeWithExtensions } from "./support/extensions.ts"
-import { RawClient } from "./support/raw.ts"
+import { deadline, RawClient } from "./support/raw.ts"
 import {
   runEnds,
   runningServer,
+  servingUntilIdle,
   settled,
   submit,
+  tempHome,
   transcript,
   type ViewWatch,
   watchView,
@@ -150,11 +152,12 @@ test("claude-read: Claude reads files without asking and the read shows as a cal
   ])
 })
 
-test("claude-resume: each run resumes the Claude Code session where nisse's transcript ends", async () => {
+test("claude-resume, claude-live: a Claude Code process that exits while it waits for the next run is replaced by one that resumes where nisse's transcript ends", async () => {
   using claude = new FakeClaude("died_while_idle")
   await using session = await conversationWith(claude)
   await session.submit("Remember the word PLUM. Reply with exactly: noted")
   await session.view.until(settled(1))
+  process.kill(claude.pids()[0]!, "SIGKILL")
   await session.submit("Which word did I ask you to remember? Reply with that word only.")
   await session.view.until(settled(2))
   const [first, second] = claude.spawns()
@@ -166,11 +169,18 @@ test("claude-resume: each run resumes the Claude Code session where nisse's tran
   expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: PLUM", "run_end: answered"])
 })
 
-test("claude-session-gone: when Claude Code lost the session, a fresh one is given the conversation so far", async () => {
-  using claude = new FakeClaude("session_gone")
-  await using session = await conversationWith(claude)
+/** The recording's first process lost its session after it answered: its process is gone, so the next run resumes. */
+const sessionLost = async (claude: FakeClaude, options: ServerOptions = {}) => {
+  const session = await conversationWith(claude, {}, options)
   await session.submit("Remember the word PLUM. Reply with exactly: noted")
   await session.view.until(settled(1))
+  process.kill(claude.pids()[0]!, "SIGKILL")
+  return session
+}
+
+test("claude-session-gone: when Claude Code lost the session, a fresh one is given the conversation so far", async () => {
+  using claude = new FakeClaude("session_gone")
+  await using session = await sessionLost(claude)
   await session.submit("Which word did I ask you to remember? Reply with that word only.")
   await session.view.until(settled(2))
   expect(claude.spawns()[2]!["--resume"]).toBeUndefined()
@@ -186,9 +196,82 @@ test("claude-session-gone: when Claude Code lost the session, a fresh one is giv
   expect(runEnds(session.view.seen()).map((end) => end.outcome)).toEqual(["answered", "answered"])
 })
 
+test("claude-live: the next run reaches the Claude Code process that served the last one, told only its prompt, and what the process spent counts once", async () => {
+  using claude = new FakeClaude("session_gone")
+  await using session = await sessionLost(claude)
+  await session.submit("Which word did I ask you to remember? Reply with that word only.")
+  await session.view.until(settled(2))
+  await session.submit("Now reply with that word in lowercase.")
+  await session.view.until(settled(3))
+  // The third run went to the fresh process the second one started.
+  expect(claude.spawns()).toHaveLength(3)
+  expect(claude.userTexts(2).at(-1)).toEqual(["Now reply with that word in lowercase."])
+  expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: plum", "run_end: answered"])
+  // The first process's totals and the second's last ones: the second process's first result is inside its last.
+  const usage = session.view.view().docs["pi.usage"] as { models: Record<string, Record<string, number>> }
+  expect(usage.models["claude/claude-haiku-5-5"]).toMatchObject({
+    input: 2 + 4,
+    output: 4 + 10,
+    cacheRead: 16_112 + 37_850,
+    cacheWrite: 9_309 + 13_157,
+  })
+})
+
+const startClaude = async (client: RawClient, cwd: string) =>
+  (await client.call("conversation/start", { cwd, provider: "claude" })).result.conversation as string
+
+test("claude-idle-release: a live Claude Code process closes after the idle period, and the next run resumes its session", async () => {
+  using claude = new FakeClaude("died_while_idle")
+  await using session = await conversationWith(claude, {}, { claudeIdle: "50 millis" })
+  await session.submit("Remember the word PLUM. Reply with exactly: noted")
+  await session.view.until(settled(1))
+  await claude.logged((fake) => fake.exited(0))
+  await session.submit("Which word did I ask you to remember? Reply with that word only.")
+  await session.view.until(settled(2))
+  const [first, second] = claude.spawns()
+  expect(second!["--resume"]).toBe(first!["--session-id"])
+  expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: PLUM", "run_end: answered"])
+})
+
+test("server-idle-exit, claude-idle-release: a live Claude Code process keeps the server up after its client leaves, until the process closes", async () => {
+  using claude = new FakeClaude("text")
+  const home = tempHome()
+  const served = await servingUntilIdle(home, "10 millis", [], { claude: claude.options, claudeIdle: "500 millis" })
+  const client = await RawClient.connect(home.socket)
+  const conversation = await startClaude(client, home.dir)
+  await submit(client, conversation, "Reply with exactly: fixture text ok")
+  const view = watchView(client, conversation)
+  await view.until(settled(1))
+  const answered = performance.now()
+  client.close()
+  await deadline(served.exited, 5000, "server exit")
+  // Without the process's hold the server would have gone 10 ms after the client did, closing the process with it.
+  expect(performance.now() - answered).toBeGreaterThanOrEqual(500)
+  await claude.logged((fake) => fake.exited(0))
+  rmSync(home.dir, { recursive: true, force: true })
+})
+
+test("server-stop, claude-live: stopping the server closes its live Claude Code processes at once", async () => {
+  using claude = new FakeClaude("text")
+  const home = tempHome()
+  const served = await servingUntilIdle(home, "1 hour", [], { claude: claude.options })
+  const client = await RawClient.connect(home.socket)
+  const conversation = await startClaude(client, home.dir)
+  await submit(client, conversation, "Reply with exactly: fixture text ok")
+  await watchView(client, conversation).until(settled(1))
+  expect(claude.exited(0)).toBe(false)
+  expect(await client.call("server/stop", null)).toMatchObject({ result: null })
+  client.close()
+  await deadline(served.exited, 5000, "server exit")
+  // Long before the 30 minutes a live process waits.
+  await claude.logged((fake) => fake.exited(0))
+  rmSync(home.dir, { recursive: true, force: true })
+})
+
 test("queue-run: a prompt sent while Claude works runs once Claude answers, resuming the same session", async () => {
   using claude = new FakeClaude("bash_allowed", "text")
-  await using session = await conversationWith(claude)
+  // The recordings are one process each, so no process stays live for the queued run.
+  await using session = await conversationWith(claude, {}, { claudeIdle: 0 })
   await session.submit("Run the bash command `touch made.txt` with the Bash tool, then reply with exactly: made")
   await waitingApproval(session.view)
   await session.submit("Reply with exactly: fixture text ok")
@@ -466,7 +549,8 @@ test("claude-sign-in: signing in to Claude runs Claude Code's own sign-in in a t
 
 test("claude-compact, claude-session-gone: a resume at a position Claude Code compacted away starts a fresh session told the conversation", async () => {
   using claude = new FakeClaude("compaction_resume")
-  await using session = await conversationWith(claude, { approvals: "auto" })
+  // A run resumes at the position only when no process stayed live, as in the recording.
+  await using session = await conversationWith(claude, { approvals: "auto" }, { claudeIdle: 0 })
   await session.submit("Remember the word PLUM. Reply with exactly: noted")
   await session.view.until(settled(1))
   await session.submit("/compact")
@@ -496,7 +580,8 @@ test("claude-compact, claude-session-gone: a resume at a position Claude Code co
 
 test("claude-clear: /clear starts a new context in the transcript, and the next run starts a Claude Code session without it", async () => {
   using claude = new FakeClaude("clear")
-  await using session = await conversationWith(claude, { approvals: "auto" })
+  // The recording started a process per run.
+  await using session = await conversationWith(claude, { approvals: "auto" }, { claudeIdle: 0 })
   const prompts = [
     "Remember the word PLUM. Reply with exactly: noted",
     "/clear",

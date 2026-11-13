@@ -3,8 +3,10 @@
 A conversation started with `--provider claude` is answered by Claude Code
 through the Claude Agent SDK, with Claude Code's own tools and session. Nisse
 shows Claude's calls under `NISSE`, asks a person before the calls Claude Code
-would ask about, resumes Claude Code's session where nisse's transcript ends,
-and after a crash tells Claude which calls were cut off. When Claude Code has
+would ask about, keeps a conversation's Claude Code process for its next run
+for 30 minutes, resumes Claude Code's session where nisse's transcript ends
+when it starts a new process, and after a crash tells Claude which calls were
+cut off. When Claude Code has
 lost the session, or a conversation is switched to Claude from another
 provider, nisse retells the conversation to a new Claude Code session. Claude
 Code gets the conversation's model and effort, and a switch between Claude's
@@ -24,8 +26,16 @@ compaction; `/clear` starts a new context in nisse's transcript too.
 - `claude-exec-deny` makes `exec` refuse Claude's calls that would ask, unless
   `--auto`.
 - `claude-auto` lets every call run in a conversation started with `--auto`.
-- `claude-resume` continues Claude Code's session in each new run, also after
-  the server restarted.
+- `claude-live` keeps a conversation's Claude Code process after its run and
+  hands it the next run, told only what came after what it has seen. An edit,
+  a reset, another provider's answer or a change of model, effort or tools
+  between runs closes it, and the next run starts a process at the position.
+  So does a run that is stopped, fails, or leaves background work running.
+- `claude-idle-release` closes a live process after 30 minutes without a run;
+  the next run starts one that resumes the session.
+- `claude-resume` continues Claude Code's session in each run that starts a
+  process: after an idle release, after the process exited, and after the
+  server restarted.
 - `claude-session-gone` retells the conversation to a new Claude Code session
   when Claude Code no longer has the old one, and the run answers as usual.
 - `claude-cut-off` records a call the server's crash cut off as interrupted,
@@ -134,16 +144,19 @@ Preconditions:
   the log's answer is an `allow` nobody pressed.
 - **Resume** (`died_while_idle`). Run
   `drive.ts r nisse exec --provider claude 'Remember the word PLUM. Reply with exactly: noted'`:
-  stdout `noted`. Run `drive.ts r rpc server/stop`, `drive.ts r serve`, and
+  stdout `noted`. Run `drive.ts r rpc server/stop`, which closes the live
+  process (the log's `{"spawn":0,"exited":"stdin closed"}`), `drive.ts r serve`, and
   take the id from `drive.ts r rpc conversation/list`. Run
   `drive.ts r nisse exec --conversation <id> 'Which word did I ask you to remember? Reply with that word only.'`:
   exit 0, stdout `PLUM`. The log's `"spawn": 1` argv has
   `--resume=<spawn 0's --session-id>` and `--resume-session-at=...`: the new
   server resumed Claude Code's session. `drive.ts r watch <id> --save resumed`
   shows both runs' `nisse.user`, `pi.assistant` and `nisse.run_end` entries.
-- **Session gone** (`session_gone`). Run
+- **Session gone, then live** (`session_gone`). Run
   `drive.ts r nisse exec --provider claude 'Remember the word PLUM. Reply with exactly: noted'`:
-  stdout `noted`. Then
+  stdout `noted`. The recording's session was lost after this answer: end
+  its process with `kill -9 <pid>`, the `"pid"` on the log's `"spawn": 0`
+  line, which a live process survives as a cold start. Then
   `drive.ts r nisse exec --conversation <id> 'Which word did I ask you to remember? Reply with that word only.'`:
   exit 0, stdout `PLUM`. In the log, `"spawn": 1` has
   `--resume=<spawn 0's --session-id>`, which the recording answers
@@ -151,10 +164,12 @@ Preconditions:
   `--session-id` and received one user message of four texts:
   `This Claude Code session joins a conversation it does not hold. This is the conversation so far; continue it.`,
   `Remember the word PLUM. Reply with exactly: noted`, `You answered: noted`,
-  and the question. `drive.ts r watch <id> --save gone` shows two runs, each
-  ending `answered`, and no failure. Stop there: the recording's third prompt,
-  `Now reply with that word in lowercase.`, was sent to the same Claude Code
-  process, and nisse now starts a process per run, so sending it stalls.
+  and the question. Then
+  `drive.ts r nisse exec --conversation <id> 'Now reply with that word in lowercase.'`:
+  stdout `plum`, no `"spawn": 3`, and `"spawn": 2` received one more user
+  message holding only that prompt: the live process served the run.
+  `drive.ts r watch <id> --save live` shows three runs, each ending
+  `answered`, and `docs` `pi.usage` counts the third run's spend once.
 - **Cut off** (`resume_after_kill`). Run
   `drive.ts r tui start --provider claude --auto`, `drive.ts r tui wait READY`,
   type
@@ -191,8 +206,8 @@ Preconditions:
   goes on with the new model. `drive.ts r watch <id> --save switched` shows a
   `nisse.model` entry with that selection between the two runs. This departs from
   the recording: its second prompt, `Reply with exactly: two`, went to the
-  first process after an in-process `set_model`, and nisse now starts a
-  process per run, so the step leaves that prompt out. The answer
+  first process after an in-process `set_model`, and nisse closes a live
+  process whose model changes, so the step leaves that prompt out. The answer
   `one, two` is the recording's, not proof that Claude remembers.
 - **Instructions** (`text`). Run
   `drive.ts r nisse exec --provider claude --instructions 'Answer in Swedish.' 'Reply with exactly: fixture text ok'`:
@@ -253,7 +268,8 @@ Preconditions:
 - **Inside an agent.** Nisse leaves out the variables a host Claude Code
   session sets (`claude-environment`). Its `ANTHROPIC` and `CCR` variables
   still reach Claude Code, so start a real-account run without them.
-- **Server restart.** The run resumes Claude Code's session where Nisse's transcript ends.
+- **Server restart.** A stop closes the live processes; the next run resumes Claude Code's session where Nisse's transcript ends.
+- **No client.** A live process keeps the server up until it is released, 30 minutes after the conversation's last run, so `nisse exec` and attn, which hold no watch, still find it.
 
 ## Tests
 
@@ -268,8 +284,12 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - claude-system-prompt: Claude Code keeps its own system prompt, adds the conversation's instructions, and its commands know the conversation
 - claude-approval: a command Claude wants to run waits for a person, and Claude Code hears the answer
 - claude-read: Claude reads files without asking and the read shows as a call and its result
-- claude-resume: each run resumes the Claude Code session where nisse's transcript ends
+- claude-resume, claude-live: a Claude Code process that exits while it waits for the next run is replaced by one that resumes where nisse's transcript ends
 - claude-session-gone: when Claude Code lost the session, a fresh one is given the conversation so far
+- claude-live: the next run reaches the Claude Code process that served the last one, told only its prompt, and what the process spent counts once
+- claude-idle-release: a live Claude Code process closes after the idle period, and the next run resumes its session
+- server-idle-exit, claude-idle-release: a live Claude Code process keeps the server up after its client leaves, until the process closes
+- server-stop, claude-live: stopping the server closes its live Claude Code processes at once
 - claude-sign-in-error: a signed-out Claude Code fails the run with its own words
 - claude-model: the conversation's model and effort reach Claude Code
 - claude-cut-off: a run cut off by a server stop resumes, and Claude Code is told which call was cut off
@@ -289,12 +309,13 @@ Provider, `packages/nisse/test/claude.test.ts`:
 Package, `packages/claude/test/claude.test.ts`:
 
 - claude-clear: a reset queued while Claude works ends the run, and what was queued with it starts fresh
-- claude-resume: an edit to the context starts a fresh session told the edited conversation
+- claude-live, claude-resume: an edit to the context closes the live process and starts a fresh session told the edited conversation
+- claude-live: a reset between runs closes the live process, and the next run starts a fresh session
 - claude-read: parallel calls of one response are each committed with the result Claude Code returned
 - claude-resume: a fork of a Claude conversation forks Claude Code's session at the fork's position
-- claude-resume: what each run spent is added to the conversation's usage, once
-- claude-model: after a switch to another Claude model, the next run resumes the same session on it
-- claude-switch: switching to Claude from another provider retells the conversation to a new Claude Code session
+- claude-resume: what each run spent is added to the conversation's usage, once, when each run starts its own process
+- claude-model, claude-live: after a switch to another Claude model, the next run starts a process that resumes the same session on it
+- claude-switch, claude-live: switching to Claude from another provider retells the conversation to a new Claude Code session
 
 ## Gotchas
 
@@ -310,10 +331,13 @@ Package, `packages/claude/test/claude.test.ts`:
 - The fake plays its recording whatever it is sent, and a spawn past the
   recording's last process waits forever: a second conversation in the same
   run stalls. Start a new run for each journey.
-- Nisse starts one Claude Code process per run. Recordings that sent two
-  prompts to one process (`switch_model`, the last prompt of
-  `session_gone`) can't be replayed whole; the steps above say what they leave
-  out.
+- A conversation's next run goes to its live process, which plays on in the
+  recording's same spawn. A recording whose runs each started a process
+  (`died_while_idle`, `clear`, `compaction_resume`) needs that process gone
+  first: `kill -9` its pid from the log, or `rpc server/stop` and `serve`.
+  A prompt sent to a live process past its recording stalls.
+- Every Claude run keeps the server up for 30 minutes after it: end a journey
+  with `drive.ts r rpc server/stop`, or `down`.
 - The `resume_after_kill` recording expected
   `...was cut off: interrupted: nisse stopped while this ran; it may or may not have taken effect`;
   nisse now sends `...was cut off: interrupted; it may or may not have taken effect`.

@@ -48,11 +48,13 @@ import type { SubagentLinks } from "./links.ts"
 import { promptOf, type Said, textOf } from "./retell.ts"
 import { ClaudeSessionDoc } from "./session.ts"
 
-/** How a run ended: it answered, the session is gone, or Claude Code failed. */
+/** How a run ended: it answered, the session is gone, Claude Code failed, or its process exited. */
 export type Ended =
   | { readonly _tag: "answered"; readonly answer: EntryId | undefined; readonly turnLimit: boolean }
   | { readonly _tag: "gone" }
   | { readonly _tag: "failed"; readonly message: string }
+  /** The process exited before it sent the run a frame: a live process lost while idle, or one that never started. */
+  | { readonly _tag: "exited"; readonly message: string }
   /** A reset was queued while the run worked: the run ends before it, and the next run starts in its context. */
   | { readonly _tag: "reset" }
 

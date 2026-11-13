@@ -1,6 +1,6 @@
 // The server a home runs: one Harness over `kernel.sqlite`, served over the home's socket with the protocol
 // (`@nisse/protocol`). Conversations run on the home's providers (`./providers.ts`).
-import { claudeRunTasks } from "@nisse/claude"
+import { claudeRunTasks, makeClaudeProcesses } from "@nisse/claude"
 import { CodemodeSandbox } from "@nisse/codemode/sandbox"
 import { LocalExecutionEnv } from "@nisse/env/local"
 import {
@@ -113,11 +113,17 @@ export type KernelHarnessService = {
 }
 
 export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
-  static readonly layer = (home: Home, readOnly: boolean) =>
+  static readonly layer = (home: Home, readOnly: boolean, claudeIdle: Duration.Input | undefined) =>
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
         const { instances, agents, claude, agentTypes } = yield* Providers
+        const lifetime = yield* Lifetime
+        // Opened before the harness, so a server stop closes the live Claude Code processes after the runs (D3).
+        const processes = yield* makeClaudeProcesses({
+          ...(claudeIdle === undefined ? {} : { idle: claudeIdle }),
+          hold: lifetime.hold,
+        })
         const stoppedTooOften = new Map<ConversationId, number>()
         const registry = createRegistry()
         // Closed after the harness, which stops the scripts first. Closing asks a stuck worker to stop and does not wait
@@ -143,6 +149,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
           builtinExtensions: new Set(base.map((extension) => extension.name)),
           withheldTools: () => removedTools(),
           title: (conversation) => titleOf(harness, conversation),
+          processes,
         })
         registry.install({ name: "claude", tasks: [claudeRuns.run, claudeRuns.subagent] })
         // A run ended for the limit was aborted; its run_end says why.
@@ -674,7 +681,10 @@ const afterReply = (effect: Effect.Effect<void>) =>
   )
 
 export interface ServerOptions {
+  /** How long the server outlives its last watch, run and live Claude Code process. */
   readonly idleGrace: Duration.Input
+  /** How long a Claude Code process stays live for its conversation's next run; default `IDLE_RELEASE`. */
+  readonly claudeIdle?: Duration.Input
   /** Show the home and change nothing: no run resumes, and calls that would change it are refused. */
   readonly readOnly?: boolean
   readonly providers: ProviderOptions
@@ -688,7 +698,7 @@ export const serverLayer = (home: Home, options: ServerOptions) =>
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(readableNdJsonRpc),
     Layer.provide(homeSocketServer(home.socket)),
-    Layer.provideMerge(KernelHarness.layer(home, options.readOnly === true)),
+    Layer.provideMerge(KernelHarness.layer(home, options.readOnly === true, options.claudeIdle)),
     Layer.provideMerge(
       Providers.layer(
         options.readOnly === true

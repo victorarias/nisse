@@ -3,7 +3,8 @@
 One server serves a home, shared by every client. The first client to need it
 starts it, clients starting at the same moment share it, a second server for
 the same home refuses to start, and the server exits 30 s after its last
-watch closes and its last run settles. `nisse serve --restart` replaces a
+watch closes, its last run settles and its last live Claude Code process
+closes. `nisse serve --restart` replaces a
 running server once its runs settle.
 
 ## Sub-features
@@ -11,13 +12,16 @@ running server once its runs settle.
 - `server-on-demand` starts a server for the first `exec` or TUI.
 - `server-shared` lets clients that start together share one server.
 - `server-refuse` makes `nisse serve` refuse a home that already has a server.
-- `server-idle-exit` exits the server 30 s after its last watch closes
-  and its last run settles.
+- `server-idle-exit` exits the server 30 s after its last watch closes,
+  its last run settles and its last live Claude Code process closes, which
+  is 30 minutes after that conversation's last run (`claude-idle-release` in
+  [Claude](./claude.md)).
 - `server-cannot-start` shows a waiting client why the home's server refuses
   to start, such as a `config.toml` that does not read: on the TUI's status
   line, and on `exec`'s stderr. The client starts the next server a second
   after each refusal, and carries on once one starts.
-- `server-stop` stops it on `server/stop` once its runs settle.
+- `server-stop` stops it on `server/stop` once its runs settle, closing its
+  live Claude Code processes at once.
 - `server-restart` replaces the running server with `nisse serve --restart`
   once its runs settle. A server a client starts meanwhile gives way to it,
   even one that was already waiting for the old server's home.
@@ -39,7 +43,7 @@ running server once its runs settle.
 
 ### Triggers
 
-- The home has no open `conversation/watch`, `status/watch` or `auth/watch` stream and no running run for 30 s. A connection making only single calls does not keep the server alive.
+- The home has no open `conversation/watch`, `status/watch` or `auth/watch` stream, no running run and no live Claude Code process for 30 s. A connection making only single calls does not keep the server alive.
 
 ## Driving it with drive.ts
 
@@ -69,6 +73,13 @@ Preconditions:
 - **Stop.** Run `drive.ts r serve`, then
   `drive.ts r rpc server/stop`, then `drive.ts r doctor`: `none running`.
   The call answers with a `null` result before the server ends.
+- **Stop with a live Claude Code process** (`drive.ts r up --fake-claude text`).
+  Run `drive.ts r nisse exec --provider claude 'Reply with exactly: fixture text ok'`:
+  stdout `fixture text ok`, and `drive.ts r doctor` still shows the server
+  past 30 s, since the process is live. Run `drive.ts r rpc server/stop`:
+  `doctor` shows `none running`, and
+  `/tmp/nisse-verify/r/evidence/fake-claude/log.ndjson` ends with
+  `{"spawn":0,"exited":"stdin closed"}`.
 - **Restart.** Run `drive.ts r serve` and note the pid, then
   `drive.ts r nisse serve --restart &`. `nisse` runs the new server in the
   foreground, so the command keeps going. Run `drive.ts r doctor` until the
@@ -118,6 +129,11 @@ Wire, `packages/nisse/test/wire.test.ts`:
 - server-stop: stopping the server answers the caller, then the server exits
 - server-stop: stopping the server while nisse answers lets the answer finish first
 
+Provider, `packages/nisse/test/claude.test.ts`:
+
+- server-idle-exit, claude-idle-release: a live Claude Code process keeps the server up after its client leaves, until the process closes
+- server-stop, claude-live: stopping the server closes its live Claude Code processes at once
+
 Screen, `packages/nisse/test/screen.test.ts`:
 
 - server-restart, serve-read-only: an open TUI keeps drawing while nisse serve --restart replaces its server, read-only and back
@@ -139,7 +155,8 @@ Stack, `packages/nisse/test/stack.test.ts`:
 ## Gotchas
 
 - A server started with `drive.ts r serve` also exits 30 s after it goes idle.
-  Start it just before the journey needs it.
+  Start it just before the journey needs it. A Claude run keeps it up for
+  30 minutes: stop it with `drive.ts r rpc server/stop`.
 - `server-old-home` is covered by its stack test only: making a Rust home by
   hand is not a user path `drive.ts` can drive.
 - The idle exit is the one journey that waits on time; give `doctor` 40 s.
