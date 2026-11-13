@@ -1,7 +1,7 @@
 // `write`. Derived from pi-durable's `src/tools/write.ts` (earendil-works/pi, packages/durable, commit 7d073328e),
 // under the MIT license in this package's LICENSE (Copyright 2025 Mario Zechner).
-import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@nisse/harness"
-import { obj, type Static, str } from "@nisse/schema"
+import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@sigma/harness"
+import { obj, type Static, str } from "@sigma/schema"
 import { Effect } from "effect"
 import { requireEnv, resolveToolPath, withFileMutationQueue } from "./environment.ts"
 

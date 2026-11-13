@@ -1,6 +1,6 @@
 // `read`: text files and images. Derived from pi-durable's `src/tools/read.ts` (earendil-works/pi, packages/durable,
 // commit 7d073328e), under the MIT license in this package's LICENSE (Copyright 2025 Mario Zechner).
-import { type BinaryReader, type FileInfo, rangeDecoder, startsWithBom } from "@nisse/env"
+import { type BinaryReader, type FileInfo, rangeDecoder, startsWithBom } from "@sigma/env"
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
@@ -8,15 +8,15 @@ import {
   type TruncationResult,
   truncateHeadOf,
   utf8ByteLength,
-} from "@nisse/env/truncate"
+} from "@sigma/env/truncate"
 import {
   characterEnd,
   defineTool,
   type ToolDiagnostic,
   type ToolExecutionApi,
   type ToolExecutionResult,
-} from "@nisse/harness"
-import { lit, num, obj, opt, type Static, str, union } from "@nisse/schema"
+} from "@sigma/harness"
+import { lit, num, obj, opt, type Static, str, union } from "@sigma/schema"
 import { Effect } from "effect"
 import { requireEnv, resolveReadToolPath } from "./environment.ts"
 import { detectSupportedImageMimeTypeOf, imageDimensions } from "./image.ts"

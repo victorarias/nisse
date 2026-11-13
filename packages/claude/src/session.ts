@@ -1,7 +1,7 @@
-// Where a conversation stands in Claude Code's own session (F7): the session and its newest message that nisse
-// committed, written in the commit of each entry a run records. Nisse's transcript is the truth; a run resumes Claude
+// Where a conversation stands in Claude Code's own session (F7): the session and its newest message that sigma
+// committed, written in the commit of each entry a run records. Sigma's transcript is the truth; a run resumes Claude
 // Code's session at this position, which drops whatever Claude Code went on to write, and retells what came after it.
-import { defineDoc } from "@nisse/kernel"
+import { defineDoc } from "@sigma/kernel"
 
 export type ClaudeSession = {
   /** The conversation that wrote it; a fork sees its parent's until its first run forks the session. */

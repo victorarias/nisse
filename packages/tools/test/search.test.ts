@@ -2,7 +2,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { mkdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { fauxAssistantMessage, fauxToolCall } from "@nisse/models/faux"
+import { fauxAssistantMessage, fauxToolCall } from "@sigma/models/faux"
 import { Effect } from "effect"
 import { createGlobTool, createGrepTool } from "../src/index.ts"
 import { type Chat, openChat, removeDirectories, resultText, run } from "./support.ts"

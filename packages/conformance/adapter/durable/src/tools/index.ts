@@ -1,5 +1,5 @@
-// Upstream's `tools` module over @nisse/tools: tools in upstream's Promise form, options converted to the Effect form.
-import * as T from "@nisse/tools";
+// Upstream's `tools` module over @sigma/tools: tools in upstream's Promise form, options converted to the Effect form.
+import * as T from "@sigma/tools";
 import { upstreamExtension } from "./bridge.ts";
 import { createReadTool, type ReadToolOptions } from "./read.ts";
 

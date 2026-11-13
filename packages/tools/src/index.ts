@@ -1,4 +1,4 @@
-import { defineExtension } from "@nisse/harness"
+import { defineExtension } from "@sigma/harness"
 import { createBashTool } from "./bash.ts"
 import { createEditTool } from "./edit.ts"
 import { createReadTool, type ReadToolOptions } from "./read.ts"

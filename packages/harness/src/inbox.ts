@@ -1,7 +1,7 @@
 // `pi.inbox` and input boundaries (spec 6): the queue of a conversation's submissions waiting for a boundary, and the
 // placement of what a boundary selects. From pi-durable's `src/harness/inbox.ts` at 7d073328e (MIT, see LICENSE).
-import type { Draft } from "@nisse/delta"
-import { copyJson } from "@nisse/delta/json"
+import type { Draft } from "@sigma/delta"
+import { copyJson } from "@sigma/delta/json"
 import {
   type ConversationId,
   defineDoc,
@@ -14,8 +14,8 @@ import {
   type StorageError,
   type SubmissionId,
   type Tx,
-} from "@nisse/kernel"
-import type { JsonRepresentation } from "@nisse/models"
+} from "@sigma/kernel"
+import type { JsonRepresentation } from "@sigma/models"
 import { Effect } from "effect"
 import { stored, UserEntry } from "./entries.ts"
 import type { Stored } from "./live.ts"

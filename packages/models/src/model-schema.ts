@@ -1,5 +1,5 @@
 // The model catalog's field types, from pi-ai's `src/providers/model-schema.ts` in earendil-works/pi at commit
-// 7d073328e (MIT, see LICENSE). pi-ai declares them as schemas to validate its catalog files; nisse has no catalog
+// 7d073328e (MIT, see LICENSE). pi-ai declares them as schemas to validate its catalog files; sigma has no catalog
 // files, so they are plain types here.
 
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const

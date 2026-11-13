@@ -1,6 +1,6 @@
 // `glob`: files whose path matches a glob, newest first, through the call's environment.
-import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@nisse/harness"
-import { obj, opt, type Static, str } from "@nisse/schema"
+import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@sigma/harness"
+import { obj, opt, type Static, str } from "@sigma/schema"
 import { Effect } from "effect"
 import { requireEnv, resolveToolPath } from "./environment.ts"
 import { filesBelow, globMatcher } from "./files.ts"

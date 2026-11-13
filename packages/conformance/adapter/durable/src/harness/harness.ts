@@ -1,4 +1,4 @@
-// pi-durable's Promise Harness over @nisse/harness's Effect Harness. The Session part is the adapter's Session over the
+// pi-durable's Promise Harness over @sigma/harness's Effect Harness. The Session part is the adapter's Session over the
 // harness's kernel Session; conversations, tasks and the registry are the harness's, with upstream's extension code
 // converted at install (`convert.ts`). Compaction belongs to a later child.
 import { Effect } from "effect";

@@ -1,6 +1,6 @@
 # Conformance
 
-pi-durable's own test suite, kept as an outside measure of nisse's kernel. It is
+pi-durable's own test suite, kept as an outside measure of sigma's kernel. It is
 private to this repository: nothing imports it, and it is outside root `tsc`,
 prettier and `bun test`.
 

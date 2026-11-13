@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "nisse-workspace",
+      "name": "sigma-workspace",
       "devDependencies": {
         "@types/bun": "1.4.4",
         "@xterm/headless": "6.0.0",
@@ -12,37 +12,37 @@
       },
     },
     "packages/claude": {
-      "name": "@nisse/claude",
+      "name": "@sigma/claude",
       "version": "0.1.0",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.312",
-        "@nisse/delta": "workspace:*",
-        "@nisse/harness": "workspace:*",
-        "@nisse/kernel": "workspace:*",
-        "@nisse/models": "workspace:*",
+        "@sigma/delta": "workspace:*",
+        "@sigma/harness": "workspace:*",
+        "@sigma/kernel": "workspace:*",
+        "@sigma/models": "workspace:*",
         "effect": "4.0.6",
         "zod": "4.6.7",
       },
     },
     "packages/codemode": {
-      "name": "@nisse/codemode",
+      "name": "@sigma/codemode",
       "version": "0.1.0",
       "dependencies": {
-        "@nisse/env": "workspace:*",
-        "@nisse/harness": "workspace:*",
-        "@nisse/kernel": "workspace:*",
-        "@nisse/models": "workspace:*",
-        "@nisse/schema": "workspace:*",
-        "@nisse/tools": "workspace:*",
+        "@sigma/env": "workspace:*",
+        "@sigma/harness": "workspace:*",
+        "@sigma/kernel": "workspace:*",
+        "@sigma/models": "workspace:*",
+        "@sigma/schema": "workspace:*",
+        "@sigma/tools": "workspace:*",
         "effect": "4.0.6",
         "quickjs-wasi": "3.6.2",
       },
     },
     "packages/conformance": {
-      "name": "@nisse/conformance",
+      "name": "@sigma/conformance",
       "dependencies": {
-        "@nisse/env": "workspace:*",
-        "@nisse/tools": "workspace:*",
+        "@sigma/env": "workspace:*",
+        "@sigma/tools": "workspace:*",
         "@silvia-odwyer/photon": "0.3.3",
         "diff": "8.0.4",
         "quickjs-wasi": "3.6.2",
@@ -53,61 +53,61 @@
       },
     },
     "packages/delta": {
-      "name": "@nisse/delta",
+      "name": "@sigma/delta",
       "version": "0.1.0",
     },
     "packages/env": {
-      "name": "@nisse/env",
+      "name": "@sigma/env",
       "version": "0.1.0",
       "dependencies": {
         "effect": "4.0.6",
       },
     },
     "packages/harness": {
-      "name": "@nisse/harness",
+      "name": "@sigma/harness",
       "version": "0.1.0",
       "dependencies": {
-        "@nisse/delta": "workspace:*",
-        "@nisse/env": "workspace:*",
-        "@nisse/kernel": "workspace:*",
-        "@nisse/models": "workspace:*",
+        "@sigma/delta": "workspace:*",
+        "@sigma/env": "workspace:*",
+        "@sigma/kernel": "workspace:*",
+        "@sigma/models": "workspace:*",
         "effect": "4.0.6",
       },
     },
     "packages/kernel": {
-      "name": "@nisse/kernel",
+      "name": "@sigma/kernel",
       "version": "0.1.0",
       "dependencies": {
-        "@nisse/delta": "workspace:*",
+        "@sigma/delta": "workspace:*",
         "effect": "4.0.6",
       },
     },
     "packages/models": {
-      "name": "@nisse/models",
+      "name": "@sigma/models",
       "version": "0.1.0",
       "dependencies": {
-        "@nisse/schema": "workspace:*",
+        "@sigma/schema": "workspace:*",
         "effect": "4.0.6",
       },
     },
-    "packages/nisse": {
-      "name": "nisse",
+    "packages/sigma": {
+      "name": "sigma",
       "version": "0.1.0",
       "bin": {
-        "nisse": "./src/main.ts",
+        "sigma": "./src/main.ts",
       },
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.312",
         "@effect/platform-bun": "4.0.6",
-        "@nisse/claude": "workspace:*",
-        "@nisse/codemode": "workspace:*",
-        "@nisse/env": "workspace:*",
-        "@nisse/harness": "workspace:*",
-        "@nisse/kernel": "workspace:*",
-        "@nisse/models": "workspace:*",
-        "@nisse/protocol": "workspace:*",
-        "@nisse/schema": "workspace:*",
-        "@nisse/tools": "workspace:*",
+        "@sigma/claude": "workspace:*",
+        "@sigma/codemode": "workspace:*",
+        "@sigma/env": "workspace:*",
+        "@sigma/harness": "workspace:*",
+        "@sigma/kernel": "workspace:*",
+        "@sigma/models": "workspace:*",
+        "@sigma/protocol": "workspace:*",
+        "@sigma/schema": "workspace:*",
+        "@sigma/tools": "workspace:*",
         "@opentui/core": "0.7.0",
         "@opentui/solid": "0.7.0",
         "effect": "4.0.6",
@@ -116,7 +116,7 @@
       },
     },
     "packages/protocol": {
-      "name": "@nisse/protocol",
+      "name": "@sigma/protocol",
       "version": "0.1.0",
       "devDependencies": {
         "effect": "4.0.6",
@@ -126,21 +126,21 @@
       },
     },
     "packages/schema": {
-      "name": "@nisse/schema",
+      "name": "@sigma/schema",
       "version": "0.1.0",
       "devDependencies": {
         "effect": "4.0.6",
       },
     },
     "packages/tools": {
-      "name": "@nisse/tools",
+      "name": "@sigma/tools",
       "version": "0.1.0",
       "dependencies": {
-        "@nisse/env": "workspace:*",
-        "@nisse/harness": "workspace:*",
-        "@nisse/kernel": "workspace:*",
-        "@nisse/models": "workspace:*",
-        "@nisse/schema": "workspace:*",
+        "@sigma/env": "workspace:*",
+        "@sigma/harness": "workspace:*",
+        "@sigma/kernel": "workspace:*",
+        "@sigma/models": "workspace:*",
+        "@sigma/schema": "workspace:*",
         "@silvia-odwyer/photon": "0.3.3",
         "diff": "8.0.4",
         "effect": "4.0.6",
@@ -244,27 +244,27 @@
 
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.32.2", "", { "dependencies": { "@hono/node-server": "^1.19.9 || ^2.0.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-SWsVtH/0vULSQStoZ6xxH2K09Li8fXYTMC64ZeogCdpZ3XSi1eCPOByV1OpuJxuI3OcmHhosDWYyii07tpPsLw=="],
 
-    "@nisse/claude": ["@nisse/claude@workspace:packages/claude"],
+    "@sigma/claude": ["@sigma/claude@workspace:packages/claude"],
 
-    "@nisse/codemode": ["@nisse/codemode@workspace:packages/codemode"],
+    "@sigma/codemode": ["@sigma/codemode@workspace:packages/codemode"],
 
-    "@nisse/conformance": ["@nisse/conformance@workspace:packages/conformance"],
+    "@sigma/conformance": ["@sigma/conformance@workspace:packages/conformance"],
 
-    "@nisse/delta": ["@nisse/delta@workspace:packages/delta"],
+    "@sigma/delta": ["@sigma/delta@workspace:packages/delta"],
 
-    "@nisse/env": ["@nisse/env@workspace:packages/env"],
+    "@sigma/env": ["@sigma/env@workspace:packages/env"],
 
-    "@nisse/harness": ["@nisse/harness@workspace:packages/harness"],
+    "@sigma/harness": ["@sigma/harness@workspace:packages/harness"],
 
-    "@nisse/kernel": ["@nisse/kernel@workspace:packages/kernel"],
+    "@sigma/kernel": ["@sigma/kernel@workspace:packages/kernel"],
 
-    "@nisse/models": ["@nisse/models@workspace:packages/models"],
+    "@sigma/models": ["@sigma/models@workspace:packages/models"],
 
-    "@nisse/protocol": ["@nisse/protocol@workspace:packages/protocol"],
+    "@sigma/protocol": ["@sigma/protocol@workspace:packages/protocol"],
 
-    "@nisse/schema": ["@nisse/schema@workspace:packages/schema"],
+    "@sigma/schema": ["@sigma/schema@workspace:packages/schema"],
 
-    "@nisse/tools": ["@nisse/tools@workspace:packages/tools"],
+    "@sigma/tools": ["@sigma/tools@workspace:packages/tools"],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.10.0", "", {}, "sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ=="],
 
@@ -586,7 +586,7 @@
 
     "negotiator": ["negotiator@1.1.0", "", { "dependencies": { "content-type": "^2.1.0" } }, "sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg=="],
 
-    "nisse": ["nisse@workspace:packages/nisse"],
+    "sigma": ["sigma@workspace:packages/sigma"],
 
     "node-releases": ["node-releases@2.0.60", "", {}, "sha512-OmO8+GM1JUZqXET720VrJCwkjUCXmCMQm0Z3UDDRbfNLHS4NEAvY60j5jiFv0tkKw2PNNlqOLhahVmwJIOLDIQ=="],
 

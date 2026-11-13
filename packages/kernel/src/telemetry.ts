@@ -16,7 +16,7 @@ export interface TracePropagation {
 }
 
 /** The host's trace propagation, read from the context a Session opens in. */
-export const TracePropagation = Context.Reference<TracePropagation | undefined>("@nisse/kernel/TracePropagation", {
+export const TracePropagation = Context.Reference<TracePropagation | undefined>("@sigma/kernel/TracePropagation", {
   defaultValue: () => undefined,
 })
 

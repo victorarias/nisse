@@ -1,8 +1,8 @@
 // The transaction of one Session commit (spec sections 3.3 to 3.7 and 4): table reads, then table writes and document
 // changes, staged into one batch.
 // Derived from pi-durable's `src/session/transaction.ts` and `src/session/forks.ts` at 7d073328e (MIT, see LICENSE).
-import { type Change, type Draft, type Op, type Prepared, type Tracker, track } from "@nisse/delta"
-import { copyJson } from "@nisse/delta/json"
+import { type Change, type Draft, type Op, type Prepared, type Tracker, track } from "@sigma/delta"
+import { copyJson } from "@sigma/delta/json"
 import { Cause, Deferred, Effect, Queue, type Tracer } from "effect"
 import {
   type AnyDocDefinition,

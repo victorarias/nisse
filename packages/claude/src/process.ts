@@ -12,8 +12,8 @@ import {
   type SDKUserMessage,
   type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk"
-import type { Agent } from "@nisse/harness"
-import type { Usage } from "@nisse/models"
+import type { Agent } from "@sigma/harness"
+import type { Usage } from "@sigma/models"
 import { Clock, type Duration, Effect, Option, Semaphore } from "effect"
 import { z } from "zod"
 import { claudeEnvironment, toolSearchSettings } from "./environment.ts"
@@ -51,11 +51,11 @@ export type Start =
 export type ProcessConfig = {
   readonly agent: Agent
   readonly settings: ClaudeProcessSettings
-  /** Extensions whose tools Claude Code has its own of; the rest reach it through nisse's MCP server. */
+  /** Extensions whose tools Claude Code has its own of; the rest reach it through sigma's MCP server. */
   readonly builtinExtensions: ReadonlySet<string>
-  /** Tool names extensions removed: nisse's own, which stand for Claude Code's, and Claude Code's by its names. */
+  /** Tool names extensions removed: sigma's own, which stand for Claude Code's, and Claude Code's by its names. */
   readonly withheldTools: ReadonlyArray<string>
-  /** The id of the conversation people started, for the `NISSE_ROOT_CONVERSATION` its commands see. */
+  /** The id of the conversation people started, for the `SIGMA_ROOT_CONVERSATION` its commands see. */
   readonly rootConversation: string
 }
 
@@ -108,7 +108,7 @@ export interface LastRequest {
 /** One model's running totals in one Claude Code process, as it reports them (`modelUsage`). */
 type UsageTotals = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }
 
-/** Claude Code's tool for each of nisse's built-in tools, which Claude Code is never offered. */
+/** Claude Code's tool for each of sigma's built-in tools, which Claude Code is never offered. */
 const CLAUDE_TOOL: Readonly<Record<string, string>> = {
   read: "Read",
   grep: "Grep",
@@ -167,7 +167,7 @@ const userMessage = (parts: ReadonlyArray<Said>, priority?: "next"): SDKUserMess
 /** What a process is started with that it cannot change once it runs. */
 const spawnedWith = (config: ProcessConfig) => {
   const { agent } = config
-  // Own tools: those of extensions other than nisse's built-in ones, offered to Claude Code over MCP.
+  // Own tools: those of extensions other than sigma's built-in ones, offered to Claude Code over MCP.
   const builtin = new Set(
     agent.extensions
       .filter((extension) => config.builtinExtensions.has(extension.name))
@@ -255,8 +255,8 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
       own.size === 0
         ? {}
         : {
-            nisse: createSdkMcpServer({
-              name: "nisse",
+            sigma: createSdkMcpServer({
+              name: "sigma",
               tools: [...own.values()].map((tool) => ({
                 name: tool.name,
                 description: tool.description,
@@ -268,8 +268,8 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
     const settingSources: SettingSource[] = ["user", "project", "local"]
     const env = {
       ...claudeEnvironment(settings.env),
-      NISSE_ROOT_CONVERSATION: config.rootConversation,
-      CLAUDE_AGENT_SDK_CLIENT_APP: "nisse",
+      SIGMA_ROOT_CONVERSATION: config.rootConversation,
+      CLAUDE_AGENT_SDK_CLIENT_APP: "sigma",
     }
     const toolSearch = yield* toolSearchSettings(agent.cwd, settingSources, env)
     const messages = query({
@@ -283,7 +283,7 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
         mcpServers,
         ...(withheld.length === 0 ? {} : { disallowedTools: withheld }),
         settingSources,
-        // Claude Code's own idle compaction would compact with no run to commit its summary; nisse's does it (D7).
+        // Claude Code's own idle compaction would compact with no run to commit its summary; sigma's does it (D7).
         settings: { ...toolSearch, idleCompaction: false },
         extraArgs: { ...extraArgs(settings.args ?? []), "replay-user-messages": null },
         systemPrompt: {
@@ -426,7 +426,7 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
 
     /**
      * What every frame tells the process, whether or not a run is served: its session, its tasks and its replays.
-     * Returns whether the frame is for the run: a replay of a message nisse sent is not.
+     * Returns whether the frame is for the run: a replay of a message sigma sent is not.
      */
     const observe = (message: SDKMessage) => {
       track(message)

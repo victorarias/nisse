@@ -20,7 +20,7 @@ const JPEG_QUALITIES = [80, 70, 55, 40]
 
 /**
  * An `ImageProcessor` on Photon (Rust compiled to WebAssembly), for `createCodingTools({ images })`. `wasm` is
- * Photon's `photon_rs_bg.wasm` as bytes or as a compiled module: `@nisse/tools/images/node` reads it from the
+ * Photon's `photon_rs_bg.wasm` as bytes or as a compiled module: `@sigma/tools/images/node` reads it from the
  * installed package. Photon loads once per process; later calls reuse the first `wasm`.
  *
  * An image already upright, in a format providers take inline, and within the limits is returned as it is, once it

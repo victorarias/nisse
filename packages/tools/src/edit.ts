@@ -1,9 +1,9 @@
 // `edit`. Derived from pi-durable's `src/tools/edit.ts` (earendil-works/pi, packages/durable, commit 7d073328e), under
 // the MIT license in this package's LICENSE (Copyright 2025 Mario Zechner).
-import type { FileError } from "@nisse/env"
-import type { JsonObject } from "@nisse/kernel"
-import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@nisse/harness"
-import { arr, obj, type Static, str } from "@nisse/schema"
+import type { FileError } from "@sigma/env"
+import type { JsonObject } from "@sigma/kernel"
+import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@sigma/harness"
+import { arr, obj, type Static, str } from "@sigma/schema"
 import { Effect } from "effect"
 import {
   applyEditsToNormalizedContent,

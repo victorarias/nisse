@@ -9,4 +9,4 @@ export {
 	normalizeToLF,
 	restoreLineEndings,
 	stripBom,
-} from "@nisse/tools/edit-diff";
+} from "@sigma/tools/edit-diff";

@@ -1,6 +1,6 @@
 // pi-ai as the upstream suite imports it, over packages/models. The suite calls pi-ai's Promise API: providers whose
 // streams are AssistantMessageEventStreams, and a mutable `Models` collection of them. Each provider here also carries
-// the Effect provider it stands for (`SEAM`), so `toSeam` hands a later child the same models behind nisse's seam.
+// the Effect provider it stands for (`SEAM`), so `toSeam` hands a later child the same models behind sigma's seam.
 //
 // Failures the seam reports as `Unsupported` or `UnknownProvider` come back as pi-ai's `Models` reports them: an error
 // message from a stream or a fetch, an error result from `classify` and `generateImages`, a rejection from
@@ -65,7 +65,7 @@ export { fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "../.
 export const builtinModels = unimplemented("builtinModels", "no child: only excluded e2e tests use it");
 export const openaiProvider = unimplemented("openaiProvider", "no child: only excluded e2e tests use it");
 
-const SEAM = Symbol("nisse seam");
+const SEAM = Symbol("sigma seam");
 
 export interface ProviderStreams {
 	stream(model: Model<string>, context: TranscriptContext, options?: SimpleStreamOptions): AssistantMessageEventStream;
@@ -307,7 +307,7 @@ export function toSeam(models: Models): M.Models {
 }
 
 /**
- * nisse's seam over any pi-ai `Models`, through its Promise methods: a suite that wraps one, as a Proxy overriding
+ * sigma's seam over any pi-ai `Models`, through its Promise methods: a suite that wraps one, as a Proxy overriding
  * `streamSimple`, is heard. Interruption aborts the request's signal.
  */
 export function promiseSeam(models: Models): M.Models {

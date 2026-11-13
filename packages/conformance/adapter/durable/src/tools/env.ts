@@ -1,4 +1,4 @@
-import * as T from "@nisse/tools";
+import * as T from "@sigma/tools";
 import { Effect } from "effect";
 import { effectEnv, promiseEnv } from "./bridge.ts";
 

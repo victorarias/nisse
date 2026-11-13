@@ -1,1 +1,1 @@
-export { rangeDecoder, StreamDecoder, startsWithBom } from "@nisse/env/decode";
+export { rangeDecoder, StreamDecoder, startsWithBom } from "@sigma/env/decode";

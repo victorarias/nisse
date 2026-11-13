@@ -1,8 +1,8 @@
 // What the view mounts share: observers that run on the mutation line at a publication, and the end the Session's
 // close gives them (spec 9.1). One that throws, or whose `advance` returns a promise that rejects, is detached and
 // ended `listener_error`; the others still get their call.
-import type { DocumentChange, DocumentObserver, DocumentObserverEnd, Session } from "@nisse/kernel"
-import { SessionClosed, SessionFailed } from "@nisse/kernel"
+import type { DocumentChange, DocumentObserver, DocumentObserverEnd, Session } from "@sigma/kernel"
+import { SessionClosed, SessionFailed } from "@sigma/kernel"
 
 /** One attached observer and what it ends with; `detach` removes it from its mount. */
 export type Follower<T> = {

@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
-const MAP = ".agents/skills/verify-nisse"
+const MAP = ".agents/skills/verify-sigma"
 const CONFORMANCE = "packages/conformance"
 
 type UseCase = { id: string; file: string; kind: "client" | "kernel" }
@@ -135,11 +135,11 @@ function upstreamCovers(id: string): boolean {
 function coverage(useCase: UseCase): { covered: boolean; detail: string } {
   const own = tests.filter((t) => t.ids.includes(useCase.id))
   const rows = upstream.get(useCase.id) ?? []
-  const nisseTests = own.filter((t) => t.file.startsWith("packages/nisse/test/"))
+  const sigmaTests = own.filter((t) => t.file.startsWith("packages/sigma/test/"))
   const covered =
     useCase.kind === "kernel"
       ? own.length > 0 || upstreamCovers(useCase.id)
-      : nisseTests.length > 0 && (rows.length === 0 || upstreamCovers(useCase.id))
+      : sigmaTests.length > 0 && (rows.length === 0 || upstreamCovers(useCase.id))
   const parts = [`${own.length} test${own.length === 1 ? "" : "s"}`]
   if (rows.length > 0) parts.push(`${rows.filter((s) => s === "pass").length}/${rows.length} upstream rows pass`)
   return { covered, detail: parts.join(", ") }

@@ -1,1 +1,1 @@
-export { rankDocuments, tokenize } from "@nisse/tools";
+export { rankDocuments, tokenize } from "@sigma/tools";

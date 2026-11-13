@@ -1,7 +1,7 @@
 // Leaf-by-leaf JSON assignment into document drafts, from pi-durable's `src/harness/json.ts` at 7d073328e (MIT, see
 // LICENSE).
-import { appendText, type Draft } from "@nisse/delta"
-import type { JsonValue } from "@nisse/delta/json"
+import { appendText, type Draft } from "@sigma/delta"
+import type { JsonValue } from "@sigma/delta/json"
 
 /** How `assignJson()` writes one value instead of assigning it leaf by leaf. */
 export type AssignPlan =

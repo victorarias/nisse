@@ -1,5 +1,5 @@
 // The files below a directory, as `grep` and `glob` search them, through the call's environment.
-import type { ExecutionEnv, FileError } from "@nisse/env"
+import type { ExecutionEnv, FileError } from "@sigma/env"
 import { Effect } from "effect"
 
 /**

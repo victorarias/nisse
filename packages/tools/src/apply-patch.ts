@@ -1,8 +1,8 @@
 // `apply_patch`: the Codex patch format (add, delete, update and move files) through the call's environment, each file
 // changed under the per-file mutation queue.
-import type { ExecutionEnv } from "@nisse/env"
-import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@nisse/harness"
-import { obj, type Static, str } from "@nisse/schema"
+import type { ExecutionEnv } from "@sigma/env"
+import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@sigma/harness"
+import { obj, type Static, str } from "@sigma/schema"
 import { Effect } from "effect"
 import { requireEnv, resolveToolPath, sameFile, withFileMutationQueue } from "./environment.ts"
 

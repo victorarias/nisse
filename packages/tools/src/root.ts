@@ -1,6 +1,6 @@
-// Nisse's tool environment variables: what a command learns about the conversation that runs it.
-import type { ToolExecutionApi } from "@nisse/harness"
-import type { ConversationId } from "@nisse/kernel"
+// Sigma's tool environment variables: what a command learns about the conversation that runs it.
+import type { ToolExecutionApi } from "@sigma/harness"
+import type { ConversationId } from "@sigma/kernel"
 import { Effect } from "effect"
 import type { BashExecution } from "./bash.ts"
 
@@ -20,8 +20,8 @@ export const rootConversation = (api: Pick<ToolExecutionApi, "conversationId" | 
     }),
   )
 
-/** A `bash` `prepare` that sets `NISSE_ROOT_CONVERSATION` to the id of the conversation people started. */
+/** A `bash` `prepare` that sets `SIGMA_ROOT_CONVERSATION` to the id of the conversation people started. */
 export const rootConversationEnv = (execution: BashExecution, api: ToolExecutionApi) =>
   Effect.map(rootConversation(api), (root) => {
-    execution.env.NISSE_ROOT_CONVERSATION = String(root)
+    execution.env.SIGMA_ROOT_CONVERSATION = String(root)
   })

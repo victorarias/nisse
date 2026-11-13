@@ -1,6 +1,6 @@
-// Agent limits (D13): how deep subagents nest and how many work at once in one tree of conversations. Nisse's own
+// Agent limits (D13): how deep subagents nest and how many work at once in one tree of conversations. Sigma's own
 // subagent tools and Claude Code's hosted subagents both check them, so they live here.
-import { type ConversationId, defineDoc, type Tx } from "@nisse/kernel"
+import { type ConversationId, defineDoc, type Tx } from "@sigma/kernel"
 import { Effect } from "effect"
 
 export type AgentLimits = {
@@ -31,7 +31,7 @@ export const refusedSpawn = (limits: AgentLimits, parent: string, working: numbe
     : refusedWork(limits, working)
 
 /**
- * The call a subagent came from: the parent's call, the subagent's title, and, for one nisse's own tools started, its
+ * The call a subagent came from: the parent's call, the subagent's title, and, for one sigma's own tools started, its
  * canonical task path. Its parent is its owner's conversation. Written in the commit that creates it.
  */
 export type SubagentOrigin = {
@@ -42,7 +42,7 @@ export type SubagentOrigin = {
 }
 
 export const SubagentOriginDoc = defineDoc<SubagentOrigin>({
-  kind: "nisse.subagent_origin",
+  kind: "sigma.subagent_origin",
   version: 1,
   scope: "conversation",
   history: "latest",

@@ -2,7 +2,7 @@
 // process; when the run ends well, the process stays live for the next run until it has served no run for the idle
 // period (D2). A live process is a cache of `claude.session`: losing one costs a cold start and nothing else. A live
 // process with a long context compacts shortly before the prompt cache of its last request expires, then closes (D7).
-import type { ConversationId } from "@nisse/kernel"
+import type { ConversationId } from "@sigma/kernel"
 import { Clock, Duration, Effect, Exit, Fiber, Scope } from "effect"
 import type { ClaudeProcess, Selection, Start } from "./process.ts"
 import type { Said } from "./retell.ts"

@@ -97,7 +97,7 @@ async function outcomeOf(harness: Harness, id: TaskId): Promise<string> {
 const directories = new Set<string>();
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "nisse-structured-"));
+	const directory = await mkdtemp(join(tmpdir(), "sigma-structured-"));
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

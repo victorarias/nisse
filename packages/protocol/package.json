@@ -1,5 +1,5 @@
 {
-  "name": "@nisse/protocol",
+  "name": "@sigma/protocol",
   "version": "0.1.0",
   "type": "module",
   "exports": {

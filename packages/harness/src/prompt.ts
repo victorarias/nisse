@@ -1,6 +1,6 @@
 // The system prompt as positional `pi.system` entries (spec 7.4): render the agent's sections, replay what the active
 // transcript already shows, and plan the entries that make the two equal.
-import type { ContextEdit, JsonObject, TypedEntryDraft } from "@nisse/kernel"
+import type { ContextEdit, JsonObject, TypedEntryDraft } from "@sigma/kernel"
 import {
   declarationsEqual,
   getCurrentTools,
@@ -9,7 +9,7 @@ import {
   type Tool,
   type ToolReference,
   toToolDeclaration,
-} from "@nisse/models"
+} from "@sigma/models"
 import { Cause, Effect, Exit } from "effect"
 import { SystemEntry } from "./entries.ts"
 import type { ContextView, PromptInput, PromptSection, ToolRegistration } from "./types.ts"

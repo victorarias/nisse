@@ -1,9 +1,9 @@
 // `bash` and `powershell`. Derived from pi-durable's `src/tools/bash.ts` (earendil-works/pi, packages/durable, commit
 // 7d073328e), under the MIT license in this package's LICENSE (Copyright 2025 Mario Zechner).
-import type { ExecutionError, ShellExecResult } from "@nisse/env"
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@nisse/env/truncate"
-import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@nisse/harness"
-import { bool, num, obj, opt, type Static, str } from "@nisse/schema"
+import type { ExecutionError, ShellExecResult } from "@sigma/env"
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@sigma/env/truncate"
+import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@sigma/harness"
+import { bool, num, obj, opt, type Static, str } from "@sigma/schema"
 import { Effect, Exit } from "effect"
 import { requireEnv } from "./environment.ts"
 

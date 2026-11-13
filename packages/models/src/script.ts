@@ -1,4 +1,4 @@
-// The `script` provider: answers from a list of steps, the format of `NISSE_MODEL_SCRIPT`. Each request takes the
+// The `script` provider: answers from a list of steps, the format of `SIGMA_MODEL_SCRIPT`. Each request takes the
 // next unused step for its agent; with none left, it answers `You said: <the last user text>`. It streams word by
 // word, with `delayMs` before each word.
 import { Duration, Effect, Schema, Stream } from "effect"
@@ -22,7 +22,7 @@ export const ScriptStep = Schema.Struct({
 })
 export type ScriptStep = typeof ScriptStep.Type
 
-/** The agent a request is for when its `metadata.agent` names none: nisse's root conversation. */
+/** The agent a request is for when its `metadata.agent` names none: sigma's root conversation. */
 export const ROOT_AGENT = "/root"
 
 const ZERO: Usage = {

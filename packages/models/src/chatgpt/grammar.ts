@@ -1,7 +1,7 @@
 // Grammar tools: a tool whose `constrainedSampling` is a grammar is offered to ChatGPT as a custom tool, and the raw
 // text the model writes for it arrives as the one string property its parameters declare. From pi-ai's
 // `src/api/constrained-sampling.ts` in earendil-works/pi at commit 7d073328e (MIT, see LICENSE): the grammar half,
-// without the JSON-schema strict mode nisse does not send.
+// without the JSON-schema strict mode sigma does not send.
 import type { Tool } from "../types.ts"
 
 export interface Grammar {

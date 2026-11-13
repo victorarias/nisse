@@ -3,5 +3,5 @@ import { Registry } from "./convert.ts";
 
 export const BUILTIN_TASKS = HARNESS_BUILTIN_TASKS;
 
-/** Upstream's registry over @nisse/harness's; installs convert upstream's extensions once. */
+/** Upstream's registry over @sigma/harness's; installs convert upstream's extensions once. */
 export const createRegistry = (): Registry => new Registry();

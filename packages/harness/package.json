@@ -1,5 +1,5 @@
 {
-  "name": "@nisse/harness",
+  "name": "@sigma/harness",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
@@ -7,10 +7,10 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@nisse/delta": "workspace:*",
-    "@nisse/env": "workspace:*",
-    "@nisse/kernel": "workspace:*",
-    "@nisse/models": "workspace:*",
+    "@sigma/delta": "workspace:*",
+    "@sigma/env": "workspace:*",
+    "@sigma/kernel": "workspace:*",
+    "@sigma/models": "workspace:*",
     "effect": "4.0.6"
   }
 }

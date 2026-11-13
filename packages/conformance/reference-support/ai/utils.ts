@@ -6,7 +6,7 @@ import { formats } from "../schema/src/formats/index.ts";
 import type { AssistantMessage, ClientAttribution, ClientIdentity, Context, JsonObject, JsonValue, Message, SystemMessage, Tool, ToolCall, ToolReference, TranscriptContext, Usage } from "./types.ts";
 export type { ClientIdentity } from "./types.ts";
 
-export const PI_ATTRIBUTION: ClientAttribution = { name: "nisse", url: "https://example.invalid", categories: ["cli-agent"] };
+export const PI_ATTRIBUTION: ClientAttribution = { name: "sigma", url: "https://example.invalid", categories: ["cli-agent"] };
 
 export function uuidv7(): string {
 	const now = Date.now();

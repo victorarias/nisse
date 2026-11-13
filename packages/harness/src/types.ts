@@ -21,7 +21,7 @@ import type {
   SubmissionId,
   SubmissionRecord,
   TaskId,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import type {
   Api,
   AssistantMessage,
@@ -34,8 +34,8 @@ import type {
   ToolResultMessage,
   Usage,
   UserMessage,
-} from "@nisse/models"
-import type { ExecutionEnv } from "@nisse/env"
+} from "@sigma/models"
+import type { ExecutionEnv } from "@sigma/env"
 import type { OutputLimits } from "./output.ts"
 import type { Effect } from "effect"
 import type { TaskServices } from "./services.ts"
@@ -55,7 +55,7 @@ export type ToolRegistration = Tool & {
   readonly executionMode?: "parallel" | "sequential"
   readonly callers?: readonly ToolCaller[]
   /**
-   * A call waits for a person's answer in `nisse.approvals` before it runs, unless the conversation approves
+   * A call waits for a person's answer in `sigma.approvals` before it runs, unless the conversation approves
    * automatically; a denied call settles with a `denied` error and does not run (D13).
    */
   readonly asks?: true

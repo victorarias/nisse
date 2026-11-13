@@ -1,1 +1,1 @@
-export { exifOrientation } from "@nisse/tools/images/exif";
+export { exifOrientation } from "@sigma/tools/images/exif";

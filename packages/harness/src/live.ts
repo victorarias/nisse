@@ -1,8 +1,8 @@
 // `pi.live`: run control and the presentation of a conversation's current work (spec 8.2), and the commits that end a
 // run. From pi-durable's `src/harness/live.ts` at 7d073328e (MIT, see LICENSE). Partial output is committed state
 // here, not a deferred commit (D5): a crash keeps what was committed.
-import type { Draft } from "@nisse/delta"
-import { copyJson, type JsonValue } from "@nisse/delta/json"
+import type { Draft } from "@sigma/delta"
+import { copyJson, type JsonValue } from "@sigma/delta/json"
 import {
   type AnyTask,
   type ConversationId,
@@ -18,8 +18,8 @@ import {
   type TaskRecord,
   type Tx,
   type TypedEntry,
-} from "@nisse/kernel"
-import type { AssistantMessage, JsonRepresentation, Usage } from "@nisse/models"
+} from "@sigma/kernel"
+import type { AssistantMessage, JsonRepresentation, Usage } from "@sigma/models"
 import type { TaskServices } from "./services.ts"
 import { Effect } from "effect"
 import { removeApproval } from "./approvals.ts"

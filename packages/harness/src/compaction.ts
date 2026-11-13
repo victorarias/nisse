@@ -2,7 +2,7 @@
 // entry whose `head` is the first kept entry. A compaction the generation owns blocks it and appends directly; a
 // conversation-owned one places its summary through a write submission. From pi-durable's `src/harness/compaction.ts`
 // at 7d073328e (MIT, see LICENSE).
-import type { Draft } from "@nisse/delta"
+import type { Draft } from "@sigma/delta"
 import {
   type ConversationId,
   defineTask,
@@ -14,7 +14,7 @@ import {
   type TaskId,
   type TaskRuntime,
   type Tx,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import {
   calculateContextTokens,
   estimateMessageTokens,
@@ -24,7 +24,7 @@ import {
   type Message,
   type ModelThinkingLevel,
   type RequestOptions,
-} from "@nisse/models"
+} from "@sigma/models"
 import { Effect } from "effect"
 import { orderToolResults } from "./context.ts"
 import { CompactionEntry, stored } from "./entries.ts"

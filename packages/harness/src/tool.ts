@@ -2,13 +2,13 @@
 // runs `afterTool`, and settles the result. Running output, details and diagnostics are committed into the call's slot
 // in `pi.live` on an adaptive pace, as ordinary commits (D5). From pi-durable's `src/harness/tool.ts` at 7d073328e
 // (MIT, see LICENSE).
-import type { Draft } from "@nisse/delta"
-import { overlap, ownedSlice } from "@nisse/delta"
-import { copyJson } from "@nisse/delta/json"
-import { compile, type Validator } from "@nisse/schema"
-import { formats } from "@nisse/schema/formats"
-import type { ExecutionEnv, ShellOutputSkip, ShellOutputWindow } from "@nisse/env"
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@nisse/env/truncate"
+import type { Draft } from "@sigma/delta"
+import { overlap, ownedSlice } from "@sigma/delta"
+import { copyJson } from "@sigma/delta/json"
+import { compile, type Validator } from "@sigma/schema"
+import { formats } from "@sigma/schema/formats"
+import type { ExecutionEnv, ShellOutputSkip, ShellOutputWindow } from "@sigma/env"
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@sigma/env/truncate"
 import {
   defineDocFamily,
   defineTask,
@@ -32,7 +32,7 @@ import {
   type TypedEntry,
   currentSpan,
   spanTime,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import {
   validateToolArguments,
   type ImageContent,
@@ -41,7 +41,7 @@ import {
   type TextContent,
   type ToolCall,
   type ToolResultMessage,
-} from "@nisse/models"
+} from "@sigma/models"
 import { Cause, Effect, Exit, Fiber, Option, Stream } from "effect"
 import { toolExtension } from "./agent.ts"
 import { type ApprovalAnswer, ApprovalsDoc, removeApproval } from "./approvals.ts"

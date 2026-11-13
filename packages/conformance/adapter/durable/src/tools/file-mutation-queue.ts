@@ -1,4 +1,4 @@
-import * as T from "@nisse/tools";
+import * as T from "@sigma/tools";
 import type { Context } from "../../../chord/src/context/index.ts";
 import { promised } from "../harness/convert.ts";
 import { run } from "../session/session.ts";

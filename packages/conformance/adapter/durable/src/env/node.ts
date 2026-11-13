@@ -1,5 +1,5 @@
-import { type ExecutionEnv, ExecutionError, FileError } from "@nisse/env";
-import { LocalExecutionEnv, type LocalExecutionEnvOptions } from "@nisse/env/local";
+import { type ExecutionEnv, ExecutionError, FileError } from "@sigma/env";
+import { LocalExecutionEnv, type LocalExecutionEnvOptions } from "@sigma/env/local";
 import { Cause, Effect, Exit } from "effect";
 import { BACKGROUND_CONTEXT, type Context } from "../../../chord/src/context/index.ts";
 import { err, ok, type Result } from "./index.ts";

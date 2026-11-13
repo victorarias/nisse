@@ -6,16 +6,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, type Scope } from "effect"
-import { LocalExecutionEnv } from "@nisse/env/local"
-import { defineDoc, openSqliteStorage } from "@nisse/kernel"
+import { LocalExecutionEnv } from "@sigma/env/local"
+import { defineDoc, openSqliteStorage } from "@sigma/kernel"
 import {
   type AssistantMessage,
   fromProviders,
   getCurrentSystemMessage,
   getCurrentTools,
   type Message,
-} from "@nisse/models"
-import { type FauxResponseStep, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@nisse/models/faux"
+} from "@sigma/models"
+import { type FauxResponseStep, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@sigma/models/faux"
 import {
   type Conversation,
   createRegistry,
@@ -48,7 +48,7 @@ const text = (content: string) => [{ type: "text" as const, text: content }]
 
 const pathArgument = { path: { type: "string" } }
 
-// Minimal file tools over the call's environment; `@nisse/tools` builds on this package and cannot be imported here.
+// Minimal file tools over the call's environment; `@sigma/tools` builds on this package and cannot be imported here.
 const readTool = defineTool({
   name: "read",
   description: "Read a file.",
@@ -97,7 +97,7 @@ const openApp = (options: {
         return typeof step === "function" ? step(context, requestOptions, state, model) : step
       }),
     )
-    const storage = yield* openSqliteStorage(join(directory("nisse-modes-home-"), "kernel.sqlite"))
+    const storage = yield* openSqliteStorage(join(directory("sigma-modes-home-"), "kernel.sqlite"))
     const harness = yield* Effect.acquireRelease(
       openHarness(storage, {
         registry: options.registry,
@@ -139,7 +139,7 @@ const toolResults = (messages: readonly Message[]) =>
 
 describe("modes", () => {
   test("mode-plan: plan mode offers only reading and submitting a plan, refuses a write, stores the plan, and leaving it gives every tool back", async () => {
-    const workspace = directory("nisse-plan-")
+    const workspace = directory("sigma-plan-")
     writeFileSync(join(workspace, "server.ts"), "app.listen(3000);\n")
 
     // The current plan of a conversation.
@@ -236,7 +236,7 @@ describe("modes", () => {
   })
 
   test("mode-reviewer: a reviewer conversation runs its own model, extensions, read-only tools and checkout beside the main agent, and its loop asks again until the review is done", async () => {
-    const worktree = directory("nisse-review-")
+    const worktree = directory("sigma-review-")
     writeFileSync(join(worktree, "user.ts"), "export const name = (user) => user.name;\n")
 
     const DONE = "No further findings."
@@ -361,7 +361,7 @@ describe("modes", () => {
         // Each user's conversation gets a fresh sandbox in its creating commit.
         const conversationFor = (user: string) =>
           Effect.gen(function* () {
-            const path = directory(`nisse-sandbox-${user}-`)
+            const path = directory(`sigma-sandbox-${user}-`)
             const conversation = yield* harness.createConversation({
               ownership: { kind: "ownerless" },
               agent: { model },
@@ -381,7 +381,7 @@ describe("modes", () => {
         expect(readFileSync(join(bob.path, "note.txt"), "utf8")).toBe("from bob")
 
         // The app moves alice to a new sandbox: her next call works there.
-        const moved = directory("nisse-sandbox-alice-moved-")
+        const moved = directory("sigma-sandbox-alice-moved-")
         yield* alice.conversation.commit((tx) =>
           Effect.map(tx.doc(Sandbox, alice.conversation.id), (sandbox) => {
             sandbox.path = moved

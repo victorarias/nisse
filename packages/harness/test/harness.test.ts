@@ -14,9 +14,9 @@ import {
   type Task,
   type TaskId,
   TracePropagation,
-} from "@nisse/kernel"
-import { fromProviders } from "@nisse/models"
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@nisse/models/faux"
+} from "@sigma/kernel"
+import { fromProviders } from "@sigma/models"
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@sigma/models/faux"
 import {
   AgentDoc,
   type Conversation,
@@ -41,7 +41,7 @@ afterEach(() => {
 })
 
 const databasePath = (): string => {
-  const home = mkdtempSync(join(tmpdir(), "nisse-harness-"))
+  const home = mkdtempSync(join(tmpdir(), "sigma-harness-"))
   homes.push(home)
   return join(home, "kernel.sqlite")
 }

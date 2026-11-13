@@ -1,8 +1,8 @@
 // The provider-facing identity document the creation hook writes (spec 7.1). `pi.live`, `pi.inbox` and `pi.usage`
 // live with the code that fills them: `live.ts`, `inbox.ts` and `usage.ts`.
-import { type CommitError, defineDoc, type InvocationEnded, type ReadFailure, type TaskRuntime } from "@nisse/kernel"
+import { type CommitError, defineDoc, type InvocationEnded, type ReadFailure, type TaskRuntime } from "@sigma/kernel"
 import { Effect } from "effect"
-import { uuidv7 } from "@nisse/models"
+import { uuidv7 } from "@sigma/models"
 
 /** The provider-facing identity; every fork starts with a fresh one. */
 export const ProviderDoc = defineDoc<{ sessionId: string }>({

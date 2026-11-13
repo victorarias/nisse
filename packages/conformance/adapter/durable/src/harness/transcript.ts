@@ -1,4 +1,4 @@
-// pi-durable's Promise ConversationTranscript over @nisse/harness's: the loader takes the context of the call that
+// pi-durable's Promise ConversationTranscript over @sigma/harness's: the loader takes the context of the call that
 // started the load, as upstream's does.
 import { Effect } from "effect";
 import * as H from "../../../../../harness/src/index.ts";

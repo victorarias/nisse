@@ -44,7 +44,7 @@ const ENGINE_AMEND: [RegExp, Stage, string, string][] = [
 ];
 const REMOVED_FILES: Record<string, string> = { "indexeddb-storage": "IndexedDB", "jsonl-storage": "JSONL backend", "store-storage": "key-value store adapter", "store-storage-commit": "key-value store adapter" };
 const D14_FILES: Record<string, string> = {
-	"storage-runtime-boundary": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version",
+	"storage-runtime-boundary": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is sigma's version",
 	"harness-registry-reader": "needs chord's root host and facets, which D5's removal of the store adapter takes out",
 };
 const E2E: Record<string, string> = {

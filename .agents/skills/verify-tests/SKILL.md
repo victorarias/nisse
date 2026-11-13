@@ -1,6 +1,6 @@
 ---
 name: verify-tests
-description: Use before opening a pull request whose changes add, change or delete nisse's own tests.
+description: Use before opening a pull request whose changes add, change or delete sigma's own tests.
 ---
 
 # Verify tests
@@ -8,7 +8,7 @@ description: Use before opening a pull request whose changes add, change or dele
 Judge whether each test this change adds, changes or deletes earns its place in
 the suite. Report findings. Do not edit.
 
-The "Testing" section of `AGENTS.md` is nisse's test strategy. Read it first;
+The "Testing" section of `AGENTS.md` is sigma's test strategy. Read it first;
 this skill does not repeat it. `packages/conformance` is outside this skill:
 `verify-conformance` covers it.
 
@@ -44,7 +44,7 @@ checkout, and remove the worktree when you are done.
 - Can it fail? Does it assert only on its own fakes, check what the compiler
   guarantees, read source files, or test a helper?
 - Could it fail on a good run? Look for sleeps, wall-clock deadlines, shared
-  state, order between tests, and a `NISSE_HOME` it does not own.
+  state, order between tests, and a `SIGMA_HOME` it does not own.
 - Does a deleted test leave a promise unguarded?
 
 ## Report

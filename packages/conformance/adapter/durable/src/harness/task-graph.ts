@@ -1,4 +1,4 @@
-// The task graph view is @nisse/harness's; the Harness exposes it (`harness.ts`).
+// The task graph view is @sigma/harness's; the Harness exposes it (`harness.ts`).
 import type * as H from "../../../../../harness/src/index.ts";
 
 export type TaskGraph = H.TaskGraph;

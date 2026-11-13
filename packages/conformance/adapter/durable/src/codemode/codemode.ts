@@ -1,4 +1,4 @@
-// Upstream's code mode over @nisse/codemode: the tool and extension in upstream's Promise form, and globals given as
+// Upstream's code mode over @sigma/codemode: the tool and extension in upstream's Promise form, and globals given as
 // upstream's `execute(args, api, context)` converted to the Effect form.
 import { Effect } from "effect";
 import * as C from "../../../../../codemode/src/index.ts";

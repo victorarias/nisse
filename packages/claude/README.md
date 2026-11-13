@@ -1,9 +1,9 @@
-# @nisse/claude
+# @sigma/claude
 
-Claude Code as a run task on `@nisse/harness`. A conversation whose model a Claude Code instance serves runs each run as
+Claude Code as a run task on `@sigma/harness`. A conversation whose model a Claude Code instance serves runs each run as
 the `claude.run` task, served by the conversation's Claude Code process, started through the Claude Agent SDK. The
 process stays live after a run for the conversation's next one, and closes after 30 minutes without a run. Claude Code
-keeps its own session and runs its own tools; nisse's transcript stays the truth, and every frame Claude Code sends
+keeps its own session and runs its own tools; sigma's transcript stays the truth, and every frame Claude Code sends
 becomes a commit.
 
 `claudeRunTasks(options)` returns the two task definitions, to install in the registry, and the `RunTasks` to open the
@@ -38,8 +38,8 @@ live.
   executable, environment, arguments, directory, own and withheld tools, turn limit, model and effort.
 - `src/serving.ts`: what one run does with its process's frames. A call Claude Code makes is committed as an assistant
   entry and a live slot before its PreToolUse hook is answered, with the extensions' `beforeTool` applied; a call it
-  would ask about waits on `nisse.approvals`, keyed `<task>/<call>`, where the first answer counts. An extension's tool
-  reaches Claude Code over nisse's in-process MCP server and runs as a `pi.tool` task. `afterTool` runs through
+  would ask about waits on `sigma.approvals`, keyed `<task>/<call>`, where the first answer counts. An extension's tool
+  reaches Claude Code over sigma's in-process MCP server and runs as a `pi.tool` task. `afterTool` runs through
   PostToolUse: Claude Code takes a changed result only for `Read`, so another tool's change is reported. Steers placed
   at a round of results are sent with priority `next`. Claude Code's compaction is kept as a compaction entry holding
   its summary, `/clear` as a reset. The subagents a run hosts end with the process.
@@ -47,10 +47,10 @@ live.
   server's environment without the variables a host Claude Code session sets, then the provider instance's `env`. A
   run's settings also turn tool search on where the person's Claude Code settings leave it at `auto`.
 - `src/session.ts`: `claude.session`, the conversation's position in Claude Code's session: the session, the newest
-  message nisse committed, and the newest entry Claude Code was shown. Rewindable, so a fork sees it as of its fork.
+  message sigma committed, and the newest entry Claude Code was shown. Rewindable, so a fork sees it as of its fork.
 - `src/retell.ts`: what a session is told of the conversation: the entries a resumed one missed, or, for a fresh one,
   the conversation so far within about 64,000 characters.
 - `src/links.ts`: how a hosted subagent ended and how to stop it, shared in memory by the run and its subagent tasks.
 
-The tests in `test/` drive `claude.run` through a Harness with nisse's fake `claude` replaying `fixtures/claude`;
-`packages/nisse/test/claude.test.ts` drives it over the wire.
+The tests in `test/` drive `claude.run` through a Harness with sigma's fake `claude` replaying `fixtures/claude`;
+`packages/sigma/test/claude.test.ts` drives it over the wire.

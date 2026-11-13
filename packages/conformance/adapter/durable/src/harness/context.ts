@@ -7,11 +7,11 @@ type Any = any;
 
 export { orderToolResults } from "../../../../../harness/src/index.ts";
 
-/** Committed context of one conversation; @nisse/harness reads it through the Session alone. */
+/** Committed context of one conversation; @sigma/harness reads it through the Session alone. */
 export const readContext = (session: Any, _storage: unknown, conversationId: Any, context: Context, at?: Any) =>
 	run(H.readContext(session.kernel, conversationId, at), context);
 
-// The kept-context range belongs to upstream's derivation cache, which @nisse/harness does not keep (D14).
+// The kept-context range belongs to upstream's derivation cache, which @sigma/harness does not keep (D14).
 export const advanceRange = unimplemented("advanceRange", "harness-shell");
 export const captureContextBounds = unimplemented("captureContextBounds", "harness-shell");
 export const deriveContext = unimplemented("deriveContext", "harness-shell");

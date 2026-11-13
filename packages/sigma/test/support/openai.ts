@@ -1,0 +1,214 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import type { OpenAiOptions } from "../../src/providers.ts"
+import type { Home } from "../../src/home.ts"
+
+const FIXTURES = join(import.meta.dir, "../../../../fixtures/openai")
+export const ACCOUNT = "acct-test"
+export const EMAIL = "ada@example.com"
+const ANY = "<any>"
+
+type Reply =
+  | { readonly http: { status: number; body: unknown } }
+  | { readonly events: Array<unknown>; readonly hold?: boolean; readonly crlfSplit?: boolean }
+
+export interface Received {
+  readonly path: string
+  readonly headers: Headers
+  readonly body: string
+}
+
+export const accessToken = (label: string) => {
+  const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url")
+  return [
+    part({ alg: "none" }),
+    part({
+      label,
+      "https://api.openai.com/auth": { chatgpt_account_id: ACCOUNT, chatgpt_plan_type: "plus" },
+      "https://api.openai.com/profile": { email: EMAIL },
+    }),
+    "signature",
+  ].join(".")
+}
+
+export const matches = (actual: unknown, expected: unknown): boolean => {
+  if (expected === ANY) return true
+  if (Array.isArray(expected))
+    return Array.isArray(actual) && actual.length === expected.length && expected.every((e, i) => matches(actual[i], e))
+  if (typeof expected === "object" && expected !== null) {
+    if (typeof actual !== "object" || actual === null || Array.isArray(actual)) return false
+    const keys = new Set([...Object.keys(expected), ...Object.keys(actual)])
+    return [...keys].every((key) => matches((actual as any)[key], (expected as any)[key]))
+  }
+  return actual === expected
+}
+
+const renamed = (line: string, tools: Readonly<Record<string, string>>) =>
+  Object.entries(tools).reduce(
+    (text, [from, to]) => text.replaceAll(`"name":${JSON.stringify(from)}`, `"name":${JSON.stringify(to)}`),
+    line,
+  )
+
+export class FakeOpenAi {
+  readonly received: Array<Received> = []
+  private readonly replies: Array<Reply> = []
+  private readonly tokens: Array<unknown> = []
+  private readonly held = new Set<ReadableStreamDefaultController<Uint8Array>>()
+  private readonly abandoned = Promise.withResolvers<void>()
+  private readonly awaited: Array<{ count: number; resolve: () => void }> = []
+  private readonly server: ReturnType<typeof Bun.serve>
+  modelList: unknown
+  devicePolls = 1
+  onResponse: (body: unknown) => void = () => undefined
+
+  constructor(port = 0) {
+    // Listen on the address sigma dials. Bun.serve's default, every address ([::]:port), leaves 127.0.0.1:port free
+    // for another process to bind, and that listener then takes sigma's requests.
+    this.server = Bun.serve({ hostname: "127.0.0.1", port, fetch: (request) => this.answer(request) })
+  }
+
+  get base() {
+    return `http://127.0.0.1:${this.server.port}`
+  }
+
+  options() {
+    return (home: Home) =>
+      (id: string): OpenAiOptions => ({
+        authPath: join(home.dir, "auth", `${id}.json`),
+        modelsPath: join(home.dir, "cache", `${id}-models.json`),
+        authBase: this.base,
+        baseUrl: this.base,
+        callbackPort: 0,
+        claudeConfig: join(home.dir, "claude"),
+      })
+  }
+
+  /**
+   * Serves a recorded exchange and answers what each request should be. `tools` renames the tools it names, for a
+   * server whose tools have other names than the recording's.
+   */
+  play(fixture: string, tools: Readonly<Record<string, string>> = {}) {
+    const expected: Array<unknown> = []
+    const replies: Array<Array<any>> = []
+    const held = new Set<number>()
+    for (const line of readFileSync(join(FIXTURES, `${fixture}.ndjson`), "utf8").split("\n")) {
+      if (line.trim() === "") continue
+      const parsed = JSON.parse(renamed(line, tools))
+      if (parsed.type === "expect_outbound") {
+        expected.push(parsed.frame)
+        replies.push([])
+      } else if (parsed.type === "emit_inbound") replies.at(-1)!.push(parsed.frame)
+      else if (parsed.type === "hold_open") held.add(replies.length - 1)
+    }
+    replies.forEach((frames, index) =>
+      this.replies.push(frames[0]?.http ? { http: frames[0].http } : { events: frames, hold: held.has(index) }),
+    )
+    return expected
+  }
+
+  reply(reply: Reply) {
+    this.replies.push(reply)
+  }
+
+  issueTokens(label: string, expiresIn: number) {
+    this.tokens.push({
+      access_token: accessToken(label),
+      refresh_token: `${label}-refresh`,
+      id_token: "unused",
+      expires_in: expiresIn,
+    })
+  }
+
+  responses() {
+    return this.received.filter((request) => request.path === "/codex/responses")
+  }
+
+  requested(count: number) {
+    const { promise, resolve } = Promise.withResolvers<void>()
+    this.awaited.push({ count, resolve })
+    this.settleAwaited()
+    return promise
+  }
+
+  private settleAwaited() {
+    const received = this.responses().length
+    for (const waiter of this.awaited) if (received >= waiter.count) waiter.resolve()
+  }
+
+  private async answer(request: Request) {
+    const path = new URL(request.url).pathname
+    const body = await request.text()
+    this.received.push({ path, headers: request.headers, body })
+    if (path === "/codex/models") {
+      return this.modelList ? Response.json(this.modelList) : Response.json({ error: "down" }, { status: 500 })
+    }
+    if (path === "/api/accounts/deviceauth/usercode") {
+      return Response.json({ device_auth_id: "device-1", user_code: "ABCD-1234", interval: "0" })
+    }
+    if (path === "/api/accounts/deviceauth/token") {
+      if (this.devicePolls-- > 0) return new Response("", { status: 403 })
+      return Response.json({ authorization_code: "device-code", code_verifier: "device-verifier" })
+    }
+    if (path === "/oauth/token") {
+      const tokens = this.tokens.shift()
+      return tokens ? Response.json(tokens) : Response.json({ error: "invalid_grant" }, { status: 400 })
+    }
+    if (path === "/codex/responses") {
+      this.onResponse(JSON.parse(body))
+      this.settleAwaited()
+    }
+    const reply = this.replies.shift()
+    if (!reply) return Response.json({ error: { message: "no reply scripted" } }, { status: 500 })
+    if ("http" in reply)
+      return reply.http.body === ""
+        ? new Response(null, { status: reply.http.status })
+        : Response.json(reply.http.body, { status: reply.http.status })
+    const encoder = new TextEncoder()
+    if (reply.crlfSplit) {
+      const pieces = reply.events.flatMap((event) => [`data: ${JSON.stringify(event)}\r\n\r`, "\n"])
+      const split = new ReadableStream<Uint8Array>({
+        pull: async (controller) => {
+          await Bun.sleep(5)
+          const piece = pieces.shift()
+          if (piece === undefined) controller.close()
+          else controller.enqueue(encoder.encode(piece))
+        },
+      })
+      return new Response(split, { headers: { "content-type": "text/event-stream" } })
+    }
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        for (const event of reply.events) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        if (reply.hold) {
+          this.held.add(controller)
+          request.signal.addEventListener("abort", () => {
+            this.held.delete(controller)
+            this.abandoned.resolve()
+          })
+        } else controller.close()
+      },
+      cancel: () => undefined,
+    })
+    return new Response(stream, { headers: { "content-type": "text/event-stream" } })
+  }
+
+  get heldStreamAbandoned() {
+    return this.abandoned.promise
+  }
+
+  async [Symbol.asyncDispose]() {
+    for (const controller of this.held) controller.close()
+    await this.server.stop(true)
+  }
+}
+
+export const signIn = async (home: Home, label = "first", expiresAt = Date.now() + 3_600_000) =>
+  Bun.write(
+    join(home.dir, "auth", "openai.json"),
+    JSON.stringify({
+      access_token: accessToken(label),
+      refresh_token: `${label}-refresh`,
+      expires_at_ms: expiresAt,
+      account_id: ACCOUNT,
+    }),
+  )

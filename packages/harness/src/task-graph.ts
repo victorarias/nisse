@@ -2,7 +2,7 @@
 // on the Session line by its first observer and dropped with its last, advanced from each stored commit at its
 // publication. `blocked` is derived at read time from the committed records and the registry (D16), and derived again
 // on the line when the registry changes or a migration fails.
-import { applyImmutable, type Op } from "@nisse/delta"
+import { applyImmutable, type Op } from "@sigma/delta"
 import {
   type BlockedReason,
   type BlockedSubject,
@@ -24,7 +24,7 @@ import {
   type TaskOutcome,
   type TaskRecord,
   type TaskScheduler,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import { Effect } from "effect"
 import { advanceFollower, closedError, closeEnd, endFollower, type Follower, guarded } from "./followers.ts"
 

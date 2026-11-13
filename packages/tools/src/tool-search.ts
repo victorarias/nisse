@@ -3,8 +3,8 @@
 // loaded tools stay offered on that branch, also after a compaction. Derived from pi-durable's
 // `src/tool-search/tool-search.ts` (earendil-works/pi, packages/durable, commit 7d073328e), under the MIT license in this
 // package's LICENSE (Copyright 2025 Mario Zechner).
-import { defineExtension, defineTool, type ToolExecutionApi, type ToolRegistration } from "@nisse/harness"
-import { num, obj, opt, type Static, str } from "@nisse/schema"
+import { defineExtension, defineTool, type ToolExecutionApi, type ToolRegistration } from "@sigma/harness"
+import { num, obj, opt, type Static, str } from "@sigma/schema"
 import { Effect } from "effect"
 import { rankDocuments } from "./search.ts"
 

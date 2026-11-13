@@ -1,4 +1,4 @@
-import * as T from "@nisse/tools";
+import * as T from "@sigma/tools";
 import { harnessPrepare, upstreamTool } from "./bridge.ts";
 
 type Any = any;

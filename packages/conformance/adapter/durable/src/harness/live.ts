@@ -1,4 +1,4 @@
-// `pi.live` helpers over @nisse/harness's. Upstream reads the restart limit from a runtime's settings; the harness takes
+// `pi.live` helpers over @sigma/harness's. Upstream reads the restart limit from a runtime's settings; the harness takes
 // the limit. Partial output is committed state (D5), so a progress commit is an ordinary one.
 import * as H from "../../../../../harness/src/index.ts";
 import { run } from "../session/session.ts";

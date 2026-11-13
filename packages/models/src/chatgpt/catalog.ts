@@ -40,7 +40,7 @@ const readSaved = (path: string): Models | undefined => {
   }
 }
 
-/** ChatGPT's Responses API, as nisse speaks it to `/codex/responses`. */
+/** ChatGPT's Responses API, as sigma speaks it to `/codex/responses`. */
 export const CHATGPT_API = "openai-codex-responses"
 
 // The catalog names no output limit; 0 tells the harness it is unknown. ChatGPT bills a subscription, not tokens.

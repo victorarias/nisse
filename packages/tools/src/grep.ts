@@ -1,7 +1,7 @@
 // `grep`: regular expression search of file contents through the call's environment.
-import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@nisse/harness"
-import { bool, obj, opt, type Static, str } from "@nisse/schema"
-import type { ExecutionEnv, FileError } from "@nisse/env"
+import { defineTool, type ToolExecutionApi, type ToolExecutionResult } from "@sigma/harness"
+import { bool, obj, opt, type Static, str } from "@sigma/schema"
+import type { ExecutionEnv, FileError } from "@sigma/env"
 import { Effect } from "effect"
 import { requireEnv, resolveToolPath } from "./environment.ts"
 import { filesBelow, globMatcher } from "./files.ts"

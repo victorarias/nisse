@@ -10,7 +10,7 @@
 // Nothing is woken directly from the line (F6). Completing a Deferred resumes the fiber waiting on it inside the
 // completer's call, which on the line would run that fiber's code before the next job; outcomes therefore go back
 // through a queue, whose waiter resumes later. Observers are called on the line, so they must only capture.
-import { type Op, track } from "@nisse/delta"
+import { type Op, track } from "@sigma/delta"
 import { Cause, Clock, type Context, Deferred, Effect, Exit, Fiber, Option, Queue, type Scope, Tracer } from "effect"
 import { spanTime, TracePropagation } from "../telemetry.ts"
 import {

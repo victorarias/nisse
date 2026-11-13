@@ -1,4 +1,4 @@
-// Generation helpers over @nisse/harness's: a Transaction of the suite works through its kernel Tx.
+// Generation helpers over @sigma/harness's: a Transaction of the suite works through its kernel Tx.
 import * as H from "../../../../../harness/src/index.ts";
 import { run } from "../session/session.ts";
 

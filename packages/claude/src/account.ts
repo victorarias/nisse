@@ -1,7 +1,7 @@
 // A Claude Code instance's account: how it is signed in and which models it has, from a probe of Claude Code, and
 // signing in and out with its own commands. Its conversations run as `claude.run` tasks (`./run.ts`).
 import { query, type AccountInfo, type ModelInfo as ClaudeModel } from "@anthropic-ai/claude-agent-sdk"
-import { type Health, type ModelInfo, type ProviderAccount, ProviderError } from "@nisse/models"
+import { type Health, type ModelInfo, type ProviderAccount, ProviderError } from "@sigma/models"
 import { tmpdir } from "node:os"
 import { Effect, Semaphore } from "effect"
 import { claudeEnvironment } from "./environment.ts"

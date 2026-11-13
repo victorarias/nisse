@@ -14,9 +14,9 @@ import type {
   ReadError,
   SubmissionId,
   Tx,
-} from "@nisse/kernel"
-import type { ExecutionEnv } from "@nisse/env"
-import type { Models } from "@nisse/models"
+} from "@sigma/kernel"
+import type { ExecutionEnv } from "@sigma/env"
+import type { Models } from "@sigma/models"
 import { Context, type Effect, type Scope } from "effect"
 import type { InputWithdrawnHook } from "./inbox.ts"
 import type { RunOwner, RunTasks } from "./live.ts"
@@ -92,4 +92,4 @@ export interface TaskApi {
 }
 
 /** The harness's services of one task handler. */
-export class TaskServices extends Context.Service<TaskServices, TaskApi>()("@nisse/harness/TaskServices") {}
+export class TaskServices extends Context.Service<TaskServices, TaskApi>()("@sigma/harness/TaskServices") {}

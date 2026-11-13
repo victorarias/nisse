@@ -1,6 +1,6 @@
 // The harness's entry kinds (spec section 8.1).
-import { defineEntry, type JsonObject } from "@nisse/kernel"
-import type { Message } from "@nisse/models"
+import { defineEntry, type JsonObject } from "@sigma/kernel"
+import type { Message } from "@sigma/models"
 import type { CompactionReason, ToolDiagnostic } from "./types.ts"
 
 /** User input: `model` is `[UserMessage]`. Written by submissions. */

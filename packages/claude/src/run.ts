@@ -23,7 +23,7 @@ import {
   salvageable,
   type TaskApi,
   TaskServices,
-} from "@nisse/harness"
+} from "@sigma/harness"
 import {
   type ConversationId,
   defineTask,
@@ -37,8 +37,8 @@ import {
   type TaskId,
   type TaskRuntime,
   type Tx,
-} from "@nisse/kernel"
-import type { Message } from "@nisse/models"
+} from "@sigma/kernel"
+import type { Message } from "@sigma/models"
 import { Deferred, Effect } from "effect"
 import { SubagentLinks } from "./links.ts"
 import {
@@ -68,7 +68,7 @@ type Running = RunningTask<Record<string, never>, ClaudeRunCheckpoint, ClaudeRun
 export interface ClaudeRunOptions {
   /** How the Claude Code of a provider instance is started; `undefined` for a provider Claude Code does not serve. */
   readonly settings: (provider: string) => ClaudeProcessSettings | undefined
-  /** Extensions whose tools Claude Code has its own of, so nisse's MCP server leaves them out. */
+  /** Extensions whose tools Claude Code has its own of, so sigma's MCP server leaves them out. */
   readonly builtinExtensions?: ReadonlySet<string>
   /** Tool names extensions removed, whose Claude Code equivalents it is told not to use. */
   readonly withheldTools?: () => ReadonlyArray<string>

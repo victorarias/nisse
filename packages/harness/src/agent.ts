@@ -1,9 +1,9 @@
 // A conversation's agent: the stored `pi.agent` document, changes to it, and its resolution against a registry
 // snapshot and the settings (spec section 7.1).
-import type { Draft } from "@nisse/delta"
-import { copyJson } from "@nisse/delta/json"
-import { type ConversationId, type ConversationRecord, defineDoc, type Tx, type DocError } from "@nisse/kernel"
-import type { Api, Model } from "@nisse/models"
+import type { Draft } from "@sigma/delta"
+import { copyJson } from "@sigma/delta/json"
+import { type ConversationId, type ConversationRecord, defineDoc, type Tx, type DocError } from "@sigma/kernel"
+import type { Api, Model } from "@sigma/models"
 import { Effect } from "effect"
 import type {
   Agent,

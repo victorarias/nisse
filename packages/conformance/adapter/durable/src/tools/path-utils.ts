@@ -1,4 +1,4 @@
-import * as T from "@nisse/tools";
+import * as T from "@sigma/tools";
 import type { Context } from "../../../chord/src/context/index.ts";
 import { run } from "../session/session.ts";
 import { effectEnv } from "./bridge.ts";

@@ -3,7 +3,7 @@
 // A document with no observer leaves the cache once it was not read or written for the retention period; the next
 // access loads it from Storage again. A document with an observer is pinned and stays. Eviction runs on the mutation
 // line (`sweep`), so no transaction ever holds a tracker that leaves.
-import type { Tracker } from "@nisse/delta"
+import type { Tracker } from "@sigma/delta"
 import type { DocumentId, DocumentRecord, JsonObject } from "../records.ts"
 
 /** One committed incarnation the cache owns. */

@@ -123,7 +123,7 @@ describe("Storage port", () => {
 })
 
 const home = (): string => {
-  const directory = mkdtempSync(join(tmpdir(), "nisse-kernel-"))
+  const directory = mkdtempSync(join(tmpdir(), "sigma-kernel-"))
   homes.push(directory)
   return directory
 }

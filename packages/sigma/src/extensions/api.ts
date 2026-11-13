@@ -1,0 +1,91 @@
+import type { ConversationId, Lineage, ModelSelection } from "@sigma/protocol"
+import { Effect, Schema, type Scope } from "effect"
+import { failed, ok, tool, type Tool as SigmaTool, type ToolOutcome } from "../tools/tool.ts"
+
+export class Refused extends Schema.TaggedError<Refused>()("Refused", { message: Schema.String }) {}
+
+export interface ConversationHandle {
+  readonly id: ConversationId
+  readonly cwd: string
+  readonly model: ModelSelection
+  readonly lineage?: Lineage
+  readonly status: (text?: string) => Effect.Effect<void>
+  readonly toast: (text: string) => Effect.Effect<void>
+}
+
+export interface ToolCall {
+  readonly conversation: ConversationHandle
+  readonly call: string
+  readonly tool: string
+  input: unknown
+}
+
+export interface ToolResult {
+  readonly conversation: ConversationHandle
+  readonly call: string
+  readonly tool: string
+  readonly input: unknown
+  outcome: { output: string; error: boolean }
+}
+
+export interface ModelRequest {
+  readonly conversation: ConversationHandle
+  instructions: Array<string>
+  tools: Array<string>
+}
+
+export interface ToolHooks {
+  readonly "execute.before": ToolCall
+  readonly "execute.after": ToolResult
+}
+
+export interface ToolFailures {
+  readonly "execute.before": Refused
+  readonly "execute.after": never
+}
+
+export interface ToolEdit {
+  description: string
+  readOnly: boolean
+}
+
+export interface ToolEditor {
+  readonly list: () => ReadonlyArray<SigmaTool>
+  readonly get: (name: string) => SigmaTool | undefined
+  readonly add: (tool: SigmaTool) => void
+  readonly update: (name: string, edit: (tool: ToolEdit) => void) => void
+  readonly remove: (name: string) => void
+}
+
+export interface Context {
+  readonly name: string
+  readonly options: Readonly<Record<string, unknown>>
+  readonly tool: {
+    readonly transform: (edit: (tools: ToolEditor) => void) => Effect.Effect<void, never, Scope.Scope>
+    readonly hook: <Name extends keyof ToolHooks>(
+      name: Name,
+      run: (event: ToolHooks[Name]) => Effect.Effect<void, ToolFailures[Name]>,
+    ) => Effect.Effect<void, never, Scope.Scope>
+  }
+  readonly request: {
+    readonly hook: (
+      run: (request: ModelRequest) => Effect.Effect<void, unknown>,
+    ) => Effect.Effect<void, never, Scope.Scope>
+  }
+}
+
+export type Extension = (context: Context) => Effect.Effect<void, unknown, Scope.Scope>
+
+export const Extension = {
+  define: (extension: Extension): Extension => extension,
+}
+
+export const Tool = {
+  make: tool,
+  ok,
+  fail: failed,
+  refuse: (message: string): Effect.Effect<never, Refused> => Effect.fail(new Refused({ message })),
+}
+
+export type Tool = SigmaTool
+export type { ToolOutcome }

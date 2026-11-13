@@ -1,5 +1,5 @@
 // Amends upstream/test/harness-tools-recovery.test.ts > "reruns a safe tool whose running slot a crash after its intent
-// lost, or a sibling stored, and shows it running" (D5, `persistWithinMs`): nisse has no deferred commits, so the
+// lost, or a sibling stored, and shows it running" (D5, `persistWithinMs`): sigma has no deferred commits, so the
 // running slot is committed before the tool runs and a crash never loses it. After the crash the slot shows `running`
 // with or without a sibling's commit, and the rerun still shows it running and answers.
 import { mkdtemp, rm } from "node:fs/promises";
@@ -28,7 +28,7 @@ afterEach(async () => {
 });
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "nisse-tools-"));
+	const directory = await mkdtemp(join(tmpdir(), "sigma-tools-"));
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

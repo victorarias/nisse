@@ -7,7 +7,7 @@
  * `searchTools()`. The section renders from the conversation's callable tools, so it changes with them; the tool's
  * description never does.
  */
-import type { ToolRegistration } from "@nisse/harness"
+import type { ToolRegistration } from "@sigma/harness"
 import { renderToolSample, toCodemodeIdentifier } from "./sandbox/declarations.ts"
 import type { CodemodeJsonSchema } from "./sandbox/types.ts"
 import { MODELS_DESCRIPTION } from "./models.ts"

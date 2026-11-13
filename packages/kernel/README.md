@@ -1,7 +1,7 @@
-# @nisse/kernel
+# @sigma/kernel
 
-Nisse's durable kernel, rewritten on Effect from pi-durable's specification. `docs/spec.md` is that specification
-with nisse's amendments listed at its top; it is the behavioral contract.
+Sigma's durable kernel, rewritten on Effect from pi-durable's specification. `docs/spec.md` is that specification
+with sigma's amendments listed at its top; it is the behavioral contract.
 
 So far the kernel holds storage, the session, documents and tasks:
 

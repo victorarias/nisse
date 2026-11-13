@@ -14,8 +14,8 @@ import type {
   ReadFailure,
   Session,
   TaskId,
-} from "@nisse/kernel"
-import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@nisse/models"
+} from "@sigma/kernel"
+import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@sigma/models"
 import { Clock, Effect, Fiber } from "effect"
 import { SystemEntry } from "./entries.ts"
 import type { ContextView } from "./types.ts"

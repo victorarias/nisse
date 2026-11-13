@@ -1,6 +1,6 @@
 // Amends two tests of upstream/test/conversation-transcript.test.ts (spec section 9.3, amendments.json): concurrent
 // `loadEarlier()` calls, and `fillGap()` calls for one gap, share one load. Upstream checks that the calls return the
-// same Promise object; nisse's transcript returns Effects, so each Promise is the adapter's own. These rewrites keep
+// same Promise object; sigma's transcript returns Effects, so each Promise is the adapter's own. These rewrites keep
 // upstream's setup and check the shared load itself: one loader call, and one result every caller gets.
 import {
 	ConversationTranscript,

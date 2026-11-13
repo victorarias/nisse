@@ -1,4 +1,4 @@
-// Upstream's Promise-and-Context extension code as @nisse/harness's Effect-shaped code, and back. Every conversion is
+// Upstream's Promise-and-Context extension code as @sigma/harness's Effect-shaped code, and back. Every conversion is
 // cached both ways, so an object the suite installed comes back from a snapshot as itself.
 import { Effect, Option, Tracer } from "effect";
 import * as H from "../../../../../harness/src/index.ts";
@@ -462,7 +462,7 @@ export const harnessReader = (reader: Any, host: RuntimeHost): H.RegistryReader 
 	subscribe: (listener) => reader.subscribe(listener),
 });
 
-/** Upstream's registry over @nisse/harness's: what is installed is converted once. */
+/** Upstream's registry over @sigma/harness's: what is installed is converted once. */
 export class Registry {
 	readonly #inner = H.createRegistry<Any>();
 
