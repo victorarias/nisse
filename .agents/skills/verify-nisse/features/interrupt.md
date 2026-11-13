@@ -62,6 +62,7 @@ Preconditions:
 ## Contexts
 
 - **Second client.** Any client can interrupt, and every client sees the run end `interrupted`.
+- **Claude.** Stopping a Claude run interrupts Claude Code's turn and keeps its process for the next prompt, in [Claude](./claude.md) `claude-stop`.
 - **Subagents.** Stopping a run stops every subagent under it. `Esc` in a subagent's own conversation stops it and any subagent under it, not its parent.
 
 ## Tests

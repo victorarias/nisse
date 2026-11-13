@@ -45,6 +45,7 @@ export interface ServerOptions {
   readonly config?: HomeConfig
   /** How long a Claude Code process stays live after its run; 0 closes it when the run ends. */
   readonly claudeIdle?: Duration.Input
+  readonly claudeStop?: Duration.Input
 }
 
 /** The providers a test's server has: `script` playing `script` and preferred, then those `options` configure. */
@@ -75,6 +76,7 @@ export const runningServer = async (
         ...(options.connectionQueue === undefined ? {} : { connectionQueue: options.connectionQueue }),
         ...(options.readOnly === undefined ? {} : { readOnly: options.readOnly }),
         ...(options.claudeIdle === undefined ? {} : { claudeIdle: options.claudeIdle }),
+        ...(options.claudeStop === undefined ? {} : { claudeStop: options.claudeStop }),
       }).pipe(Layer.provide(recorder)),
       scope,
     ),
@@ -110,6 +112,7 @@ export const servingUntilIdle = async (
           idleGrace,
           providers: testProviders(home, script, options),
           ...(options.claudeIdle === undefined ? {} : { claudeIdle: options.claudeIdle }),
+          ...(options.claudeStop === undefined ? {} : { claudeStop: options.claudeStop }),
         }),
       ),
       Effect.scoped,

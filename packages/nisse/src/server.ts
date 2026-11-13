@@ -113,7 +113,12 @@ export type KernelHarnessService = {
 }
 
 export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessService>()("nisse/KernelHarness") {
-  static readonly layer = (home: Home, readOnly: boolean, claudeIdle: Duration.Input | undefined) =>
+  static readonly layer = (
+    home: Home,
+    readOnly: boolean,
+    claudeIdle: Duration.Input | undefined,
+    claudeStop: Duration.Input | undefined,
+  ) =>
     Layer.effect(
       KernelHarness,
       Effect.gen(function* () {
@@ -122,6 +127,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         // Opened before the harness, so a server stop closes the live Claude Code processes after the runs (D3).
         const processes = yield* makeClaudeProcesses({
           ...(claudeIdle === undefined ? {} : { idle: claudeIdle }),
+          ...(claudeStop === undefined ? {} : { stop: claudeStop }),
           hold: lifetime.hold,
         })
         const stoppedTooOften = new Map<ConversationId, number>()
@@ -685,6 +691,8 @@ export interface ServerOptions {
   readonly idleGrace: Duration.Input
   /** How long a Claude Code process stays live for its conversation's next run; default `IDLE_RELEASE`. */
   readonly claudeIdle?: Duration.Input
+  /** How long a stopped run waits for Claude Code to end its turn before closing its process; default `STOP_TIMEOUT`. */
+  readonly claudeStop?: Duration.Input
   /** Show the home and change nothing: no run resumes, and calls that would change it are refused. */
   readonly readOnly?: boolean
   readonly providers: ProviderOptions
@@ -698,7 +706,7 @@ export const serverLayer = (home: Home, options: ServerOptions) =>
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(readableNdJsonRpc),
     Layer.provide(homeSocketServer(home.socket)),
-    Layer.provideMerge(KernelHarness.layer(home, options.readOnly === true, options.claudeIdle)),
+    Layer.provideMerge(KernelHarness.layer(home, options.readOnly === true, options.claudeIdle, options.claudeStop)),
     Layer.provideMerge(
       Providers.layer(
         options.readOnly === true

@@ -12,8 +12,7 @@ server's `makeClaudeProcesses`, opened with the idle period and the hold that ke
 live.
 
 - `src/run.ts`: `claude.run`. An invocation starts by recording, as interrupted, the calls a previous process left
-  without results, which only a crash or a stop leaves, and each ends its process; a stop is not counted as a
-  restart. It then leases the conversation's live process, told only the entries after the newest one it has seen,
+  without results, which only a crash or a stop leaves; a stop is not counted as a restart. It then leases the conversation's live process, told only the entries after the newest one it has seen,
   when the process key matches and those entries are continuable. Otherwise it starts a process (a cold start) where
   Claude Code's session starts: a resume at the conversation's position, a fork of it when the position belongs to the
   conversation this one forked from, or a fresh session when there is none, another provider's Claude Code held it, or
@@ -21,8 +20,11 @@ live.
   `ClaudeRunOptions.title` gives, so Claude Code does not ask a model for one. A live process that exited while it
   waited costs a cold start. A session Claude Code no longer has, or no longer holds the position of (as after its
   compaction), is dropped and the run starts over in a fresh one, once. A run that answers leaves its process live;
-  one that fails, is stopped, hits the turn limit or leaves Claude Code background work closes it. The
-  `claude.subagent` task holds the run of a hosted subagent's conversation until Claude Code says the subagent ended.
+  one that fails, hits the turn limit or leaves Claude Code background work closes it. A stopped run interrupts Claude
+  Code's turn and leaves the process live once Claude Code ends that turn, within `STOP_TIMEOUT` (5 s), with nothing
+  left queued or running; otherwise it closes it. The live process's session holds the stop, so the next run on it is
+  not told what the stop recorded. The `claude.subagent` task holds the run of a hosted subagent's conversation until
+  Claude Code says the subagent ended.
 - `src/processes.ts`: the server's live processes, at most one per conversation: the lease, the idle release after
   `IDLE_RELEASE` (30 minutes), the release of a process that exited while it waited, and closing them all when the
   server stops. Each process holds the server's lifetime from its start to its close. Nothing about them is durable: a

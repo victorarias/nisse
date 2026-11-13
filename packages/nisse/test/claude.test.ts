@@ -413,6 +413,57 @@ test("claude-cut-off: a run cut off by a server stop resumes, and Claude Code is
   client.close()
 }, 20_000)
 
+test("claude-stop, claude-live: stopping a run mid-call interrupts Claude Code's turn, and the next prompt goes to the same process, told only that prompt", async () => {
+  using claude = new FakeClaude("stop_keeps_process")
+  await using session = await conversationWith(claude, { approvals: "auto" })
+  await session.submit(
+    "Run the bash command `echo started > started.txt && python3 -c 'import time; time.sleep(120)'` with the Bash tool. Then reply with exactly: slept",
+  )
+  // Claude Code is running the call once nisse answered its PreToolUse hook.
+  await claude.logged((fake) => fake.log().some((entry) => entry.answered === "hook_callback"))
+  await session.client.call("conversation/interrupt", { conversation: session.conversation })
+  await session.view.until(settled(1))
+  const [call] = calls(session.view.seen())
+  expect(results(session.view.seen())).toEqual([
+    { call: call!.id, text: "interrupted; it may or may not have taken effect", isError: true },
+  ])
+  expect(runEnds(session.view.seen())).toEqual([expect.objectContaining({ outcome: "interrupted" })])
+  expect(claude.log().some((entry) => entry.received?.request?.subtype === "interrupt")).toBe(true)
+
+  await session.submit("Did your last Bash call finish? Reply with exactly one word: finished or interrupted")
+  await session.view.until(settled(2))
+  expect(claude.spawns()).toHaveLength(1)
+  // Claude Code's session holds the stop, so nothing about the cut-off call is told again.
+  expect(claude.userTexts(0).at(-1)).toEqual([
+    "Did your last Bash call finish? Reply with exactly one word: finished or interrupted",
+  ])
+  expect(claude.exited(0)).toBe(false)
+  expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: interrupted", "run_end: answered"])
+})
+
+test("claude-stop, claude-resume: a Claude Code process that does not end its turn after a stop is closed, and the next run resumes, told which call was cut off", async () => {
+  // The recording's process never answers the interrupt: it went on until the server was killed.
+  using claude = new FakeClaude("resume_after_kill")
+  await using session = await conversationWith(claude, {}, { claudeStop: "100 millis" })
+  await session.submit(
+    "Run the bash command `echo started > started.fifo && python3 -c 'import time; time.sleep(120)'` with the Bash tool. If the call is cut off or interrupted, do not run anything again; reply with exactly: resumed ok",
+  )
+  await session.answer(true)
+  await claude.logged((fake) => fake.permissionAnswers().length === 1)
+  await session.client.call("conversation/interrupt", { conversation: session.conversation })
+  await session.view.until(settled(1))
+  await claude.logged((fake) => fake.exited(0))
+
+  await session.submit("Go on.")
+  await session.view.until(settled(2))
+  const [call] = calls(session.view.seen())
+  expect(claude.spawns()[1]).toMatchObject({ "--resume": claude.spawns()[0]!["--session-id"] })
+  expect(claude.userTexts(1)).toEqual([
+    [`Your Bash call ${call!.id} was cut off: interrupted; it may or may not have taken effect`, "Go on."],
+  ])
+  expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: resumed ok", "run_end: answered"])
+})
+
 test("claude-resume: a run that answered before the server stopped is not run again", async () => {
   using claude = new FakeClaude("crash_points")
   const first = await conversationWith(claude, { approvals: "auto" })
@@ -543,7 +594,8 @@ test("subagent-interrupt: stopping a Claude subagent stops only it, and its pare
 
 test("subagent-interrupt: stopping a run ends the Claude subagents working under it", async () => {
   using claude = new FakeClaude("subagent_working")
-  await using session = await conversationWith(claude)
+  // The recording has no interrupt, so its process is closed once the stop times out.
+  await using session = await conversationWith(claude, {}, { claudeStop: "100 millis" })
   await session.submit("go")
   const child = await subagentOf(session)
   await child.view.until((watch) => results(watch.seen()).length > 0)

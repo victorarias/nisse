@@ -9,9 +9,18 @@ import type { Said } from "./retell.ts"
 /** How long a live process waits for its conversation's next run; Victor chose it, and t3code uses the same (D2). */
 export const IDLE_RELEASE: Duration.Input = "30 minutes"
 
+/**
+ * How long a stopped run waits for Claude Code to end its turn before closing the process (D5). A real Claude Code ends
+ * it 3 to 18 ms after the interrupt, during text, a call, a call waiting for approval and a subagent (F14); this is past
+ * any of those, so only a process that ignores the interrupt reaches it.
+ */
+export const STOP_TIMEOUT: Duration.Input = "5 seconds"
+
 export interface ClaudeProcessesOptions {
   /** Default `IDLE_RELEASE`; 0 closes each process when its run ends. */
   readonly idle?: Duration.Input
+  /** Default `STOP_TIMEOUT`. */
+  readonly stop?: Duration.Input
   /** Held from each process's open to its close, so the server outlives its live processes (D3). */
   readonly hold?: Effect.Effect<void, never, Scope.Scope>
 }
@@ -46,6 +55,8 @@ export interface ClaudeProcesses {
     openings: Openings<E>,
     open: (start: Start) => Effect.Effect<ClaudeProcess, never, Scope.Scope>,
   ) => Effect.Effect<Lease, E, Scope.Scope>
+  /** How long a stopped run waits for its process to end the turn. */
+  readonly stopWithin: Duration.Input
 }
 
 type Live = {
@@ -122,8 +133,7 @@ export const makeClaudeProcesses = (options: ClaudeProcessesOptions = {}) =>
             const one: Live = { key, process, scope: processScope, seen: 0 }
             return { one, texts, live: false, kept: false }
           }),
-          (leased, exit) =>
-            leased.kept && Exit.isSuccess(exit) ? keep(conversation, leased.one) : Scope.close(leased.one.scope, exit),
+          (leased, exit) => (leased.kept ? keep(conversation, leased.one) : Scope.close(leased.one.scope, exit)),
         ),
         (leased): Lease => ({
           process: leased.one.process,
@@ -136,5 +146,5 @@ export const makeClaudeProcesses = (options: ClaudeProcessesOptions = {}) =>
         }),
       )
 
-    return { lease } satisfies ClaudeProcesses
+    return { lease, stopWithin: options.stop ?? STOP_TIMEOUT } satisfies ClaudeProcesses
   })
