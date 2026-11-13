@@ -41,7 +41,14 @@ import {
 import type { Message } from "@nisse/models"
 import { Deferred, Effect } from "effect"
 import { SubagentLinks } from "./links.ts"
-import { type ClaudeProcessSettings, openProcess, type ProcessConfig, processKey, type Start } from "./process.ts"
+import {
+  type ClaudeProcessSettings,
+  openProcess,
+  type ProcessConfig,
+  processKey,
+  selectionOf,
+  type Start,
+} from "./process.ts"
 import type { ClaudeProcesses, Openings } from "./processes.ts"
 import { history, INTERRUPTED, JOINING, unseen } from "./retell.ts"
 import type { ClaudeRunCheckpoint, Ended, RunContext } from "./serving.ts"
@@ -194,6 +201,7 @@ const converse = <E>(shared: Shared, config: ProcessConfig, run: RunContext, ope
       const lease = yield* shared.options.processes.lease(
         runtime.conversationId,
         processKey(config),
+        selectionOf(config.agent),
         openings,
         (start) => openProcess(config, start),
       )

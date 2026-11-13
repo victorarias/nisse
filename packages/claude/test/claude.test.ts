@@ -546,24 +546,6 @@ test("claude-resume: what each run spent is added to the conversation's usage, o
   expect(usage["claude/claude-haiku-5-5"]!.cost.total).toBeCloseTo(0.00291112, 10)
 })
 
-test("claude-model, claude-live: after a switch to another Claude model, the next run starts a process that resumes the same session on it", async () => {
-  const claude = fake("switch_model")
-  await run(
-    Effect.gen(function* () {
-      const { harness, cwd } = yield* open(claude, [])
-      const conversation = yield* start(harness, cwd)
-      yield* conversation.configure({ model: { provider: "claude", modelId: "haiku" } })
-      yield* ask(conversation, "Reply with exactly: one")
-      yield* conversation.configure({ model: { provider: "claude", modelId: "sonnet" }, thinkingLevel: "low" })
-      yield* ask(conversation, "What were your two previous replies? Reply with just them, separated by a comma.")
-    }),
-  )
-  const [first, second] = spawns(claude)
-  const session = first!.find((arg) => arg.startsWith("--session-id"))!.split("=")[1]
-  expect(first).toContain("--model=haiku")
-  expect(second).toEqual(expect.arrayContaining([`--resume=${session}`, "--model=sonnet", "--effort=low"]))
-})
-
 /** Commits a turn another provider answered: the prompt, and its echo. */
 const scripted = (conversation: Conversation, text: string) =>
   conversation.commit((tx) =>

@@ -305,6 +305,44 @@ test("claude-model: the conversation's model and effort reach Claude Code", asyn
   expect(claude.spawns()[0]).toMatchObject({ "--model": "opus", "--effort": "high" })
 })
 
+test("claude-model, claude-live: a switch of model and effort reaches the live Claude Code process, and clearing the effort resumes the session in a new one", async () => {
+  using claude = new FakeClaude("switch_model")
+  await using session = await conversationWith(claude, { model: "haiku" })
+  const select = (selection: Record<string, string>) =>
+    session.client.call("conversation/select_model", {
+      conversation: session.conversation,
+      author: "ada",
+      selection: { provider: "claude", ...selection },
+    })
+  await session.submit("Reply with exactly: one")
+  await session.view.until(settled(1))
+  expect((await select({ model: "sonnet", effort: "low" })).error).toBeUndefined()
+  await session.submit("Reply with exactly: two")
+  await session.view.until(settled(2))
+  expect((await select({ model: "sonnet" })).error).toBeUndefined()
+  await session.submit("What were your two previous replies? Reply with just them, separated by a comma.")
+  await session.view.until(settled(3))
+
+  const [first, second] = claude.spawns()
+  expect(first).toMatchObject({ "--model": "haiku" })
+  expect(first!["--effort"]).toBeUndefined()
+  // The first process is switched before it is told the second prompt.
+  const told = claude
+    .log()
+    .filter((entry) => entry.spawn === 0 && entry.received !== undefined)
+    .map(({ received }) => received.request ?? received.message.content[0].text)
+  expect(told).toEqual([
+    "Reply with exactly: one",
+    { subtype: "set_model", model: "sonnet" },
+    { subtype: "apply_flag_settings", settings: { effortLevel: "low" } },
+    "Reply with exactly: two",
+  ])
+  // Claude Code clears an effort to the model's default, not the person's, so a new process resumes the session.
+  expect(second).toMatchObject({ "--model": "sonnet", "--resume": first!["--session-id"] })
+  expect(second!["--effort"]).toBeUndefined()
+  expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: one, two", "run_end: answered"])
+})
+
 test("steer-claude: a steer sent while Claude works reaches Claude Code in the same run", async () => {
   using claude = new FakeClaude("steer")
   await using session = await conversationWith(claude)

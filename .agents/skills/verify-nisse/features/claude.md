@@ -10,8 +10,9 @@ cut off. When Claude Code has
 lost the session, or a conversation is switched to Claude from another
 provider, nisse retells the conversation to a new Claude Code session. Claude
 Code gets the conversation's model and effort, and a switch between Claude's
-models goes on in the same session. Nisse asks Claude Code how it is signed in
-and which models it offers without asking Claude anything. A Claude Code that
+models or efforts goes on in the same process and session. Nisse asks Claude
+Code how it is signed in and which models it offers without asking Claude
+anything. A Claude Code that
 cannot sign in ends the run failed with Claude Code's own message. When
 Claude Code compacts its own context, nisse keeps Claude's summary as a
 compaction; `/clear` starts a new context in nisse's transcript too.
@@ -28,9 +29,9 @@ compaction; `/clear` starts a new context in nisse's transcript too.
 - `claude-auto` lets every call run in a conversation started with `--auto`.
 - `claude-live` keeps a conversation's Claude Code process after its run and
   hands it the next run, told only what came after what it has seen. An edit,
-  a reset, another provider's answer or a change of model, effort or tools
-  between runs closes it, and the next run starts a process at the position.
-  So does a run that is stopped, fails, or leaves background work running.
+  a reset, another provider's answer, a change of tools, or clearing the model
+  or effort between runs closes it, and the next run starts a process at the
+  position. So does a run that is stopped, fails, or leaves background work running.
 - `claude-idle-release` closes a live process after 30 minutes without a run;
   the next run starts one that resumes the session.
 - `claude-resume` continues Claude Code's session in each run that starts a
@@ -47,9 +48,12 @@ compaction; `/clear` starts a new context in nisse's transcript too.
 - `claude-system-prompt` keeps Claude Code's own system prompt and appends the
   conversation's start instructions to it; Claude Code's commands see
   `NISSE_ROOT_CONVERSATION`.
-- `claude-model` hands Claude Code the conversation's model and effort; after
-  a switch to another Claude model, the next run resumes the same session on
-  the new model and effort.
+- `claude-model` hands Claude Code the conversation's model and effort. After
+  a switch to another Claude model or effort, the next run switches the live
+  process (`set_model`, then `apply_flag_settings` with `effortLevel`) before
+  its prompt. Clearing the effort or the model starts a process that resumes
+  the session, because Claude Code would clear them to its own default, not
+  the person's settings.
 - `claude-switch` retells a conversation switched to Claude to a new Claude
   Code session: the first prompt, then as many of the latest entries as fit in
   about 64,000 characters, with `(N entries left out here)` between them.
@@ -199,15 +203,18 @@ Preconditions:
   `drive.ts r nisse exec --provider claude --model haiku 'Reply with exactly: one'`:
   stdout `one`. Run
   `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "ada", "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}'`,
+  then `drive.ts r nisse exec --conversation <id> 'Reply with exactly: two'`:
+  stdout `two`, and no `"spawn": 1`: `"spawn": 0` received
+  `{"subtype":"set_model","model":"sonnet"}`, then
+  `{"subtype":"apply_flag_settings","settings":{"effortLevel":"low"}}`, then
+  the prompt. Clear the effort with
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "ada", "selection": {"provider": "claude", "model": "sonnet"}}'`,
   then
   `drive.ts r nisse exec --conversation <id> 'What were your two previous replies? Reply with just them, separated by a comma.'`:
-  stdout `one, two`. The log's `"spawn": 1` argv holds `--model=sonnet`,
-  `--effort=low` and `--resume=<spawn 0's --session-id>`: the same session
-  goes on with the new model. `drive.ts r watch <id> --save switched` shows a
-  `nisse.model` entry with that selection between the two runs. This departs from
-  the recording: its second prompt, `Reply with exactly: two`, went to the
-  first process after an in-process `set_model`, and nisse closes a live
-  process whose model changes, so the step leaves that prompt out. The answer
+  stdout `one, two`. The log's `"spawn": 1` argv holds `--model=sonnet`, no
+  `--effort`, and `--resume=<spawn 0's --session-id>`: the same session goes
+  on in a new process. `drive.ts r watch <id> --save switched` shows a
+  `nisse.model` entry with each selection between the runs. The answer
   `one, two` is the recording's, not proof that Claude remembers.
 - **Instructions** (`text`). Run
   `drive.ts r nisse exec --provider claude --instructions 'Answer in Swedish.' 'Reply with exactly: fixture text ok'`:
@@ -292,6 +299,7 @@ Provider, `packages/nisse/test/claude.test.ts`:
 - server-stop, claude-live: stopping the server closes its live Claude Code processes at once
 - claude-sign-in-error: a signed-out Claude Code fails the run with its own words
 - claude-model: the conversation's model and effort reach Claude Code
+- claude-model, claude-live: a switch of model and effort reaches the live Claude Code process, and clearing the effort resumes the session in a new one
 - claude-cut-off: a run cut off by a server stop resumes, and Claude Code is told which call was cut off
 - claude-resume: a run that answered before the server stopped is not run again
 - claude-read: a skill Claude Code runs shows as its call and result, and Claude answers from it
@@ -314,7 +322,6 @@ Package, `packages/claude/test/claude.test.ts`:
 - claude-read: parallel calls of one response are each committed with the result Claude Code returned
 - claude-resume: a fork of a Claude conversation forks Claude Code's session at the fork's position
 - claude-resume: what each run spent is added to the conversation's usage, once, when each run starts its own process
-- claude-model, claude-live: after a switch to another Claude model, the next run starts a process that resumes the same session on it
 - claude-switch, claude-live: switching to Claude from another provider retells the conversation to a new Claude Code session
 
 ## Gotchas
@@ -392,12 +399,19 @@ decide instead of them: a `touch` asks, a `Read` does not.
   the newest session file under your Claude Code configuration's `projects/`
   holds `"model":"claude-haiku-...`.
 - **Switch model.** `drive.ts r nisse exec --provider claude --model haiku 'Reply with exactly: one'`,
-  then `drive.ts r nisse exec --conversation <id> 'Reply with exactly: two'`,
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "ada", "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}'`,
-  and
-  `drive.ts r nisse exec --conversation <id> 'What were your two previous replies? Reply with just them, separated by a comma.'`:
-  stdout `one, two`, and the session file's last answer names a
-  `claude-sonnet-...` model.
+  then
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "ada", "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}'`
+  and `drive.ts r nisse exec --conversation <id> 'Reply with exactly: two'`:
+  stdout `two`, and the session file (the newest under your Claude Code
+  configuration's `projects/`) shows a `/model` command, `Set model to
+sonnet (claude-sonnet-...)`, and the answer `two` from a
+  `claude-sonnet-...` model, with no second session file. Select
+  `{"provider": "claude", "model": "sonnet"}` and send
+  `What were your two previous replies? Reply with just them, separated by a comma.`:
+  stdout `one, two` from `claude-sonnet-...`, in the same session file.
+  A switch to another model misses the prompt cache (the answer's
+  `cache_miss_reason` is `model_changed`); an effort switch on one model, or
+  `sonnet` to `sonnet[1m]`, reads it.
 - **Switch to Claude.** Drive the faked step above against the real Claude
   Code, without the long turn: start a `script` conversation, submit
   `Remember the word lantern.`, switch to `claude` `haiku`, and submit

@@ -59,12 +59,28 @@ export type ProcessConfig = {
   readonly rootConversation: string
 }
 
+/** The model and effort a process answers with; `""` and `undefined` leave them to the person's Claude Code settings. */
+export type Selection = { readonly modelId: string; readonly effort: EffortLevel | undefined }
+
+export const selectionOf = (agent: Agent): Selection => ({
+  modelId: agent.model?.modelId ?? "",
+  effort:
+    agent.thinkingLevel === "off" || agent.thinkingLevel === undefined
+      ? undefined
+      : (agent.thinkingLevel as EffortLevel),
+})
+
 export interface ClaudeProcess {
   /**
-   * Serves the run `run`: sends it `opening`, then hands every frame to it until the run ends. A process that exits
-   * before Claude Code took the opening ends the run `exited`.
+   * Serves the run `run`: switches to the run's model and effort, sends it `opening`, then hands every frame to it
+   * until the run ends. A process that exits before Claude Code took the opening ends the run `exited`.
    */
   readonly serve: (run: RunContext, opening: ReadonlyArray<Said>) => Effect.Effect<Ended, unknown>
+  /**
+   * Whether `serve` can switch the process to `selection`. Claude Code clears a model or effort to its own default,
+   * not to the person's settings, so a run that clears either needs a new process (D4).
+   */
+  readonly canSelect: (selection: Selection) => boolean
   /** Background work Claude Code started and has not said ended: a background command or subagent (D6). */
   readonly busy: boolean
   /** Reads ahead while no run is served, and completes once the process has exited. */
@@ -143,8 +159,7 @@ const spawnedWith = (config: ProcessConfig) => {
     agent.tools.filter((tool) => !builtin.has(tool.name)).map((tool) => [tool.name, tool]),
   )
   return {
-    modelId: agent.model?.modelId ?? "",
-    effort: agent.thinkingLevel === "off" || agent.thinkingLevel === undefined ? undefined : agent.thinkingLevel,
+    ...selectionOf(agent),
     own,
     // Claude Code's own tools an extension removed, and the own tools, which it reaches only over MCP.
     withheld: [...new Set([...config.withheldTools.map((name) => CLAUDE_TOOL[name] ?? name), ...own.keys()])],
@@ -153,18 +168,15 @@ const spawnedWith = (config: ProcessConfig) => {
 
 /**
  * The process key: what a process of `config` is spawned with, which a live one cannot change. A run whose key
- * differs from its live process's gets a new process. The model and effort are in it until a live process can switch
- * them.
+ * differs from its live process's gets a new process. The model and effort are not in it: `serve` switches them.
  */
 export const processKey = (config: ProcessConfig) => {
-  const { modelId, effort, own, withheld } = spawnedWith(config)
+  const { own, withheld } = spawnedWith(config)
   return JSON.stringify({
     provider: config.agent.model?.provider,
     settings: config.settings,
     cwd: config.agent.cwd,
     maxTurns: config.agent.maxTurns,
-    modelId,
-    effort,
     own: [...own.values()].map(({ name, description, parameters }) => ({ name, description, parameters })),
     withheld,
     afterHooks: toolHooksOf(config.agent).after.length > 0,
@@ -181,6 +193,8 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
     const inbox = new Inbox<SDKUserMessage>()
     const awaitingReplay = new Set<string>()
     let session = start.session
+    /** What Claude Code answers with now: what it was spawned with, then what the last run switched it to. */
+    let selected: Selection = { modelId, effort }
     let resetting = false
     // `modelUsage` at this process's previous result: a process reports its own running totals, which a resumed
     // session does not carry over (died_while_idle's second process reports a first turn's cache read again).
@@ -365,6 +379,23 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
       }
     }
 
+    const canSelect = (wanted: Selection) =>
+      (wanted.modelId !== "" || selected.modelId === "") &&
+      (wanted.effort !== undefined || selected.effort === undefined)
+
+    /** Switches Claude Code to `wanted`, which `canSelect` allows; the model first, as an effort may depend on it. */
+    const select = (wanted: Selection) =>
+      Effect.tryPromise(async () => {
+        if (wanted.modelId !== selected.modelId) {
+          await messages.setModel(wanted.modelId)
+          selected = { ...selected, modelId: wanted.modelId }
+        }
+        if (wanted.effort !== selected.effort) {
+          await messages.applyFlagSettings({ effortLevel: wanted.effort! })
+          selected = { ...selected, effort: wanted.effort }
+        }
+      })
+
     const serve = (run: RunContext, opening: ReadonlyArray<Said>) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -384,6 +415,14 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
                 serving = undefined
               }),
           )
+          const switched = yield* Effect.result(select(selectionOf(run.agent)))
+          // Nothing of the run reached Claude Code yet, so a process that cannot switch costs a cold start.
+          if (switched._tag === "Failure") {
+            return {
+              _tag: "exited",
+              message: `Claude Code did not switch its model or effort: ${String(switched.failure)}`,
+            } as const
+          }
           const opened = send(opening)
           for (;;) {
             const next = yield* Effect.promise(pull)
@@ -421,6 +460,7 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
 
     return {
       serve,
+      canSelect,
       get busy() {
         return tasks.size > 0
       },
