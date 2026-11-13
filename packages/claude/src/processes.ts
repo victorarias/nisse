@@ -3,7 +3,7 @@
 // period (D2). A live process is a cache of `claude.session`: losing one costs a cold start and nothing else.
 import type { ConversationId } from "@nisse/kernel"
 import { Duration, Effect, Exit, Fiber, Scope } from "effect"
-import type { ClaudeProcess, Start } from "./process.ts"
+import type { ClaudeProcess, Selection, Start } from "./process.ts"
 import type { Said } from "./retell.ts"
 
 /** How long a live process waits for its conversation's next run; Victor chose it, and t3code uses the same (D2). */
@@ -35,12 +35,14 @@ export interface Lease {
 
 export interface ClaudeProcesses {
   /**
-   * The conversation's live process when its key is `key` and `openings.live` says it can go on; otherwise a new one
-   * `open` starts where `openings.cold` says, after closing the live one. The lease ends with the scope.
+   * The conversation's live process when its key is `key`, it can switch to `selection`, and `openings.live` says it
+   * can go on; otherwise a new one `open` starts where `openings.cold` says, after closing the live one. The lease ends
+   * with the scope.
    */
   readonly lease: <E>(
     conversation: ConversationId,
     key: string,
+    selection: Selection,
     openings: Openings<E>,
     open: (start: Start) => Effect.Effect<ClaudeProcess, never, Scope.Scope>,
   ) => Effect.Effect<Lease, E, Scope.Scope>
@@ -98,12 +100,17 @@ export const makeClaudeProcesses = (options: ClaudeProcessesOptions = {}) =>
         return one
       })
 
-    const lease: ClaudeProcesses["lease"] = (conversation, key, openings, open) =>
+    const lease: ClaudeProcesses["lease"] = (conversation, key, selection, openings, open) =>
       Effect.map(
         Effect.acquireRelease(
           Effect.gen(function* () {
             const found = yield* take(conversation)
-            if (found !== undefined && found.key === key && openings.live !== undefined) {
+            if (
+              found !== undefined &&
+              found.key === key &&
+              found.process.canSelect(selection) &&
+              openings.live !== undefined
+            ) {
               const texts = yield* Effect.onError(openings.live(found.seen), () => Scope.close(found.scope, Exit.void))
               if (texts !== undefined) return { one: found, texts, live: true, kept: false }
             }
