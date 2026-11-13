@@ -1,11 +1,11 @@
 # Sigma
 
 Sigma is a coding agent designed to be durable, to integrate with agent SDKs,
-and to be multiplayer at its core. One server owns every conversation and
-commits each step to SQLite before anyone sees it. Clients draw what it
-commits; the first is a terminal UI. Models run through the Claude Agent SDK,
-which drives Claude Code, or through a ChatGPT sign-in, where sigma runs the
-loop and the tools itself.
+and to serve many clients on one conversation, with every change attributed.
+One server owns every conversation and commits each step to SQLite before
+anyone sees it. Clients draw what it commits; the first is a terminal UI.
+Models run through the Claude Agent SDK, which drives Claude Code, or through
+a ChatGPT sign-in, where sigma runs the loop and the tools itself.
 
 ## Where we are
 
@@ -66,6 +66,8 @@ approval                a tool call waiting for a person to allow or deny it;
 - Only committed state is observable. Every change goes through one store
   commit, published after it is stored. Never show a client anything else.
 - The server owns state and execution; clients only render.
+- Sigma orders and records what clients do. It does not decide who a client is
+  or what it may do; whatever runs sigma owns identity and permissions.
 - A client never slows the server: each watch has a bounded queue and ends
   with `FellBehind` when it falls behind; the client watches again and pages
   what it missed.
