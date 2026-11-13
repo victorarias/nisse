@@ -3,6 +3,8 @@
 import { expect, test } from "bun:test"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { type Duration, Effect } from "effect"
+import { TestClock } from "effect/testing"
 import { FakeClaude } from "./support/claude.ts"
 import {
   type AuthState,
@@ -11,6 +13,7 @@ import {
   type ProviderSnapshot,
   STATUS_LINES_KIND,
   TOAST_KIND,
+  USER_KIND,
 } from "@nisse/protocol"
 import { homeWithExtensions } from "./support/extensions.ts"
 import { deadline, RawClient } from "./support/raw.ts"
@@ -231,6 +234,76 @@ test("claude-idle-release: a live Claude Code process closes after the idle peri
   const [first, second] = claude.spawns()
   expect(second!["--resume"]).toBe(first!["--session-id"])
   expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: PLUM", "run_end: answered"])
+})
+
+/** A clock for the live Claude Code processes that moves only when the test moves it. */
+const testClock = () => Effect.runPromise(Effect.scoped(TestClock.make()))
+const advance = (clock: TestClock.TestClock, by: Duration.Input) => Effect.runPromise(clock.adjust(by))
+/** Who submitted each input of the conversation, and what. */
+const inputs = (entries: ReadonlyArray<EntryRecord>) =>
+  entries
+    .filter((entry) => entry.kind === USER_KIND)
+    .map((entry) => `${(entry.data as { author: string }).author}: ${transcript([entry])[0]!.slice("user: ".length)}`)
+
+test("claude-idle-compaction: an idle Claude conversation past 200,000 tokens compacts once, two minutes before its prompt cache expires, then its process closes", async () => {
+  // The recording's runs report a context of about 230,000 tokens and write the 1-hour cache.
+  using claude = new FakeClaude("idle_compaction")
+  const clock = await testClock()
+  await using session = await conversationWith(claude, { approvals: "auto" }, { claudeClock: clock })
+  await session.submit("Reply with exactly: one")
+  await session.view.until(settled(1))
+  // Past the 30 minutes a process waits for its next run: one that waits to compact stays live.
+  await advance(clock, "57 minutes")
+  await session.submit("Reply with exactly: two")
+  await session.view.until(settled(2))
+  // The first run's compaction was due at 58 minutes; the second run moved it to 58 minutes after itself.
+  await advance(clock, "57 minutes")
+  await session.client.call("conversation/list", {})
+  expect(claude.userTexts(0)).toHaveLength(2)
+  await advance(clock, "1 minute")
+  await session.view.until(settled(3))
+  await claude.logged((fake) => fake.exited(0))
+  expect(claude.spawns()).toHaveLength(1)
+  expect(claude.userTexts(0)).toEqual([["Reply with exactly: one"], ["Reply with exactly: two"], ["/compact"]])
+  expect(inputs(session.view.seen())).toEqual([
+    "ada: Reply with exactly: one",
+    "ada: Reply with exactly: two",
+    "nisse: /compact",
+  ])
+  expect(session.view.seen().filter((entry) => entry.kind === "pi.compaction")).toHaveLength(1)
+  expect(runEnds(session.view.seen()).map((end) => end.outcome)).toEqual(["answered", "answered", "answered"])
+})
+
+test("claude-idle-compaction: a conversation whose last request wrote the 5-minute cache compacts three minutes into its pause", async () => {
+  // Recorded under a sign-in Claude Code gives the 5-minute cache, as it does an API key.
+  using claude = new FakeClaude("idle_compaction_5m")
+  const clock = await testClock()
+  await using session = await conversationWith(claude, { approvals: "auto" }, { claudeClock: clock })
+  await session.submit("Reply with exactly: one")
+  await session.view.until(settled(1))
+  await advance(clock, "3 minutes")
+  await session.view.until(settled(2))
+  await claude.logged((fake) => fake.exited(0))
+  expect(inputs(session.view.seen())).toEqual(["ada: Reply with exactly: one", "nisse: /compact"])
+  expect(session.view.seen().filter((entry) => entry.kind === "pi.compaction")).toHaveLength(1)
+})
+
+test("claude-idle-compaction, claude-idle-release: a short context, or claude_idle_compaction = false, closes after the idle period without compacting", async () => {
+  for (const [fixture, config] of [
+    ["text", {}],
+    ["idle_compaction", { claude_idle_compaction: false }],
+  ] as const) {
+    using claude = new FakeClaude(fixture)
+    const clock = await testClock()
+    await using session = await conversationWith(claude, { approvals: "auto" }, { claudeClock: clock, config })
+    await session.submit(fixture === "text" ? "Reply with exactly: fixture text ok" : "Reply with exactly: one")
+    await session.view.until(settled(1))
+    await advance(clock, "1 hour")
+    await claude.logged((fake) => fake.exited(0))
+    // A compaction would have reached the process before it closed.
+    expect(claude.userTexts(0)).toHaveLength(1)
+    expect(inputs(session.view.seen())).toHaveLength(1)
+  }
 })
 
 test("server-idle-exit, claude-idle-release: a live Claude Code process keeps the server up after its client leaves, until the process closes", async () => {

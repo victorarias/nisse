@@ -23,6 +23,8 @@ const HomeConfig = Schema.Struct({
   agents: Schema.optionalKey(AgentsConfig),
   providers: Schema.optionalKey(Schema.Record(Schema.String, Instance)),
   extensions: Schema.optionalKey(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown))),
+  /** `false` keeps an idle Claude conversation from compacting before its prompt cache expires. */
+  claude_idle_compaction: Schema.optionalKey(Schema.Boolean),
 })
 export type HomeConfig = typeof HomeConfig.Type
 

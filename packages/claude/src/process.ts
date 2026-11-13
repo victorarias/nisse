@@ -14,7 +14,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk"
 import type { Agent } from "@nisse/harness"
 import type { Usage } from "@nisse/models"
-import { type Duration, Effect, Option, Semaphore } from "effect"
+import { Clock, type Duration, Effect, Option, Semaphore } from "effect"
 import { z } from "zod"
 import { claudeEnvironment, toolSearchSettings } from "./environment.ts"
 import { Inbox } from "./inbox.ts"
@@ -91,6 +91,18 @@ export interface ClaudeProcess {
   readonly busy: boolean
   /** Reads ahead while no run is served, and completes once the process has exited. */
   readonly exited: Effect.Effect<void>
+  /** The cache facts of the newest main-loop request, once one was made (F13). */
+  readonly lastRequest: LastRequest | undefined
+}
+
+/** What the newest main-loop request left in the prompt cache: when it was made, its context and the cache's TTL. */
+export interface LastRequest {
+  /** When its response started, by the clock the process was opened with, in milliseconds. */
+  readonly at: number
+  /** Its whole context in tokens: uncached input, cache reads and cache writes. */
+  readonly context: number
+  /** How long the cache it wrote lives, from the newest request that wrote one; `undefined` while none has. */
+  readonly ttl: "5m" | "1h" | undefined
 }
 
 /** One model's running totals in one Claude Code process, as it reports them (`modelUsage`). */
@@ -196,6 +208,8 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
     const { agent, settings } = config
     const { modelId, effort, own, withheld } = spawnedWith(config)
     const serial = yield* Semaphore.make(1)
+    const clock = yield* Clock.Clock
+    let lastRequest: LastRequest | undefined
     const inbox = new Inbox<SDKUserMessage>()
     const awaitingReplay = new Set<string>()
     let session = start.session
@@ -269,7 +283,8 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
         mcpServers,
         ...(withheld.length === 0 ? {} : { disallowedTools: withheld }),
         settingSources,
-        ...(toolSearch === undefined ? {} : { settings: toolSearch }),
+        // Claude Code's own idle compaction would compact with no run to commit its summary; nisse's does it (D7).
+        settings: { ...toolSearch, idleCompaction: false },
         extraArgs: { ...extraArgs(settings.args ?? []), "replay-user-messages": null },
         systemPrompt: {
           type: "preset",
@@ -380,6 +395,7 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
 
     /** Tracks Claude Code's tasks, which end the process when its run ends with one still working (D6). */
     const track = (message: SDKMessage) => {
+      if (message.type === "stream_event") return observeRequest(message)
       if (message.type !== "system") return
       if (message.subtype === "task_started") tasks.add(message.task_id)
       else if (message.subtype === "task_notification") tasks.delete(message.task_id)
@@ -425,6 +441,24 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
       // `/clear`: the session goes on under the id the next frames carry (F13).
       if (message.type === "conversation_reset") resetting = true
       return true
+    }
+
+    /** Keeps the cache facts of each main-loop request from the usage its response starts with (F13). */
+    const observeRequest = (message: Extract<SDKMessage, { type: "stream_event" }>) => {
+      if (message.parent_tool_use_id !== null || message.event.type !== "message_start") return
+      const usage = message.event.message.usage
+      const written = usage.cache_creation
+      const ttl =
+        (written?.ephemeral_1h_input_tokens ?? 0) > 0
+          ? "1h"
+          : (written?.ephemeral_5m_input_tokens ?? 0) > 0
+            ? "5m"
+            : lastRequest?.ttl
+      lastRequest = {
+        at: clock.currentTimeMillisUnsafe(),
+        context: usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
+        ttl,
+      }
     }
 
     const serve = (run: RunContext, opening: ReadonlyArray<Said>) =>
@@ -489,5 +523,8 @@ export const openProcess = (config: ProcessConfig, start: Start) =>
         return tasks.size > 0
       },
       exited,
+      get lastRequest() {
+        return lastRequest
+      },
     } satisfies ClaudeProcess
   })

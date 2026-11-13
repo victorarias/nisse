@@ -42,6 +42,7 @@ once.
 ### Triggers
 
 - A context past its threshold compacts on its own before the next request, and a provider's context-window error compacts and sends the request again.
+- A Claude conversation past 200,000 tokens compacts while idle, two minutes before its prompt cache expires: `claude-idle-compaction` in [Claude](./claude.md).
 
 ## Driving it with drive.ts
 
