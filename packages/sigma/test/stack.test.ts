@@ -3,18 +3,9 @@ import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { applyImmutable, type Op } from "@sigma/delta"
 import { PROTOCOL_VERSION, type View, type ViewItem } from "@sigma/protocol"
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  watch,
-  writeFileSync,
-} from "node:fs"
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs"
 import { open, readFile } from "node:fs/promises"
+import { createConnection, createServer } from "node:net"
 import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import { deadline, RawClient } from "./support/raw.ts"
@@ -119,18 +110,42 @@ test("idle-server: a server with no run in flight uses no CPU", async () => {
   client.close()
 }, 20_000)
 
-test("server-old-home: a home an earlier sigma used still starts, and its old stores are left as they were", async () => {
+test("server-foreign-home: sigma serve refuses a home whose database another program wrote, and leaves the database as it was", async () => {
   const sigmaHome = home()
-  // The Rust version's store, then the TypeScript version's before the kernel.
-  const old = ["sigma.sqlite", "store.sqlite"].map((name) => join(sigmaHome.dir, name))
   mkdirSync(sigmaHome.dir, { recursive: true })
-  for (const path of old) writeFileSync(path, `an earlier sigma's ${path}`)
-  await serving(await scriptEnv(sigmaHome))
-  const client = await RawClient.connect(sigmaHome.socket)
-  await start(client)
-  for (const path of old) expect(readFileSync(path, "utf8")).toBe(`an earlier sigma's ${path}`)
-  expect(existsSync(sigmaHome.database)).toBe(true)
-  client.close()
+  const foreign = new Database(sigmaHome.database)
+  foreign.run("CREATE TABLE notes (body TEXT)")
+  foreign.run("INSERT INTO notes VALUES ('kept')")
+  foreign.close()
+  const before = readFileSync(sigmaHome.database)
+  const server = sigma(["serve"], await scriptEnv(sigmaHome))
+  const [code, stderr] = await Promise.all([server.exited, new Response(server.stderr).text()])
+  expect(code).toBe(1)
+  expect(stderr).toContain(`${sigmaHome.database} was not written by sigma`)
+  expect(readFileSync(sigmaHome.database).equals(before)).toBe(true)
+})
+
+test("server-foreign-home: sigma serve refuses a home whose socket another program serves, and that program keeps its clients", async () => {
+  const sigmaHome = home()
+  mkdirSync(sigmaHome.dir, { recursive: true })
+  // A listener that hangs up on every client, as a server speaking another protocol might.
+  const foreign = createServer((client) => client.end("another program\n"))
+  await new Promise<void>((resolve) => foreign.listen(sigmaHome.socket, resolve))
+  await using _foreign = { [Symbol.asyncDispose]: () => new Promise<void>((resolve) => foreign.close(() => resolve())) }
+  const server = sigma(["serve"], await scriptEnv(sigmaHome))
+  const [code, stderr] = await Promise.all([server.exited, new Response(server.stderr).text()])
+  expect(code).toBe(1)
+  expect(stderr).toContain(`another program serves ${sigmaHome.socket}`)
+  const greeting = await deadline(
+    new Promise<string>((resolve, reject) =>
+      createConnection(sigmaHome.socket)
+        .on("data", (data) => resolve(data.toString()))
+        .on("error", reject),
+    ),
+    5_000,
+    "the other program's greeting",
+  )
+  expect(greeting).toBe("another program\n")
 })
 
 test("wire-schema: sigma schema prints the protocol's schema, the one committed beside the code", async () => {

@@ -25,9 +25,12 @@ running server once its runs settle.
 - `server-restart` replaces the running server with `sigma serve --restart`
   once its runs settle. A server a client starts meanwhile gives way to it,
   even one that was already waiting for the old server's home.
-- `server-old-home` keeps working in a home an earlier Sigma used: its
-  older databases, such as `sigma.sqlite`, stay as they were, and this Sigma uses
-  `kernel.sqlite` beside them.
+- `server-foreign-home` makes the server refuse a home another program uses,
+  and leaves that program's files as they were: a `kernel.sqlite` sigma did not
+  write (sigma marks its own in the SQLite header), or a `sigma.sock` another
+  program serves. The harness attn calls Sigma, a fork of Pi, uses the same
+  `~/.sigma` and `sigma.sock`. The refusal names the file, and reaches a waiting
+  client as `server-cannot-start` describes.
 
 ## How to get to it
 
@@ -59,6 +62,17 @@ Preconditions:
   about a second later (a starting server waits up to 1 s for a moment's
   contention on the home lock to pass), and stderr says
   `another server already serves /tmp/sigma-verify/r/home`.
+- **Foreign home.** In a fresh run with no server, run
+  `sqlite3 /tmp/sigma-verify/r/home/kernel.sqlite "CREATE TABLE notes (body TEXT)"`,
+  then `drive.ts r sigma serve`: `--- exit 1`, and stderr says
+  `/tmp/sigma-verify/r/home/kernel.sqlite was not written by sigma. Point SIGMA_HOME at a folder of sigma's own.`
+  `sqlite3 ... .tables` still lists only `notes`. `drive.ts r sigma exec hi`
+  prints the same reason on stderr and exits 1.
+  In another fresh run, start a listener on the socket
+  (`python3 -c "import signal, socket; s = socket.socket(socket.AF_UNIX); s.bind('/tmp/sigma-verify/r/home/sigma.sock'); s.listen(); signal.pause()" &`),
+  then `drive.ts r sigma serve`: `--- exit 1`, stderr
+  `another program serves /tmp/sigma-verify/r/home/sigma.sock. ...`, and the
+  socket file is still there.
 - **Shared.** In a fresh run, start eight at once:
   `for i in 1 2 3 4 5 6 7 8; do drive.ts r sigma exec "client $i" & done; wait`.
   The run's evidence holds eight `NNN-sigma.txt` files, each with its own
@@ -142,7 +156,8 @@ Screen, `packages/sigma/test/screen.test.ts`:
 Stack, `packages/sigma/test/stack.test.ts`:
 
 - server-stop: sigma serve answers server/stop, then exits 0
-- server-old-home: a home an earlier sigma used still starts, and its old stores are left as they were
+- server-foreign-home: sigma serve refuses a home whose database another program wrote, and leaves the database as it was
+- server-foreign-home: sigma serve refuses a home whose socket another program serves, and that program keeps its clients
 - mode-print, answer-exec, server-on-demand: sigma exec starts a server, prints the answer and exits 0
 - server-restart: sigma serve --restart replaces the running server once its run settles
 - server-restart: sigma exec waiting on a run that serve --restart lets finish prints the answer and exits 0
@@ -157,8 +172,6 @@ Stack, `packages/sigma/test/stack.test.ts`:
 - A server started with `drive.ts r serve` also exits 30 s after it goes idle.
   Start it just before the journey needs it. A Claude run keeps it up for
   30 minutes: stop it with `drive.ts r rpc server/stop`.
-- `server-old-home` is covered by its stack test only: making a Rust home by
-  hand is not a user path `drive.ts` can drive.
 - The idle exit is the one journey that waits on time; give `doctor` 40 s.
 - `rpc server/stop` with a run still working waits for it, so the call times
   out after 5 s; start the stop once the run has ended.
