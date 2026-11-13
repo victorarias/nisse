@@ -1,13 +1,12 @@
 import { Database } from "bun:sqlite"
-import { existsSync, mkdirSync, rmSync } from "node:fs"
-import { createConnection } from "node:net"
+import { mkdirSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { Console, Effect, Schedule, Schema } from "effect"
 
 export interface Home {
   readonly dir: string
-  /** The kernel's database, marked as sigma's in its header. */
+  /** The kernel's database. A `store.sqlite` an earlier sigma left beside it is ignored. */
   readonly database: string
   readonly socket: string
   readonly lock: string
@@ -30,64 +29,6 @@ export const homeAt = (dir: string): Home => ({
 export const defaultHome = () => homeAt(resolve(process.env.SIGMA_HOME ?? join(homedir(), ".sigma")))
 
 export class HomeTaken extends Schema.TaggedError<HomeTaken>()("HomeTaken", { dir: Schema.String }) {}
-
-/** A home another program uses: its database was not written by sigma, or another program serves its socket. */
-export class ForeignHome extends Schema.TaggedError<ForeignHome>()("ForeignHome", { reason: Schema.String }) {}
-
-/**
- * Marks `kernel.sqlite` as sigma's in the SQLite header ("SGMA"). Another program can use the same home: the harness attn
- * calls Sigma, a fork of Pi, defaults to `~/.sigma` and `sigma.sock` too, and stores pi-durable's tables, which the
- * kernel would read as its own.
- */
-const APPLICATION_ID = 0x53474d41
-
-const elsewhere = "Point SIGMA_HOME at a folder of sigma's own."
-
-/** Marks a new database as sigma's, or refuses one sigma did not write. */
-const ownDatabase = (home: Home) =>
-  Effect.suspend(() => {
-    const created = !existsSync(home.database)
-    const database = new Database(home.database, { create: true })
-    try {
-      if (created) database.run(`PRAGMA application_id = ${APPLICATION_ID}`)
-      const { application_id } = database.query("PRAGMA application_id").get() as { application_id: number }
-      return application_id === APPLICATION_ID
-        ? Effect.void
-        : Effect.fail(new ForeignHome({ reason: `${home.database} was not written by sigma. ${elsewhere}` }))
-    } finally {
-      database.close()
-    }
-  })
-
-/**
- * Removes the socket a stopped server left behind. A server of this home holds its lock, so with the lock held, a socket
- * that still answers belongs to another program, which would lose its clients if sigma took the path.
- */
-const clearSocket = (home: Home) =>
-  Effect.flatMap(answers(home.socket), (answered) =>
-    answered
-      ? Effect.fail(new ForeignHome({ reason: `another program serves ${home.socket}. ${elsewhere}` }))
-      : Effect.sync(() => rmSync(home.socket, { force: true })),
-  )
-
-/**
- * Whether something listens on the socket at `path`. Only a refused connection says nothing does: a listener that hangs up
- * at once reaches the client as a reset.
- */
-const answers = (path: string) =>
-  Effect.callback<boolean>((resume) => {
-    if (!existsSync(path)) return resume(Effect.succeed(false))
-    const socket = createConnection(path)
-    const answered = (yes: boolean) => {
-      socket.destroy()
-      resume(Effect.succeed(yes))
-    }
-    socket.once("connect", () => answered(true))
-    socket.once("error", (error: NodeJS.ErrnoException) => answered(!NOBODY_LISTENS.has(error.code ?? "")))
-    return Effect.sync(() => socket.destroy())
-  })
-
-const NOBODY_LISTENS = new Set(["ECONNREFUSED", "ENOENT"])
 
 /**
  * How long a claim waits out another process touching the lock. Other servers' claims and their failed attempts touch it
@@ -116,17 +57,15 @@ const tryLock = (dir: string, path: string, waitMs: number) => {
 /** The home's lock; with `giveWay`, refused while a restart replaces the server, as `claimHome` describes. */
 const lockHome = (home: Home, giveWay = false) =>
   Effect.acquireRelease(
-    Effect.suspend((): Effect.Effect<Database, HomeTaken | ForeignHome> => {
+    Effect.suspend(() => {
       const lock = tryLock(home.dir, home.lock, LOCK_WAIT_MS)
       if (!lock) return Effect.fail(new HomeTaken({ dir: home.dir }))
       if (giveWay && replacing(home)) {
         lock.close()
         return Effect.fail(new HomeTaken({ dir: home.dir }))
       }
-      return Effect.andThen(clearSocket(home), ownDatabase(home)).pipe(
-        Effect.as(lock),
-        Effect.tapError(() => Effect.sync(() => lock.close())),
-      )
+      rmSync(home.socket, { force: true })
+      return Effect.succeed(lock)
     }),
     (lock) =>
       Effect.sync(() => {
@@ -179,15 +118,12 @@ export const replaceServer = <R>(home: Home, stop: Effect.Effect<boolean, never,
           if (stopped) deadline = Date.now() + REPLACE_WAIT_MS
           return lockHome(home)
         }).pipe(
-          Effect.tapError((error) => {
-            if (waiting || error._tag !== "HomeTaken") return Effect.void
+          Effect.tapError(() => {
+            if (waiting) return Effect.void
             waiting = true
             return Console.error(`waiting for the server that holds ${home.dir} to stop`)
           }),
-          Effect.retry({
-            schedule: Schedule.spaced("100 millis"),
-            while: (error) => error._tag === "HomeTaken" && Date.now() < deadline,
-          }),
+          Effect.retry({ schedule: Schedule.spaced("100 millis"), while: () => Date.now() < deadline }),
         )
       }),
     (next) => Effect.sync(() => next.close()),

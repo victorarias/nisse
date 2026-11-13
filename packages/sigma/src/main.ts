@@ -6,15 +6,7 @@ import { Argument, Command, Flag } from "effect/cli"
 import type { ExtensionInfo } from "@sigma/protocol"
 import { Client, clientLayer, REFUSAL_FILE, ServerFailed, serverAnswers, type StartOptions } from "./client.ts"
 import { exec } from "./exec.ts"
-import {
-  claimHome,
-  defaultHome,
-  type ForeignHome,
-  HOME_TAKEN_EXIT,
-  type Home,
-  type HomeTaken,
-  replaceServer,
-} from "./home.ts"
+import { claimHome, defaultHome, HOME_TAKEN_EXIT, type Home, type HomeTaken, replaceServer } from "./home.ts"
 import { openAiOptions, type ProviderOptions, readScript } from "./providers.ts"
 import { readHomeConfig } from "./config.ts"
 import { login, logout } from "./login.ts"
@@ -103,13 +95,6 @@ const refuse = (reason: string, exitCode = 1) =>
     }),
   )
 
-/** Refuses to serve, and tells the client that started this server why through its refusal file. */
-const refuseToServe = (reason: string, refusalFile: string | undefined) =>
-  Effect.andThen(
-    Effect.sync(() => refusalFile !== undefined && writeFileSync(refusalFile, reason)),
-    refuse(reason),
-  )
-
 const homeTaken = (home: Home) => refuse(`another server already serves ${home.dir}`, HOME_TAKEN_EXIT)
 
 /**
@@ -170,7 +155,7 @@ const providerOptions = (home: Home) =>
 // ends the process.
 const serveHome = <A, R>(
   home: Home,
-  claimed: Effect.Effect<A, HomeTaken | ForeignHome, R>,
+  claimed: Effect.Effect<A, HomeTaken, R>,
   readOnly: boolean,
   refusalFile: string | undefined,
 ) =>
@@ -185,9 +170,10 @@ const serveHome = <A, R>(
     ).pipe(
       Effect.as(true),
       Effect.catchTag("HomeTaken", () => Effect.as(homeTaken(home), false)),
-      Effect.catchTags({
-        ConfigError: (error) => Effect.as(refuseToServe(`${error.path}: ${error.message}`, refusalFile), false),
-        ForeignHome: (error) => Effect.as(refuseToServe(error.reason, refusalFile), false),
+      Effect.catchTag("ConfigError", (error) => {
+        const reason = `${error.path}: ${error.message}`
+        if (refusalFile !== undefined) writeFileSync(refusalFile, reason)
+        return Effect.as(refuse(reason), false)
       }),
     )
     if (served) process.exit(0)
