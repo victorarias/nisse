@@ -1018,13 +1018,18 @@
             "type": "string",
             "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
+          "author": {
+            "type": "string",
+            "description": "Who asked; the `/compact` input of a provider that compacts in a run names them."
+          },
           "instructions": {
             "type": "string",
             "description": "What the summary should keep, beside what it always keeps."
           }
         },
         "required": [
-          "conversation"
+          "conversation",
+          "author"
         ],
         "additionalProperties": true
       },
@@ -1039,7 +1044,7 @@
               "failed",
               "stopped"
             ],
-            "description": "compacted: its pi.compaction entry is placed, at once or, behind a run in flight, at the run's next step. nothing_to_compact: the context is no longer than what a summary keeps. stopped: interrupted before it ended."
+            "description": "compacted: its pi.compaction entry is placed, at once or, behind a run in flight, at the run's next step or after it. nothing_to_compact: there was not enough context to summarize. stopped: interrupted or withdrawn before it ended."
           },
           "message": {
             "type": "string",
@@ -1062,9 +1067,6 @@
           },
           {
             "$ref": "#/$defs/TakesNoInputEncoded"
-          },
-          {
-            "$ref": "#/$defs/CannotCompactEncoded"
           }
         ]
       },
@@ -2870,25 +2872,6 @@
       "required": [
         "_tag",
         "entry",
-        "message"
-      ],
-      "additionalProperties": true
-    },
-    "CannotCompactEncoded": {
-      "type": "object",
-      "properties": {
-        "_tag": {
-          "type": "string",
-          "enum": [
-            "CannotCompact"
-          ]
-        },
-        "message": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "_tag",
         "message"
       ],
       "additionalProperties": true

@@ -671,11 +671,6 @@ export class ConversationBusy extends Schema.TaggedError<ConversationBusy>()("Co
   }
 }
 
-/** The conversation cannot compact now: `message` says why, such as a provider that compacts by itself. */
-export class CannotCompact extends Schema.TaggedError<CannotCompact>()("CannotCompact", {
-  message: Schema.String,
-}) {}
-
 /** `conversation/continue` has nothing to go on with: no run has ended, or the last one answered. */
 export class NothingToContinue extends Schema.TaggedError<NothingToContinue>()("NothingToContinue", {
   message: Schema.String,
@@ -731,12 +726,17 @@ export const Reset = Rpc.make("conversation/reset", {
 })
 
 /**
- * Summarizes the context now. pi.live's `compactions` shows it running and `compactionFailure` why one failed; its
- * pi.compaction entry replaces what it summarized.
+ * Summarizes the context now; its pi.compaction entry replaces what it summarized. On a model nisse runs, pi.live's
+ * `compactions` shows it running and `compactionFailure` why one failed. A provider that runs its own loop, such as
+ * Claude Code, compacts in a run: the conversation gets the input `/compact [instructions]` from `author`, queued
+ * behind a run in flight.
  */
 export const Compact = Rpc.make("conversation/compact", {
   payload: {
     conversation: ConversationId,
+    author: Schema.String.annotate({
+      description: "Who asked; the `/compact` input of a provider that compacts in a run names them.",
+    }),
     instructions: Schema.optionalKey(
       Schema.String.annotate({ description: "What the summary should keep, beside what it always keeps." }),
     ),
@@ -744,11 +744,11 @@ export const Compact = Rpc.make("conversation/compact", {
   success: Schema.Struct({
     outcome: Schema.Literals(["compacted", "nothing_to_compact", "failed", "stopped"]).annotate({
       description:
-        "compacted: its pi.compaction entry is placed, at once or, behind a run in flight, at the run's next step. nothing_to_compact: the context is no longer than what a summary keeps. stopped: interrupted before it ended.",
+        "compacted: its pi.compaction entry is placed, at once or, behind a run in flight, at the run's next step or after it. nothing_to_compact: there was not enough context to summarize. stopped: interrupted or withdrawn before it ended.",
     }),
     message: Schema.optionalKey(Schema.String.annotate({ description: "Why it failed." })),
   }).annotate({ description: "How the compaction ended; the call answers once it has." }),
-  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, CannotCompact]),
+  error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput]),
 })
 
 /** Starts a run with no new input after one that did not answer: it failed, was interrupted or hit a limit. */

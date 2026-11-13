@@ -2181,7 +2181,11 @@ test("compact-rpc, compaction-live-status: compacting shows live, then a summary
   const conversation = await start(client, server.home.dir)
   const view = watchView(client, conversation)
   const compact = (instructions?: string) =>
-    client.call("conversation/compact", { conversation, ...(instructions === undefined ? {} : { instructions }) })
+    client.call("conversation/compact", {
+      conversation,
+      author: "ada",
+      ...(instructions === undefined ? {} : { instructions }),
+    })
   expect((await compact()).result).toEqual({ outcome: "nothing_to_compact" })
   await submit(client, conversation, long)
   await view.until(settled(1))
@@ -2464,7 +2468,7 @@ test("serve-read-only: a read-only server shows a home's conversations without r
           author: "bo",
           selection: { provider: "script", model: "script" },
         }),
-        client.call("conversation/compact", { conversation }),
+        client.call("conversation/compact", { conversation, author: "bo" }),
         client.call("conversation/continue", { conversation }),
         client.call("submission/withdraw", { conversation, submission: 1 }),
         client.call("approval/resolve", { conversation, approval: "1", author: "bo", allow: true }),

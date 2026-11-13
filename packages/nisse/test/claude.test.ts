@@ -741,6 +741,28 @@ test("claude-compact, claude-session-gone: a resume at a position Claude Code co
   expect(runEnds(session.view.seen()).map((end) => end.outcome)).toEqual(["answered", "answered", "answered"])
 })
 
+test("compact-rpc, claude-compact: conversation/compact compacts a Claude conversation by sending Claude Code /compact with the instructions, and answers once it has", async () => {
+  using claude = new FakeClaude("compaction_resume")
+  // A run resumes at the position only when no process stayed live, as in the recording.
+  await using session = await conversationWith(claude, { approvals: "auto" }, { claudeIdle: 0 })
+  await session.submit("Remember the word PLUM. Reply with exactly: noted")
+  await session.view.until(settled(1))
+  const compacted = await session.client.call("conversation/compact", {
+    conversation: session.conversation,
+    author: "ada",
+    instructions: "keep the word",
+  })
+  expect(compacted.result).toEqual({ outcome: "compacted" })
+  expect(claude.userTexts(1)).toEqual([["/compact keep the word"]])
+  await session.view.until(settled(2))
+  expect(inputs(session.view.seen())).toEqual([
+    "ada: Remember the word PLUM. Reply with exactly: noted",
+    "ada: /compact keep the word",
+  ])
+  const compaction = session.view.seen().find((entry) => entry.kind === "pi.compaction")!
+  expect((compaction.model![0] as { content: string }).content).toContain("PLUM")
+})
+
 test("claude-clear: /clear starts a new context in the transcript, and the next run starts a Claude Code session without it", async () => {
   using claude = new FakeClaude("clear")
   // The recording started a process per run.
