@@ -15,13 +15,17 @@ harness with, which choose `claude.run` for a model whose provider `options.sett
   a reset, a compaction or another model's answer came after it. A session Claude Code no longer has, or no longer
   holds the position of (as after its compaction), is dropped and the run starts over in a fresh one, once. The
   `claude.subagent` task holds the run of a hosted subagent's conversation until Claude Code says the subagent ended.
-- `src/process.ts`: one Claude Code process. A call Claude Code makes is committed as an assistant entry and a live slot
-  before its PreToolUse hook is answered, with the extensions' `beforeTool` applied; a call it would ask about waits on
-  `nisse.approvals`, keyed `<task>/<call>`, where the first answer counts. An extension's tool reaches Claude Code over
-  nisse's in-process MCP server and runs as a `pi.tool` task. `afterTool` runs through PostToolUse: Claude Code takes a
-  changed result only for `Read`, so another tool's change is reported. Steers placed at a round of results are sent
-  with priority `next`. Claude Code's compaction is kept as a compaction entry holding its summary, `/clear` as a
-  reset. Usage is taken from `modelUsage`, which each process reports as running totals of its own.
+- `src/process.ts`: one Claude Code process, started through the Claude Agent SDK at a resume, a fork or a fresh
+  session. It owns the query, the inbox its messages go through, the frame pump, the callbacks Claude Code makes, its
+  session id across `/clear`, and its usage: `modelUsage` reports running totals of the process's own. `serve` hands its
+  frames and callbacks to one run until the run ends; `claude.run` opens one process per run.
+- `src/serving.ts`: what one run does with its process's frames. A call Claude Code makes is committed as an assistant
+  entry and a live slot before its PreToolUse hook is answered, with the extensions' `beforeTool` applied; a call it
+  would ask about waits on `nisse.approvals`, keyed `<task>/<call>`, where the first answer counts. An extension's tool
+  reaches Claude Code over nisse's in-process MCP server and runs as a `pi.tool` task. `afterTool` runs through
+  PostToolUse: Claude Code takes a changed result only for `Read`, so another tool's change is reported. Steers placed
+  at a round of results are sent with priority `next`. Claude Code's compaction is kept as a compaction entry holding
+  its summary, `/clear` as a reset. The subagents a run hosts end with the process.
 - `src/session.ts`: `claude.session`, the conversation's position in Claude Code's session: the session, the newest
   message nisse committed, and the newest entry Claude Code was shown. Rewindable, so a fork sees it as of its fork.
 - `src/retell.ts`: what a session is told of the conversation: the entries a resumed one missed, or, for a fresh one,
