@@ -88,10 +88,30 @@
           "instructions": {
             "type": "string",
             "description": "Instructions the model follows in this conversation, beside its own. Its subagents don't get them."
+          },
+          "author": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
+            "description": "Who started it; a new conversation's first entry, sigma.started, names them. An id that names a conversation records nothing."
           }
         },
         "required": [
-          "cwd"
+          "cwd",
+          "author"
         ],
         "additionalProperties": true
       },
@@ -319,7 +339,22 @@
             "description": "Submitting again with the same id is answered once. The input's sigma.user entry keeps it in its data, or its sigma.withdrawn entry when it is withdrawn before it runs."
           },
           "author": {
-            "type": "string",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
             "description": "Who wrote it; the input is placed as a sigma.user entry naming them, and waits in pi.inbox with them."
           },
           "text": {
@@ -783,7 +818,22 @@
             "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "author": {
-            "type": "string",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
             "description": "Who switched it; the transcript names them."
           },
           "selection": {
@@ -888,10 +938,30 @@
           "conversation": {
             "type": "string",
             "description": "Stops its run; what was said stays."
+          },
+          "author": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
+            "description": "Who interrupted it; a sigma.interrupted entry names them."
           }
         },
         "required": [
-          "conversation"
+          "conversation",
+          "author"
         ],
         "additionalProperties": true
       },
@@ -927,11 +997,31 @@
           "id": {
             "type": "string",
             "description": "The id to name the fork by, as conversation/start takes one."
+          },
+          "author": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
+            "description": "Who forked it; the fork's first entry of its own, sigma.forked, names them."
           }
         },
         "required": [
           "conversation",
-          "at"
+          "at",
+          "author"
         ],
         "additionalProperties": true
       },
@@ -978,7 +1068,22 @@
             "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "author": {
-            "type": "string",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
             "description": "Who reset it; its pi.reset entry names them."
           },
           "handoff": {
@@ -1019,8 +1124,23 @@
             "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "author": {
-            "type": "string",
-            "description": "Who asked; the `/compact` input of a provider that compacts in a run names them."
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
+            "description": "Who asked; the pi.compaction entry names them, or the `/compact` input of a provider that compacts in a run."
           },
           "instructions": {
             "type": "string",
@@ -1079,10 +1199,30 @@
           "conversation": {
             "type": "string",
             "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
+          },
+          "author": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
+            "description": "Who continued it; a sigma.continued entry names them."
           }
         },
         "required": [
-          "conversation"
+          "conversation",
+          "author"
         ],
         "additionalProperties": true
       },
@@ -1134,11 +1274,31 @@
             "minimum": -9007199254740991,
             "maximum": 9007199254740991,
             "description": "An `id` of the view's pi.inbox `items`."
+          },
+          "author": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
+            "description": "Who withdrew it; its sigma.withdrawn entry names them."
           }
         },
         "required": [
           "conversation",
-          "submission"
+          "submission",
+          "author"
         ],
         "additionalProperties": true
       },
@@ -1184,7 +1344,22 @@
             "description": "A conversation's id: the one its client chose at conversation/start, or else the number it gave."
           },
           "author": {
-            "type": "string",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
             "description": "Who changed it; its sigma.configured entry names them."
           },
           "instructions": {
@@ -1703,7 +1878,22 @@
             "description": "A key of the view's sigma.approvals `requests`: the call's tool task."
           },
           "author": {
-            "type": "string",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Who it is to the program that runs sigma; sigma never reads it."
+              },
+              "name": {
+                "type": "string",
+                "description": "What people see."
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": true,
             "description": "Who answers; the transcript names them."
           },
           "allow": {

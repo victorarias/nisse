@@ -57,15 +57,15 @@ Preconditions:
   whose `sections` hold
   `"instructions": "<instructions>\nanswer in French\n</instructions>"`.
 - **Clear over the wire.** Run
-  `drive.ts r rpc conversation/configure '{"conversation": "talk", "author": "bo", "instructions": null, "maxTurns": null}'`:
+  `drive.ts r rpc conversation/configure '{"conversation": "talk", "author": {"id": "bo", "name": "bo"}, "instructions": null, "maxTurns": null}'`:
   `"result": null`, and the TUI draws
   `◆ bo cleared the instructions and removed the turn limit`. Send `two`:
   `conversation/context` now ends with a message whose `sections` hold
   `"instructions": null`. `drive.ts r watch talk --save configured` holds
   three `sigma.configured` entries:
-  `{"author": "ada", "instructions": "answer in French"}`,
-  `{"author": "ada", "maxTurns": 3}` and
-  `{"author": "bo", "instructions": null, "maxTurns": null}`.
+  `{"author": {"id": "ada", "name": "ada"}, "instructions": "answer in French"}`,
+  `{"author": {"id": "ada", "name": "ada"}, "maxTurns": 3}` and
+  `{"author": {"id": "bo", "name": "bo"}, "instructions": null, "maxTurns": null}`.
   `"maxTurns": 0` fails with a message that holds
   `Expected a value greater than or equal to 1` and `maxTurns`.
 - **The limit ends a run.** See [Run limits and resilience](./run-resilience.md).

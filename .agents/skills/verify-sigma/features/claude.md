@@ -232,13 +232,13 @@ Preconditions:
 - **Switch model** (`switch_model`). Run
   `drive.ts r sigma exec --provider claude --model haiku 'Reply with exactly: one'`:
   stdout `one`. Run
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "ada", "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}'`,
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": {"id": "ada", "name": "ada"}, "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}'`,
   then `drive.ts r sigma exec --conversation <id> 'Reply with exactly: two'`:
   stdout `two`, and no `"spawn": 1`: `"spawn": 0` received
   `{"subtype":"set_model","model":"sonnet"}`, then
   `{"subtype":"apply_flag_settings","settings":{"effortLevel":"low"}}`, then
   the prompt. Clear the effort with
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "ada", "selection": {"provider": "claude", "model": "sonnet"}}'`,
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": {"id": "ada", "name": "ada"}, "selection": {"provider": "claude", "model": "sonnet"}}'`,
   then
   `drive.ts r sigma exec --conversation <id> 'What were your two previous replies? Reply with just them, separated by a comma.'`:
   stdout `one, two`. The log's `"spawn": 1` argv holds `--model=sonnet`, no
@@ -252,13 +252,13 @@ Preconditions:
   no `systemPrompt`, and its argv line holds `"rootConversation"` set to the
   conversation's id.
 - **Switch to Claude** (`handoff`). Run `drive.ts r serve` and
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "script"}'`.
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp", "provider": "script"}'`.
   Submit three turns, each with
   `drive.ts r watch <id> --submit '<text>' --until run_end`:
   `Remember the word lantern.`, then a 70,000-character turn,
   `"$(head -c 70000 /dev/zero | tr '\0' x)"`, then `Nothing else for now.`
   Run
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "bo", "selection": {"provider": "claude", "model": "haiku"}}'`
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": {"id": "bo", "name": "bo"}, "selection": {"provider": "claude", "model": "haiku"}}'`
   and
   `drive.ts r watch <id> --submit 'Which word did I ask you to remember? Reply with just the word.' --until run_end --save switched`:
   a `sigma.model` entry, then the answer `lantern`. The log's `"spawn": 0` has
@@ -313,7 +313,7 @@ Preconditions:
   `one`. Take the id from `drive.ts r rpc conversation/list`, then
   `drive.ts r watch <id> --until pi.compaction --timeout 300000 --save idle-compaction`:
   within about 3 minutes of the answer, a `sigma.user` entry `/compact` with
-  `"author": "sigma"`, then a `pi.compaction` holding Claude's summary. The log's `"spawn": 0` argv holds
+  `"author": {"id": "sigma", "name": "sigma"}`, then a `pi.compaction` holding Claude's summary. The log's `"spawn": 0` argv holds
   `--settings {"idleCompaction":false}`, it received `/compact` as its second
   user message, and it then has an `"exited"` line: the process closed after
   the compaction, long before the 30 minutes.
@@ -480,7 +480,7 @@ decide instead of them: a `touch` asks, a `Read` does not.
   holds `"model":"claude-haiku-...`.
 - **Switch model.** `drive.ts r sigma exec --provider claude --model haiku 'Reply with exactly: one'`,
   then
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "ada", "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}'`
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": {"id": "ada", "name": "ada"}, "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}'`
   and `drive.ts r sigma exec --conversation <id> 'Reply with exactly: two'`:
   stdout `two`, and the session file (the newest under your Claude Code
   configuration's `projects/`) shows a `/model` command, `Set model to

@@ -14,6 +14,16 @@ export type ConversationId = typeof ConversationId.Type
 
 export const Json = Schema.Unknown.annotate({ description: "Any JSON value." })
 
+/**
+ * Who made a change: two strings the client chooses, such as `{ id: "person:p-7k3f9m", name: "Erika" }`. Sigma stores
+ * both on the change's entry, shows the name, and never interprets either.
+ */
+export const Author = Schema.Struct({
+  id: Schema.String.annotate({ description: "Who it is to the program that runs sigma; sigma never reads it." }),
+  name: Schema.String.annotate({ description: "What people see." }),
+})
+export type Author = typeof Author.Type
+
 export const EntryRecord = Schema.Struct({
   id: Schema.Int,
   conversationId: Schema.Int,
@@ -40,8 +50,23 @@ export const MODEL_KIND = "sigma.model"
 /** A person's input: the entry its user message is placed as, with data `{ author, requestId }`. */
 export const USER_KIND = "sigma.user"
 
-/** A person's input withdrawn while it waited, as an interrupt withdraws what waits, with data `{ requestId }`. */
+/**
+ * A person's input withdrawn while it waited, with data `{ requestId, author? }`: `author` when someone withdrew it
+ * with submission/withdraw; none when an interrupt or a failed run withdrew what waited.
+ */
 export const WITHDRAWN_KIND = "sigma.withdrawn"
+
+/** An entry `{ author }`, a conversation's first: someone started it with conversation/start. */
+export const STARTED_KIND = "sigma.started"
+
+/** An entry `{ author }`, a fork's first of its own: someone forked it with conversation/fork. */
+export const FORKED_KIND = "sigma.forked"
+
+/** An entry `{ author }`: someone asked to interrupt the conversation; its run, if one worked, ends interrupted. */
+export const INTERRUPTED_KIND = "sigma.interrupted"
+
+/** An entry `{ author }`: someone continued the conversation after a run that did not answer; a run starts after it. */
+export const CONTINUED_KIND = "sigma.continued"
 
 export const RunEnd = Schema.Struct({
   outcome: Outcome,
@@ -264,6 +289,9 @@ export const StartConversation = Rpc.make("conversation/start", {
           "Instructions the model follows in this conversation, beside its own. Its subagents don't get them.",
       }),
     ),
+    author: Author.annotate({
+      description: `Who started it; a new conversation's first entry, ${STARTED_KIND}, names them. An id that names a conversation records nothing.`,
+    }),
   },
   success: Schema.Struct({
     conversation: ConversationId,
@@ -289,7 +317,7 @@ export const Submit = Rpc.make("conversation/submit", {
     requestId: Schema.String.annotate({
       description: `Submitting again with the same id is answered once. The input's ${USER_KIND} entry keeps it in its data, or its ${WITHDRAWN_KIND} entry when it is withdrawn before it runs.`,
     }),
-    author: Schema.String.annotate({
+    author: Author.annotate({
       description: `Who wrote it; the input is placed as a ${USER_KIND} entry naming them, and waits in pi.inbox with them.`,
     }),
     text: Schema.String,
@@ -318,7 +346,10 @@ export const Watch = Rpc.make("conversation/watch", {
 })
 
 export const Interrupt = Rpc.make("conversation/interrupt", {
-  payload: { conversation: ConversationId.annotate({ description: "Stops its run; what was said stays." }) },
+  payload: {
+    conversation: ConversationId.annotate({ description: "Stops its run; what was said stays." }),
+    author: Author.annotate({ description: `Who interrupted it; a ${INTERRUPTED_KIND} entry names them.` }),
+  },
   error: Schema.Union([ReadOnlyServer, NoSuchConversation]),
 })
 
@@ -328,7 +359,7 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
     approval: Schema.String.annotate({
       description: "A key of the view's sigma.approvals `requests`: the call's tool task.",
     }),
-    author: Schema.String.annotate({ description: "Who answers; the transcript names them." }),
+    author: Author.annotate({ description: "Who answers; the transcript names them." }),
     allow: Schema.Boolean,
   },
   success: Schema.Struct({
@@ -402,7 +433,7 @@ export const ListConversations = Rpc.make("conversation/list", {
 export const SelectModel = Rpc.make("conversation/select_model", {
   payload: {
     conversation: ConversationId,
-    author: Schema.String.annotate({ description: "Who switched it; the transcript names them." }),
+    author: Author.annotate({ description: "Who switched it; the transcript names them." }),
     selection: ModelSelection,
   },
   error: Schema.Union([ReadOnlyServer, NoSuchConversation, UnknownProvider, UnknownEffort, TakesNoInput]),
@@ -688,7 +719,10 @@ export class NoSuchSubmission extends Schema.TaggedError<NoSuchSubmission>()("No
 /** A person started a new context: an entry of this kind, `{ author }`, whose `model` carries the handoff, if any. */
 export const RESET_KIND = "pi.reset"
 
-/** A summary that replaced earlier context: an entry of this kind, whose `data.reason` says what started it. */
+/**
+ * A summary that replaced earlier context: an entry of this kind, whose `data.reason` says what started it, and whose
+ * `data.author` names who asked for a manual one.
+ */
 export const COMPACTION_KIND = "pi.compaction"
 
 /** An entry `{ author, instructions?, maxTurns? }`: someone changed the conversation's settings; null clears one. */
@@ -701,6 +735,9 @@ export const Fork = Rpc.make("conversation/fork", {
     id: Schema.optionalKey(
       Schema.String.annotate({ description: "The id to name the fork by, as conversation/start takes one." }),
     ),
+    author: Author.annotate({
+      description: `Who forked it; the fork's first entry of its own, ${FORKED_KIND}, names them.`,
+    }),
   },
   success: Schema.Struct({
     conversation: ConversationId.annotate({
@@ -717,7 +754,7 @@ export const Fork = Rpc.make("conversation/fork", {
 export const Reset = Rpc.make("conversation/reset", {
   payload: {
     conversation: ConversationId,
-    author: Schema.String.annotate({ description: `Who reset it; its ${RESET_KIND} entry names them.` }),
+    author: Author.annotate({ description: `Who reset it; its ${RESET_KIND} entry names them.` }),
     handoff: Schema.optionalKey(
       Schema.String.annotate({ description: "The first message of the new context, such as a brief of the work." }),
     ),
@@ -734,8 +771,8 @@ export const Reset = Rpc.make("conversation/reset", {
 export const Compact = Rpc.make("conversation/compact", {
   payload: {
     conversation: ConversationId,
-    author: Schema.String.annotate({
-      description: "Who asked; the `/compact` input of a provider that compacts in a run names them.",
+    author: Author.annotate({
+      description: `Who asked; the ${COMPACTION_KIND} entry names them, or the \`/compact\` input of a provider that compacts in a run.`,
     }),
     instructions: Schema.optionalKey(
       Schema.String.annotate({ description: "What the summary should keep, beside what it always keeps." }),
@@ -753,7 +790,10 @@ export const Compact = Rpc.make("conversation/compact", {
 
 /** Starts a run with no new input after one that did not answer: it failed, was interrupted or hit a limit. */
 export const Continue = Rpc.make("conversation/continue", {
-  payload: { conversation: ConversationId },
+  payload: {
+    conversation: ConversationId,
+    author: Author.annotate({ description: `Who continued it; a ${CONTINUED_KIND} entry names them.` }),
+  },
   success: Schema.Struct({ submission: Schema.Int }),
   error: Schema.Union([ReadOnlyServer, NoSuchConversation, TakesNoInput, ConversationBusy, NothingToContinue]),
 })
@@ -762,6 +802,7 @@ export const Withdraw = Rpc.make("submission/withdraw", {
   payload: {
     conversation: ConversationId,
     submission: Schema.Int.annotate({ description: "An `id` of the view's pi.inbox `items`." }),
+    author: Author.annotate({ description: `Who withdrew it; its ${WITHDRAWN_KIND} entry names them.` }),
   },
   success: Schema.Struct({
     result: Schema.Literals(["withdrawn", "already_placed", "settled"]).annotate({
@@ -775,7 +816,7 @@ export const Withdraw = Rpc.make("submission/withdraw", {
 export const Configure = Rpc.make("conversation/configure", {
   payload: {
     conversation: ConversationId,
-    author: Schema.String.annotate({ description: `Who changed it; its ${CONFIGURED_KIND} entry names them.` }),
+    author: Author.annotate({ description: `Who changed it; its ${CONFIGURED_KIND} entry names them.` }),
     instructions: Schema.optionalKey(
       Schema.NullOr(Schema.String).annotate({
         description: "The model's instructions beside its own; null clears them.",

@@ -109,7 +109,7 @@ Preconditions:
   `drive.ts r sigma exec --provider openai --model gpt-5.5 --effort low hello`:
   exit 0, `Hello there`. Take the id from `drive.ts r rpc conversation/list`,
   run
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "bo", "selection": {"provider": "openai", "model": "gpt-5.5", "effort": "high"}}'`,
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": {"id": "bo", "name": "bo"}, "selection": {"provider": "openai", "model": "gpt-5.5", "effort": "high"}}'`,
   then `drive.ts r sigma exec --conversation <id> hello`: exit 0.
   `fake-openai.ndjson` shows request 1 with `"reasoning": {"effort": "low"}`
   and request 2 with `"effort": "high"` and the first exchange in its

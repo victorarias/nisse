@@ -147,7 +147,7 @@ Preconditions:
   ```
 
   run `drive.ts r serve`,
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "script"}'`
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp", "provider": "script"}'`
   and
   `drive.ts r watch <id> --submit delegate --until run_end --timeout 30000 --save message`:
   `list_agents` returns
@@ -190,8 +190,8 @@ Preconditions:
   subagent's id from `drive.ts r rpc conversation/list`. Run
   `drive.ts r watch <subagent id> --save scribe-asking` and take the key of
   the request in its `docs.sigma.approvals.requests`, the approval id. Run
-  `drive.ts r rpc approval/resolve '{"conversation": "<subagent id>", "approval": "<approval>", "author": "bo", "allow": true}'`:
-  `"accepted": true`; the same call with `"author": "cy"` and
+  `drive.ts r rpc approval/resolve '{"conversation": "<subagent id>", "approval": "<approval>", "author": {"id": "bo", "name": "bo"}, "allow": true}'`:
+  `"accepted": true`; the same call with `"author": {"id": "cy", "name": "cy"}` and
   `"allow": false` answers `"accepted": false`. `drive.ts r watch <subagent id>`
   shows the `sigma.approval` by `bo`, the `pi.tool-result` `scribbled`, then
   `wrote it`, and `drive.ts r watch <id>` ends `the scribe is done`.
@@ -284,7 +284,7 @@ Preconditions:
   the subagent's id from the `details` of the `spawn_agent` result.
   `drive.ts r watch <subagent id>` shows its `bash` call in
   `sigma.approvals`. Run
-  `drive.ts r rpc conversation/interrupt '{"conversation": "<id>"}'` (result
+  `drive.ts r rpc conversation/interrupt '{"author": {"id": "ada", "name": "ada"}, "conversation": "<id>"}'` (result
   `null`) on the root only. `drive.ts r watch <id>` and
   `drive.ts r watch <subagent id>` each end with a `sigma.run_end`
   `interrupted`, no `pi.live` run, and the subagent's approval requests are
@@ -305,7 +305,7 @@ Preconditions:
   ```
 
   run `drive.ts r serve`,
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "script"}'`
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp", "provider": "script"}'`
   and
   `drive.ts r watch <id> --submit 'take notes' --until run_end --save followup`:
   each `wait_agent` returns `Wait completed.`, each followed by a
@@ -398,7 +398,7 @@ Preconditions:
 
   Run `drive.ts r serve` with `CLAUDE_CONFIG_DIR` set to an empty folder, so
   your own agent types stay out,
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp/sigma-verify/r/project", "provider": "openai"}'`
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp/sigma-verify/r/project", "provider": "openai"}'`
   and
   `drive.ts r watch <id> --submit 'Get the diff reviewed.' --until run_end --save typed`:
   the answer is `The reviewer approves.`, and `conversation/list` shows the
@@ -423,7 +423,7 @@ Preconditions:
   then `drive.ts r tui start --conversation <subagent id>` and
   `drive.ts r tui wait 'INPUT GOES THROUGH ITS PARENT'`: its prompt, the call
   `✓ allowed by ada`, and `Made made.txt.`
-  `drive.ts r rpc conversation/submit '{"conversation": "<subagent id>", "author": "ada", "text": "hi", "requestId": "r1"}'`
+  `drive.ts r rpc conversation/submit '{"conversation": "<subagent id>", "author": {"id": "ada", "name": "ada"}, "text": "hi", "requestId": "r1"}'`
   fails with `TakesNoInput`.
 
 - **Claude subagent, plain** (`--fake-claude subagent`). Send the same prompt
@@ -443,7 +443,7 @@ Preconditions:
 
 - **Claude subagent stopped over the wire** (`--fake-claude subagent_stopped`).
   Send the same prompt and wait for `(general-purpose) working`. Run
-  `drive.ts r rpc conversation/interrupt '{"conversation": "<subagent id>", "author": "ada"}'`,
+  `drive.ts r rpc conversation/interrupt '{"conversation": "<subagent id>", "author": {"id": "ada", "name": "ada"}}'`,
   then wait for `READY`: the card reads `interrupted`, and the parent goes on
   to `The subagent was stopped.` `evidence/fake-claude/log.ndjson` holds a
   `stop_task` request.

@@ -9,6 +9,7 @@ import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import { deadline, RawClient } from "./support/raw.ts"
 import {
+  person,
   scriptEnv,
   runEnds,
   runningServer,
@@ -134,8 +135,9 @@ test("crash-limit, conversation-ended: a run that keeps crashing the server stop
   for (let attempt = 1; attempt <= 3; attempt++) {
     const server = await serving(env)
     const client = await RawClient.connect(sigmaHome.socket)
-    conversation ??= (await client.call("conversation/start", { cwd: sigmaHome.dir, approvals: "auto" })).result
-      .conversation as string
+    conversation ??= (
+      await client.call("conversation/start", { author: person("ada"), cwd: sigmaHome.dir, approvals: "auto" })
+    ).result.conversation as string
     if (attempt === 1) await submit(client, conversation, "go")
     // Each server's model calls again, after its call was cut off; kill the server while that call runs.
     expect(await deadline(readFile(fifo, "utf8"), 10_000, `call ${attempt} started`)).toBe("ran\n")
@@ -165,7 +167,7 @@ test("start-with-id: a conversation opened on a client's id survives a restart, 
   const id = crypto.randomUUID()
   const first = await serving(env)
   let client = await RawClient.connect(sigmaHome.socket)
-  expect((await client.call("conversation/start", { id, cwd: sigmaHome.dir })).result).toEqual({
+  expect((await client.call("conversation/start", { author: person("ada"), id, cwd: sigmaHome.dir })).result).toEqual({
     conversation: id,
     model: { provider: "script", model: "script" },
   })
@@ -178,7 +180,7 @@ test("start-with-id: a conversation opened on a client's id survives a restart, 
 
   await serving(env)
   client = await RawClient.connect(sigmaHome.socket)
-  expect((await client.call("conversation/start", { id, cwd: "/elsewhere" })).result).toEqual({
+  expect((await client.call("conversation/start", { author: person("ada"), id, cwd: "/elsewhere" })).result).toEqual({
     conversation: id,
     model: { provider: "script", model: "script" },
   })
@@ -222,8 +224,14 @@ test("reload: a server refuses to start on a config.toml that does not read, and
 
 /** A conversation on the script's code-mode model, whose calls run without asking. */
 const codeModeConversation = async (client: RawClient, cwd: string) =>
-  (await client.call("conversation/start", { cwd, approvals: "auto", model: "script-code-mode" })).result
-    .conversation as string
+  (
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd,
+      approvals: "auto",
+      model: "script-code-mode",
+    })
+  ).result.conversation as string
 
 /** The text of the conversation's `codemode` result. */
 const codemodeResult = (entries: ReadonlyArray<{ kind: string; model?: ReadonlyArray<unknown> }>) =>
@@ -300,7 +308,7 @@ test("codemode-stop: a script stuck in a long built-in stops when its run is int
     "the script searching",
   )
   // Interrupting the run stops the script without waiting for its worker, which goes on searching.
-  await client.call("conversation/interrupt", { conversation })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation })
   await view.until(settled(1), 5000)
   // With the run ended the server stops, and its process ends though the worker still searches.
   expect(await client.call("server/stop", null)).toMatchObject({ result: null })
@@ -317,7 +325,7 @@ test("provider-default: a conversation that names no provider and has no default
     const env = await scriptEnv(sigmaHome)
     const server = await serving(script ? env : { ...env, SIGMA_MODEL_SCRIPT: undefined })
     const client = await RawClient.connect(sigmaHome.socket)
-    const started = await client.call("conversation/start", { cwd: sigmaHome.dir })
+    const started = await client.call("conversation/start", { author: person("ada"), cwd: sigmaHome.dir })
     expect(started.result.model.provider).toBe(provider)
     await client.call("server/stop", null)
     expect(await deadline(server.exited, 5000, "server exit")).toBe(0)
@@ -334,7 +342,12 @@ test("crash-claude-settled: a Claude Code answer committed before the server was
   const first = await serving(env)
   let client = await RawClient.connect(sigmaHome.socket)
   const conversation = (
-    await client.call("conversation/start", { cwd: sigmaHome.dir, provider: "claude", approvals: "auto" })
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: sigmaHome.dir,
+      provider: "claude",
+      approvals: "auto",
+    })
   ).result.conversation as string
   const before = watchView(client, conversation)
   await submit(client, conversation, prompt)
@@ -405,14 +418,14 @@ test("answer-exec-fail: sigma exec exits 1 when an interrupt withdraws its queue
   const env = await scriptEnv(sigmaHome, [{ text: "one two three four five six seven eight nine ten", delayMs: 300 }])
   await serving(env)
   const client = await RawClient.connect(sigmaHome.socket)
-  await client.call("conversation/start", { id: "shared", cwd: sigmaHome.dir })
+  await client.call("conversation/start", { author: person("ada"), id: "shared", cwd: sigmaHome.dir })
   const view = watchView(client, "shared")
   await view.until(() => true)
   await submit(client, "shared", "count")
   const exec = sigma(["exec", "-c", "shared", "second"], env)
   const inbox = (watch: ViewWatch) => (watch.view().docs["pi.inbox"] as { items: Array<unknown> }).items
   await view.until((watch) => inbox(watch).length === 1, 10_000)
-  await client.call("conversation/interrupt", { conversation: "shared" })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation: "shared" })
   const result = await finished(exec)
   expect(result).toMatchObject({ code: 1, stdout: "" })
   expect(result.stderr).toContain("the prompt was withdrawn before it ran")
@@ -427,7 +440,7 @@ test("answer-exec: sigma exec whose prompt waits behind a run that fails prints 
   ])
   await serving(env)
   const client = await RawClient.connect(sigmaHome.socket)
-  await client.call("conversation/start", { id: "shared", cwd: sigmaHome.dir })
+  await client.call("conversation/start", { author: person("ada"), id: "shared", cwd: sigmaHome.dir })
   const view = watchView(client, "shared")
   await view.until(() => true)
   await submit(client, "shared", "count")
@@ -613,13 +626,14 @@ test("reopen-continue: sigma exec --conversation continues a conversation by its
   ])
   // A conversation started with a chosen id answers to its number too, by the chosen id every call names it by.
   const client = await RawClient.connect(sigmaHome.socket)
-  await client.call("conversation/start", { id: "picked-2", cwd: sigmaHome.dir })
+  await client.call("conversation/start", { author: person("ada"), id: "picked-2", cwd: sigmaHome.dir })
   const watch = watchView(client, "picked-2")
   await watch.until(() => true)
   const number = String(watch.view().conversation.id)
-  expect((await client.call("conversation/start", { id: number, cwd: sigmaHome.dir })).result.conversation).toBe(
-    "picked-2",
-  )
+  expect(
+    (await client.call("conversation/start", { author: person("ada"), id: number, cwd: sigmaHome.dir })).result
+      .conversation,
+  ).toBe("picked-2")
   client.close()
   expect(await finished(sigma(["exec", "-c", number, "by number"], env))).toMatchObject({
     code: 0,
@@ -854,8 +868,14 @@ test("answer-exec, wire-dropped: a sigma exec whose prompt waits, runs and ends 
   ]
   await using server = await runningServer(script, { home: sigmaHome, connectionQueue: 16 })
   const client = await RawClient.connect(server.home.socket)
-  const conversation = (await client.call("conversation/start", { cwd: sigmaHome.dir, approvals: "auto", id: "gated" }))
-    .result.conversation as string
+  const conversation = (
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: sigmaHome.dir,
+      approvals: "auto",
+      id: "gated",
+    })
+  ).result.conversation as string
   const watch = watchView(client, conversation)
   await submit(client, conversation, "open the gate")
   await watch.until((current) => current.view().docs["pi.live"] !== undefined)
@@ -888,8 +908,14 @@ test("answer-exec-fail, wire-dropped: a sigma exec dropped while an interrupt wi
   ]
   await using server = await runningServer(script, { home: sigmaHome, connectionQueue: 16 })
   const client = await RawClient.connect(server.home.socket)
-  const conversation = (await client.call("conversation/start", { cwd: sigmaHome.dir, approvals: "auto", id: "busy" }))
-    .result.conversation as string
+  const conversation = (
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: sigmaHome.dir,
+      approvals: "auto",
+      id: "busy",
+    })
+  ).result.conversation as string
   const watch = watchView(client, conversation)
   await submit(client, conversation, "count")
   await watch.until((current) => current.view().docs["pi.live"] !== undefined)
@@ -898,7 +924,7 @@ test("answer-exec-fail, wire-dropped: a sigma exec dropped while an interrupt wi
     ((current.view().docs["pi.inbox"] as { items?: unknown[] } | undefined)?.items ?? []).length === 1
   await watch.until(waiting)
   exec.kill("SIGSTOP")
-  await client.call("conversation/interrupt", { conversation })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation })
   await watch.until(settled(1))
   await submit(client, conversation, "read the note")
   await watch.until(settled(2))
@@ -918,7 +944,7 @@ test("answer-exec-fail: sigma exec exits 1 when one interrupt withdraws its prom
   const env = await scriptEnv(sigmaHome, [{ text: "one two three four five six seven eight nine ten", delayMs: 300 }])
   await serving(env)
   const client = await RawClient.connect(sigmaHome.socket)
-  await client.call("conversation/start", { id: "shared", cwd: sigmaHome.dir })
+  await client.call("conversation/start", { author: person("ada"), id: "shared", cwd: sigmaHome.dir })
   const view = watchView(client, "shared")
   await view.until(() => true)
   await submit(client, "shared", "count")
@@ -928,7 +954,7 @@ test("answer-exec-fail: sigma exec exits 1 when one interrupt withdraws its prom
   // More prompts wait behind exec's than a watch's window keeps, so the commit that withdraws them all slides exec's
   // withdrawal out of the window it hands exec.
   for (let i = 0; i < 110; i++) await submit(client, "shared", `behind ${i}`)
-  await client.call("conversation/interrupt", { conversation: "shared" })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation: "shared" })
   const result = await finished(exec)
   expect(result).toMatchObject({ code: 1, stdout: "" })
   expect(result.stderr).toContain("the prompt was withdrawn before it ran")
@@ -952,8 +978,14 @@ test("answer-exec, wire-dropped: a sigma exec dropped while an earlier prompt ru
   ]
   await using server = await runningServer(script, { home: sigmaHome, connectionQueue: 16 })
   const client = await RawClient.connect(server.home.socket)
-  const conversation = (await client.call("conversation/start", { cwd: sigmaHome.dir, approvals: "auto", id: "gated" }))
-    .result.conversation as string
+  const conversation = (
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: sigmaHome.dir,
+      approvals: "auto",
+      id: "gated",
+    })
+  ).result.conversation as string
   const watch = watchView(client, conversation)
   const waiting = (count: number) => (current: ViewWatch) =>
     ((current.view().docs["pi.inbox"] as { items?: unknown[] } | undefined)?.items ?? []).length === count
@@ -1138,8 +1170,9 @@ test("crash-call: a call cut off by a crashed server is recorded as interrupted 
     await scriptEnv(sigmaHome, [{ tool: { name: "bash", input: { command: `echo ran > ${fifo}; cat ${release}` } } }]),
   )
   let client = await RawClient.connect(sigmaHome.socket)
-  const conversation = (await client.call("conversation/start", { cwd: sigmaHome.dir, approvals: "auto" })).result
-    .conversation as string
+  const conversation = (
+    await client.call("conversation/start", { author: person("ada"), cwd: sigmaHome.dir, approvals: "auto" })
+  ).result.conversation as string
   await submit(client, conversation, "go")
   expect(await deadline(readFile(fifo, "utf8"), 10_000, "the call started")).toBe("ran\n")
   first.kill("SIGKILL")
@@ -1164,7 +1197,12 @@ test("crash-claude: a Claude subagent cut off by a crashed server ends interrupt
   const first = await serving(env)
   let client = await RawClient.connect(sigmaHome.socket)
   const conversation = (
-    await client.call("conversation/start", { cwd: sigmaHome.dir, provider: "claude", approvals: "auto" })
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: sigmaHome.dir,
+      provider: "claude",
+      approvals: "auto",
+    })
   ).result.conversation as string
   const parent = watchView(client, conversation)
   await parent.until(() => true)

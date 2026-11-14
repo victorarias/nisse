@@ -44,7 +44,7 @@ Clients and extensions follow conversations and documents through windowed views
 Preconditions: a run made with `drive.ts r up`, so Sigma echoes `You said: <prompt>`.
 
 - **Watch.** Run `drive.ts r serve`, take the id from
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`, and run
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`, and run
   `drive.ts r watch <id> --submit 'a b c d e f g h i j k l m n o p q r s t u v w x y z one two three four five six seven eight nine ten' --until run_end --save answer`
   (a prompt this long streams; a short one ends before any live text
   commits): the first line is `{"_tag": "view", ...}` with `entries` and `docs`, then one
@@ -54,7 +54,7 @@ Preconditions: a run made with `drive.ts r up`, so Sigma echoes `You said: <prom
   `drive.ts r watch <id> --save fresh` shows the same entries in its first
   view, and `--from <entry id>` starts the window at that entry.
 - **Load earlier.** Run `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "id": "long"}'`, then forty times
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp", "id": "long"}'`, then forty times
   `drive.ts r watch long --submit 'prompt <n>' --until run_end` for `<n>` from 1 to 40: 120 entries, more than
   twice the window. Run `drive.ts r tui start --conversation long` and `drive.ts r tui wait 'You said: prompt 40'`.
   Turn the wheel up with `drive.ts r tui type $'\e[<64;20;5M'`, five at a time, until

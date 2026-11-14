@@ -16,7 +16,7 @@ import {
 import { Deferred, Effect, Schedule, type Scope, Stream } from "effect"
 import { imagesIn } from "./attach.ts"
 import type { RpcClientError } from "effect/rpc/RpcClientError"
-import { userName } from "./author.ts"
+import { launchAuthor } from "./author.ts"
 import { Client, serverRefusal, type StartOptions } from "./client.ts"
 import { describeCall } from "./tui/calls.ts"
 
@@ -172,8 +172,10 @@ export const exec = Effect.fnUntraced(function* (
   json: boolean,
 ) {
   const client = yield* Client
+  const author = launchAuthor()
   const { conversation } = yield* client["conversation/start"]({
     cwd: process.cwd(),
+    author,
     ...options,
     ...(id === undefined ? {} : { id }),
   })
@@ -185,7 +187,7 @@ export const exec = Effect.fnUntraced(function* (
       ([key, request]) => {
         asked.add(`${from} ${key}`)
         return reconnecting(
-          client["approval/resolve"]({ conversation: from, approval: key, author: userName(), allow: false }),
+          client["approval/resolve"]({ conversation: from, approval: key, author, allow: false }),
         ).pipe(
           Effect.tap(({ accepted }) =>
             Effect.sync(() => {
@@ -290,7 +292,7 @@ export const exec = Effect.fnUntraced(function* (
             client["conversation/submit"]({
               conversation,
               requestId,
-              author: userName(),
+              author,
               text: prompt,
               ...(images.length === 0 ? {} : { images }),
             }),

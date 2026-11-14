@@ -35,7 +35,7 @@ Preconditions:
 - `drive.ts r up --script <file>` with the script
   `[{"text": "a"}, {"text": "b"}, {"text": "c"}]`, then `drive.ts r serve`.
 
-- **Fill a transcript.** Run `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`, then
+- **Fill a transcript.** Run `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`, then
   `drive.ts r watch <id> --submit one --until run_end`, the same with `two` and `three`, and
   `drive.ts r watch <id> --save full`: nine or more entries.
 - **Page through it** (`entries-rpc`). Run

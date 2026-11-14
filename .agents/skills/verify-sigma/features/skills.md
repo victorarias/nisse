@@ -83,7 +83,7 @@ Preconditions:
   ```
 
 - **List.** Run `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp/sigma-verify/r/project/app", "provider": "openai"}'`
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp/sigma-verify/r/project/app", "provider": "openai"}'`
   and `drive.ts r rpc skills/list '{"conversation": "<id>"}'`: `bare` with
   `"description": ""`, `deploy` `Ship the app folder` from
   `project/app/.agents/skills`, `notes` `Take notes` from `home/skills`, and
@@ -128,7 +128,7 @@ Preconditions:
   to `/tmp/sigma-verify/r/home/AGENTS.md` and `The code word is egret.` to
   `/tmp/sigma-verify/r/project/AGENTS.md`. Run `drive.ts r serve`, then for
   each request below start a new conversation with
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp/sigma-verify/r/project/app", "provider": "openai"}'`,
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp/sigma-verify/r/project/app", "provider": "openai"}'`,
   so each request holds one message:
   1. `drive.ts r watch <id> --submit hello --until run_end --save agents-md`:
      the answer is `Hello there`.
@@ -208,7 +208,7 @@ check, and save the `.ndjson` files and `steps.log`. No step needs a person.
 ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
 make the project and the `AGENTS.md` files as in the faked steps above, run
 `drive.ts r serve`, start a conversation with
-`drive.ts r rpc conversation/start '{"cwd": "/tmp/sigma-verify/r/project/app", "provider": "openai"}'`,
+`drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp/sigma-verify/r/project/app", "provider": "openai"}'`,
 and use
 `drive.ts r watch <id> --submit '<text>' --until run_end --timeout 120000 --save <name>`:
 
@@ -233,7 +233,7 @@ printf -- '---\nname: gnome-facts\ndescription: Where the gnome lives\n---\nRepl
 ```
 
 Run
-`drive.ts r rpc conversation/start '{"cwd": "/tmp/sigma-verify/r/project", "provider": "claude"}'`
+`drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp/sigma-verify/r/project", "provider": "claude"}'`
 and
 `drive.ts r watch <id> --submit 'Use the Skill tool to run the gnome-facts skill, then do what it says.' --until run_end --timeout 120000 --save claude-skill`:
 a `pi.assistant` calling `Skill`, then the answer

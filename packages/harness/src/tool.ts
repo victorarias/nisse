@@ -307,7 +307,7 @@ export const ToolTask: Task<ToolTaskInput, ToolTaskCheckpoint, ToolTaskResult, T
         if (tool.asks === true) {
           const answer = yield* awaitApproval(ctx, call, final)
           if (answer !== undefined && !answer.allow) {
-            const denied = harnessError("denied", `denied by ${answer.author}: the person did not allow this call`)
+            const denied = harnessError("denied", `denied by ${answer.author.name}: the person did not allow this call`)
             return yield* reject(ctx, task.input, call, tool, denied)
           }
         }
