@@ -198,18 +198,23 @@ needs a person. Write the long first prompt once:
 { echo 'Remember these 600 labels; I will ask about them next. Reply with exactly: noted'; seq 1 600 | sed 's/.*/label & is amber-&-cedar/'; } > /tmp/sigma-verify/long.txt
 ```
 
-It is about 6,000 tokens, past the 1,024 a provider needs before it caches.
+It is about 12,000 tokens (12,042 on gpt-6-luna), past the 1,024 a provider
+needs before it caches.
 
 ChatGPT, in a run made with `drive.ts r up --openai-auth <your saved sign-in>`:
 
-- **Turns.** `drive.ts r sigma exec --provider openai "$(cat /tmp/sigma-verify/long.txt)"`:
+- **Turns.** `drive.ts r sigma exec --provider openai --model gpt-6-luna "$(cat /tmp/sigma-verify/long.txt)"`
+  (any model `drive.ts r rpc models/list` lists for openai; the account may not
+  serve sigma's default):
   `noted`. Take the id, then
   `drive.ts r watch <id> --submit 'Which label is number 412? Reply with it only.' --until run_end --timeout 120000 --save second`:
   the answer names `amber-412-cedar`. Read each answer's usage:
   `jq -c '.. | objects | select(.kind? == "pi.assistant") | .model[0].usage | {input, cacheRead, output}' /tmp/sigma-verify/r/evidence/second.ndjson`.
   The first answer's `input` is the whole first request, with `cacheRead`
   near 0. The second's `cacheRead` is nearly all of the first's `input`, in
-  multiples of 128, and its `input` is a few hundred tokens.
+  multiples of 128, and its `input` is a few hundred tokens. Measured on
+  2026-11-14: `noted` with `input` 12,042 and `cacheRead` 0, then
+  `amber-412-cedar` with `input` 162 and `cacheRead` 11,904.
   `drive.ts r rpc usage/get '{"conversation": "<id>"}'` sums both.
 
 Claude, in a run made with `drive.ts r up --real-claude`; give each `rpc` and
@@ -222,13 +227,22 @@ Claude, in a run made with `drive.ts r up --real-claude`; give each `rpc` and
   and `cacheWrite` (the rest, now written). Then
   `drive.ts r sigma exec --conversation <id> 'Which label is number 412? Reply with it only.'`:
   `amber-412-cedar`, and `usage/get` again. The second run added a
-  `cacheRead` near the first run's `cacheRead + cacheWrite`, and an `input`
-  of a few tokens.
+  `cacheRead` of most of the first run's `cacheRead + cacheWrite`, and an
+  `input` of a few tokens. It does not read all of it: Claude Code puts the
+  first request's last cache breakpoint at the first content block of the
+  prompt's message, so what follows that block is written again. Measured on
+  2026-11-14: the first run read 12,932 and wrote 23,140; the second read
+  31,547 and wrote 7,762, with `input` 2. Claude Code's transcript
+  (`~/.claude/projects/<cwd slug>/<session>.jsonl`) has each request's
+  `api-request` line with its `cacheControl` breakpoints.
 - **A fork subagent.** In a new conversation,
   `drive.ts r sigma exec --provider claude --model claude-haiku-5-5 --auto 'Use the Agent tool with subagent_type "fork" to have a forked subagent reply with exactly: forked. Then reply with exactly what it said.'`
   starts a fork, as the recipe above shows. Its usage does not reach sigma
   (Gotchas). Read it from Claude Code: the `Agent` call's result in
   `drive.ts r watch <id>` names an `output_file`, the fork's own transcript.
   `jq -c 'select(.message.usage) | .message.usage | {cache_read_input_tokens, cache_creation_input_tokens}' <output_file>`:
-  its first request reads about as much from the cache as its parent's last
-  request did (27,838 tokens on haiku when this was written).
+  its requests read the parent's prefix from the cache. Its first request
+  read 27,838 tokens on haiku in one run. In another it read 15,500 and wrote
+  12,192, the same split as the parent's request that made the `Agent` call,
+  and its second request read 27,692: the fork probably started before the parent's
+  response finished, so before its cache entry existed.
