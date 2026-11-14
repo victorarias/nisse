@@ -329,6 +329,48 @@ test("openai-model: the conversation's model and effort reach ChatGPT", async ()
   expect(JSON.parse(fake.responses()[0]!.body)).toMatchObject({ model: "gpt-6-luna", reasoning: { effort: "high" } })
 })
 
+type Sent = { instructions: string; tools: unknown; prompt_cache_key: string; input: Array<unknown> }
+const sentBodies = (fake: FakeOpenAi): Array<Sent> => fake.responses().map((request) => JSON.parse(request.body))
+
+/** What keeps ChatGPT's prompt cache: `later` repeats `earlier`'s front, so the provider reads it from the cache. */
+const expectCacheKept = (earlier: Sent, later: Sent) => {
+  expect(later.prompt_cache_key).toBe(earlier.prompt_cache_key)
+  expect(later.instructions).toBe(earlier.instructions)
+  expect(later.tools).toEqual(earlier.tools)
+  expect(later.input.length).toBeGreaterThan(earlier.input.length)
+  expect(later.input.slice(0, earlier.input.length)).toEqual(earlier.input)
+}
+
+test("cache-turns: each ChatGPT request of a conversation, within a run and across runs, repeats the one before it and adds to its end", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("tool_call", TOOL_NAMES)
+  fake.play("text_answer")
+  await using session = await conversationWith(fake)
+  await session.submit("what does echo say?")
+  await session.view.until(settled(1))
+  await session.submit("hello")
+  await session.view.until(settled(2))
+  const [first, second, third] = sentBodies(fake)
+  expect(sentBodies(fake)).toHaveLength(3)
+  expectCacheKept(first!, second!)
+  expectCacheKept(second!, third!)
+})
+
+test("cache-fresh-subagent: a subagent started without its parent's history keeps its own requests' front, under a cache key of its own", async () => {
+  await using fake = new FakeOpenAi()
+  fake.play("fresh_subagent_tool_call")
+  await using session = await conversationWith(fake)
+  await session.submit("Ask a scout what echo prints.")
+  await session.view.until(settled(1), 20_000)
+  const [parent, child, childAgain, parentAgain] = sentBodies(fake)
+  expect(sentBodies(fake)).toHaveLength(4)
+  expect(child!.input).toHaveLength(1)
+  expectCacheKept(child!, childAgain!)
+  expect(child!.prompt_cache_key).not.toBe(parent!.prompt_cache_key)
+  expectCacheKept(parent!, parentAgain!)
+  expect(session.said().at(-2)).toBe("assistant: The scout says echo prints hi.")
+})
+
 test("subagent-fork: a spawned agent's requests carry its own conversation, and its last answer reaches the parent", async () => {
   await using fake = new FakeOpenAi()
   const expected = fake.play("subagent")

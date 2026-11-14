@@ -2470,10 +2470,10 @@ test("configure-rpc, run-turn-limit: changed instructions reach the model and th
   client.close()
 })
 
-test("usage-rpc, usage-per-model, usage-total: a client reads the tokens each conversation spent, by model, and the home's total", async () => {
+test("usage-rpc, usage-per-model, usage-total, cache-shown: a client reads the tokens each conversation spent, by model, cached input apart, and the home's total", async () => {
   await using server = await runningServer([
-    { text: "a", usage: { input: 100, output: 10 } },
-    { text: "b", usage: { input: 200, output: 20 } },
+    { text: "a", usage: { input: 100, output: 10, cacheWrite: 40 } },
+    { text: "b", usage: { input: 200, output: 20, cacheRead: 1000 } },
     { text: "c", usage: { input: 50, output: 5 } },
   ])
   const client = await RawClient.connect(server.home.socket)
@@ -2493,9 +2493,21 @@ test("usage-rpc, usage-per-model, usage-total: a client reads the tokens each co
     (await client.call("usage/get", conversation === undefined ? {} : { conversation })).result as {
       models: Record<string, { input: number; output: number; totalTokens: number }>
     }
-  expect((await usage(first)).models["script/script"]).toMatchObject({ input: 300, output: 30, totalTokens: 330 })
+  expect((await usage(first)).models["script/script"]).toMatchObject({
+    input: 300,
+    output: 30,
+    cacheRead: 1000,
+    cacheWrite: 40,
+    totalTokens: 1370,
+  })
   expect((await usage(second)).models["script/script"]).toMatchObject({ input: 50, output: 5, totalTokens: 55 })
-  expect((await usage()).models["script/script"]).toMatchObject({ input: 350, output: 35, totalTokens: 385 })
+  expect((await usage()).models["script/script"]).toMatchObject({
+    input: 350,
+    output: 35,
+    cacheRead: 1000,
+    cacheWrite: 40,
+    totalTokens: 1425,
+  })
   expect(errorTag(await client.call("usage/get", { conversation: "99" }))).toBe("NoSuchConversation")
   client.close()
 })

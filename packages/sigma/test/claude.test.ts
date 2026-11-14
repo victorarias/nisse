@@ -208,7 +208,7 @@ test("claude-session-gone: when Claude Code lost the session, a fresh one is giv
   expect(runEnds(session.view.seen()).map((end) => end.outcome)).toEqual(["answered", "answered"])
 })
 
-test("claude-live: the next run reaches the Claude Code process that served the last one, told only its prompt, and what the process spent counts once", async () => {
+test("claude-live, cache-claude-turns: the next run reaches the Claude Code process that served the last one, told only its prompt, and what the process spent counts once", async () => {
   using claude = new FakeClaude("session_gone")
   await using session = await sessionLost(claude)
   await session.submit("Which word did I ask you to remember? Reply with that word only.")
@@ -811,6 +811,25 @@ test("claude-auto: in a conversation started without asking, a call Claude Code 
   expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: made", "run_end: answered"])
 })
 
+test("cache-claude-subagent: Claude Code's fork subagent stays available, and sigma hosts it as a conversation of its own", async () => {
+  using claude = new FakeClaude("fork_subagent")
+  await using session = await conversationWith(claude, { approvals: "auto" })
+  await session.submit(
+    'Use the Agent tool with subagent_type "fork" to have a forked subagent reply with exactly: forked. Then reply with exactly what it said.',
+  )
+  await session.view.until(settled(1))
+  const child = await subagentOf(session)
+  await child.view.until(childEnded)
+  // The fork runs in Claude Code's background; this recording's parent ends its turn first.
+  expect(calls(session.view.seen())).toMatchObject([{ name: "Agent", arguments: { subagent_type: "fork" } }])
+  expect(child.data).toMatchObject({ title: 'Reply with exactly "forked"', agentType: "fork" })
+  expect(transcript(child.view.seen())[0]).toBe("user: Reply with exactly the single word: forked")
+  expect(transcript(session.view.seen()).slice(-2)).toEqual([
+    "assistant: Waiting on the forked agent's reply.",
+    "run_end: answered",
+  ])
+})
+
 test("subagent-spawn: a Claude subagent is listed under its parent with the call that started it, and takes no input of its own", async () => {
   using claude = new FakeClaude("subagent")
   await using session = await conversationWith(claude)
@@ -1144,6 +1163,81 @@ test("claude-extensions: a tool an extension removes is withheld from Claude Cod
   await session.view.until(settled(1))
   expect(results(session.view.seen())).toEqual([expect.objectContaining({ text: "noon in CET", isError: false })])
   expect(claude.spawns()[0]!["--disallowedTools"]).toBe("WebFetch,Bash,Clock")
+})
+
+/** Adds two read-only tools, `Clock` then `Moon`, and removes Claude Code's `WebFetch`. */
+const clockAndMoon = `import { Extension, Tool } from "@sigma/extension"
+import { Effect, Schema } from "effect"
+export default Extension.define((ctx) =>
+  ctx.tool.transform((tools) => {
+    for (const [name, answer] of [["Clock", "noon"], ["Moon", "full"]]) {
+      tools.add(
+        Tool.make({
+          name,
+          description: "Says " + answer,
+          input: Schema.Struct({ zone: Schema.String }),
+          readOnly: true,
+          run: () => Effect.succeed(Tool.ok(answer)),
+        }),
+      )
+    }
+    tools.remove("WebFetch")
+  }),
+)`
+
+/**
+ * What Claude Code puts at the front of its requests that sigma chose for a spawn: the appended instructions, sigma's
+ * MCP tools in order, and the withheld tools. Two spawns that agree on it can read each other's prompt cache.
+ */
+const cacheFront = (claude: FakeClaude, spawn: number) => {
+  const initialize = claude.log().find((entry) => entry.spawn === spawn && entry.initialize)?.initialize
+  return {
+    append: initialize?.appendSystemPrompt,
+    tools: initialize?.sdkMcpServerManifests?.sigma?.toolsListResult?.tools,
+    withheld: claude.spawns()[spawn]?.["--disallowedTools"],
+  }
+}
+
+const expectSameFront = (claude: FakeClaude, spawns: readonly [number, number]) => {
+  const [first, second] = spawns.map((spawn) => cacheFront(claude, spawn))
+  expect(first).toMatchObject({ append: "Report with attn when done.", withheld: expect.stringContaining("WebFetch") })
+  expect(first!.tools.map((tool: { name: string }) => tool.name)).toEqual(["Clock", "Moon"])
+  expect(second).toEqual(first!)
+}
+
+test("cache-claude-resume: a Claude Code process reopened for a conversation starts with the instructions, sigma tools and withheld tools of the one before", async () => {
+  using claude = new FakeClaude("died_while_idle")
+  const home = homeWithExtensions({ "clock.ts": clockAndMoon })
+  await using session = await conversationWith(claude, { instructions: "Report with attn when done." }, { home })
+  await session.submit("Remember the word PLUM. Reply with exactly: noted")
+  await session.view.until(settled(1))
+  process.kill(claude.pids()[0]!, "SIGKILL")
+  await session.submit("Which word did I ask you to remember? Reply with that word only.")
+  await session.view.until(settled(2))
+  expect(claude.spawns()[1]).toMatchObject({ "--resume": claude.spawns()[0]!["--session-id"] })
+  expectSameFront(claude, [0, 1])
+})
+
+test("cache-claude-fork: a fork of a Claude conversation forks Claude Code's session, started with its parent's instructions, sigma tools and withheld tools", async () => {
+  using claude = new FakeClaude("died_while_idle")
+  const home = homeWithExtensions({ "clock.ts": clockAndMoon })
+  await using session = await conversationWith(claude, { instructions: "Report with attn when done." }, { home })
+  await session.submit("Remember the word PLUM. Reply with exactly: noted")
+  await session.view.until(settled(1))
+  const at = session.view.seen().at(-1)!.id
+  const forked = (
+    await session.client.call("conversation/fork", { author: person("ada"), conversation: session.conversation, at })
+  ).result.conversation as string
+  const fork = watchView(session.client, forked)
+  await fork.until(() => true)
+  await submit(session.client, forked, "Which word did I ask you to remember? Reply with that word only.")
+  await fork.until(settled(1))
+  expect(claude.spawns()[1]).toMatchObject({
+    "--resume": claude.spawns()[0]!["--session-id"],
+    "--fork-session": true,
+  })
+  expect(claude.spawns()[1]!["--session-id"]).not.toBe(claude.spawns()[0]!["--session-id"])
+  expectSameFront(claude, [0, 1])
 })
 
 /** What a Claude Code session sets for the commands it runs, a server among them: the names Claude Code 2.1.312 sets. */

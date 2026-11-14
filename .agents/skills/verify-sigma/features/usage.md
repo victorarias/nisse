@@ -4,7 +4,9 @@ Tokens and cost are counted per conversation, model and tool, and totalled for
 the home. The TUI's status bar shows `<n> tokens · context <n>` on the right:
 what the conversation spent and how full its context is after the newest
 answer. `/usage` opens a `USAGE` panel with this conversation's tokens and
-every conversation's, by model; `usage/get` answers the same ledger.
+every conversation's, by model, with the input the provider read from its
+prompt cache apart, in [Prompt cache](./prompt-cache.md); `usage/get` answers
+the same ledger.
 
 ## Sub-features
 
@@ -45,9 +47,9 @@ Preconditions:
 - **Another conversation.** `drive.ts r sigma exec three`: stdout
   `answer three`, in a conversation of its own.
 - **The panel.** Type `/usage` and `Enter`, `drive.ts r tui wait USAGE`:
-  `this conversation: 4.0k tokens` over `script/script  4.0k (3.2k in, 800 out)`,
+  `this conversation: 4.0k tokens` over `script/script  4.0k (3.2k in, 0 cached, 800 out)`,
   then `every conversation: 4.1k tokens` over
-  `script/script  4.1k (3.3k in, 805 out)`. `drive.ts r tui key Escape` and
+  `script/script  4.1k (3.3k in, 0 cached, 805 out)`. `drive.ts r tui key Escape` and
   `drive.ts r tui wait --gone USAGE`: the transcript is back.
 - **Over the wire.** `drive.ts r rpc usage/get '{"conversation": "talk"}'`:
   `"models": {"script/script": {"input": 3200, "output": 800, ..., "totalTokens": 4000, "cost": {...}}}, "tools": {}`.
@@ -76,4 +78,6 @@ Screen, `packages/sigma/test/screen.test.ts`:
 ## Gotchas
 
 - `usage/get` and `/usage` work on a read-only server too.
+- A script step's `usage` takes `cacheRead` and `cacheWrite` beside `input`
+  and `output`, as [Prompt cache](./prompt-cache.md) drives.
 - `cost` is an estimate in US dollars, 0 for the scripted model and on a subscription.
