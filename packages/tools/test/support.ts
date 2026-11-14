@@ -3,8 +3,8 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { ExecutionEnv } from "@nisse/env"
-import { LocalExecutionEnv } from "@nisse/env/local"
+import type { ExecutionEnv } from "@sigma/env"
+import { LocalExecutionEnv } from "@sigma/env/local"
 import {
   type Conversation,
   createRegistry,
@@ -14,10 +14,10 @@ import {
   type HarnessSettings,
   openHarness,
   type ToolRegistration,
-} from "@nisse/harness"
-import { openSqliteStorage } from "@nisse/kernel"
-import { fromProviders, type Message, type ToolResultMessage, type UserMessage } from "@nisse/models"
-import { type FauxResponseStep, fauxProvider } from "@nisse/models/faux"
+} from "@sigma/harness"
+import { openSqliteStorage } from "@sigma/kernel"
+import { fromProviders, type Message, type ToolResultMessage, type UserMessage } from "@sigma/models"
+import { type FauxResponseStep, fauxProvider } from "@sigma/models/faux"
 import { Effect, type Scope } from "effect"
 
 const directories: string[] = []
@@ -57,7 +57,7 @@ export const openChat = (options: {
   readonly env?: (env: ExecutionEnv) => ExecutionEnv
 }): Effect.Effect<Chat, unknown, Scope.Scope> =>
   Effect.gen(function* () {
-    const workspace = temporaryDirectory("nisse-tools-")
+    const workspace = temporaryDirectory("sigma-tools-")
     const requests: Message[][] = []
     const faux = fauxProvider({
       models: [{ id: "faux-1", input: options.vision === false ? ["text"] : ["text", "image"] }],
@@ -76,7 +76,7 @@ export const openChat = (options: {
         ...(options.tasks === undefined ? {} : { tasks: options.tasks }),
       }),
     )
-    const storage = yield* openSqliteStorage(join(temporaryDirectory("nisse-tools-home-"), "kernel.sqlite"))
+    const storage = yield* openSqliteStorage(join(temporaryDirectory("sigma-tools-home-"), "kernel.sqlite"))
     const harness = yield* Effect.acquireRelease(
       openHarness(storage, {
         registry,

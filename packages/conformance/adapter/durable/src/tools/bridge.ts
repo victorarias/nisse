@@ -1,7 +1,7 @@
-// @nisse/tools as upstream's Promise-and-Context tools, and upstream's Promise environments and image processors as the
+// @sigma/tools as upstream's Promise-and-Context tools, and upstream's Promise environments and image processors as the
 // Effect ones those tools take. Conversions are cached both ways, so an object comes back as itself.
-import type * as Env from "@nisse/env";
-import type * as T from "@nisse/tools";
+import type * as Env from "@sigma/env";
+import type * as T from "@sigma/tools";
 import { Effect } from "effect";
 import { fromPromise } from "../../../../../kernel/src/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../../../chord/src/context/index.ts";
@@ -42,7 +42,7 @@ const reader = (opened: Any): Any =>
 		}).filter(([name]) => typeof opened[name] === "function"),
 	);
 
-/** Upstream's Promise environment as @nisse/env's Effect one; each call goes to the upstream object, so overrides hold. */
+/** Upstream's Promise environment as @sigma/env's Effect one; each call goes to the upstream object, so overrides hold. */
 export function effectEnv(env: Any): Env.ExecutionEnv | undefined {
 	if (env === undefined) return undefined;
 	const known = toEffect.get(env);

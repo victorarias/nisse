@@ -1,4 +1,4 @@
-// Upstream's agent functions over @nisse/harness's: Promise transactions, and upstream snapshots and agents.
+// Upstream's agent functions over @sigma/harness's: Promise transactions, and upstream snapshots and agents.
 import * as H from "../../../../../harness/src/index.ts";
 import { run } from "../session/session.ts";
 import { harnessSnapshot, upstreamAgent } from "./convert.ts";

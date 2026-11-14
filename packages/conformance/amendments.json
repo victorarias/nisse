@@ -1208,14 +1208,14 @@
   "owner": "harness-views",
   "spec": "9.3",
   "rewrite": "Check one loader call and one result per shared load instead of the identity of the returned Promises.",
-  "private": "Promise identity of concurrent calls; nisse's transcript returns Effects"
+  "private": "Promise identity of concurrent calls; sigma's transcript returns Effects"
  },
  {
   "test": "upstream/test/conversation-transcript.test.ts :: ConversationTranscript loads > shares one load between a stale gap descriptor and the gap it shrank into",
   "owner": "harness-views",
   "spec": "9.3",
   "rewrite": "Check one loader call and one result per shared load instead of the identity of the returned Promises.",
-  "private": "Promise identity of concurrent calls; nisse's transcript returns Effects"
+  "private": "Promise identity of concurrent calls; sigma's transcript returns Effects"
  },
  {
   "test": "upstream/test/session-adoption.test.ts :: Session adoption after Storage stored a commit > takes the durability receipt inside the commit, and adopts once Storage resolved",

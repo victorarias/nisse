@@ -1,6 +1,6 @@
-# @nisse/harness
+# @sigma/harness
 
-The agent harness over `@nisse/kernel`, rewritten on Effect from pi-durable's specification
+The agent harness over `@sigma/kernel`, rewritten on Effect from pi-durable's specification
 (`packages/kernel/docs/spec.md`, sections 2, 5 and 7). A Harness owns one Session and its task scheduler and adds
 conversations, their agents and the extension registry.
 

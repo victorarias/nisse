@@ -5,7 +5,7 @@
 // everything pending as one call per pull. A consumer that keeps up gets each commit's own call; a slow one gets the
 // newest value with the folded operations of every commit since its last call, or one root replacement past
 // `MAX_PENDING_OPS`, so a stalled consumer neither delays a commit nor holds more than one value and a bounded queue.
-import { type JsonValue, type Op, PendingOps } from "@nisse/delta"
+import { type JsonValue, type Op, PendingOps } from "@sigma/delta"
 import { Cause, Effect, Queue, type Scope, Stream } from "effect"
 import { SessionFailed } from "../errors.ts"
 import type {

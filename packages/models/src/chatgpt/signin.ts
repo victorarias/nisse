@@ -21,7 +21,7 @@ const randomText = (bytes: number) => Buffer.from(crypto.getRandomValues(new Uin
 
 const page = (status: number, message: string) =>
   new Response(
-    `<!doctype html><meta charset=utf-8><title>Nisse</title><p style="font-family:sans-serif">${message}</p>`,
+    `<!doctype html><meta charset=utf-8><title>Sigma</title><p style="font-family:sans-serif">${message}</p>`,
     { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
   )
 

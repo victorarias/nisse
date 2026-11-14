@@ -1,9 +1,9 @@
 // What one `claude.run` does with the frames of the Claude Code process serving it: every frame turned into commits. A
 // call Claude Code runs itself is committed before its PreToolUse hook is answered, so the intent is durable before the
-// effect; an extension's tool reached through nisse's MCP server runs as a `pi.tool` task; a question for a person
-// waits on `nisse.approvals`; each subagent is a conversation of its own (F7).
+// effect; an extension's tool reached through sigma's MCP server runs as a `pi.tool` task; a question for a person
+// waits on `sigma.approvals`; each subagent is a conversation of its own (F7).
 import type { HookCallback, Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk"
-import { copyJson } from "@nisse/delta/json"
+import { copyJson } from "@sigma/delta/json"
 import {
   type Agent,
   agentHooks,
@@ -29,8 +29,8 @@ import {
   type ToolHooks,
   type ToolTaskResult,
   UserEntry,
-} from "@nisse/harness"
-import type { Draft } from "@nisse/delta"
+} from "@sigma/harness"
+import type { Draft } from "@sigma/delta"
 import type {
   AnyTask,
   ConversationId,
@@ -41,8 +41,8 @@ import type {
   TaskId,
   TaskRuntime,
   Tx,
-} from "@nisse/kernel"
-import type { AssistantMessage, ToolCall, Usage } from "@nisse/models"
+} from "@sigma/kernel"
+import type { AssistantMessage, ToolCall, Usage } from "@sigma/models"
 import { Cause, Deferred, Effect, Option, Stream } from "effect"
 import type { SubagentLinks } from "./links.ts"
 import { promptOf, type Said, textOf } from "./retell.ts"
@@ -85,7 +85,7 @@ export interface ServingProcess {
   readonly resetting: boolean
   /** A message the process was sent has not come back as a replay yet. */
   readonly awaitingReplay: boolean
-  /** Tools offered to Claude Code over nisse's MCP server, by name. */
+  /** Tools offered to Claude Code over sigma's MCP server, by name. */
   readonly own: ReadonlyMap<string, OwnTool>
   readonly send: (parts: ReadonlyArray<Said>, priority?: "next") => void
   readonly stopTask: (taskId: string) => Promise<void>
@@ -123,14 +123,14 @@ type McpPart = { type: "text"; text: string } | { type: "image"; data: string; m
 type McpResult = { content: McpPart[]; isError: boolean }
 
 /** The entry that places a hosted subagent's conversation in its parent's transcript. */
-export const SUBAGENT_ENTRY_KIND = "nisse.subagent"
+export const SUBAGENT_ENTRY_KIND = "sigma.subagent"
 
 export type SubagentEntry = { call: string; conversation: number; title: string; agentType?: string }
 
 /** What a call Claude Code asked a person about gets when they deny it. */
 export const DENIED = "the person did not allow this call"
 
-const OWN_TOOL = "mcp__nisse__"
+const OWN_TOOL = "mcp__sigma__"
 /** Claude Code's errors for a session it does not have, or a position its session does not hold (F12). */
 const SESSION_GONE = /No conversation found|No message found with message\.uuid/
 
@@ -157,7 +157,7 @@ export const toolHooksOf = (agent: Agent) => {
   }
 }
 
-/** A tool result as MCP carries it: its text and its images, whose shape MCP shares with nisse's. */
+/** A tool result as MCP carries it: its text and its images, whose shape MCP shares with sigma's. */
 const mcpContent = (content: unknown): McpPart[] => {
   if (!Array.isArray(content)) return [{ type: "text", text: String(content ?? "") }]
   return (content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>).flatMap(
@@ -369,7 +369,7 @@ export const makeServing = (ctx: RunContext, process: ServingProcess): Serving =
   const autoApproved = (owner: Owner) =>
     Effect.map(runtime.snapshot(ApprovalsDoc, owner.conversationId), (doc) => doc?.auto === true)
 
-  /** Asks a person about the call in its conversation's `nisse.approvals`, and waits for the first answer. */
+  /** Asks a person about the call in its conversation's `sigma.approvals`, and waits for the first answer. */
   const approve = (owner: Owner, call: ToolCall) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -418,7 +418,7 @@ export const makeServing = (ctx: RunContext, process: ServingProcess): Serving =
           }
           const error = Cause.squash(decided.cause)
           api.report(error, { kind: "extension", extension })
-          // A failing hook blocks the call, as in nisse's own tool task.
+          // A failing hook blocks the call, as in sigma's own tool task.
           return { block: error instanceof Error ? error.message : String(error) }
         }
         if (decided.value?.block !== undefined) return { block: decided.value.block }
@@ -432,7 +432,7 @@ export const makeServing = (ctx: RunContext, process: ServingProcess): Serving =
 
   const preToolUse: HookCallback = async (input, _toolUseID, { signal }) => {
     if (input.hook_event_name !== "PreToolUse") return {}
-    // An own tool's task runs the hooks and asks, as in nisse's own loop.
+    // An own tool's task runs the hooks and asks, as in sigma's own loop.
     if (own.has(toolName(input.tool_name)) && input.tool_name.startsWith(OWN_TOOL)) return {}
     const asked: ToolCall = {
       type: "toolCall",
@@ -493,7 +493,7 @@ export const makeServing = (ctx: RunContext, process: ServingProcess): Serving =
 
   /**
    * Hands what Claude Code's own tool returned to the extensions' `afterTool`. Claude Code takes a changed output
-   * only as the tool's own result object; for `Read`, whose object carries the file's text, nisse swaps that text
+   * only as the tool's own result object; for `Read`, whose object carries the file's text, sigma swaps that text
    * (F15). Another tool's result is given to the hooks as `final`: their change cannot reach Claude.
    */
   const postToolUse: HookCallback = async (input, _toolUseID, { signal }) => {
@@ -608,7 +608,7 @@ export const makeServing = (ctx: RunContext, process: ServingProcess): Serving =
 
   /**
    * Places the steers waiting in the inbox after a round of results, and hands them to Claude Code. A queued reset
-   * ends the run instead, as in nisse's own loop: the session Claude Code holds is the context the reset cuts.
+   * ends the run instead, as in sigma's own loop: the session Claude Code holds is the context the reset cuts.
    */
   const steer = commit((tx) =>
     Effect.gen(function* () {

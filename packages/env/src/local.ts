@@ -336,7 +336,7 @@ export interface LocalExecutionEnvOptions {
   readonly watch?: LocalWatchOptions
 }
 
-/** The machine nisse runs on. */
+/** The machine sigma runs on. */
 export class LocalExecutionEnv implements ExecutionEnv {
   /** Every local environment sees the same files. */
   readonly id: string = "node:local"

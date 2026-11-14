@@ -1,6 +1,6 @@
-// Tool-call argument validation as pi-ai's `src/utils/validation.ts` exposes it, over `@nisse/schema`'s
+// Tool-call argument validation as pi-ai's `src/utils/validation.ts` exposes it, over `@sigma/schema`'s
 // `checkToolArguments`, the one pipeline tool arguments go through (D7).
-import { checkToolArguments } from "@nisse/schema"
+import { checkToolArguments } from "@sigma/schema"
 import type { Tool, ToolCall } from "./types.ts"
 
 /** The coerced arguments of a call to `tool`. Throws with the message the model reads when they do not validate. */

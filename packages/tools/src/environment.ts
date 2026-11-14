@@ -1,8 +1,8 @@
 // The call's execution environment, tool paths, and the per-file mutation queue (spec 7.3). Derived from pi-durable's
 // `src/tools/env.ts`, `path-utils.ts` and `file-mutation-queue.ts` (earendil-works/pi, packages/durable, commit
 // 7d073328e), under the MIT license in this package's LICENSE (Copyright 2025 Mario Zechner).
-import type { ExecutionEnv } from "@nisse/env"
-import type { ToolExecutionApi } from "@nisse/harness"
+import type { ExecutionEnv } from "@sigma/env"
+import type { ToolExecutionApi } from "@sigma/harness"
 import { Effect } from "effect"
 
 /** The call's execution environment; a tool without one fails with an ordinary error result. */

@@ -1,6 +1,6 @@
 // The registry of extensions and the helpers that build what an extension contributes (spec 7.1). A snapshot is
 // immutable; install and uninstall publish a new one synchronously.
-import type { AnyTask } from "@nisse/kernel"
+import type { AnyTask } from "@sigma/kernel"
 import { INSTRUCTIONS_KEY } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"
 import type { TaskServices } from "./services.ts"

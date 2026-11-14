@@ -1,5 +1,5 @@
 // Approvals (D13): a tool call that changes things waits for a person's answer before it runs. The request lives in
-// the conversation's `nisse.approvals` document, which the view carries, keyed by the call's tool task. The first
+// the conversation's `sigma.approvals` document, which the view carries, keyed by the call's tool task. The first
 // answer counts: the commit that answers finds the request unanswered or refuses. The request leaves the document in
 // the commit that settles its tool task, so a request is listed exactly while its call is live.
 import {
@@ -11,7 +11,7 @@ import {
   type StorageError,
   type TaskId,
   type Tx,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import { Effect } from "effect"
 
 /** A person's answer to one call. */
@@ -35,7 +35,7 @@ export type ApprovalsState = {
   requests: Record<string, ApprovalRequest>
 }
 
-export const APPROVALS_KIND = "nisse.approvals"
+export const APPROVALS_KIND = "sigma.approvals"
 
 export const ApprovalsDoc = defineDoc<ApprovalsState>({
   kind: APPROVALS_KIND,
@@ -49,7 +49,7 @@ export const ApprovalsDoc = defineDoc<ApprovalsState>({
 })
 
 /** The entry an answer appends, so the transcript says who allowed or denied the call. */
-export const APPROVAL_ENTRY_KIND = "nisse.approval"
+export const APPROVAL_ENTRY_KIND = "sigma.approval"
 
 export type ApprovalEntry = { approval: string; callId: string; tool: string; allow: boolean; author: string }
 

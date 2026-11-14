@@ -5,4 +5,4 @@ export {
   truncateHead,
   truncateHeadOf,
   utf8ByteLength,
-} from "@nisse/env/truncate";
+} from "@sigma/env/truncate";

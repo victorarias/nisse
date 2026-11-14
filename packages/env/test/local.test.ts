@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import { LocalExecutionEnv } from "@nisse/env/local"
+import { LocalExecutionEnv } from "@sigma/env/local"
 import { Deferred, Effect, Fiber } from "effect"
 
 const dirs: string[] = []
@@ -10,7 +10,7 @@ afterEach(() => {
 })
 
 function env(): LocalExecutionEnv {
-  const cwd = mkdtempSync(join("/tmp", "nisse-env-"))
+  const cwd = mkdtempSync(join("/tmp", "sigma-env-"))
   dirs.push(cwd)
   return new LocalExecutionEnv({ cwd })
 }

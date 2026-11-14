@@ -25,7 +25,7 @@ afterEach(() => {
 
 const newSession = (): Effect.Effect<Session, unknown, Scope.Scope> =>
   Effect.gen(function* () {
-    const home = mkdtempSync(join(tmpdir(), "nisse-documents-"))
+    const home = mkdtempSync(join(tmpdir(), "sigma-documents-"))
     homes.push(home)
     return yield* openSession(yield* openSqliteStorage(join(home, "kernel.sqlite")))
   })
@@ -331,7 +331,7 @@ describe("documents", () => {
           },
           checkpointWhen: () => false,
         })
-        const path = join(mkdtempSync(join(tmpdir(), "nisse-documents-")), "kernel.sqlite")
+        const path = join(mkdtempSync(join(tmpdir(), "sigma-documents-")), "kernel.sqlite")
         homes.push(dirname(path))
         yield* Effect.scoped(
           Effect.gen(function* () {

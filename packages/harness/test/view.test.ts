@@ -5,8 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Exit, type Scope } from "effect"
-import { type EntryRecord, openSqliteStorage } from "@nisse/kernel"
-import { fromProviders } from "@nisse/models"
+import { type EntryRecord, openSqliteStorage } from "@sigma/kernel"
+import { fromProviders } from "@sigma/models"
 import {
   type Conversation,
   ConversationTranscript,
@@ -23,7 +23,7 @@ afterEach(() => {
 })
 
 const databasePath = (): string => {
-  const home = mkdtempSync(join(tmpdir(), "nisse-view-"))
+  const home = mkdtempSync(join(tmpdir(), "sigma-view-"))
   homes.push(home)
   return join(home, "kernel.sqlite")
 }

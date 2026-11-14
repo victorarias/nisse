@@ -1,7 +1,7 @@
 // Document definitions and addresses (spec sections 3.1, 3.2 and 3.6).
 // Derived from pi-durable's `src/documents.ts` at 7d073328e (MIT, see LICENSE).
-import type { Op } from "@nisse/delta"
-import { copyJson } from "@nisse/delta/json"
+import type { Op } from "@sigma/delta"
+import { copyJson } from "@sigma/delta/json"
 import type {
   ConversationId,
   DocumentAddress,

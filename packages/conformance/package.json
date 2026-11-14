@@ -1,10 +1,10 @@
 {
-  "name": "@nisse/conformance",
+  "name": "@sigma/conformance",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@nisse/env": "workspace:*",
-    "@nisse/tools": "workspace:*",
+    "@sigma/env": "workspace:*",
+    "@sigma/tools": "workspace:*",
     "@silvia-odwyer/photon": "0.3.3",
     "diff": "8.0.4",
     "quickjs-wasi": "3.6.2",

@@ -5,8 +5,8 @@
 // watch's value with 1 ms sleeps; this waits on the value itself, with a deadline, and closes the Harness either way.
 //
 // Amends upstream/test/harness-storage-failure.test.ts > "does not fail it for a read its caller cancelled" (spec
-// section 10.1, with nisse's D6 amendment): upstream's Storage sees the caller's abort signal in its Context and throws
-// the abort reason itself. Nisse's Storage port takes no Context; cancelling the caller interrupts its read instead
+// section 10.1, with sigma's D6 amendment): upstream's Storage sees the caller's abort signal in its Context and throws
+// the abort reason itself. Sigma's Storage port takes no Context; cancelling the caller interrupts its read instead
 // (D6). So the Storage here holds the context read, the caller aborts while it is held, and the checks are upstream's:
 // the read rejects with the caller's reason, nothing is reported, and a later commit goes through.
 import type { Context } from "@earendil-works/chord/context";

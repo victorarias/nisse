@@ -1,7 +1,7 @@
 // The records Storage keeps and the shapes of its reads and writes (spec sections 2, 3.2 and 10). Their names, fields
 // and JSON are pi-durable's (D2), so a database and the upstream suite read the same.
-import type { Op } from "@nisse/delta"
-import type { JsonValue } from "@nisse/delta/json"
+import type { Op } from "@sigma/delta"
+import type { JsonValue } from "@sigma/delta/json"
 
 export type { JsonValue }
 

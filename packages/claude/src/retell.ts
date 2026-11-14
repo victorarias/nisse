@@ -1,8 +1,8 @@
 // What Claude Code is told of the conversation: the opening a fresh session gets, and what a resumed one missed after
-// its position. Claude Code holds its own session, so whatever nisse committed that the session does not hold is told
+// its position. Claude Code holds its own session, so whatever sigma committed that the session does not hold is told
 // to it as text in the run's first message.
-import type { EntryRecord } from "@nisse/kernel"
-import type { ImageContent, Message } from "@nisse/models"
+import type { EntryRecord } from "@sigma/kernel"
+import type { ImageContent, Message } from "@sigma/models"
 
 /** Opens a fresh session that a conversation with history joins, before that history. */
 export const JOINING =
@@ -11,7 +11,7 @@ export const JOINING =
 /** About what a retelling of a long conversation keeps, besides its first prompt and the prompts being answered. */
 export const RETOLD_CHARACTERS = 64_000
 
-/** The result of a call a stop cut off, as nisse records it and Claude Code is told. */
+/** The result of a call a stop cut off, as sigma records it and Claude Code is told. */
 export const INTERRUPTED = "interrupted; it may or may not have taken effect"
 
 type Part = { readonly type: string; readonly text?: string }
@@ -38,7 +38,7 @@ const messagesOf = (entry: EntryRecord): readonly Message[] => (entry.model ?? [
 
 /**
  * What a resumed session missed: the entries after its position, as text. Prompts are told as they are; what Claude
- * wrote and nisse kept although the session lost it, and the results nisse recorded for calls the session holds no
+ * wrote and sigma kept although the session lost it, and the results sigma recorded for calls the session holds no
  * result of, are told as cut off.
  */
 export function unseen(entries: readonly EntryRecord[]): Said[] {

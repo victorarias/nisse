@@ -1,7 +1,7 @@
 // Tool result ordering of model context (spec 2.1, rule 7) for responses an agent running its own loop commits block by
 // block, as Claude Code does: each block arrives as its own assistant message, and all of them share the response's id.
 import { expect, test } from "bun:test"
-import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@nisse/models"
+import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@sigma/models"
 import { orderToolResults } from "../src/index.ts"
 
 const usage = {

@@ -1,30 +1,30 @@
-# Nisse
+# Sigma
 
-Nisse is a coding agent designed to be durable, to integrate with agent SDKs,
+Sigma is a coding agent designed to be durable, to integrate with agent SDKs,
 and to serve many clients on one conversation, with every change attributed.
 One server owns every conversation and commits each step to SQLite before
 anyone sees it. Clients draw what it commits; the first is a terminal UI.
 Models run through the Claude Agent SDK, which drives Claude Code, or through
-a ChatGPT sign-in, where nisse runs the loop and the tools itself.
+a ChatGPT sign-in, where sigma runs the loop and the tools itself.
 
 ## Where we are
 
-Nisse is still being built and nobody depends on it yet. Choose the right
+Sigma is still being built and nobody depends on it yet. Choose the right
 design over compatibility with what exists.
 
 The binary runs on a durable kernel written on Effect, following pi-durable's
 model: `packages/kernel` stores state and runs tasks, `packages/harness` runs
-conversations on it, and `packages/nisse` serves them over `packages/protocol`.
+conversations on it, and `packages/sigma` serves them over `packages/protocol`.
 The kernel's features with no client path are marked `[kernel]` in the feature
 map, and are proven by package tests or pi-durable's own suite.
 
 ## Domain language
 
-These terms are nisse's domain model. Use them with these meanings in code,
+These terms are sigma's domain model. Use them with these meanings in code,
 tests, docs and conversation.
 
 ```text
-home                    one directory of state, NISSE_HOME; like a tenant
+home                    one directory of state, SIGMA_HOME; like a tenant
 ├─ server (at most 1)   the process that owns the home's state and runs its work
 ├─ conversation (0..n)
 ├─ provider (1..n)      a way to reach models: Claude Code or a ChatGPT sign-in
@@ -66,8 +66,8 @@ approval                a tool call waiting for a person to allow or deny it;
 - Only committed state is observable. Every change goes through one store
   commit, published after it is stored. Never show a client anything else.
 - The server owns state and execution; clients only render.
-- Nisse orders and records what clients do. It does not decide who a client is
-  or what it may do; whatever runs nisse owns identity and permissions.
+- Sigma orders and records what clients do. It does not decide who a client is
+  or what it may do; whatever runs sigma owns identity and permissions.
 - A client never slows the server: each watch has a bounded queue and ends
   with `FellBehind` when it falls behind; the client watches again and pages
   what it missed.
@@ -79,9 +79,9 @@ approval                a tool call waiting for a person to allow or deny it;
 
 | To learn                                                     | Read                                                      |
 | ------------------------------------------------------------ | --------------------------------------------------------- |
-| What nisse does, feature by feature, and how to drive each   | `.agents/skills/verify-nisse/features/README.md`          |
-| The commands and flags                                       | `bun packages/nisse/src/main.ts --help`                   |
-| What clients can call                                        | `schema/nisse.schema.json`, made from `packages/protocol` |
+| What sigma does, feature by feature, and how to drive each   | `.agents/skills/verify-sigma/features/README.md`          |
+| The commands and flags                                       | `bun packages/sigma/src/main.ts --help`                   |
+| What clients can call                                        | `schema/sigma.schema.json`, made from `packages/protocol` |
 | What a package owns                                          | its `README.md`, or the exports in its `package.json`     |
 | Which package may import which                               | `scripts/boundaries.ts`                                   |
 | How the kernel is measured against pi-durable's suite        | `packages/conformance/README.md`                          |
@@ -97,7 +97,7 @@ bun run check   # what CI runs
   skill.
 - A change to a kernel package or `packages/conformance` goes through
   `verify-conformance`.
-- Before reporting a change done, drive it with the `verify-nisse` skill and
+- Before reporting a change done, drive it with the `verify-sigma` skill and
   show its evidence. A change to a user-facing behavior updates that skill's
   feature map in the same PR.
 - After a protocol change run `bun run schema` and commit the result.
@@ -112,14 +112,14 @@ enter where those consumers enter:
 
 | Kind     | Enters through                                                                                                                          | Lives in                                               |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Wire     | a real server in process, driven as a raw JSON-RPC client over its socket                                                               | `packages/nisse/test/wire.test.ts`                     |
-| Screen   | the real TUI in a PTY on an `@xterm/headless` screen, typed into, against a real server                                                 | `packages/nisse/test/screen.test.ts`                   |
-| Stack    | the `nisse` binary over its socket: kill, restart, reconnect                                                                            | `packages/nisse/test/stack.test.ts`                    |
-| Provider | a wire test whose provider is a fake server replaying a recorded exchange from `fixtures/`                                              | `packages/nisse/test/openai.test.ts`, `claude.test.ts` |
+| Wire     | a real server in process, driven as a raw JSON-RPC client over its socket                                                               | `packages/sigma/test/wire.test.ts`                     |
+| Screen   | the real TUI in a PTY on an `@xterm/headless` screen, typed into, against a real server                                                 | `packages/sigma/test/screen.test.ts`                   |
+| Stack    | the `sigma` binary over its socket: kill, restart, reconnect                                                                            | `packages/sigma/test/stack.test.ts`                    |
+| Provider | a wire test whose provider is a fake server replaying a recorded exchange from `fixtures/`                                              | `packages/sigma/test/openai.test.ts`, `claude.test.ts` |
 | Package  | a package's public API, only for specified logic with a large input space (as tables or properties) or a promise no wire test can reach | `packages/<name>/test`                                 |
 
 - The model is the seam. Tests script it (the `script` provider,
-  `NISSE_MODEL_SCRIPT`) or replay a provider's recorded exchange; nothing else
+  `SIGMA_MODEL_SCRIPT`) or replay a provider's recorded exchange; nothing else
   is faked.
 - Judge the TUI by its screen.
 - A test's title starts with the feature-map use case it covers:
@@ -128,7 +128,7 @@ enter where those consumers enter:
   same change; see the feature map's README.
 - Wait on events with a deadline, never sleep. A flaky test is a bug: fix it,
   never retry it.
-- Each test gets its own `NISSE_HOME` under `/tmp` (a socket path must stay
+- Each test gets its own `SIGMA_HOME` under `/tmp` (a socket path must stay
   under 108 bytes) and stops any server it started.
 - Don't test what the compiler guarantees, don't assert on your own fakes, and
   don't read source files in tests.
@@ -139,10 +139,10 @@ Provider tests replay recorded exchanges from `fixtures/`:
   every request against its `expect_outbound` frame, where `"<any>"` matches
   anything. A `hold_open` line leaves that reply's stream open until the test
   ends.
-- The fake `claude` executable (`packages/nisse/test/support/fake-claude`)
+- The fake `claude` executable (`packages/sigma/test/support/fake-claude`)
   plays one recorded Claude Code process per spawn, and one recorded probe per
-  probe (a spawn with `--no-session-persistence`). It logs what nisse sent it,
+  probe (a spawn with `--no-session-persistence`). It logs what sigma sent it,
   and tests judge Claude by that log.
-- Screen and stack tests point `NISSE_CLAUDE` at the fake `claude`, so no test
+- Screen and stack tests point `SIGMA_CLAUDE` at the fake `claude`, so no test
   reaches a real Claude. A stack test that needs ChatGPT points
-  `NISSE_OPENAI_URL` at the fake OpenAI server.
+  `SIGMA_OPENAI_URL` at the fake OpenAI server.

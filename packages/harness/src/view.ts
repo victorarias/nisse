@@ -1,7 +1,7 @@
 // The conversation view (spec 9.3): one mount per conversation, a window over its transcript and its built-in
 // documents, built on the Session line by its first observer and dropped with its last. Each mount advances from the
 // Session's commits at their publication and hands every observer the next revision of its own window.
-import { applyImmutable, type NonEmptyPath, type Op, type Path } from "@nisse/delta"
+import { applyImmutable, type NonEmptyPath, type Op, type Path } from "@sigma/delta"
 import {
   type AnyDocToken,
   type CommitPublication,
@@ -22,7 +22,7 @@ import {
   readOnLine,
   type Session,
   type StorageReads,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import { Effect } from "effect"
 import { AgentDoc } from "./agent.ts"
 import { ApprovalsDoc } from "./approvals.ts"
@@ -43,7 +43,7 @@ export type ConversationView = {
   /** ID of the entry just before the window; absent when the window starts the transcript. */
   readonly before?: EntryId
   /**
-   * `pi.agent`, `pi.live`, `pi.inbox`, `pi.provider`, `pi.usage`, `nisse.approvals` and the host's `viewDocs`, keyed by
+   * `pi.agent`, `pi.live`, `pi.inbox`, `pi.provider`, `pi.usage`, `sigma.approvals` and the host's `viewDocs`, keyed by
    * kind; absent documents are absent.
    */
   readonly docs: Readonly<Record<string, JsonObject>>

@@ -1,5 +1,5 @@
 {
-  "name": "@nisse/codemode",
+  "name": "@sigma/codemode",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
@@ -12,12 +12,12 @@
     "./sandbox/worker": "./src/sandbox/runtime/worker.ts"
   },
   "dependencies": {
-    "@nisse/env": "workspace:*",
-    "@nisse/harness": "workspace:*",
-    "@nisse/kernel": "workspace:*",
-    "@nisse/models": "workspace:*",
-    "@nisse/schema": "workspace:*",
-    "@nisse/tools": "workspace:*",
+    "@sigma/env": "workspace:*",
+    "@sigma/harness": "workspace:*",
+    "@sigma/kernel": "workspace:*",
+    "@sigma/models": "workspace:*",
+    "@sigma/schema": "workspace:*",
+    "@sigma/tools": "workspace:*",
     "effect": "4.0.6",
     "quickjs-wasi": "3.6.2"
   }

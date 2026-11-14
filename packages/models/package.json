@@ -1,5 +1,5 @@
 {
-  "name": "@nisse/models",
+  "name": "@sigma/models",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
@@ -9,7 +9,7 @@
     "./chatgpt": "./src/chatgpt/index.ts"
   },
   "dependencies": {
-    "@nisse/schema": "workspace:*",
+    "@sigma/schema": "workspace:*",
     "effect": "4.0.6"
   }
 }

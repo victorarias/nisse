@@ -1,7 +1,7 @@
 // What a `claude.run` invocation and the `claude.subagent` tasks under it share in memory: how each hosted subagent
 // ended, and how to stop it. Neither survives a restart, which abandons the subagent tasks with the process.
-import type { HookApi } from "@nisse/harness"
-import type { TaskId } from "@nisse/kernel"
+import type { HookApi } from "@sigma/harness"
+import type { TaskId } from "@sigma/kernel"
 import { Deferred } from "effect"
 
 /** How Claude Code said a subagent ended. */

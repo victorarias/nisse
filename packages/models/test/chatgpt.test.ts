@@ -4,8 +4,8 @@ import { expect, test } from "bun:test"
 import { Effect, Stream } from "effect"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { fromProviders, type Context, type Tool, type ToolCall } from "@nisse/models"
-import { chatGptInstance } from "@nisse/models/chatgpt"
+import { fromProviders, type Context, type Tool, type ToolCall } from "@sigma/models"
+import { chatGptInstance } from "@sigma/models/chatgpt"
 
 const FIXTURE = join(import.meta.dir, "../../../fixtures/openai/code_mode_script.ndjson")
 
@@ -50,7 +50,7 @@ const withChatGpt = async (
       return new Response(sse, { headers: { "content-type": "text/event-stream" } })
     },
   })
-  const home = mkdtempSync("/tmp/nisse-models-")
+  const home = mkdtempSync("/tmp/sigma-models-")
   try {
     const authPath = join(home, "auth.json")
     writeFileSync(

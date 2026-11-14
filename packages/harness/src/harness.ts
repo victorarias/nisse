@@ -1,6 +1,6 @@
 // The Harness: one Session with its task scheduler, conversations, and the services harness tasks run with (spec 2.2,
 // 5 and 7.1). Every change is one commit on the Session line.
-import type { ExecutionEnv } from "@nisse/env"
+import type { ExecutionEnv } from "@sigma/env"
 import {
   type AnyDocToken,
   type CommitError,
@@ -50,14 +50,14 @@ import {
   spanTime,
   TracePropagation,
   updateMetric,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import {
   type ClientIdentity,
   mergeClientIdentity,
   type Models,
   PI_ATTRIBUTION,
   withClientIdentity,
-} from "@nisse/models"
+} from "@sigma/models"
 import { Cause, Clock, Context, Data, Deferred, Effect, Exit, Layer, Scope, type Tracer } from "effect"
 import { AgentDoc, agentHooks, configure, createAgent, resolveAgent, resolveSettings } from "./agent.ts"
 import { BUILTIN_TASKS } from "./builtin.ts"

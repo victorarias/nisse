@@ -2,8 +2,8 @@
 // changes and the commit that writes them, or when the copied partial is ahead of the events seen, orders only the
 // throttle's timing and a provider writing its partial ahead of its events produce.
 import { describe, expect, test } from "bun:test"
-import { copyJson } from "@nisse/delta/json"
-import type { AssistantMessage, AssistantMessageEvent, ToolCall } from "@nisse/models"
+import { copyJson } from "@sigma/delta/json"
+import type { AssistantMessage, AssistantMessageEvent, ToolCall } from "@sigma/models"
 import { type LiveState, PartialChanges, type PartialMessage } from "../src/index.ts"
 
 const partial = (args: ToolCall["arguments"]): AssistantMessage =>

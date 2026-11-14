@@ -1,4 +1,4 @@
-# @nisse/models
+# @sigma/models
 
 What the harness asks of a model: the message types entries store, the `Models`
 seam, and the providers behind it.
@@ -42,12 +42,12 @@ or the script. A home's config names instances of a kind, such as `openai` and
 
 ## Providers
 
-- `scriptProvider(steps)` (`src/script.ts`) plays `NISSE_MODEL_SCRIPT`'s steps
+- `scriptProvider(steps)` (`src/script.ts`) plays `SIGMA_MODEL_SCRIPT`'s steps
   (`ScriptStep`): `text` word by word with `delayMs` before each word, a `tool`
   call, a `fail` error, and `agent` to give a subagent its own steps, matched to
   the request's `metadata.agent` (default `/root`). When the steps run out, it
   answers `You said: <the last user text>`, 30 ms per word. It has no deferred, classifier or image support.
-- `fauxProvider(options)` (`@nisse/models/faux`) is pi-ai's faux provider on
+- `fauxProvider(options)` (`@sigma/models/faux`) is pi-ai's faux provider on
   Effect, for tests: scripted responses one per request, a deferred response
   pending for `deferred.pendingFetches` fetches, cancellation, pacing by
   `tokensPerSecond`, and usage estimated from the prompt with a simulated prompt
@@ -55,7 +55,7 @@ or the script. A home's config names instances of a kind, such as `openai` and
 
 ## ChatGPT
 
-`@nisse/models/chatgpt` reaches ChatGPT through a person's ChatGPT sign-in.
+`@sigma/models/chatgpt` reaches ChatGPT through a person's ChatGPT sign-in.
 `chatGptInstance(id, options)` opens one instance: its account (browser and
 device-code sign-in, token refresh, health, the model catalog ChatGPT lists or
 the one bundled in `models.json`) and the provider behind the seam, which sends
@@ -74,7 +74,7 @@ each request to `/codex/responses` and streams the answer back.
   usage limit with its plan and reset time, the response's error code and
   message (`context_length_exceeded` is read as an overflow), or a stream cut
   before the response ended.
-- `originator: nisse` names nisse on every request and sign-in; the provider's
+- `originator: sigma` names sigma on every request and sign-in; the provider's
   `sessionId` is both the `session-id` header and the `prompt_cache_key`.
 
 ## Copied code
@@ -99,7 +99,7 @@ the MIT license in `LICENSE`:
 | `faux.ts`            | `providers/faux.ts`, ported to Effect           |                                                   |
 | `chatgpt/grammar.ts` | `api/constrained-sampling.ts`, the grammar half | JSON-schema strict mode                           |
 
-`validation.ts` keeps pi-ai's `validateToolArguments` over `@nisse/schema`'s
+`validation.ts` keeps pi-ai's `validateToolArguments` over `@sigma/schema`'s
 `checkToolArguments`. `test/overflow.test.ts` and `test/retry.test.ts` are
 pi-ai's tests for those files, on `bun:test`; `retry.test.ts` leaves out the
 tests of `retryAssistantCall`.

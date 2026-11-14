@@ -1,4 +1,4 @@
-import * as T from "@nisse/tools";
+import * as T from "@sigma/tools";
 import { upstreamExtension, upstreamTool } from "../tools/bridge.ts";
 
 export const TOOL_SEARCH_TOOL_NAME = T.TOOL_SEARCH_TOOL_NAME;

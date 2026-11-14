@@ -2,9 +2,9 @@
 import { afterEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
-import type { ExecutionEnv } from "@nisse/env"
-import { LocalExecutionEnv } from "@nisse/env/local"
-import { fauxAssistantMessage, fauxToolCall } from "@nisse/models/faux"
+import type { ExecutionEnv } from "@sigma/env"
+import { LocalExecutionEnv } from "@sigma/env/local"
+import { fauxAssistantMessage, fauxToolCall } from "@sigma/models/faux"
 import { Deferred, Effect, Fiber } from "effect"
 import { createApplyPatchTool, createEditTool, withFileMutationQueue } from "../src/index.ts"
 import { openChat, overriding, removeDirectories, resultText, run, temporaryDirectory } from "./support.ts"
@@ -111,7 +111,7 @@ test("tool-apply-patch: a patch adds, updates, moves and deletes files, and a hu
 test("tool-file-queue: a mutation interrupted while it waits does not let the next one run beside the one holding the file", () =>
   run(
     Effect.gen(function* () {
-      const workspace = temporaryDirectory("nisse-tools-")
+      const workspace = temporaryDirectory("sigma-tools-")
       // Signals once a call has resolved the file's key and taken its place in the queue, which it does in the same step.
       let resolved = Deferred.makeUnsafe<void>()
       writeFileSync(join(workspace, "notes.txt"), "alpha\n")

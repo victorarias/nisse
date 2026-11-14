@@ -1,6 +1,6 @@
 // Amends upstream/test/harness-live-deltas.test.ts (spec 8.2).
 //
-// "keeps a complete base exactly while nothing runs": nisse also takes a base during a long generation or tool round,
+// "keeps a complete base exactly while nothing runs": sigma also takes a base during a long generation or tool round,
 // so a one-hour tool stream does not retain every delta since the round began. The base whenever nothing runs is
 // unchanged; while something runs, a short chain stays deltas and a long one gets a base.
 //

@@ -2,8 +2,8 @@
 // model, retries with a durable backoff, classifies the response, and runs the tool round and the run's end. The run's
 // inputs live in `pi.live.run`. Partial responses are committed into `pi.live` on a throttle, as ordinary commits
 // (D5). From pi-durable's `src/harness/generation.ts` at 7d073328e (MIT, see LICENSE).
-import { copyJson } from "@nisse/delta/json"
-import type { Draft } from "@nisse/delta"
+import { copyJson } from "@sigma/delta/json"
+import type { Draft } from "@sigma/delta"
 import {
   type AnyTask,
   defineTask,
@@ -20,7 +20,7 @@ import {
   type TaskOutcome,
   type TaskRuntime,
   type Tx,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import {
   getCurrentTools,
   isContextOverflow,
@@ -34,7 +34,7 @@ import {
   type ModelThinkingLevel,
   type RequestOptions,
   type ToolCall,
-} from "@nisse/models"
+} from "@sigma/models"
 import { Cause, Effect, Exit, Fiber, Queue, Stream } from "effect"
 import { addTools, AgentDoc, agentHooks, offeredTo, sectionExtension } from "./agent.ts"
 import { compactionPolicy, createCompaction, estimateContext, selectCut } from "./compaction.ts"

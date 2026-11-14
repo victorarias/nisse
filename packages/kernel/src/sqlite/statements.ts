@@ -62,7 +62,7 @@ export const insertRows = (
     yield* insertBound(executor, `INSERT INTO ${table} (${names}) VALUES`, columns.length, large, conflict)
   })
 
-// Durable Objects bind at most 100 parameters per statement. Nisse runs on bun:sqlite, whose limit is far higher, but
+// Durable Objects bind at most 100 parameters per statement. Sigma runs on bun:sqlite, whose limit is far higher, but
 // the statement shapes upstream's tests count keep this bound.
 const MAX_PARAMETERS = 100
 

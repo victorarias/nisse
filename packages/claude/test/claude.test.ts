@@ -1,12 +1,12 @@
 // claude.run through the harness's own seams: a Harness over real SQLite whose registry holds extensions written as a
-// host installs them, with Claude Code played by nisse's fake `claude` replaying a recorded process per spawn. These
+// host installs them, with Claude Code played by sigma's fake `claude` replaying a recorded process per spawn. These
 // cover what the wire cannot reach yet: extension tools and hooks, and forks.
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Scope } from "effect"
-import { type EntryRecord, openSqliteStorage } from "@nisse/kernel"
-import { fromProviders } from "@nisse/models"
+import { type EntryRecord, openSqliteStorage } from "@sigma/kernel"
+import { fromProviders } from "@sigma/models"
 import {
   AssistantEntry,
   approveAutomatically,
@@ -21,11 +21,11 @@ import {
   ToolTask,
   UsageDoc,
   UserEntry,
-} from "@nisse/harness"
+} from "@sigma/harness"
 import { type ClaudeProcessesOptions, claudeRunTasks, makeClaudeProcesses } from "../src/index.ts"
 
 const FIXTURES = join(import.meta.dir, "../../../fixtures/claude")
-const FAKE = join(import.meta.dir, "../../nisse/test/support/fake-claude")
+const FAKE = join(import.meta.dir, "../../sigma/test/support/fake-claude")
 
 const dirs: string[] = []
 afterEach(() => {
@@ -34,7 +34,7 @@ afterEach(() => {
 
 /** A fake Claude Code playing the fixtures' processes one per spawn, in order, and what it logged. */
 const fake = (...fixtures: [string, ...string[]]) => {
-  const dir = mkdtempSync("/tmp/nisse-claude-")
+  const dir = mkdtempSync("/tmp/sigma-claude-")
   dirs.push(dir)
   const played = join(dir, "fixture.ndjson")
   writeFileSync(played, fixtures.map((fixture) => readFileSync(join(FIXTURES, `${fixture}.ndjson`), "utf8")).join("\n"))
@@ -76,7 +76,7 @@ const open = (
 ) =>
   Effect.gen(function* () {
     // The fake writes the conversation's directory into its recorded paths as given; on macOS /tmp is /private/tmp.
-    const dir = realpathSync(mkdtempSync("/tmp/nisse-harness-"))
+    const dir = realpathSync(mkdtempSync("/tmp/sigma-harness-"))
     dirs.push(dir)
     const registry = createRegistry()
     const tasks = claudeRunTasks({
@@ -161,7 +161,7 @@ const clock = defineExtension({
   ],
 })
 
-test("claude-extensions: an extension's tool reaches Claude through nisse's own MCP server, without asking", async () => {
+test("claude-extensions: an extension's tool reaches Claude through sigma's own MCP server, without asking", async () => {
   const claude = fake("own_tool")
   const all = await run(
     Effect.gen(function* () {
@@ -179,10 +179,10 @@ test("claude-extensions: an extension's tool reaches Claude through nisse's own 
   ])
   // Claude Code is offered the tool once, over MCP, not also as one of its own.
   expect(spawns(claude)[0]!.find((arg) => arg.startsWith("--disallowedTools"))).toBe("--disallowedTools=Clock")
-  expect(claude.log().find((entry) => entry.initialize)?.initialize.sdkMcpServers).toEqual(["nisse"])
+  expect(claude.log().find((entry) => entry.initialize)?.initialize.sdkMcpServers).toEqual(["sigma"])
 })
 
-test("claude-extensions: an extension refuses a call Claude wants, in nisse's words, and Claude Code hears why", async () => {
+test("claude-extensions: an extension refuses a call Claude wants, in sigma's words, and Claude Code hears why", async () => {
   const claude = fake("bash_hook_denied")
   const all = await run(
     Effect.gen(function* () {
@@ -244,7 +244,7 @@ test("claude-extensions: an extension's hooks reach the calls of Claude's subage
       const conversation = yield* start(harness, cwd)
       yield* ask(conversation, "what time is it")
       const all = yield* entries(conversation)
-      const placed = all.find((entry) => entry.kind === "nisse.subagent")!.data as { conversation: number }
+      const placed = all.find((entry) => entry.kind === "sigma.subagent")!.data as { conversation: number }
       const subagent = (yield* harness.conversation(placed.conversation as never))!
       yield* subagent.waitForIdle
       const parentId = Number(conversation.id)
@@ -273,7 +273,7 @@ test("claude-extensions: an extension's tool runs for Claude's subagents, in the
       const conversation = yield* start(harness, cwd)
       yield* ask(conversation, "ask a subagent the time in CET")
       const all = yield* entries(conversation)
-      const placed = all.find((entry) => entry.kind === "nisse.subagent")!.data as { conversation: number }
+      const placed = all.find((entry) => entry.kind === "sigma.subagent")!.data as { conversation: number }
       const subagent = (yield* harness.conversation(placed.conversation as never))!
       yield* subagent.waitForIdle
       return { parent: all, child: yield* entries(subagent) }

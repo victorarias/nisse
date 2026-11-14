@@ -1,6 +1,6 @@
 // Amends three tests of upstream/test/session-adoption.test.ts > "Session adoption after Storage stored a commit"
 // (spec 4 and 10.1, amendments.json). Upstream spies on the private `Transaction.prototype.adopt` and `discard`, which
-// nisse's kernel does not have; these keep the same Storage faults and every public assertion, and drop the spies.
+// sigma's kernel does not have; these keep the same Storage faults and every public assertion, and drop the spies.
 //
 // - "takes the durability receipt inside the commit, and adopts once Storage resolved" (spec 4): Storage runs the
 //   receipt inside its call and resolves after it, and the adopted value is what a snapshot reads.

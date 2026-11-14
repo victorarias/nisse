@@ -1,9 +1,9 @@
 // The usage ledger of a conversation (spec 8.6), from pi-durable's `src/harness/usage.ts` at 7d073328e (MIT, see
 // LICENSE).
-import type { Draft } from "@nisse/delta"
-import { copyJson } from "@nisse/delta/json"
-import { type ConversationId, defineDoc, type DocError, type Tx } from "@nisse/kernel"
-import type { Usage } from "@nisse/models"
+import type { Draft } from "@sigma/delta"
+import { copyJson } from "@sigma/delta/json"
+import { type ConversationId, defineDoc, type DocError, type Tx } from "@sigma/kernel"
+import type { Usage } from "@sigma/models"
 import type { Stored } from "./live.ts"
 import { Effect } from "effect"
 

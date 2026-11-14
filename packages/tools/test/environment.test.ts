@@ -1,8 +1,8 @@
 // What a command learns about the conversation that runs it.
 import { afterEach, expect, test } from "bun:test"
-import { type TaskServices } from "@nisse/harness"
-import { defineTask } from "@nisse/kernel"
-import { fauxAssistantMessage, fauxToolCall } from "@nisse/models/faux"
+import { type TaskServices } from "@sigma/harness"
+import { defineTask } from "@sigma/kernel"
+import { fauxAssistantMessage, fauxToolCall } from "@sigma/models/faux"
 import { Effect } from "effect"
 import { createBashTool, rootConversationEnv } from "../src/index.ts"
 import { openChat, removeDirectories, resultText, run } from "./support.ts"
@@ -20,11 +20,11 @@ const Owner = defineTask<null, { readonly phase: "hold" }, null, TaskServices>({
 })
 
 const echoRoot = () =>
-  fauxAssistantMessage(fauxToolCall("bash", { command: 'printf "root=%s" "$NISSE_ROOT_CONVERSATION"' }), {
+  fauxAssistantMessage(fauxToolCall("bash", { command: 'printf "root=%s" "$SIGMA_ROOT_CONVERSATION"' }), {
     stopReason: "toolUse",
   })
 
-test("tool-root-env-kernel: bash runs with NISSE_ROOT_CONVERSATION set to the conversation people started, also in one a task of it owns", () =>
+test("tool-root-env-kernel: bash runs with SIGMA_ROOT_CONVERSATION set to the conversation people started, also in one a task of it owns", () =>
   run(
     Effect.gen(function* () {
       const chat = yield* openChat({

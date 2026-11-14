@@ -1,1 +1,1 @@
-export { LocalFileWatcher as NodeFileWatcher } from "@nisse/env/local";
+export { LocalFileWatcher as NodeFileWatcher } from "@sigma/env/local";

@@ -2,7 +2,7 @@
 // (earendil-works/pi, packages/durable, commit 7d073328e), under the MIT license in this package's LICENSE (Copyright 2025
 // Mario Zechner); `prepare` returns an Effect.
 
-import type { ModelInputLimits } from "@nisse/models"
+import type { ModelInputLimits } from "@sigma/models"
 import type { Effect } from "effect"
 
 /** Limits an image the model sees must keep; the defaults below are the coding agent's. */
@@ -42,7 +42,7 @@ export type PreparedImage = {
 
 /**
  * Decodes, orients, resizes, and re-encodes images so the model can take them. `read` uses one when given; without
- * one, it passes supported images within the byte limit through as they are. `@nisse/tools/images` provides a
+ * one, it passes supported images within the byte limit through as they are. `@sigma/tools/images` provides a
  * Photon-based one.
  */
 export type ImageProcessor = {

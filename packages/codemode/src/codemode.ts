@@ -34,8 +34,8 @@
 //
 // The VM drives the call through callbacks. Work they start runs as fibers of the call's scope, which ends with
 // `execute`, so nothing outlives the call. Stopping never waits for the VM's worker (F19): the sandbox asks it to stop.
-import { ownedSlice } from "@nisse/delta"
-import { copyJson } from "@nisse/delta/json"
+import { ownedSlice } from "@sigma/delta"
+import { copyJson } from "@sigma/delta/json"
 import {
   defineExtension,
   defineTool,
@@ -47,12 +47,12 @@ import {
   type ToolExecutionResult,
   type ToolRegistration,
   type ToolTaskInput,
-} from "@nisse/harness"
-import type { ExecutionEnv } from "@nisse/env"
-import { defineDoc, fromPromise, type JsonObject, type JsonValue } from "@nisse/kernel"
-import type { TextContent } from "@nisse/models"
-import { obj, type Static, str } from "@nisse/schema"
-import { rankDocuments } from "@nisse/tools"
+} from "@sigma/harness"
+import type { ExecutionEnv } from "@sigma/env"
+import { defineDoc, fromPromise, type JsonObject, type JsonValue } from "@sigma/kernel"
+import type { TextContent } from "@sigma/models"
+import { obj, type Static, str } from "@sigma/schema"
+import { rankDocuments } from "@sigma/tools"
 import { Cause, Deferred, Effect, FiberSet, Semaphore } from "effect"
 import {
   type CodemodeNamespace,

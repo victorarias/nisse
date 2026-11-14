@@ -1457,22 +1457,22 @@
   {
    "test": "upstream/test/storage-runtime-boundary.test.ts :: durable storage runtime boundaries > keeps the package root limited to portable core storage",
    "decision": "D14",
-   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version"
+   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is sigma's version"
   },
   {
    "test": "upstream/test/storage-runtime-boundary.test.ts :: durable storage runtime boundaries > keeps the portable environment subpath free of Node imports",
    "decision": "D14",
-   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version"
+   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is sigma's version"
   },
   {
    "test": "upstream/test/storage-runtime-boundary.test.ts :: durable storage runtime boundaries > keeps the portable JSONL subpath free of Node imports",
    "decision": "D14",
-   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version"
+   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is sigma's version"
   },
   {
    "test": "upstream/test/storage-runtime-boundary.test.ts :: durable storage runtime boundaries > keeps the portable SQLite subpath free of Node imports",
    "decision": "D14",
-   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is nisse's version"
+   "reason": "reads pi-durable's source files to check its import graph; scripts/boundaries.ts is sigma's version"
   },
   {
    "test": "upstream/test/store-storage-commit.test.ts :: durability > keeps every batch of a stored call across a crash: reopened, the seqs, rows, documents and ids are there",

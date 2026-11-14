@@ -1,6 +1,6 @@
-# @nisse/codemode
+# @sigma/codemode
 
-Durable code mode on `@nisse/harness` and Effect: one `codemode` tool whose argument is a JavaScript script. The script
+Durable code mode on `@sigma/harness` and Effect: one `codemode` tool whose argument is a JavaScript script. The script
 calls the conversation's other tools as `await tools.<name>(args)`, each one a nested call under the `codemode` call
 that passes the same hooks and approvals as a direct call. Every result is journaled before the script sees it, so after
 a restart the script runs again from the start, gets its finished calls from the journal without running them again,
@@ -12,7 +12,7 @@ and stops with an error if it takes another path.
 | `createCodemodeTool(options)`                                           | the `codemode` tool alone                                                                                                                            |
 | `CodemodeRunDoc`, `CodemodeJournalDoc`, `CodemodeStoreDoc`              | the documents `pi.codemode.run`, `pi.codemode.journal` and `pi.codemode.store`                                                                       |
 | `codemodeDescription`, `codemodeSection`, `formatResult`, `catalogCall` | the tool description, the prompt section, the result format and the `models.*` catalog                                                               |
-| `@nisse/codemode/sandbox`                                               | `CodemodeSandbox`: the deterministic QuickJS sandbox, run in a worker thread                                                                         |
+| `@sigma/codemode/sandbox`                                               | `CodemodeSandbox`: the deterministic QuickJS sandbox, run in a worker thread                                                                         |
 
 - A script sees `tools`, `ALL_TOOLS`, `searchTools`, `describeTool`, `describeNamespace`, `store`, `text`, `image`,
   `console`, `exit` and `models.*`. Its first line may be `// @options: {"max_output_tokens": N, "timeout_ms": N}`.

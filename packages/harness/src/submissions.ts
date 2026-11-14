@@ -1,6 +1,6 @@
 // Submissions (spec 6): admission in one commit, waits for settlement, and withdrawal. From pi-durable's
 // `src/harness/submissions.ts` at 7d073328e (MIT, see LICENSE).
-import { copyJson } from "@nisse/delta/json"
+import { copyJson } from "@sigma/delta/json"
 import {
   type CommitError,
   type CommitPublication,
@@ -18,7 +18,7 @@ import {
   type SubmissionRecord,
   type TracePropagation,
   type Tx,
-} from "@nisse/kernel"
+} from "@sigma/kernel"
 import { Cause, Data, Effect, Exit, Option, Queue, Tracer } from "effect"
 import { startRun } from "./generation.ts"
 import {

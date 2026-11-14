@@ -1,1 +1,1 @@
-export { LineScanner } from "@nisse/env/line-scan";
+export { LineScanner } from "@sigma/env/line-scan";

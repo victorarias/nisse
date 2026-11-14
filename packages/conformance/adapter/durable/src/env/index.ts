@@ -1,5 +1,5 @@
-// The Promise-and-Result surface the suite expects, over @nisse/env's Effect surface.
-export { ExecutionError, FileError, LineScanner, StreamDecoder, rangeDecoder, startsWithBom, toError } from "@nisse/env";
+// The Promise-and-Result surface the suite expects, over @sigma/env's Effect surface.
+export { ExecutionError, FileError, LineScanner, StreamDecoder, rangeDecoder, startsWithBom, toError } from "@sigma/env";
 
 export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };
 

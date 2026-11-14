@@ -1,4 +1,4 @@
-// Compaction over @nisse/harness's: a Transaction of the suite creates through its kernel Tx.
+// Compaction over @sigma/harness's: a Transaction of the suite creates through its kernel Tx.
 import * as H from "../../../../../harness/src/index.ts";
 import { run } from "../session/session.ts";
 

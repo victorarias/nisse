@@ -1,6 +1,6 @@
 // The protocol clients speak to the server: JSON-RPC over the home's socket, one call per line. A client watches a
 // conversation's view: the view through a window first, then the operations each commit applies to it. `bun run
-// schema` prints it to `schema/nisse.schema.json`.
+// schema` prints it to `schema/sigma.schema.json`.
 import { Schema } from "effect"
 import * as Rpc from "effect/rpc/Rpc"
 import * as RpcGroup from "effect/rpc/RpcGroup"
@@ -19,7 +19,7 @@ export const EntryRecord = Schema.Struct({
   conversationId: Schema.Int,
   kind: Schema.String.annotate({
     description:
-      "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; nisse.run_end says how a run ended in `data`, nisse.approval who answered a call, nisse.withdrawn which input was withdrawn before it ran.",
+      "pi.user, pi.assistant and pi.tool-result carry model messages in `model`; sigma.run_end says how a run ended in `data`, sigma.approval who answered a call, sigma.withdrawn which input was withdrawn before it ran.",
   }),
   model: Schema.optionalKey(Schema.Array(Json)),
   data: Schema.optionalKey(Json),
@@ -32,16 +32,16 @@ export type EntryRecord = typeof EntryRecord.Type
 export const Outcome = Schema.Literals(["answered", "interrupted", "failed", "restart_limit"])
 export type Outcome = typeof Outcome.Type
 
-export const RUN_END_KIND = "nisse.run_end"
+export const RUN_END_KIND = "sigma.run_end"
 
 /** An entry `{ author, selection }`: someone switched the conversation's model; it answers with it from the next run on. */
-export const MODEL_KIND = "nisse.model"
+export const MODEL_KIND = "sigma.model"
 
 /** A person's input: the entry its user message is placed as, with data `{ author, requestId }`. */
-export const USER_KIND = "nisse.user"
+export const USER_KIND = "sigma.user"
 
 /** A person's input withdrawn while it waited, as an interrupt withdraws what waits, with data `{ requestId }`. */
-export const WITHDRAWN_KIND = "nisse.withdrawn"
+export const WITHDRAWN_KIND = "sigma.withdrawn"
 
 export const RunEnd = Schema.Struct({
   outcome: Outcome,
@@ -74,7 +74,7 @@ export const View = Schema.Struct({
   ),
   docs: Schema.Record(Schema.String, Json).annotate({
     description:
-      "pi.agent, pi.live, pi.inbox, pi.provider, pi.usage and nisse.approvals, by kind; pi.live holds the run in flight, nisse.approvals the calls waiting for a person.",
+      "pi.agent, pi.live, pi.inbox, pi.provider, pi.usage and sigma.approvals, by kind; pi.live holds the run in flight, sigma.approvals the calls waiting for a person.",
   }),
 })
 export type View = typeof View.Type
@@ -180,7 +180,7 @@ export class FellBehind extends Schema.TaggedError<FellBehind>()("FellBehind", {
 }
 
 /** Starts a new, empty context, the transcript kept. Behind a working run it waits in pi.inbox and applies at the run's next step. */
-/** The server opened its home read-only (`nisse serve --read-only`): it shows the home and changes nothing. */
+/** The server opened its home read-only (`sigma serve --read-only`): it shows the home and changes nothing. */
 export class ReadOnlyServer extends Schema.TaggedError<ReadOnlyServer>()("ReadOnlyServer", {
   message: Schema.String,
 }) {}
@@ -206,7 +206,7 @@ export class UnknownProvider extends Schema.TaggedError<UnknownProvider>()("Unkn
   message: Schema.String,
 }) {
   constructor(props: { readonly provider: string; readonly message?: string }) {
-    super({ ...props, message: props.message ?? `nisse has no provider named ${props.provider}` })
+    super({ ...props, message: props.message ?? `sigma has no provider named ${props.provider}` })
   }
 }
 
@@ -215,7 +215,7 @@ export class CannotSignIn extends Schema.TaggedError<CannotSignIn>()("CannotSign
   message: Schema.String,
 }) {}
 
-/** The effort is not a reasoning effort nisse knows; `efforts` lists those it does. */
+/** The effort is not a reasoning effort sigma knows; `efforts` lists those it does. */
 export class UnknownEffort extends Schema.TaggedError<UnknownEffort>()("UnknownEffort", {
   effort: Schema.String,
   efforts: Schema.Array(Schema.String),
@@ -224,7 +224,7 @@ export class UnknownEffort extends Schema.TaggedError<UnknownEffort>()("UnknownE
   constructor(props: { readonly effort: string; readonly efforts: ReadonlyArray<string>; readonly message?: string }) {
     super({
       ...props,
-      message: props.message ?? `nisse knows no effort named ${props.effort}; it knows ${props.efforts.join(", ")}`,
+      message: props.message ?? `sigma knows no effort named ${props.effort}; it knows ${props.efforts.join(", ")}`,
     })
   }
 }
@@ -326,7 +326,7 @@ export const ResolveApproval = Rpc.make("approval/resolve", {
   payload: {
     conversation: ConversationId,
     approval: Schema.String.annotate({
-      description: "A key of the view's nisse.approvals `requests`: the call's tool task.",
+      description: "A key of the view's sigma.approvals `requests`: the call's tool task.",
     }),
     author: Schema.String.annotate({ description: "Who answers; the transcript names them." }),
     allow: Schema.Boolean,
@@ -526,10 +526,10 @@ export const WatchStatus = Rpc.make("status/watch", {
 })
 
 /** Each extension's status line in a conversation, by extension name; the view's document of this kind. */
-export const STATUS_LINES_KIND = "nisse.status_lines"
+export const STATUS_LINES_KIND = "sigma.status_lines"
 
 /** An entry `{ extension, text }`: an extension told the people in the conversation something. */
-export const TOAST_KIND = "nisse.toast"
+export const TOAST_KIND = "sigma.toast"
 
 export const StopServer = Rpc.make("server/stop")
 
@@ -692,7 +692,7 @@ export const RESET_KIND = "pi.reset"
 export const COMPACTION_KIND = "pi.compaction"
 
 /** An entry `{ author, instructions?, maxTurns? }`: someone changed the conversation's settings; null clears one. */
-export const CONFIGURED_KIND = "nisse.configured"
+export const CONFIGURED_KIND = "sigma.configured"
 
 export const Fork = Rpc.make("conversation/fork", {
   payload: {
@@ -726,7 +726,7 @@ export const Reset = Rpc.make("conversation/reset", {
 })
 
 /**
- * Summarizes the context now; its pi.compaction entry replaces what it summarized. On a model nisse runs, pi.live's
+ * Summarizes the context now; its pi.compaction entry replaces what it summarized. On a model sigma runs, pi.live's
  * `compactions` shows it running and `compactionFailure` why one failed. A provider that runs its own loop, such as
  * Claude Code, compacts in a run: the conversation gets the input `/compact [instructions]` from `author`, queued
  * behind a run in flight.
@@ -847,7 +847,7 @@ export const WatchTasks = Rpc.make("tasks/watch", {
   stream: true,
 })
 
-export const NisseRpcs = RpcGroup.make(
+export const SigmaRpcs = RpcGroup.make(
   Initialize,
   StartConversation,
   ListConversations,

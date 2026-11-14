@@ -1,4 +1,4 @@
-// The usage ledger over @nisse/harness's: a Transaction of the suite records through its kernel Tx.
+// The usage ledger over @sigma/harness's: a Transaction of the suite records through its kernel Tx.
 import * as H from "../../../../../harness/src/index.ts";
 import { run } from "../session/session.ts";
 

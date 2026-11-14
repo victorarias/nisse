@@ -6,10 +6,10 @@
 // are paid effects, so each runs as an internal tool (`callers: ["tools"]`, a reserved name, hidden from scripts' tool
 // listings): a nested durable call with its own task, live row, abort, usage accounting, and replay policy. The code
 // mode tool turns a script's call of the global into a call of that tool.
-import { defineTool, type ToolExecutionApi, type ToolRegistration } from "@nisse/harness"
-import type { JsonValue } from "@nisse/kernel"
-import type { AnyModel, ClassifierContext, ImagesContext, Models, ModelType, ModelTypeMap, Usage } from "@nisse/models"
-import { obj, unknown } from "@nisse/schema"
+import { defineTool, type ToolExecutionApi, type ToolRegistration } from "@sigma/harness"
+import type { JsonValue } from "@sigma/kernel"
+import type { AnyModel, ClassifierContext, ImagesContext, Models, ModelType, ModelTypeMap, Usage } from "@sigma/models"
+import { obj, unknown } from "@sigma/schema"
 import { Effect } from "effect"
 
 /** Reserved names of code mode's internal tools; they are never listed to scripts or the model. */

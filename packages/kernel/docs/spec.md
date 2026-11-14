@@ -1,8 +1,8 @@
-# Nisse amendments
+# Sigma amendments
 
 This is pi-durable's specification (`packages/durable/docs/spec.md` in earendil-works/pi at commit `7d073328e`,
-MIT, see `../LICENSE`), the behavioral contract of nisse's kernel. Below this list it is unchanged. Where the list
-and the text disagree, the list wins. Each amendment names the decision of the "Rebuild nisse on a durable kernel
+MIT, see `../LICENSE`), the behavioral contract of sigma's kernel. Below this list it is unchanged. Where the list
+and the text disagree, the list wins. Each amendment names the decision of the "Rebuild sigma on a durable kernel
 written on Effect" plan that made it.
 
 - **Deferred commits are gone (D5).** Section 4.1, invariants 2, 3 and 7, and the deferred parts of sections 4, 7.3,
@@ -21,13 +21,13 @@ written on Effect" plan that made it.
   kernel backend.
 - **Alarms and image variants are gone (D5).** `setTimer` declining and `onWake` do not apply.
 - **Approvals (D13).** A tool registration may set `asks: true`. Its call, after `beforeTool` and validation and before
-  intent (section 8.5), adds a request keyed by its tool task ID to the conversation's `nisse.approvals` document,
+  intent (section 8.5), adds a request keyed by its tool task ID to the conversation's `sigma.approvals` document,
   unless that document sets `auto`, and waits for an answer there. `answerApproval()` sets the answer only on a
-  request without one, so the first answer counts, and appends a `nisse.approval` entry naming who answered. A rerun of
+  request without one, so the first answer counts, and appends a `sigma.approval` entry naming who answered. A rerun of
   the call after a restart keeps its request, and any answer, only when it computes the same arguments; otherwise it
   replaces the request and waits for a new answer. A denied call settles with an error result, diagnostic code
   `denied`, without running. The commit that settles the tool task, however it ends, removes its request. The
-  conversation view (section 9.3) mounts `nisse.approvals`.
+  conversation view (section 9.3) mounts `sigma.approvals`.
 
 ---
 

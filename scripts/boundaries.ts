@@ -17,7 +17,7 @@ const ALLOWED: Record<string, string[]> = {
   tools: ["delta", "schema", "kernel", "harness", "models", "env"],
   codemode: ["delta", "schema", "kernel", "harness", "models", "env", "tools"],
   claude: ["delta", "schema", "kernel", "harness", "models", "env"],
-  nisse: ["protocol", "delta", "schema", "kernel", "harness", "models", "env", "tools", "codemode", "claude"],
+  sigma: ["protocol", "delta", "schema", "kernel", "harness", "models", "env", "tools", "codemode", "claude"],
 }
 // May import anything, and nothing may import it.
 const CONFORMANCE = "conformance"
@@ -40,9 +40,9 @@ function targetPackage(specifier: string, file: string): string | undefined {
     const inside = relative(PACKAGES, resolve(dirname(file), specifier))
     return inside.startsWith("..") ? undefined : inside.split("/")[0]
   }
-  const named = /^@nisse\/([^/]+)/.exec(specifier)?.[1]
+  const named = /^@sigma\/([^/]+)/.exec(specifier)?.[1]
   if (named !== undefined) return named
-  return specifier === "nisse" || specifier.startsWith("nisse/") ? "nisse" : undefined
+  return specifier === "sigma" || specifier.startsWith("sigma/") ? "sigma" : undefined
 }
 
 const problems: string[] = []

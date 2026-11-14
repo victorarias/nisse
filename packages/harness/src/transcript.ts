@@ -1,6 +1,6 @@
 // A client's transcript (spec 9.3): what a client has of one conversation, every entry it got from a view or fetched,
 // and the gaps between. A layer over any `ConversationView`, wherever it comes from: a watch, or a replica of one.
-import type { EntryId, EntryQuery, EntryRecord, Page } from "@nisse/kernel"
+import type { EntryId, EntryQuery, EntryRecord, Page } from "@sigma/kernel"
 import { Effect, Fiber } from "effect"
 import type { ConversationView, ConversationWindow } from "./view.ts"
 

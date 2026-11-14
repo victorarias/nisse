@@ -1,4 +1,4 @@
-// How every Claude Code process nisse starts is set up: a run's, the account probe's and `claude auth`'s. Each gets the
+// How every Claude Code process sigma starts is set up: a run's, the account probe's and `claude auth`'s. Each gets the
 // server's environment without what a Claude Code session sets for the commands it runs, so a server started in a shell
 // inside Claude Code does not hand that session's identity to its own Claude Code; the provider instance's `env` goes
 // on top. `CLAUDE_CODE_ENTRYPOINT` is left unset, so the SDK names its sessions `sdk-ts`.
@@ -60,7 +60,7 @@ const settingsEnv = (cwd: string | undefined, sources: SettingSource[], env: Rea
     // Sources run from lowest precedence to highest, and Claude Code merges `env` name by name.
     return Object.assign({}, ...layers.map((layer) => layer.env ?? {})) as Record<string, string>
   }).pipe(
-    // Settings Claude Code cannot read fail its own start, which says why; nisse then has nothing to override.
+    // Settings Claude Code cannot read fail its own start, which says why; sigma then has nothing to override.
     Effect.orElseSucceed(() => undefined),
   )
 

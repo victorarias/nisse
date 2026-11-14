@@ -33,7 +33,7 @@ afterEach(() => {
 })
 
 const databasePath = (): string => {
-  const home = mkdtempSync(join(tmpdir(), "nisse-session-"))
+  const home = mkdtempSync(join(tmpdir(), "sigma-session-"))
   homes.push(home)
   return join(home, "kernel.sqlite")
 }

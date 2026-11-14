@@ -1,6 +1,6 @@
 // The Storage port over SQLite (spec 10 and 11.2).
 // Derived from pi-durable's `src/storage/sqlite/storage.ts` at 7d073328e (MIT, see LICENSE).
-import { apply, type Op } from "@nisse/delta"
+import { apply, type Op } from "@sigma/delta"
 import { Deferred, Effect } from "effect"
 import { CommitRefused, StorageError, StorageRequestError } from "../errors.ts"
 import {

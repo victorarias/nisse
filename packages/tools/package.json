@@ -1,5 +1,5 @@
 {
-  "name": "@nisse/tools",
+  "name": "@sigma/tools",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
@@ -11,11 +11,11 @@
     "./images/node": "./src/images/node.ts"
   },
   "dependencies": {
-    "@nisse/env": "workspace:*",
-    "@nisse/harness": "workspace:*",
-    "@nisse/kernel": "workspace:*",
-    "@nisse/models": "workspace:*",
-    "@nisse/schema": "workspace:*",
+    "@sigma/env": "workspace:*",
+    "@sigma/harness": "workspace:*",
+    "@sigma/kernel": "workspace:*",
+    "@sigma/models": "workspace:*",
+    "@sigma/schema": "workspace:*",
     "@silvia-odwyer/photon": "0.3.3",
     "diff": "8.0.4",
     "effect": "4.0.6"

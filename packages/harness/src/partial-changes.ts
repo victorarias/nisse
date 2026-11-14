@@ -1,7 +1,7 @@
 // What a streamed answer changed in its partial message between two partial commits, so a commit costs the new text.
 // From pi-durable's `src/harness/partial-changes.ts` at 7d073328e (MIT, see LICENSE).
-import { appendText, type Draft } from "@nisse/delta"
-import type { JsonValue } from "@nisse/delta/json"
+import { appendText, type Draft } from "@sigma/delta"
+import type { JsonValue } from "@sigma/delta/json"
 import {
   type AssistantMessage,
   type AssistantMessageEvent,
@@ -9,7 +9,7 @@ import {
   type JsonRepresentation,
   StreamingJsonParser,
   type ToolCall,
-} from "@nisse/models"
+} from "@sigma/models"
 import { type AssignPlan, assignJson } from "./json.ts"
 import type { LiveState, Stored } from "./live.ts"
 

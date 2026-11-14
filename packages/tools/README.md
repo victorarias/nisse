@@ -1,7 +1,7 @@
-# @nisse/tools
+# @sigma/tools
 
-The tools a model works with, on `@nisse/harness` and Effect. Each tool reaches files and processes only through the
-calling conversation's environment (`api.env`, an `@nisse/env` `ExecutionEnv`), so it works on whichever environment
+The tools a model works with, on `@sigma/harness` and Effect. Each tool reaches files and processes only through the
+calling conversation's environment (`api.env`, an `@sigma/env` `ExecutionEnv`), so it works on whichever environment
 the conversation uses.
 
 | Export                                         | Tool                                                                                |
@@ -18,20 +18,20 @@ the conversation uses.
 
 - `edit`, `write` and `apply_patch` serialize their mutations of one file with `withFileMutationQueue`, keyed by the
   environment's `id` and the file's canonical path, so parallel calls on one file both land (spec 7.3).
-- `rootConversationEnv` is a `bash` `prepare` that sets `NISSE_ROOT_CONVERSATION` to the conversation people started,
+- `rootConversationEnv` is a `bash` `prepare` that sets `SIGMA_ROOT_CONVERSATION` to the conversation people started,
   found through the owners of the calling conversation.
-- Images: `@nisse/tools/images` has `createPhotonImages(wasm)`, Photon's WebAssembly preparing images on the calling
-  thread; `@nisse/tools/images/node` has `createNodePhotonImages()`, which reads the WebAssembly from the installed
+- Images: `@sigma/tools/images` has `createPhotonImages(wasm)`, Photon's WebAssembly preparing images on the calling
+  thread; `@sigma/tools/images/node` has `createNodePhotonImages()`, which reads the WebAssembly from the installed
   package and prepares images in a worker thread. Photon runs under Bun, in the worker too. Without a processor, `read`
   passes inline formats within the model's limits through as they are.
 
 `read`, `write`, `edit`, `bash`, `powershell`, `tool_search`, the BM25 ranker (`src/search.ts`), `edit-diff`, image
 detection and EXIF are derived from pi-durable's `src/tools/`, `src/images/`, `src/tool-search/` and `src/search.ts` at
 commit `7d073328e` (earendil-works/pi), under the MIT license in `LICENSE`; each file names its source. `grep`, `glob`
-and `apply_patch` carry nisse's own tools over to the environment.
+and `apply_patch` carry sigma's own tools over to the environment.
 
 ## Tests
 
 The conformance suite (`packages/conformance`) runs upstream's tool, image and search tests through its adapter. `test/`
 holds package tests through a real Harness with a scripted model, for what no upstream row covers: two parallel edits
-of one file, `grep`, `glob`, `apply_patch`, `NISSE_ROOT_CONVERSATION`, and images in user input and tool results.
+of one file, `grep`, `glob`, `apply_patch`, `SIGMA_ROOT_CONVERSATION`, and images in user input and tool results.

@@ -23,7 +23,7 @@ export const AUTH_BASE = "https://auth.openai.com"
 /** The model a conversation that names none gets. */
 export const DEFAULT_MODEL = "gpt-5.5"
 /** Who ChatGPT is told sent each request and sign-in. */
-export const ORIGINATOR = "nisse"
+export const ORIGINATOR = "sigma"
 
 export interface ChatGptOptions {
   /** Where this instance keeps its sign-in. */
@@ -33,7 +33,7 @@ export interface ChatGptOptions {
   readonly authBase: string
   readonly baseUrl: string
   readonly callbackPort: number
-  /** nisse's own instructions, sent before the conversation's. */
+  /** sigma's own instructions, sent before the conversation's. */
   readonly instructions: string
   /** Lists only the saved model list, never asking ChatGPT, so neither the sign-in nor the list is rewritten. */
   readonly readOnly?: boolean
@@ -110,7 +110,7 @@ export const openChatGpt = Effect.fnUntraced(function* (options: Omit<ChatGptOpt
     })
     yield* Effect.try({
       try: () => models.fetched(body),
-      catch: (error) => failure(`ChatGPT sent a model list nisse can't read: ${String(error)}`),
+      catch: (error) => failure(`ChatGPT sent a model list sigma can't read: ${String(error)}`),
     })
   })
 
