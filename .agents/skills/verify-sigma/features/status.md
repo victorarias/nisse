@@ -42,7 +42,7 @@ Preconditions:
   `[{"tool": {"name": "spawn_agent", "input": {"task_name": "writer", "message": "go"}}}, {"tool": {"name": "wait_agent", "input": {"timeout_ms": 600000}}}, {"agent": "/root/writer", "tool": {"name": "write", "input": {"path": "/tmp/sigma-verify/<run>/note.txt", "content": "hi"}}}]`.
 
 - **Chosen id.** Run
-  `drive.ts r rpc conversation/start '{"id": "11111111-1111-4111-8111-111111111111", "cwd": "/tmp"}'`,
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "id": "11111111-1111-4111-8111-111111111111", "cwd": "/tmp"}'`,
   then the same call with `"cwd": "/elsewhere"`. Both answer
   `"conversation": "11111111-1111-4111-8111-111111111111"`, and
   `conversation/list` shows it once, with `cwd` `/tmp`. After
@@ -51,13 +51,13 @@ Preconditions:
 - **Follow.** In one shell run
   `drive.ts r watch-status 11111111-1111-4111-8111-111111111111 --until waiting --save status`.
   In another, run
-  `drive.ts r rpc conversation/submit '{"conversation": "11111111-1111-4111-8111-111111111111", "requestId": "s1", "author": "ada", "text": "write a note"}'`.
+  `drive.ts r rpc conversation/submit '{"conversation": "11111111-1111-4111-8111-111111111111", "requestId": "s1", "author": {"id": "ada", "name": "ada"}, "text": "write a note"}'`.
   The watch opens with the trees that are busy, none here, then prints the
   tree `working`, then `waiting` once the subagent asks.
 - **Snapshot.** While it waits, run `drive.ts r watch-status`: its first line
   lists the tree as `waiting`. It returns after a second with no change.
 - **Ended.** Run
-  `drive.ts r rpc conversation/interrupt '{"conversation": "11111111-1111-4111-8111-111111111111"}'`
+  `drive.ts r rpc conversation/interrupt '{"author": {"id": "ada", "name": "ada"}, "conversation": "11111111-1111-4111-8111-111111111111"}'`
   while `drive.ts r watch-status 11111111-1111-4111-8111-111111111111 --until idle`
   runs. Interrupting stops the subagent too, and the last line is `idle`
   with `"ended":{"outcome":"interrupted","message":"aborted"}`. Between

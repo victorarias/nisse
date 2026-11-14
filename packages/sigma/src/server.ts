@@ -56,6 +56,11 @@ import {
   UnknownProvider,
   type EntryRecord as WireEntry,
   USER_KIND,
+  type Author,
+  STARTED_KIND,
+  FORKED_KIND,
+  INTERRUPTED_KIND,
+  CONTINUED_KIND,
   COMPACTION_KIND,
   WITHDRAWN_KIND,
   type View,
@@ -181,12 +186,13 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         }
         // A person's input withdrawn while it waited says so in the transcript, under the requestId it was submitted
         // with, so a client that lost its watch learns the input's fate from entries alone.
-        const inputWithdrawn = (tx: Tx, { conversationId, entry }: WithdrawnInput) =>
+        // Withdrawn by submission/withdraw, it names who withdrew it.
+        const inputWithdrawn = (tx: Tx, { conversationId, entry, data }: WithdrawnInput) =>
           entry?.kind === USER_KIND
             ? Effect.asVoid(
                 tx.appendEntry(conversationId, {
                   kind: WITHDRAWN_KIND,
-                  data: { requestId: (entry.data as { requestId: string }).requestId },
+                  data: { requestId: (entry.data as { requestId: string }).requestId, ...data },
                 }),
               )
             : Effect.void
@@ -210,7 +216,7 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
         compactIdle = (conversation) =>
           Effect.flatMap(harness.conversation(conversation), (handle) => {
             if (handle === undefined) return Effect.fail(new Error(`conversation ${conversation} is gone`))
-            return compactInRun(handle, { author: "sigma", whenBusy: "reject" })
+            return compactInRun(handle, { author: SIGMA, whenBusy: "reject" })
           })
         // Read-only, nothing runs, so no run counts a stop.
         if (!readOnly) for (const [id, stops] of yield* countStops(harness)) stoppedTooOften.set(id, stops)
@@ -223,13 +229,16 @@ export class KernelHarness extends Context.Service<KernelHarness, KernelHarnessS
     )
 }
 
+/** Sigma as the author of what it does on its own, such as compacting an idle conversation. */
+const SIGMA: Author = { id: "sigma", name: "sigma" }
+
 /**
  * Compacts a conversation whose provider runs its own loop, such as Claude Code: its `/compact` input starts a run in
  * which the provider summarizes its context, committed as a pi.compaction entry. `whenBusy` defaults to queueing.
  */
 const compactInRun = (
   conversation: Conversation,
-  request: { readonly author: string; readonly instructions?: string; readonly whenBusy?: "reject" },
+  request: { readonly author: Author; readonly instructions?: string; readonly whenBusy?: "reject" },
 ) => {
   const requestId = crypto.randomUUID()
   const text = request.instructions === undefined ? "/compact" : `/compact ${request.instructions}`
@@ -365,6 +374,7 @@ const Handlers = SigmaRpcs.toLayer(
       approvals: "ask" | "auto" | undefined,
       instructions: string | undefined,
       ask: ModelAsk,
+      author: Author,
     ) =>
       Effect.gen(function* () {
         yield* writable
@@ -383,6 +393,7 @@ const Handlers = SigmaRpcs.toLayer(
                 if (approvals === "auto") yield* approveAutomatically(tx, created)
                 if (id !== undefined) (yield* tx.doc(ConversationIdsDoc)).ids[id] = Number(created)
                 ;(yield* tx.doc(LastModelDoc)).selection = { ...selection }
+                yield* tx.appendEntry(created, { kind: STARTED_KIND, data: { author } })
               }),
           }),
         )
@@ -433,7 +444,7 @@ const Handlers = SigmaRpcs.toLayer(
           return yield* new InvalidConversationId({ message: `${id} already names a conversation` })
       })
 
-    const fork = (id: string, at: number, chosen: string | undefined) =>
+    const fork = (id: string, at: number, chosen: string | undefined, author: Author) =>
       Effect.gen(function* () {
         const conversation = yield* takingInput(id)
         const entry = idFromNumber<EntryId>(at)
@@ -454,6 +465,7 @@ const Handlers = SigmaRpcs.toLayer(
                 }
                 if (auto) yield* approveAutomatically(tx, created)
                 if (chosen !== undefined) (yield* tx.doc(ConversationIdsDoc)).ids[chosen] = Number(created)
+                yield* tx.appendEntry(created, { kind: FORKED_KIND, data: { author } })
               }),
           }),
         )
@@ -493,9 +505,9 @@ const Handlers = SigmaRpcs.toLayer(
 
     return SigmaRpcs.of({
       initialize: () => Effect.succeed({ version: VERSION, protocol: PROTOCOL_VERSION, readOnly }),
-      "conversation/start": ({ cwd, id, approvals, instructions, ...ask }) =>
+      "conversation/start": ({ cwd, id, approvals, instructions, author, ...ask }) =>
         Effect.gen(function* () {
-          if (id === undefined) return yield* startConversation(cwd, undefined, approvals, instructions, ask)
+          if (id === undefined) return yield* startConversation(cwd, undefined, approvals, instructions, ask, author)
           // A conversation's number opens it, as its chosen id does, and answers with the id every other call names it
           // by; a number that names none is refused below.
           const numbered = kernelNumber(id)
@@ -510,7 +522,7 @@ const Handlers = SigmaRpcs.toLayer(
           return yield* choosing.withPermits(1)(
             Effect.gen(function* () {
               const existing = chosenNumber(yield* Effect.orDie(harness.session.snapshot(ConversationIdsDoc)), id)
-              if (existing === undefined) return yield* startConversation(cwd, id, approvals, instructions, ask)
+              if (existing === undefined) return yield* startConversation(cwd, id, approvals, instructions, ask, author)
               const agent = yield* Effect.orDie(harness.resolveAgent(idFromNumber<ConversationId>(existing)))
               return { conversation: id, model: selectionOf(agent) }
             }),
@@ -606,10 +618,10 @@ const Handlers = SigmaRpcs.toLayer(
           return { messages: context.messages, entries: context.entries.map((record) => Number(record.id)) }
         }),
       "conversation/watch": ({ conversation, window }) => watch(conversation, window),
-      "conversation/fork": writing(({ conversation, at, id }) =>
+      "conversation/fork": writing(({ conversation, at, id, author }) =>
         id === undefined
-          ? fork(conversation, at, undefined)
-          : choosing.withPermits(1)(Effect.andThen(freshChoice(id), fork(conversation, at, id))),
+          ? fork(conversation, at, undefined, author)
+          : choosing.withPermits(1)(Effect.andThen(freshChoice(id), fork(conversation, at, id, author))),
       ),
       "conversation/reset": writing(({ conversation: id, author, handoff }) =>
         Effect.flatMap(takingInput(id), (conversation) =>
@@ -628,7 +640,7 @@ const Handlers = SigmaRpcs.toLayer(
             )
             return yield* Effect.orDie(compactionOfRun(conversation, submission))
           }
-          const task = yield* heldUntilIdle(Effect.orDie(conversation.compact(instructions)))
+          const task = yield* heldUntilIdle(Effect.orDie(conversation.compact(instructions, { author })))
           const outcome = (yield* Effect.orDie(harness.waitForTask(task))).state.outcome
           if (outcome.status === "completed") {
             // The summary is placed as a write; a compaction that found nothing to summarize places none.
@@ -639,7 +651,7 @@ const Handlers = SigmaRpcs.toLayer(
           return { outcome: "failed" as const, message: outcome.error?.message ?? outcome.reason ?? outcome.status }
         }),
       ),
-      "conversation/continue": writing(({ conversation: id }) =>
+      "conversation/continue": writing(({ conversation: id, author }) =>
         Effect.gen(function* () {
           const conversation = yield* takingInput(id)
           // A working run is the reason to refuse first: how the run before it ended says nothing about this one.
@@ -650,26 +662,35 @@ const Handlers = SigmaRpcs.toLayer(
             return yield* new NothingToContinue({ message: "no run has ended here yet; send a message to start one" })
           if (last.outcome === "answered")
             return yield* new NothingToContinue({ message: "the last run answered; send a message to go on" })
+          // The continue and the entry naming who continued commit together, before the run's first entry.
           const submission = yield* heldUntilIdle(
-            conversation.submit({ type: "continue" }).pipe(
-              Effect.catchIf(
-                (error) => error instanceof BusyConversation,
-                () => Effect.fail(new ConversationBusy({ conversation: id })),
+            conversation
+              .commit((tx) =>
+                Effect.gen(function* () {
+                  const submission = yield* conversation.submit(tx, { type: "continue" })
+                  yield* tx.appendEntry(conversation.id, { kind: CONTINUED_KIND, data: { author } })
+                  return submission
+                }),
+              )
+              .pipe(
+                Effect.catchIf(
+                  (error) => error instanceof BusyConversation,
+                  () => Effect.fail(new ConversationBusy({ conversation: id })),
+                ),
+                Effect.catchIf(
+                  (error) => !(error instanceof ConversationBusy),
+                  (error) => Effect.die(error),
+                ),
               ),
-              Effect.catchIf(
-                (error) => !(error instanceof ConversationBusy),
-                (error) => Effect.die(error),
-              ),
-            ),
           )
-          return { submission: submission.id }
+          return { submission: Number(submission) }
         }),
       ),
-      "submission/withdraw": writing(({ conversation: id, submission }) =>
+      "submission/withdraw": writing(({ conversation: id, submission, author }) =>
         Effect.gen(function* () {
           const conversation = yield* find(id)
           const result = yield* Effect.orDie(
-            harness.abortSubmission(idFromNumber<SubmissionId>(submission), conversation.id),
+            harness.abortSubmission(idFromNumber<SubmissionId>(submission), conversation.id, { author }),
           )
           if (result === "not_found") return yield* new NoSuchSubmission({ submission })
           return { result: result === "aborted" ? ("withdrawn" as const) : result }
@@ -701,8 +722,14 @@ const Handlers = SigmaRpcs.toLayer(
               return usage ?? { models: {}, tools: {} }
             }),
       "tasks/watch": () => watchTasks,
-      "conversation/interrupt": writing(({ conversation: id }) =>
-        Effect.flatMap(find(id), (conversation) => Effect.orDie(interruptTree(harness, conversation.id))),
+      "conversation/interrupt": writing(({ conversation: id, author }) =>
+        Effect.gen(function* () {
+          const conversation = yield* find(id)
+          yield* Effect.orDie(
+            conversation.commit((tx) => tx.appendEntry(conversation.id, { kind: INTERRUPTED_KIND, data: { author } })),
+          )
+          yield* Effect.orDie(interruptTree(harness, conversation.id))
+        }),
       ),
       "approval/resolve": writing(({ conversation: id, approval, author, allow }) =>
         Effect.gen(function* () {

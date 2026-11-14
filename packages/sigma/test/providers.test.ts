@@ -7,10 +7,10 @@ import { join } from "node:path"
 import { FakeClaude } from "./support/claude.ts"
 import { EMAIL, FakeOpenAi, signIn } from "./support/openai.ts"
 import { errorTag, RawClient } from "./support/raw.ts"
-import { runningServer, watchView, tempHome } from "./support/server.ts"
+import { person, runningServer, watchView, tempHome } from "./support/server.ts"
 
 const startWith = async (client: RawClient, ask: Record<string, string> = {}) => {
-  const reply = await client.call("conversation/start", { cwd: "/work", ...ask })
+  const reply = await client.call("conversation/start", { author: person("ada"), cwd: "/work", ...ask })
   return reply.result as { conversation: string; model: unknown }
 }
 
@@ -129,8 +129,10 @@ test("provider-unknown, model-flags: a conversation starts on the model and effo
     thinkingLevel: "low",
   })
 
-  expect(errorTag(await client.call("conversation/start", { cwd: "/work", provider: "nope" }))).toBe("UnknownProvider")
-  const loud = await client.call("conversation/start", { cwd: "/work", effort: "loud" })
+  expect(
+    errorTag(await client.call("conversation/start", { author: person("ada"), cwd: "/work", provider: "nope" })),
+  ).toBe("UnknownProvider")
+  const loud = await client.call("conversation/start", { author: person("ada"), cwd: "/work", effort: "loud" })
   expect(errorTag(loud)).toBe("UnknownEffort")
   expect(loud.error?.data[0]?.error).toMatchObject({
     effort: "loud",

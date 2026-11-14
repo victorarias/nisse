@@ -54,7 +54,7 @@ the name checks the escaping).
 - **Committed.** `drive.ts r rpc conversation/list` for the `<id>`, then
   `drive.ts r watch <id> --save attached`: the `sigma.user` entry's data has
   `images: ["Screen Shot.png"]` and its message an `image` block.
-- **Refused.** `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "bad-1", "author": "ada", "text": "look", "images": [{"name": "broken.png", "data": "bm9wZQ==", "mimeType": "image/png"}]}'`
+- **Refused.** `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "bad-1", "author": {"id": "ada", "name": "ada"}, "text": "look", "images": [{"name": "broken.png", "data": "bm9wZQ==", "mimeType": "image/png"}]}'`
   answers `UnreadableImage` naming `broken.png`, and nothing is added.
 - **Exec.** In a fresh run made with `drive.ts r up --fake-openai text_answer`
   (the TUI's run has played its one reply), `drive.ts r sigma exec "describe /tmp/sigma-verify/r/Screen\ Shot.png"`

@@ -123,6 +123,9 @@ lists when a change touches them.
 
 - [Ask and answer](./ask-and-answer.md) (people, agents): a prompt from the TUI, `exec` or the
   wire gets a streamed answer every client sees; `exec` exit codes.
+- [Authors](./authors.md) (people, agents): every call that changes a conversation
+  names its `{id, name}` author on a committed entry; the TUI and `exec` act as
+  `SIGMA_AUTHOR_ID` and `SIGMA_AUTHOR_NAME`.
 - [Tool calls and approvals](./tool-calls-and-approvals.md) (people, agents): calls that change
   things wait for `^Y`, `^N` or `approval/resolve`; `exec` denies them and
   `--auto` allows them.

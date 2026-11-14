@@ -51,16 +51,16 @@ Preconditions:
   `sigma.user` entry of `second`, and `conversation/list` shows the
   conversation's `ended` as `answered` with `said` `fast reply`.
 - **Wire.** In a fresh run with the same script, run `drive.ts r serve`, start
-  a conversation with `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`,
+  a conversation with `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`,
   and run
   `drive.ts r watch <id> --submit first --until run_end --timeout 25000 --save wire &`.
   While `first` streams, send `second` twice with the same `requestId` and
   `third` once, each as
-  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "q-1", "author": "bo", "text": "second"}'`
+  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "q-1", "author": {"id": "bo", "name": "bo"}, "text": "second"}'`
   (`q-2` and `third` for the last). The two `q-1` calls answer with the same
   `submission`. A `drive.ts r watch <id>` while `first` still streams has
   `docs.pi.inbox.items` of `second` then `third`, both `"mode": "followUp"`,
-  each carrying a `sigma.user` entry with `{"author": "bo"}`. Once the runs
+  each carrying a `sigma.user` entry with `{"author": {"id": "bo", "name": "bo"}}`. Once the runs
   settle, a fresh `watch <id>` shows `sigma.user` `first`, `pi.assistant`
   `slow one two three four five six seven eight`, `sigma.run_end`, `sigma.user`
   `second`, `pi.assistant` `fast reply`, `sigma.run_end`, `sigma.user` `third`,

@@ -51,7 +51,7 @@ Preconditions: a fresh run for each group, `drive.ts r down` after.
 - **A script's calls ask.** Write a script step file such as
   `[{"tool":{"name":"codemode","input":{"code":"text(await tools.bash({ command: \"echo hi\" }))\ntext(JSON.stringify((await searchTools(\"bash\")).map(t => t.name)))"}}},{"text":"done"}]`,
   then `drive.ts r up --script <file>`, `drive.ts r serve`,
-  `drive.ts r rpc conversation/start '{"cwd":"/tmp/sigma-verify/r","model":"script-code-mode"}'`
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd":"/tmp/sigma-verify/r","model":"script-code-mode"}'`
   and `drive.ts r watch <id> --submit 'go' --save ask` (it returns once the run waits):
   `sigma.approvals` holds a request for `bash` whose `callId` is
   `<codemode call>/c1`. `drive.ts r rpc approval/resolve '{"conversation":"<id>","approval":"<request>","author":"ada","allow":true}'`,
@@ -60,7 +60,7 @@ Preconditions: a fresh run for each group, `drive.ts r down` after.
   then `done` and a `sigma.run_end` `answered`.
 - **ChatGPT.** `drive.ts r up --fake-openai codemode_script`,
   `drive.ts r serve`,
-  `drive.ts r rpc conversation/start '{"cwd":"/tmp/sigma-verify/r","provider":"openai","model":"gpt-6.1-sol","approvals":"auto"}'`,
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd":"/tmp/sigma-verify/r","provider":"openai","model":"gpt-6.1-sol","approvals":"auto"}'`,
   `drive.ts r watch <id> --submit 'compute 2 + 2' --until run_end --save chatgpt`:
   the script `text(2 + 2);` and its result `Script completed`, `4`.
   `evidence/fake-openai.ndjson` shows each request offering one tool, the

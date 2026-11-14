@@ -22,7 +22,7 @@ can interrupt any conversation's run.
 
 ### Agents
 
-- Call `conversation/interrupt` with the conversation's id.
+- Call `conversation/interrupt` with the conversation's id and `author`.
 
 ## Driving it with drive.ts
 
@@ -42,10 +42,10 @@ Preconditions:
   entry whose text ends before `ten`, with `"stopReason": "aborted"`, then a
   `sigma.run_end` entry with `"outcome": "interrupted"`.
 - **Wire.** In a fresh run with the same script, run `drive.ts r serve`, start
-  a conversation with `rpc conversation/start '{"cwd": "/tmp"}'`, and run
+  a conversation with `rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`, and run
   `drive.ts r watch <id> --submit count --until run_end --save wire &` in the
   background. Once its output holds a live word such as `"two "`, run
-  `drive.ts r rpc conversation/interrupt '{"conversation": "<id>"}'`. The
+  `drive.ts r rpc conversation/interrupt '{"author": {"id": "ada", "name": "ada"}, "conversation": "<id>"}'`. The
   watch ends on a `pi.assistant` entry with what was said and
   `"stopReason": "aborted"`, then `sigma.run_end` with
   `{"outcome": "interrupted", "message": "aborted"}`.
@@ -53,7 +53,7 @@ Preconditions:
   start a conversation, and run
   `drive.ts r watch <id> --submit count --until run_end --save withdraw &`.
   Once its output holds a live word, run
-  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "waiting-1", "author": "ada", "text": "then this"}'`,
+  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "waiting-1", "author": {"id": "ada", "name": "ada"}, "text": "then this"}'`,
   then `conversation/interrupt`. The watch shows `pi.inbox` holding the
   prompt, then one change that empties it and adds
   `sigma.withdrawn` with `{"requestId": "waiting-1"}`, before

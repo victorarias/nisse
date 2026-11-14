@@ -18,6 +18,7 @@ import {
 import { homeWithExtensions } from "./support/extensions.ts"
 import { deadline, RawClient } from "./support/raw.ts"
 import {
+  person,
   runEnds,
   runningServer,
   servingUntilIdle,
@@ -62,7 +63,13 @@ const conversationWith = async (claude: FakeClaude, ask: Record<string, string> 
   const server = await runningServer([], { ...options, claude: claude.options })
   const client = await RawClient.connect(server.home.socket)
   const conversation = (
-    await client.call("conversation/start", { cwd: server.home.dir, provider: "claude", approvals: "ask", ...ask })
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: server.home.dir,
+      provider: "claude",
+      approvals: "ask",
+      ...ask,
+    })
   ).result.conversation as string
   const view = watchView(client, conversation)
   await view.until(() => true)
@@ -71,10 +78,11 @@ const conversationWith = async (claude: FakeClaude, ask: Record<string, string> 
     client,
     conversation,
     view,
-    submit: (text: string, steer = false) => submit(client, conversation, text, crypto.randomUUID(), "ada", steer),
+    submit: (text: string, steer = false) =>
+      submit(client, conversation, text, crypto.randomUUID(), person("ada"), steer),
     answer: async (allow: boolean, watch?: ViewWatch, on = conversation) => {
       const approval = await waitingApproval(watch ?? view)
-      await client.call("approval/resolve", { conversation: on, approval, author: "ada", allow })
+      await client.call("approval/resolve", { conversation: on, approval, author: person("ada"), allow })
     },
     [Symbol.asyncDispose]: async () => {
       client.close()
@@ -128,7 +136,7 @@ test("claude-approval: a command Claude wants to run waits for a person, and Cla
     expect(calls(entries).map((call) => call.name)).toEqual(["Bash"])
     expect(results(entries)).toHaveLength(1)
     expect(entries.filter((entry) => entry.kind === "sigma.approval").map((entry) => entry.data)).toEqual([
-      expect.objectContaining({ approval, author: "ada", allow }),
+      expect.objectContaining({ approval, author: person("ada"), allow }),
     ])
     expect(approvalsOf(session.view)!.requests).toEqual({})
     expect(transcript(entries).slice(-2)).toEqual([`assistant: ${reply}`, "run_end: answered"])
@@ -143,6 +151,7 @@ test("claude-read: Claude reads files without asking and the read shows as a cal
   expect(claude.permissionAnswers()).toEqual([])
   const entries = session.view.seen()
   expect(entries.map((entry) => entry.kind)).toEqual([
+    "sigma.started",
     "sigma.user",
     "pi.assistant",
     "pi.tool-result",
@@ -221,7 +230,8 @@ test("claude-live: the next run reaches the Claude Code process that served the 
 })
 
 const startClaude = async (client: RawClient, cwd: string) =>
-  (await client.call("conversation/start", { cwd, provider: "claude" })).result.conversation as string
+  (await client.call("conversation/start", { author: person("ada"), cwd, provider: "claude" })).result
+    .conversation as string
 
 test("claude-idle-release: a live Claude Code process closes after the idle period, and the next run resumes its session", async () => {
   using claude = new FakeClaude("died_while_idle")
@@ -243,7 +253,10 @@ const advance = (clock: TestClock.TestClock, by: Duration.Input) => Effect.runPr
 const inputs = (entries: ReadonlyArray<EntryRecord>) =>
   entries
     .filter((entry) => entry.kind === USER_KIND)
-    .map((entry) => `${(entry.data as { author: string }).author}: ${transcript([entry])[0]!.slice("user: ".length)}`)
+    .map(
+      (entry) =>
+        `${(entry.data as { author: { name: string } }).author.name}: ${transcript([entry])[0]!.slice("user: ".length)}`,
+    )
 
 test("claude-idle-compaction: an idle Claude conversation past 200,000 tokens compacts once, two minutes before its prompt cache expires, then its process closes", async () => {
   // The recording's runs report a context of about 230,000 tokens and write the 1-hour cache.
@@ -384,7 +397,7 @@ test("claude-model, claude-live: a switch of model and effort reaches the live C
   const select = (selection: Record<string, string>) =>
     session.client.call("conversation/select_model", {
       conversation: session.conversation,
-      author: "ada",
+      author: person("ada"),
       selection: { provider: "claude", ...selection },
     })
   await session.submit("Reply with exactly: one")
@@ -494,7 +507,7 @@ test("claude-stop, claude-live: stopping a run mid-call interrupts Claude Code's
   )
   // Claude Code is running the call once sigma answered its PreToolUse hook.
   await claude.logged((fake) => fake.log().some((entry) => entry.answered === "hook_callback"))
-  await session.client.call("conversation/interrupt", { conversation: session.conversation })
+  await session.client.call("conversation/interrupt", { author: person("ada"), conversation: session.conversation })
   await session.view.until(settled(1))
   const [call] = calls(session.view.seen())
   expect(results(session.view.seen())).toEqual([
@@ -523,7 +536,7 @@ test("claude-stop, claude-resume: a Claude Code process that does not end its tu
   )
   await session.answer(true)
   await claude.logged((fake) => fake.permissionAnswers().length === 1)
-  await session.client.call("conversation/interrupt", { conversation: session.conversation })
+  await session.client.call("conversation/interrupt", { author: person("ada"), conversation: session.conversation })
   await session.view.until(settled(1))
   await claude.logged((fake) => fake.exited(0))
 
@@ -597,6 +610,7 @@ test("subagent-claude: a Claude subagent works in a conversation of its own unde
   await child.view.until(childEnded)
 
   expect(session.view.seen().map((entry) => entry.kind)).toEqual([
+    "sigma.started",
     "sigma.user",
     "pi.assistant",
     "sigma.subagent",
@@ -653,7 +667,7 @@ test("subagent-interrupt: stopping a Claude subagent stops only it, and its pare
   const child = await subagentOf(session)
   await child.view.until((watch) => results(watch.seen()).length > 0)
 
-  await session.client.call("conversation/interrupt", { conversation: child.id })
+  await session.client.call("conversation/interrupt", { author: person("ada"), conversation: child.id })
   await session.view.until(settled(1))
   await child.view.until(childEnded)
 
@@ -673,7 +687,7 @@ test("subagent-interrupt: stopping a run ends the Claude subagents working under
   const child = await subagentOf(session)
   await child.view.until((watch) => results(watch.seen()).length > 0)
 
-  await session.client.call("conversation/interrupt", { conversation: session.conversation })
+  await session.client.call("conversation/interrupt", { author: person("ada"), conversation: session.conversation })
   await session.view.until(settled(1))
   await child.view.until(childEnded)
 
@@ -749,7 +763,7 @@ test("compact-rpc, claude-compact: conversation/compact compacts a Claude conver
   await session.view.until(settled(1))
   const compacted = await session.client.call("conversation/compact", {
     conversation: session.conversation,
-    author: "ada",
+    author: person("ada"),
     instructions: "keep the word",
   })
   expect(compacted.result).toEqual({ outcome: "compacted" })
@@ -826,7 +840,7 @@ test("subagent-spawn: a Claude subagent is listed under its parent with the call
   expect(refused.error?.data[0]?.error?._tag).toBe("TakesNoInput")
   const switched = await session.client.call("conversation/select_model", {
     conversation: child.id,
-    author: "ada",
+    author: person("ada"),
     selection: { provider: "claude", model: "haiku" },
   })
   expect(switched.error?.data[0]?.error?._tag).toBe("TakesNoInput")
@@ -873,7 +887,7 @@ test("claude-health: Claude Code says once how it is signed in and which models 
 const switchToClaude = (session: Awaited<ReturnType<typeof conversationWith>>) =>
   session.client.call("conversation/select_model", {
     conversation: session.conversation,
-    author: "ada",
+    author: person("ada"),
     selection: { provider: "claude" },
   })
 
@@ -900,7 +914,7 @@ test("claude-switch: switching to Claude from another provider retells the conve
       .seen()
       .filter((entry) => entry.kind === "sigma.model")
       .map((entry) => entry.data),
-  ).toEqual([{ author: "ada", selection: { provider: "claude" } }])
+  ).toEqual([{ author: person("ada"), selection: { provider: "claude" } }])
   expect(transcript(session.view.seen()).slice(-2)).toEqual(["assistant: fixture text ok", "run_end: answered"])
 })
 
@@ -1213,10 +1227,11 @@ test("claude-tool-search: tool search set to auto in the person's Claude Code se
     const options = { ...claude.options, env: { ...claude.options.env, CLAUDE_CONFIG_DIR: config } }
     await using server = await runningServer([], { claude: options })
     const client = await RawClient.connect(server.home.socket)
-    const conversation = (await client.call("conversation/start", { cwd: server.home.dir, provider: "claude" })).result
-      .conversation as string
+    const conversation = (
+      await client.call("conversation/start", { author: person("ada"), cwd: server.home.dir, provider: "claude" })
+    ).result.conversation as string
     const view = watchView(client, conversation)
-    await submit(client, conversation, "Reply with exactly: fixture text ok", crypto.randomUUID(), "ada")
+    await submit(client, conversation, "Reply with exactly: fixture text ok", crypto.randomUUID(), person("ada"))
     await view.until(settled(1))
     client.close()
     const argv: Array<string> = claude.log().find((entry) => entry.argv && entry.probe === undefined).argv

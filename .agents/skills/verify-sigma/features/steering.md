@@ -54,10 +54,10 @@ Preconditions:
   `pi.tool-result`, `sigma.user` `go left`, `pi.assistant` `steered reply`, and
   one `sigma.run_end`: one run, not two.
 - **Wire.** In a fresh run with the same script, run `drive.ts r serve`, start
-  a conversation with `rpc conversation/start '{"cwd": "/tmp"}'`, and run
+  a conversation with `rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`, and run
   `drive.ts r watch <id> --submit first --until run_end --timeout 20000 --save wire &`.
   Once its output holds a live word, run
-  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "steer-1", "author": "bo", "text": "go left", "steer": true}'`.
+  `drive.ts r rpc conversation/submit '{"conversation": "<id>", "requestId": "steer-1", "author": {"id": "bo", "name": "bo"}, "text": "go left", "steer": true}'`.
   The watch shows `go left` in `docs.pi.inbox.items` with `"mode": "steer"`,
   then the same entries as above (the steer's `sigma.user` entry is authored
   by `bo`), ending in one `sigma.run_end`.

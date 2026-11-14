@@ -73,7 +73,7 @@ export const saidBefore = (harness: Harness, id: ConversationId, end: EntryId) =
 
 /**
  * How many entries a read for the first prompt takes at a time. The first prompt is a conversation's first entry
- * (measured: `sigma.user`, then `pi.system`), so one page holds it and a list does not parse a page of tool results.
+ * (measured: `sigma.started`, `sigma.user`, then `pi.system`), so one page holds it and a list does not parse a page of tool results.
  */
 const FIRST_PROMPT_PAGE = 16
 

@@ -14,6 +14,7 @@ import {
   type TaskId,
   type TaskRuntime,
   type Tx,
+  type JsonObject,
 } from "@sigma/kernel"
 import {
   calculateContextTokens,
@@ -53,7 +54,8 @@ import type {
   Settings,
 } from "./types.ts"
 
-export type CompactionInput = { reason: CompactionReason; instructions?: string }
+/** `data` goes on the summary's entry beside `reason`, such as who asked for a manual compaction. */
+export type CompactionInput = { reason: CompactionReason; instructions?: string; data?: JsonObject }
 
 /** The pinned summarization request. */
 export type SummaryRequest = {
@@ -501,7 +503,7 @@ const placeSummary = (
       kind: CompactionEntry.kind,
       head: firstKept,
       model: [stored(message)],
-      data: { reason: current.input.reason },
+      data: { ...current.input.data, reason: current.input.reason },
     }
     let result: CompactionResult
     if (current.owner === undefined) {

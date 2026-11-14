@@ -13,8 +13,14 @@ import {
 } from "@sigma/harness"
 import type { EntryRecord } from "@sigma/kernel"
 import {
+  type Author,
   COMPACTION_KIND,
   CONFIGURED_KIND,
+  CONTINUED_KIND,
+  FORKED_KIND,
+  INTERRUPTED_KIND,
+  STARTED_KIND,
+  WITHDRAWN_KIND,
   type ConversationInfo,
   type ModelSelection,
   type Outcome,
@@ -42,7 +48,7 @@ import {
   Switch,
   untrack,
 } from "solid-js"
-import { userName } from "../author.ts"
+import { launchAuthor } from "../author.ts"
 import { VERSION } from "../version.ts"
 import { mailPayload } from "../agents.ts"
 import { Client, serverRefusal, type StartOptions } from "../client.ts"
@@ -312,7 +318,20 @@ const DRAWN = new Set([
   RESET_KIND,
   COMPACTION_KIND,
   CONFIGURED_KIND,
+  STARTED_KIND,
+  FORKED_KIND,
+  INTERRUPTED_KIND,
+  CONTINUED_KIND,
+  WITHDRAWN_KIND,
 ])
+
+/** What the entry of each act that has no other row says its author did. */
+const ACTS: Readonly<Record<string, string>> = {
+  [STARTED_KIND]: "started the conversation",
+  [FORKED_KIND]: "forked the conversation here",
+  [INTERRUPTED_KIND]: "interrupted",
+  [CONTINUED_KIND]: "continued",
+}
 
 const drawn = (item: TranscriptItem) => item.kind !== "entry" || DRAWN.has(item.entry.kind)
 
@@ -322,7 +341,8 @@ const startsTurn = (previous: TranscriptItem | undefined) =>
   previous.entry.kind === "pi.user" ||
   previous.entry.kind === USER_KIND ||
   previous.entry.kind === MAIL_KIND ||
-  previous.entry.kind === RUN_END_KIND
+  previous.entry.kind === RUN_END_KIND ||
+  previous.entry.kind === CONTINUED_KIND
 
 /** The conversations the TUI follows: the one it opened and every subagent under it, keyed by id. */
 interface Tree {
@@ -427,7 +447,7 @@ const NestedCalls = (props: { followed: Followed; index: Index; parent: string }
         const asking = () => pendingCalls(props.followed.docs()).some(([, request]) => request.callId === call.callId)
         const answer = () => {
           const entry = props.index.answers.get(call.callId)
-          return entry && dataOf<{ allow: boolean; author: string }>(entry)
+          return entry && dataOf<{ allow: boolean; author: Author }>(entry)
         }
         return (
           <box flexDirection="column" marginLeft={2}>
@@ -442,7 +462,7 @@ const NestedCalls = (props: { followed: Followed; index: Index; parent: string }
             <Show when={answer()}>
               {(given) => (
                 <text fg={color.dim} marginLeft={2}>
-                  {`${given().allow ? "✓ allowed" : "✗ denied"} by ${given().author.toLowerCase()}`}
+                  {`${given().allow ? "✓ allowed" : "✗ denied"} by ${given().author.name.toLowerCase()}`}
                 </text>
               )}
             </Show>
@@ -470,7 +490,7 @@ const ToolCallView = (props: { followed: Followed; index: Index; tree: Tree; cal
   const asking = () => pendingCalls(props.followed.docs()).some(([, request]) => request.callId === props.call.id)
   const answer = () => {
     const entry = props.index.answers.get(props.call.id)
-    return entry && dataOf<{ allow: boolean; author: string }>(entry)
+    return entry && dataOf<{ allow: boolean; author: Author }>(entry)
   }
   const subagent = () => props.index.subagents.get(props.call.id) ?? props.tree.started[props.call.id]
   const nested = () =>
@@ -494,7 +514,7 @@ const ToolCallView = (props: { followed: Followed; index: Index; tree: Tree; cal
           <Show when={answer()}>
             {(given) => (
               <text fg={color.dim} marginLeft={2}>
-                {`${given().allow ? "✓ allowed" : "✗ denied"} by ${given().author.toLowerCase()}`}
+                {`${given().allow ? "✓ allowed" : "✗ denied"} by ${given().author.name.toLowerCase()}`}
               </text>
             )}
           </Show>
@@ -582,13 +602,13 @@ const EntryView = (props: {
     case USER_KIND:
     case "pi.user": {
       const data = dataOf<{
-        author?: string
+        author?: Author
         skills?: ReadonlyArray<{ name: string }>
         images?: ReadonlyArray<string>
       }>(entry)
       return (
         <UserView
-          label={(data.author ?? "you").toUpperCase()}
+          label={(data.author?.name ?? "you").toUpperCase()}
           tone={color.magenta}
           text={typedOf(messageOf(entry)?.content)}
           attached={[...(data.skills ?? []).map((skill) => skill.name), ...(data.images ?? [])]}
@@ -630,15 +650,15 @@ const EntryView = (props: {
       return <RunEndView outcome={end.outcome} message={end.message} />
     }
     case MODEL_KIND: {
-      const data = dataOf<{ author: string; selection: ModelSelection }>(entry)
+      const data = dataOf<{ author: Author; selection: ModelSelection }>(entry)
       return (
         <text fg={color.dim} marginTop={1} marginLeft={2}>
-          {`◆ ${data.author.toLowerCase()} switched to ${modelLabel(data.selection)}`}
+          {`◆ ${data.author.name.toLowerCase()} switched to ${modelLabel(data.selection)}`}
         </text>
       )
     }
     case RESET_KIND: {
-      const author = dataOf<{ author?: string }>(entry).author
+      const author = dataOf<{ author?: Author }>(entry).author?.name
       const handoff = textOf(messageOf(entry)?.content)
       return (
         <box flexDirection="column" marginTop={1} marginLeft={2}>
@@ -651,14 +671,38 @@ const EntryView = (props: {
         </box>
       )
     }
-    case COMPACTION_KIND:
+    case COMPACTION_KIND: {
+      const data = dataOf<{ reason?: string; author?: Author }>(entry)
+      const who = data.author === undefined ? "" : `${data.author.name.toLowerCase()} `
       return (
         <text fg={color.dim} marginTop={1} marginLeft={2}>
-          {`◆ compacted the context${dataOf<{ reason?: string }>(entry).reason === "manual" ? "" : " to make room"}`}
+          {`◆ ${who}compacted the context${data.reason === "manual" ? "" : " to make room"}`}
         </text>
       )
+    }
+    case STARTED_KIND:
+    case FORKED_KIND:
+    case INTERRUPTED_KIND:
+    case CONTINUED_KIND: {
+      const did = ACTS[entry.kind]
+      return (
+        <text fg={color.dim} marginTop={1} marginLeft={2}>
+          {`◆ ${dataOf<{ author: Author }>(entry).author.name.toLowerCase()} ${did}`}
+        </text>
+      )
+    }
+    case WITHDRAWN_KIND: {
+      // Withdrawn by an interrupt or a failed run, it names no one; the interrupt or the run's end says what happened.
+      const author = dataOf<{ author?: Author }>(entry).author
+      if (author === undefined) return null
+      return (
+        <text fg={color.dim} marginTop={1} marginLeft={2}>
+          {`◆ ${author.name.toLowerCase()} withdrew a queued prompt`}
+        </text>
+      )
+    }
     case CONFIGURED_KIND: {
-      const data = dataOf<{ author: string; instructions?: string | null; maxTurns?: number | null }>(entry)
+      const data = dataOf<{ author: Author; instructions?: string | null; maxTurns?: number | null }>(entry)
       const changes = [
         ...(data.instructions === undefined
           ? []
@@ -673,7 +717,7 @@ const EntryView = (props: {
       ]
       return (
         <text fg={color.dim} marginTop={1} marginLeft={2}>
-          {`◆ ${data.author.toLowerCase()} ${changes.join(" and ")}`}
+          {`◆ ${data.author.name.toLowerCase()} ${changes.join(" and ")}`}
         </text>
       )
     }
@@ -887,6 +931,7 @@ const conversationScreen = Effect.fnUntraced(function* (
   prompt: string | undefined,
 ) {
   const client = yield* Client
+  const author = launchAuthor()
   const initialize = client.initialize({ client: "sigma", version: VERSION, protocol: PROTOCOL_VERSION })
   const [readOnly, setReadOnly] = createSignal((yield* initialize).readOnly)
   // A number names a conversation the server numbered; any other id is one a client chose, and starting with it
@@ -894,7 +939,12 @@ const conversationScreen = Effect.fnUntraced(function* (
   const numbered = id !== undefined && /^\d+$/.test(id)
   const started = numbered
     ? undefined
-    : yield* client["conversation/start"]({ cwd: process.cwd(), ...options, ...(id === undefined ? {} : { id }) })
+    : yield* client["conversation/start"]({
+        cwd: process.cwd(),
+        author,
+        ...options,
+        ...(id === undefined ? {} : { id }),
+      })
   const conversation = started?.conversation ?? id!
   const conversations = yield* client["conversation/list"]()
   const info = conversations.find((each) => each.id === conversation)
@@ -984,7 +1034,7 @@ const conversationScreen = Effect.fnUntraced(function* (
     yield* client["conversation/submit"]({
       conversation,
       requestId: crypto.randomUUID(),
-      author: userName(),
+      author,
       text: prompt,
       ...(images.length === 0 ? {} : { images }),
     })
@@ -1061,9 +1111,12 @@ const conversationScreen = Effect.fnUntraced(function* (
     get statusLines() {
       return root.docs()[STATUS_LINES_KIND]?.lines ?? {}
     },
+    // A conversation that holds only who started it shows the splash until something happens in it.
     get empty() {
       return (
-        !root.items().some((item) => item.kind !== "entry" || DRAWN.has(item.entry.kind)) &&
+        !root
+          .items()
+          .some((item) => item.kind !== "entry" || (DRAWN.has(item.entry.kind) && item.entry.kind !== STARTED_KIND)) &&
         textOf(root.docs()["pi.live"]?.generation?.message?.content) === ""
       )
     },
@@ -1106,7 +1159,7 @@ const conversationScreen = Effect.fnUntraced(function* (
       const payload = {
         conversation,
         requestId: crypto.randomUUID(),
-        author: userName(),
+        author,
         text,
         ...(images.length === 0 ? {} : { images }),
         steer,
@@ -1132,14 +1185,12 @@ const conversationScreen = Effect.fnUntraced(function* (
       const asking = [root, ...Object.values(tree.children)].find((each) => pendingCalls(each.docs()).length > 0)
       const pending = asking && pendingCalls(asking.docs())[0]
       if (asking && pending) {
-        Effect.runFork(
-          client["approval/resolve"]({ conversation: asking.id, approval: pending[0], author: userName(), allow }),
-        )
+        Effect.runFork(client["approval/resolve"]({ conversation: asking.id, approval: pending[0], author, allow }))
       }
     },
-    interrupt: () => Effect.runFork(client["conversation/interrupt"]({ conversation })),
+    interrupt: () => Effect.runFork(client["conversation/interrupt"]({ conversation, author })),
     selectModel: (selection) =>
-      Effect.runFork(client["conversation/select_model"]({ conversation, author: userName(), selection })),
+      Effect.runFork(client["conversation/select_model"]({ conversation, author, selection })),
     command: (name, argument) => {
       const run = commands[name]
       if (run === undefined || (argument !== "" && TAKES_NOTHING.has(name))) return false
@@ -1188,7 +1239,7 @@ const conversationScreen = Effect.fnUntraced(function* (
               : "the entry before the last prompt is not loaded; scroll up to it and fork again"
         return setNotice({ text, warning: true })
       }
-      report(client["conversation/fork"]({ conversation, at: Number(before.entry.id) }), (forked) => {
+      report(client["conversation/fork"]({ conversation, at: Number(before.entry.id), author }), (forked) => {
         next = forked.conversation
         Effect.runFork(Deferred.succeed(done, undefined))
         return undefined
@@ -1196,7 +1247,7 @@ const conversationScreen = Effect.fnUntraced(function* (
     },
     reset: (handoff) =>
       report(
-        client["conversation/reset"]({ conversation, author: userName(), ...(handoff === "" ? {} : { handoff }) }),
+        client["conversation/reset"]({ conversation, author, ...(handoff === "" ? {} : { handoff }) }),
         () => undefined,
       ),
     compact: (instructions) => {
@@ -1204,7 +1255,7 @@ const conversationScreen = Effect.fnUntraced(function* (
       report(
         client["conversation/compact"]({
           conversation,
-          author: userName(),
+          author,
           ...(instructions === "" ? {} : { instructions }),
         }),
         (ended) =>
@@ -1216,14 +1267,14 @@ const conversationScreen = Effect.fnUntraced(function* (
               : undefined,
       )
     },
-    continue: () => report(client["conversation/continue"]({ conversation }), () => undefined),
+    continue: () => report(client["conversation/continue"]({ conversation, author }), () => undefined),
     withdraw: () => {
       const queued = (root.docs()["pi.inbox"]?.items ?? []).filter(
         (item) => item.mode === "steer" || item.mode === "followUp",
       )
       const newest = queued.at(-1)
       if (newest === undefined) return setNotice({ text: "nothing queued to withdraw", warning: true })
-      report(client["submission/withdraw"]({ conversation, submission: newest.id }), (withdrawn) =>
+      report(client["submission/withdraw"]({ conversation, submission: newest.id, author }), (withdrawn) =>
         withdrawn.result === "withdrawn"
           ? `withdrew: ${typedOf(newest.content)}`
           : `too late to withdraw: ${typedOf(newest.content)} already ${withdrawn.result === "settled" ? "ran" : "reached sigma"}`,
@@ -1231,14 +1282,14 @@ const conversationScreen = Effect.fnUntraced(function* (
     },
     instructions: (text) =>
       report(
-        client["conversation/configure"]({ conversation, author: userName(), instructions: text === "" ? null : text }),
+        client["conversation/configure"]({ conversation, author, instructions: text === "" ? null : text }),
         () => undefined,
       ),
     "max-turns": (count) => {
       const turns = count === "" ? null : Number(count)
       if (turns !== null && !(Number.isInteger(turns) && turns >= 1))
         return setNotice({ text: `max turns takes a whole number 1 or more, got ${count}`, warning: true })
-      report(client["conversation/configure"]({ conversation, author: userName(), maxTurns: turns }), () => undefined)
+      report(client["conversation/configure"]({ conversation, author, maxTurns: turns }), () => undefined)
     },
     usage: () =>
       report(client["usage/get"]({}), (home) => {

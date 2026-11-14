@@ -31,7 +31,7 @@ entry, with a chosen id. The conversation it left is unchanged.
 
 ### Agents
 
-- Call `conversation/fork` with `conversation`, `at` (the last entry the fork inherits) and an optional `id`.
+- Call `conversation/fork` with `conversation`, `author`, `at` (the last entry the fork inherits) and an optional `id`.
 
 ## Driving it with drive.ts
 
@@ -59,7 +59,7 @@ Preconditions:
   and the inherited entries keep `"conversationId"` of `talk`.
 - **Fork over the wire.** Take the first `sigma.run_end`'s id from
   `drive.ts r watch talk --save talk-view`, then
-  `drive.ts r rpc conversation/fork '{"conversation": "talk", "at": <id>, "id": "other-way"}'`:
+  `drive.ts r rpc conversation/fork '{"author": {"id": "ada", "name": "ada"}, "conversation": "talk", "at": <id>, "id": "other-way"}'`:
   `"result": {"conversation": "other-way"}`.
   `drive.ts r watch other-way --submit 'prompt four' --until run_end --save other-way`:
   the first exchange, then `prompt four` and `You said: prompt four`.

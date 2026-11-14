@@ -14,8 +14,11 @@ import {
 } from "@sigma/kernel"
 import { Effect } from "effect"
 
+/** Who answered a call: two strings the host chooses; the harness shows `name` and never reads `id`. */
+export type Author = { readonly id: string; readonly name: string }
+
 /** A person's answer to one call. */
-export type ApprovalAnswer = { allow: boolean; author: string; at: number }
+export type ApprovalAnswer = { allow: boolean; author: Author; at: number }
 
 /** One call waiting for, or holding, its answer. */
 export type ApprovalRequest = {
@@ -51,7 +54,7 @@ export const ApprovalsDoc = defineDoc<ApprovalsState>({
 /** The entry an answer appends, so the transcript says who allowed or denied the call. */
 export const APPROVAL_ENTRY_KIND = "sigma.approval"
 
-export type ApprovalEntry = { approval: string; callId: string; tool: string; allow: boolean; author: string }
+export type ApprovalEntry = { approval: string; callId: string; tool: string; allow: boolean; author: Author }
 
 /** Makes every call of the conversation run without asking; for the commit that creates it. */
 export const approveAutomatically = (tx: Tx, conversationId: ConversationId): Effect.Effect<void, DocError> =>
@@ -69,7 +72,7 @@ export const answerApproval = (
   tx: Tx,
   conversationId: ConversationId,
   approval: string,
-  answer: { readonly allow: boolean; readonly author: string; readonly at: number },
+  answer: { readonly allow: boolean; readonly author: Author; readonly at: number },
 ): Effect.Effect<"accepted" | "answered" | "unknown", StorageError | DocError> =>
   Effect.gen(function* () {
     const doc = yield* tx.doc(ApprovalsDoc, conversationId)
@@ -81,13 +84,14 @@ export const answerApproval = (
       return record?.conversationId === conversationId ? "answered" : "unknown"
     }
     if (request.answer !== undefined) return "answered"
-    request.answer = { allow: answer.allow, author: answer.author, at: answer.at }
+    const author = { id: answer.author.id, name: answer.author.name }
+    request.answer = { allow: answer.allow, author, at: answer.at }
     const data: ApprovalEntry = {
       approval,
       callId: request.callId,
       tool: request.tool,
       allow: answer.allow,
-      author: answer.author,
+      author,
     }
     yield* tx.appendEntry(conversationId, { kind: APPROVAL_ENTRY_KIND, data })
     return "accepted"

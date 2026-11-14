@@ -42,12 +42,12 @@ Preconditions:
   `You said: go on`, and the transcript above still shows `prompt one` and its
   answer.
 - **Reset over the wire.** Run
-  `drive.ts r rpc conversation/reset '{"conversation": "talk", "author": "bo"}'`:
+  `drive.ts r rpc conversation/reset '{"conversation": "talk", "author": {"id": "bo", "name": "bo"}}'`:
   `"result": null`, and the TUI draws `◆ bo started a new context` with no
   handoff. `conversation/context` now answers `"messages": []` and one entry.
   `drive.ts r watch talk --save reset` holds every earlier entry, then
-  `pi.reset` entries with `{"author": "ada"}` (its model text the handoff) and
-  `{"author": "bo"}`. With `"conversation": "nope"` the call fails
+  `pi.reset` entries with `{"author": {"id": "ada", "name": "ada"}}` (its model text the handoff) and
+  `{"author": {"id": "bo", "name": "bo"}}`. With `"conversation": "nope"` the call fails
   `NoSuchConversation`.
 
 ## Contexts

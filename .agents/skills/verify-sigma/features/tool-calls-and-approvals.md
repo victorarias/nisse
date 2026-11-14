@@ -118,19 +118,19 @@ Preconditions:
   `drive.ts r tui screen streamed`: `tick 1`, `tick 2` and `tick 3`, then
   `counted`. Over the wire, in a fresh run,
   `drive.ts r serve`,
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "approvals": "auto"}'` and
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp", "approvals": "auto"}'` and
   `drive.ts r watch <id> --submit count --until run_end --save stream`:
   changes about a second apart grow the running call's `output` in
   `docs.pi.live.tools` by `tick 1\n`, `tick 2\n` and `tick 3\n`, before the
   `pi.tool-result` `tick 1\ntick 2\ntick 3\n`.
 
 - **Wire.** In a fresh run, run `drive.ts r serve`, start a conversation with
-  `rpc conversation/start '{"cwd": "/tmp"}'`, and run
+  `rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`, and run
   `drive.ts r watch <id> --submit 'check it' --until run_end --timeout 30000 --save wire &`.
   Once its output shows a request in `docs.sigma.approvals.requests`, take
   its key, the approval id, and run
-  `drive.ts r rpc approval/resolve '{"conversation": "<id>", "approval": "<approval>", "author": "bo", "allow": true}'`:
-  `"accepted": true`. The same call again with `"author": "cy"` and
+  `drive.ts r rpc approval/resolve '{"conversation": "<id>", "approval": "<approval>", "author": {"id": "bo", "name": "bo"}, "allow": true}'`:
+  `"accepted": true`. The same call again with `"author": {"id": "cy", "name": "cy"}` and
   `"allow": false` answers `"accepted": false`; sent at the same moment, one
   of the two is accepted. The watch shows one `sigma.approval` entry with
   `"allow": true`, a `pi.tool-result` with `approved`, and a `sigma.run_end`

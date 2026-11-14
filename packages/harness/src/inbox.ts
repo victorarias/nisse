@@ -181,6 +181,8 @@ export type WithdrawnInput = {
   readonly conversationId: ConversationId
   /** The entry it would have been placed as, when not `pi.user`. */
   readonly entry: Stored<InputEntry> | undefined
+  /** What the caller of `Harness.abortSubmission` passed, such as who withdrew it; absent for any other withdrawal. */
+  readonly data?: JsonObject
 }
 
 /**
@@ -197,13 +199,14 @@ const withdraw = (
   index: number,
   reason: string,
   withdrawn: InputWithdrawnHook | undefined,
+  data?: JsonObject,
 ): Effect.Effect<void, StorageError> =>
   Effect.gen(function* () {
     const item = items[index]!
     yield* tx.settleSubmission(item.id, { status: "unanswered", reason })
     items.splice(index, 1)
     if (item.mode === "write" || withdrawn === undefined) return
-    yield* withdrawn(tx, { conversationId, entry: item.entry })
+    yield* withdrawn(tx, { conversationId, entry: item.entry, ...(data === undefined ? {} : { data }) })
   })
 
 /** Withdraws queued submission `id`: it settles `unanswered` with `aborted` and leaves the inbox. */
@@ -212,11 +215,12 @@ export const withdrawQueued = (
   conversationId: ConversationId,
   id: SubmissionId,
   withdrawn: InputWithdrawnHook | undefined,
+  data?: JsonObject,
 ): Effect.Effect<void, DocError | StorageError> =>
   Effect.gen(function* () {
     const items = (yield* tx.doc(InboxDoc, conversationId)).items as InboxItem[]
     const index = items.findIndex((item) => item.id === id)
-    if (index >= 0) yield* withdraw(tx, conversationId, items, index, "aborted", withdrawn)
+    if (index >= 0) yield* withdraw(tx, conversationId, items, index, "aborted", withdrawn, data)
   })
 
 /**

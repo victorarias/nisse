@@ -226,14 +226,17 @@ export const transcript = (entries: ReadonlyArray<EntryRecord>) =>
     return []
   })
 
+/** A person as a client names them to sigma. */
+export const person = (name: string) => ({ id: `person:${name}`, name })
+
 export const start = async (client: RawClient, cwd = "/work") =>
-  (await client.call("conversation/start", { cwd })).result.conversation as string
+  (await client.call("conversation/start", { cwd, author: person("ada") })).result.conversation as string
 
 export const submit = (
   client: RawClient,
   conversation: string,
   text: string,
   requestId: string = crypto.randomUUID(),
-  author = "ada",
+  author = person("ada"),
   steer = false,
 ) => client.call("conversation/submit", { conversation, requestId, author, text, ...(steer ? { steer } : {}) })

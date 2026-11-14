@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { homeWithExtensions } from "./support/extensions.ts"
 import { deadline, errorTag, hangUpMidAnswer, RawClient } from "./support/raw.ts"
 import {
+  person,
   runEnds,
   runningServer,
   servingUntilIdle,
@@ -18,7 +19,15 @@ import {
 } from "./support/server.ts"
 import { applyImmutable, type Op } from "@sigma/delta"
 import { DEFAULT_MAX_BYTES } from "@sigma/env/truncate"
-import { PROTOCOL_VERSION, RUN_END_KIND, STATUS_LINES_KIND, TOAST_KIND, USER_KIND, type View } from "@sigma/protocol"
+import {
+  type EntryRecord,
+  PROTOCOL_VERSION,
+  RUN_END_KIND,
+  STATUS_LINES_KIND,
+  TOAST_KIND,
+  USER_KIND,
+  type View,
+} from "@sigma/protocol"
 import { VERSION } from "../src/version.ts"
 
 type Tree = { _tag: "tree"; conversation: string; seq: number; status: string; ended?: Record<string, string> }
@@ -126,7 +135,9 @@ test("interrupt-wire: interrupting keeps what sigma already said and marks the r
   const view = watchView(client, conversation)
   await submit(client, conversation, "count")
   await view.until(speaking)
-  expect(await client.call("conversation/interrupt", { conversation })).toMatchObject({ result: null })
+  expect(await client.call("conversation/interrupt", { author: person("ada"), conversation })).toMatchObject({
+    result: null,
+  })
   await view.until(settled(1))
   const said = transcript(view.view().entries)
   expect(said[0]).toBe("user: count")
@@ -145,7 +156,7 @@ test("interrupt-withdraw: interrupting withdraws the prompts that wait, and the 
   await view.until(speaking)
   await submit(client, conversation, "then this", "waiting-1")
   await submit(client, conversation, "and this", "waiting-2")
-  await client.call("conversation/interrupt", { conversation })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation })
   await view.until(settled(1))
   const said = transcript(view.view().entries)
   expect(said[0]).toBe("user: count")
@@ -436,12 +447,12 @@ test("approval-wire: two clients answer one approval at once and the first answe
   const approval = await waitingApproval(view)
   expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "bash" })
   const answers = await Promise.all([
-    ada.call("approval/resolve", { conversation, approval, author: "ada", allow: true }),
-    bo.call("approval/resolve", { conversation, approval, author: "bo", allow: false }),
+    ada.call("approval/resolve", { conversation, approval, author: person("ada"), allow: true }),
+    bo.call("approval/resolve", { conversation, approval, author: person("bo"), allow: false }),
   ])
   const accepted = answers.map((reply) => (reply.result as { accepted: boolean }).accepted)
   expect(accepted.filter(Boolean)).toHaveLength(1)
-  const winner = accepted[0] ? { author: "ada", allow: true } : { author: "bo", allow: false }
+  const winner = accepted[0] ? { author: person("ada"), allow: true } : { author: person("bo"), allow: false }
   await view.until(settled(1))
   const answered = view.seen().filter((entry) => entry.kind === "sigma.approval")
   expect(answered.map((entry) => entry.data)).toEqual([expect.objectContaining({ approval, ...winner })])
@@ -452,7 +463,7 @@ test("approval-wire: two clients answer one approval at once and the first answe
   ])
   // The request leaves with its call, and a late answer is not accepted.
   expect(approvalsOf(view)!.requests).toEqual({})
-  const late = await ada.call("approval/resolve", { conversation, approval, author: "cy", allow: true })
+  const late = await ada.call("approval/resolve", { conversation, approval, author: person("cy"), allow: true })
   expect(late.result).toEqual({ accepted: false })
   expect(transcript(view.view().entries).slice(-2)).toEqual(["assistant: all done", "run_end: answered"])
   ada.close()
@@ -469,7 +480,7 @@ test("approval-wire: a denied call is reported to the model as denied and does n
   const view = watchView(client, conversation)
   await submit(client, conversation, "make it")
   const approval = await waitingApproval(view)
-  const reply = await client.call("approval/resolve", { conversation, approval, author: "bo", allow: false })
+  const reply = await client.call("approval/resolve", { conversation, approval, author: person("bo"), allow: false })
   expect(reply.result).toEqual({ accepted: true })
   await view.until(settled(1))
   expect(toolResults(view)).toEqual([
@@ -477,7 +488,9 @@ test("approval-wire: a denied call is reported to the model as denied and does n
   ])
   expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
   expect(
-    errorTag(await client.call("approval/resolve", { conversation, approval: "999", author: "bo", allow: true })),
+    errorTag(
+      await client.call("approval/resolve", { conversation, approval: "999", author: person("bo"), allow: true }),
+    ),
   ).toBe("NoSuchApproval")
   client.close()
 })
@@ -486,13 +499,14 @@ test("codemode-nested-policy: a script's call that changes things asks first, an
   const code = 'try { await tools.bash({ command: "touch made" }) } catch (error) { text("refused: " + error.message) }'
   await using server = await runningServer([{ tool: { name: "codemode", input: { code } } }, { text: "all done" }])
   const client = await RawClient.connect(server.home.socket)
-  const conversation = (await client.call("conversation/start", { cwd: server.home.dir, model: "script-code-mode" }))
-    .result.conversation as string
+  const conversation = (
+    await client.call("conversation/start", { author: person("ada"), cwd: server.home.dir, model: "script-code-mode" })
+  ).result.conversation as string
   const view = watchView(client, conversation)
   await submit(client, conversation, "make it")
   const approval = await waitingApproval(view)
   expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "bash" })
-  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: false })
+  await client.call("approval/resolve", { conversation, approval, author: person("bo"), allow: false })
   await view.until(settled(1))
   const result = toolResults(view).at(-1)
   expect(result!.text).toStartWith("Script completed")
@@ -516,8 +530,9 @@ test("tool-read-only, approval-auto: reading calls and conversations started wit
   await submit(client, reading, "read it")
   await readView.until(settled(1))
   expect(toolResults(readView)).toEqual([{ text: expect.stringContaining("the gnome lives"), isError: false }])
-  const auto = (await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto" })).result
-    .conversation as string
+  const auto = (
+    await client.call("conversation/start", { author: person("ada"), cwd: server.home.dir, approvals: "auto" })
+  ).result.conversation as string
   const autoView = watchView(client, auto)
   await submit(client, auto, "check it")
   await autoView.until(settled(1))
@@ -530,15 +545,17 @@ test("start-with-id: starting a conversation with an id it already has answers w
   await using server = await runningServer([{ text: "hello" }])
   const client = await RawClient.connect(server.home.socket)
   const id = crypto.randomUUID()
-  const first = await client.call("conversation/start", { id, cwd: "/work" })
-  const again = await client.call("conversation/start", { id, cwd: "/elsewhere" })
+  const first = await client.call("conversation/start", { author: person("ada"), id, cwd: "/work" })
+  const again = await client.call("conversation/start", { author: person("ada"), id, cwd: "/elsewhere" })
   expect(first.result).toEqual({ conversation: id, model: { provider: "script", model: "script" } })
   expect(again.result).toEqual({ conversation: id, model: { provider: "script", model: "script" } })
   const view = watchView(client, id)
   await submit(client, id, "hi")
   await view.until(settled(1))
   expect((view.view().docs["pi.agent"] as { cwd?: string }).cwd).toBe("/work")
-  expect(errorTag(await client.call("conversation/start", { id: "42", cwd: "/work" }))).toBe("InvalidConversationId")
+  expect(errorTag(await client.call("conversation/start", { author: person("ada"), id: "42", cwd: "/work" }))).toBe(
+    "InvalidConversationId",
+  )
   client.close()
 })
 
@@ -555,8 +572,10 @@ const mails = (watch: ViewWatch) =>
 test("start-with-id: a chosen id that names an object property, such as toString, opens its own conversation", async () => {
   await using server = await runningServer([{ text: "hello" }])
   const client = await RawClient.connect(server.home.socket)
-  await client.call("conversation/start", { id: "first", cwd: "/work" })
-  expect((await client.call("conversation/start", { id: "toString", cwd: "/work" })).result).toEqual({
+  await client.call("conversation/start", { author: person("ada"), id: "first", cwd: "/work" })
+  expect(
+    (await client.call("conversation/start", { author: person("ada"), id: "toString", cwd: "/work" })).result,
+  ).toEqual({
     conversation: "toString",
     model: { provider: "script", model: "script" },
   })
@@ -623,7 +642,7 @@ test("child-tools: a prompt queued while the model waits on a subagent does not 
   const writer = watchView(client, child)
   const approval = await waitingApproval(writer)
   await submit(client, conversation, "and then this")
-  await client.call("approval/resolve", { conversation: child, approval, author: "ada", allow: true })
+  await client.call("approval/resolve", { conversation: child, approval, author: person("ada"), allow: true })
   await view.until(settled(2), 20_000)
   expect(JSON.parse(toolResults(view)[1]!.text)).toEqual({ message: "Wait completed.", timed_out: false })
   expect(transcript(view.seen()).filter((line) => !line.startsWith("assistant: ") || line.includes("next"))).toEqual([
@@ -645,8 +664,9 @@ test("child-tools, approval-auto: a subagent of a conversation that runs calls w
     { text: "the note is written", agent: "/root/writer" },
   ])
   const client = await RawClient.connect(server.home.socket)
-  const conversation = (await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto" })).result
-    .conversation as string
+  const conversation = (
+    await client.call("conversation/start", { author: person("ada"), cwd: server.home.dir, approvals: "auto" })
+  ).result.conversation as string
   const view = watchView(client, conversation)
   await submit(client, conversation, "delegate it")
   await view.until(settled(1), 20_000)
@@ -736,7 +756,7 @@ test("child-tools: a subagent's answer that waits in its parent's queue still re
   // The parent holds on its call's approval while the writer's answer queues behind it.
   await waitingApproval(view)
   await view.until((current) => ((current.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
-  await client.call("conversation/interrupt", { conversation })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation })
   await view.until((current) => mails(current).length > 0, 10_000)
   expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/writer" }])
   expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
@@ -761,7 +781,7 @@ test("child-tools: a follow-up task reaches a working subagent at its next step,
   const approval = await waitingApproval(writer)
   // The follow-up waits in the writer's queue while its call holds on the approval.
   await writer.until((current) => ((current.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
-  await client.call("approval/resolve", { conversation: child, approval, author: "ada", allow: true })
+  await client.call("approval/resolve", { conversation: child, approval, author: person("ada"), allow: true })
   await writer.until(settled(1), 20_000)
   expect(mails(writer).map((mail) => mail.kind)).toEqual(["new_task", "new_task"])
   expect(transcript(writer.seen()).slice(-2)).toEqual(["assistant: written and signed", "run_end: answered"])
@@ -824,7 +844,7 @@ test("child-tools, subagent-agents: interrupting a subagent stops its turn and r
   const rootApproval = await waitingApproval(view)
   const slow = watchView(client, spawned(view, "/root/slow"))
   await waitingApproval(slow)
-  await client.call("approval/resolve", { conversation, approval: rootApproval, author: "ada", allow: true })
+  await client.call("approval/resolve", { conversation, approval: rootApproval, author: person("ada"), allow: true })
   await view.until(settled(1), 20_000)
   await slow.until(settled(1), 20_000)
   const results = toolResults(view).map((result) => result.text)
@@ -867,8 +887,14 @@ const whyNotRun = (watch: ViewWatch) =>
 const statusLines = (watch: ViewWatch) =>
   (watch.view().docs[STATUS_LINES_KIND] as { lines: Record<string, string> } | undefined)?.lines ?? {}
 const startAuto = async (client: RawClient, cwd: string, id?: string) =>
-  (await client.call("conversation/start", { cwd, approvals: "auto", ...(id === undefined ? {} : { id }) })).result
-    .conversation as string
+  (
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd,
+      approvals: "auto",
+      ...(id === undefined ? {} : { id }),
+    })
+  ).result.conversation as string
 
 const clockAndNoGlob = `
 import { Extension, Tool } from "@sigma/extension"
@@ -914,7 +940,7 @@ test("tools-transform, extensions-load: an extension's tool answers the model's 
   await submit(client, conversation, "what time is it")
   const approval = await waitingApproval(view)
   expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "read" })
-  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await client.call("approval/resolve", { conversation, approval, author: person("ada"), allow: true })
   await view.until(settled(1))
   expect(callsAndToasts(view)).toEqual([
     `call Clock {"zone":"CET"}`,
@@ -967,7 +993,13 @@ test("execute-before, execute-after, toast, status-line: an extension can refuse
   )
   const client = await RawClient.connect(server.home.socket)
   const conversation = (
-    await client.call("conversation/start", { cwd: home.dir, approvals: "auto", id: "guarded", effort: "high" })
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: home.dir,
+      approvals: "auto",
+      id: "guarded",
+      effort: "high",
+    })
   ).result.conversation as string
   const view = watchView(client, conversation)
   await submit(client, conversation, "clean up")
@@ -1198,7 +1230,7 @@ test("queue-run, interrupt-withdraw: a prompt sent after an interrupt, while the
   await submit(client, conversation, "go")
   await deadline(started.given, 5000, "Hold started")
   // The interrupt withdraws what waits now and answers once the run stopped, which the held tool delays.
-  const interrupted = client.call("conversation/interrupt", { conversation })
+  const interrupted = client.call("conversation/interrupt", { author: person("ada"), conversation })
   await deadline(aborting.given, 5000, "Hold interrupted")
   await submit(client, conversation, "late")
   release.open()
@@ -1321,7 +1353,7 @@ test("approval-restart, status-snapshot: a call waiting for approval across a re
     await status.until((items) => items.length > 0)
     expect(status.items[0]).toMatchObject({ _tag: "trees", trees: [{ conversation, status: "waiting" }] })
     expect(asked(view)).not.toHaveProperty("answer")
-    await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+    await client.call("approval/resolve", { conversation, approval, author: person("ada"), allow: true })
     await view.until(settled(1))
     expect(toolResults(view)).toEqual([{ text: "two\n", isError: false }])
     client.close()
@@ -1350,8 +1382,9 @@ test("status-follow, status-ended: watching status follows each run of a tree an
   const watch = client.watch<Trees>("status/watch")
   await watch.until((items) => items.length > 0)
   expect(watch.items[0]).toMatchObject({ _tag: "trees", trees: [] })
-  const conversation = (await client.call("conversation/start", { cwd: "/work", id: "followed" })).result
-    .conversation as string
+  const conversation = (
+    await client.call("conversation/start", { author: person("ada"), cwd: "/work", id: "followed" })
+  ).result.conversation as string
   await submit(client, conversation, "go")
   await watch.until((items) => treesOf(items, conversation).some((tree) => tree.ended))
   await submit(client, conversation, "go again")
@@ -1392,7 +1425,7 @@ test("status-subagent, status-snapshot: a subagent waiting on a person shows as 
   })
   expect(treesOf(watch.items, conversation).map((tree) => tree.status)).toEqual(["working", "waiting"])
   // One interrupt of the root stops its subagent too, so the whole tree goes idle.
-  await client.call("conversation/interrupt", { conversation })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation })
   await watch.until((items) => treesOf(items, conversation).at(-1)?.status === "idle", 20_000)
   const ended = treesOf(watch.items, conversation).filter((tree) => tree.ended)
   expect(ended.map((tree) => tree.ended)).toEqual([{ outcome: "interrupted", message: "aborted" }])
@@ -1406,16 +1439,16 @@ test("submit-author, queue-shared: every client sees who wrote each prompt, whil
   const bo = await RawClient.connect(server.home.socket)
   const conversation = await start(ada)
   const view = watchView(bo, conversation)
-  await submit(ada, conversation, "one", undefined, "ada")
+  await submit(ada, conversation, "one", undefined, person("ada"))
   await view.until(speaking)
-  await submit(bo, conversation, "two", undefined, "bo")
+  await submit(bo, conversation, "two", undefined, person("bo"))
   await view.until((watch) => ((watch.view().docs["pi.inbox"] as { items?: unknown[] })?.items ?? []).length > 0)
   expect((view.view().docs["pi.inbox"] as { items: unknown[] }).items).toEqual([
-    expect.objectContaining({ entry: { kind: USER_KIND, data: expect.objectContaining({ author: "bo" }) } }),
+    expect.objectContaining({ entry: { kind: USER_KIND, data: expect.objectContaining({ author: person("bo") }) } }),
   ])
   await view.until(settled(2))
   const users = view.seen().filter((entry) => entry.kind === USER_KIND)
-  expect(users.map((entry) => (entry.data as { author: string }).author)).toEqual(["ada", "bo"])
+  expect(users.map((entry) => (entry.data as { author: unknown }).author)).toEqual([person("ada"), person("bo")])
   expect(transcript(view.seen()).filter((line) => line.startsWith("user: "))).toEqual(["user: one", "user: two"])
   ada.close()
   bo.close()
@@ -1468,7 +1501,12 @@ await tools.spawn_agent({ task_name: "deeper", message: "go" })`
   ])
   const client = await RawClient.connect(server.home.socket)
   const conversation = (
-    await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto", model: "script-code-mode" })
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: server.home.dir,
+      approvals: "auto",
+      model: "script-code-mode",
+    })
   ).result.conversation as string
   const view = watchView(client, conversation)
   await submit(client, conversation, "send a helper")
@@ -1507,7 +1545,7 @@ test("subagent-interrupt: interrupting a conversation stops the runs of its suba
   // The subagent waits on a person while its parent waits on it.
   await waitingApproval(slow)
 
-  await client.call("conversation/interrupt", { conversation })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation })
   await view.until(settled(1), 10_000)
   await slow.until(settled(1), 10_000)
 
@@ -1559,7 +1597,12 @@ test("subagent-spawn, subagent-model: conversation/list shows each subagent with
   ])
   const client = await RawClient.connect(server.home.socket)
   const conversation = (
-    await client.call("conversation/start", { cwd: server.home.dir, id: "lead", instructions: "Be brief." })
+    await client.call("conversation/start", {
+      author: person("ada"),
+      cwd: server.home.dir,
+      id: "lead",
+      instructions: "Be brief.",
+    })
   ).result.conversation as string
   const view = watchView(client, conversation)
   await submit(client, conversation, "delegate")
@@ -1622,19 +1665,19 @@ test("model-switch, model-switch-provider: switching a conversation's model is r
   await submit(client, conversation, "one")
   await view.until(settled(1))
   const selection = { provider: "script", model: "script-code-mode", effort: "low" }
-  expect((await client.call("conversation/select_model", { conversation, author: "bo", selection })).error).toBe(
-    undefined,
-  )
+  expect(
+    (await client.call("conversation/select_model", { conversation, author: person("bo"), selection })).error,
+  ).toBe(undefined)
   await submit(client, conversation, "two")
   await view.until(settled(2))
   const switched = view.seen().filter((entry) => entry.kind === "sigma.model")
-  expect(switched.map((entry) => entry.data)).toEqual([{ author: "bo", selection }])
+  expect(switched.map((entry) => entry.data)).toEqual([{ author: person("bo"), selection }])
   const answers = view.seen().filter((entry) => entry.kind === "pi.assistant")
   expect(answers.map((entry) => (entry.model![0] as { model: string }).model)).toEqual(["script", "script-code-mode"])
   expect((await list(client))[0]!.model).toEqual(selection)
   const unknown = await client.call("conversation/select_model", {
     conversation,
-    author: "bo",
+    author: person("bo"),
     selection: { provider: "nowhere" },
   })
   expect(errorTag(unknown)).toBe("UnknownProvider")
@@ -1649,11 +1692,11 @@ test("model-switch: a switch made while a run works is recorded at once and answ
   await submit(client, conversation, "check it")
   const approval = await waitingApproval(view)
   const selection = { provider: "script", model: "script-code-mode" }
-  expect((await client.call("conversation/select_model", { conversation, author: "bo", selection })).error).toBe(
-    undefined,
-  )
+  expect(
+    (await client.call("conversation/select_model", { conversation, author: person("bo"), selection })).error,
+  ).toBe(undefined)
   await view.until((current) => current.seen().some((entry) => entry.kind === "sigma.model"))
-  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await client.call("approval/resolve", { conversation, approval, author: person("ada"), allow: true })
   await view.until(settled(1))
   await submit(client, conversation, "again")
   await view.until(settled(2))
@@ -1738,7 +1781,7 @@ test("wire-malformed: a call missing a field is answered with an error that name
   await using server = await runningServer([{ text: "fine" }])
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
-  const missing = await client.call("conversation/submit", { conversation, requestId: "r", author: "ada" })
+  const missing = await client.call("conversation/submit", { conversation, requestId: "r", author: person("ada") })
   // It names the field in words, not in the cause encoded as JSON.
   expect(missing.error?.message).toContain("text")
   expect(missing.error?.message).not.toContain('"_tag"')
@@ -1754,10 +1797,10 @@ test("wire-errors: every error a call answers says what went wrong in its messag
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
   const replies = {
-    noConversation: await client.call("conversation/continue", { conversation: "nope" }),
-    noSubmission: await client.call("submission/withdraw", { conversation, submission: 9999 }),
-    noEntry: await client.call("conversation/fork", { conversation, at: 9999 }),
-    badParams: await client.call("conversation/configure", { conversation, author: "ada", maxTurns: 0 }),
+    noConversation: await client.call("conversation/continue", { author: person("ada"), conversation: "nope" }),
+    noSubmission: await client.call("submission/withdraw", { author: person("ada"), conversation, submission: 9999 }),
+    noEntry: await client.call("conversation/fork", { author: person("ada"), conversation, at: 9999 }),
+    badParams: await client.call("conversation/configure", { conversation, author: person("ada"), maxTurns: 0 }),
     noMethod: await client.call("conversation/frobnicate", {}),
   }
   expect(Object.fromEntries(Object.entries(replies).map(([name, reply]) => [name, reply.error?.message]))).toEqual({
@@ -1785,7 +1828,7 @@ test("approval-ask: a call that changes things waits for a person, and every cli
   const approval = await waitingApproval(view)
   expect(approvalsOf(view)!.requests[approval]).toMatchObject({ tool: "bash", arguments: { command: "echo approved" } })
   await status.until((items) => treesOf(items, conversation).at(-1)?.status === "waiting")
-  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await client.call("approval/resolve", { conversation, approval, author: person("ada"), allow: true })
   await view.until(settled(1))
   client.close()
 })
@@ -1810,7 +1853,7 @@ test("conversation-ended: conversation/list tells a client that was not watching
       await submit(client, conversation, "write a note")
       await waitingApproval(view)
       expect(await endedOf()).toEqual({ outcome: "answered", said: "all done" })
-      await client.call("conversation/interrupt", { conversation })
+      await client.call("conversation/interrupt", { author: person("ada"), conversation })
       await view.until(settled(2))
       expect(await endedOf()).toEqual({ outcome: "interrupted", message: "aborted", said: "Writing the note." })
       client.close()
@@ -1996,11 +2039,11 @@ test("approval-interrupt: interrupting while sigma waits for an answer withdraws
   const view = watchView(client, conversation)
   await submit(client, conversation, "make it")
   const approval = await waitingApproval(view)
-  await client.call("conversation/interrupt", { conversation })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation })
   await view.until(settled(1))
   expect(approvalsOf(view)!.requests).toEqual({})
   expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
-  const late = await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  const late = await client.call("approval/resolve", { conversation, approval, author: person("ada"), allow: true })
   expect(late.result).toEqual({ accepted: false })
   expect(await Bun.file(`${server.home.dir}/made`).exists()).toBe(false)
   client.close()
@@ -2017,7 +2060,7 @@ test("steer-wire, steer-place: a steering prompt reaches sigma during the run in
   const view = watchView(client, conversation)
   await submit(client, conversation, "start")
   await view.until((current) => liveSlots(current.view()).some((slot) => slot.status === "running"))
-  await submit(client, conversation, "also do this", crypto.randomUUID(), "ada", true)
+  await submit(client, conversation, "also do this", crypto.randomUUID(), person("ada"), true)
   writeFileSync(`${cwd}/go`, "")
   await view.until(settled(1))
   expect(callsAndToasts(view)).toEqual([expect.stringContaining("call bash"), "result: "])
@@ -2047,7 +2090,7 @@ test("subagent-answer: a subagent's answer reaches its idle parent as input that
   await view.until(settled(1))
   const child = spawned(view, "/root/kid")
   const approval = await waitingApproval(watchView(client, child))
-  await client.call("approval/resolve", { conversation: child, approval, author: "ada", allow: true })
+  await client.call("approval/resolve", { conversation: child, approval, author: person("ada"), allow: true })
   await view.until(settled(2), 10_000)
   expect(mails(view)).toEqual([{ kind: "final_answer", task: "/root", sender: "/root/kid" }])
   const kinds = view.seen().map((entry) => entry.kind)
@@ -2094,8 +2137,18 @@ test("fork-rpc, fork-shown: a fork goes on from an earlier entry with only what 
   await view.until(settled(2))
   const firstEnd = view.seen().find((entry) => entry.kind === RUN_END_KIND)!.id
   // Changed after the fork's entry, and still what the fork runs with.
-  await client.call("conversation/configure", { conversation, author: "bo", instructions: "be brief", maxTurns: 3 })
-  const forked = await client.call("conversation/fork", { conversation, at: firstEnd, id: "other-way" })
+  await client.call("conversation/configure", {
+    conversation,
+    author: person("bo"),
+    instructions: "be brief",
+    maxTurns: 3,
+  })
+  const forked = await client.call("conversation/fork", {
+    author: person("ada"),
+    conversation,
+    at: firstEnd,
+    id: "other-way",
+  })
   expect(forked.result).toEqual({ conversation: "other-way" })
   const fork = watchView(client, "other-way")
   await opened(fork)
@@ -2130,12 +2183,16 @@ test("fork-rpc, fork-shown: a fork goes on from an earlier entry with only what 
     "assistant: b",
     "run_end: answered",
   ])
-  const unnamed = await client.call("conversation/fork", { conversation, at: firstEnd })
+  const unnamed = await client.call("conversation/fork", { author: person("ada"), conversation, at: firstEnd })
   expect((unnamed.result as { conversation: string }).conversation).toMatch(/^\d+$/)
-  expect(errorTag(await client.call("conversation/fork", { conversation, at: firstEnd, id: "other-way" }))).toBe(
-    "InvalidConversationId",
+  expect(
+    errorTag(
+      await client.call("conversation/fork", { author: person("ada"), conversation, at: firstEnd, id: "other-way" }),
+    ),
+  ).toBe("InvalidConversationId")
+  expect(errorTag(await client.call("conversation/fork", { author: person("ada"), conversation, at: 9999 }))).toBe(
+    "NoSuchEntry",
   )
-  expect(errorTag(await client.call("conversation/fork", { conversation, at: 9999 }))).toBe("NoSuchEntry")
   client.close()
 })
 
@@ -2147,11 +2204,12 @@ test("reset-rpc, reset-handoff: a reset starts an empty context with the handoff
   await submit(client, conversation, "one")
   await view.until(settled(1))
   expect(
-    (await client.call("conversation/reset", { conversation, author: "bo", handoff: "we were counting" })).error,
+    (await client.call("conversation/reset", { conversation, author: person("bo"), handoff: "we were counting" }))
+      .error,
   ).toBe(undefined)
   await view.until((current) => current.seen().some((entry) => entry.kind === "pi.reset"))
   const reset = view.seen().find((entry) => entry.kind === "pi.reset")!
-  expect(reset.data).toEqual({ author: "bo" })
+  expect(reset.data).toEqual({ author: person("bo") })
   expect(await contextOf(client, conversation)).toEqual(["user: we were counting"])
   await submit(client, conversation, "two")
   await view.until(settled(2))
@@ -2183,7 +2241,7 @@ test("compact-rpc, compaction-live-status: compacting shows live, then a summary
   const compact = (instructions?: string) =>
     client.call("conversation/compact", {
       conversation,
-      author: "ada",
+      author: person("ada"),
       ...(instructions === undefined ? {} : { instructions }),
     })
   expect((await compact()).result).toEqual({ outcome: "nothing_to_compact" })
@@ -2218,7 +2276,7 @@ test("continue-rpc: a conversation whose run failed goes on with no new input; o
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
   const view = watchView(client, conversation)
-  const go = () => client.call("conversation/continue", { conversation })
+  const go = () => client.call("conversation/continue", { author: person("ada"), conversation })
   expect(errorTag(await go())).toBe("NothingToContinue")
   await submit(client, conversation, "hi")
   await view.until(settled(1))
@@ -2226,7 +2284,7 @@ test("continue-rpc: a conversation whose run failed goes on with no new input; o
   // The run waits on its approval, so it is still working when continue is asked again.
   const approval = await waitingApproval(view)
   expect(errorTag(await go())).toBe("ConversationBusy")
-  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: true })
+  await client.call("approval/resolve", { conversation, approval, author: person("bo"), allow: true })
   await view.until(settled(2))
   expect(errorTag(await go())).toBe("NothingToContinue")
   expect(transcript(view.seen())).toEqual([
@@ -2250,17 +2308,17 @@ test("continue-rpc: continue while a run works says the conversation is busy, wh
   const client = await RawClient.connect(server.home.socket)
   const conversation = await start(client, server.home.dir)
   const view = watchView(client, conversation)
-  const go = () => client.call("conversation/continue", { conversation })
+  const go = () => client.call("conversation/continue", { author: person("ada"), conversation })
   // Each run waits on its approval, so it is still working when continue is asked.
   await submit(client, conversation, "one")
   const first = await waitingApproval(view)
   expect(errorTag(await go())).toBe("ConversationBusy")
-  await client.call("approval/resolve", { conversation, approval: first, author: "bo", allow: true })
+  await client.call("approval/resolve", { conversation, approval: first, author: person("bo"), allow: true })
   await view.until(settled(1))
   await submit(client, conversation, "two")
   const second = await waitingApproval(view)
   expect(errorTag(await go())).toBe("ConversationBusy")
-  await client.call("approval/resolve", { conversation, approval: second, author: "bo", allow: true })
+  await client.call("approval/resolve", { conversation, approval: second, author: person("bo"), allow: true })
   await view.until(settled(2))
   expect(errorTag(await go())).toBe("NothingToContinue")
   client.close()
@@ -2277,10 +2335,11 @@ test("withdraw-rpc: a queued prompt taken back never runs, and one already run c
   const second = (await submit(client, conversation, "two", "two")).result as { submission: number }
   const inbox = () => (view.view().docs["pi.inbox"] as { items: Array<{ id: number }> }).items.map((item) => item.id)
   await view.until(() => inbox().includes(second.submission))
-  const withdraw = (submission: number) => client.call("submission/withdraw", { conversation, submission })
+  const withdraw = (submission: number) =>
+    client.call("submission/withdraw", { author: person("ada"), conversation, submission })
   expect((await withdraw(second.submission)).result).toEqual({ result: "withdrawn" })
   expect(inbox()).not.toContain(second.submission)
-  await client.call("approval/resolve", { conversation, approval, author: "bo", allow: true })
+  await client.call("approval/resolve", { conversation, approval, author: person("bo"), allow: true })
   await view.until(settled(1))
   expect(transcript(view.seen())).toEqual([
     "user: one",
@@ -2294,15 +2353,93 @@ test("withdraw-rpc: a queued prompt taken back never runs, and one already run c
   client.close()
 })
 
+test("author-every-change: two people steer one conversation, and its committed entries name who made each change", async () => {
+  // Past the 20,000 tokens a summary keeps by default, so the compaction has a run to summarize.
+  const long = "word ".repeat(20_000)
+  const held = { tool: { name: "bash", input: { command: "echo held" } } }
+  await using server = await runningServer([
+    { text: "a" },
+    { text: "b" },
+    { text: "summary of both" },
+    { text: "checking", ...held },
+    { text: "checking again", ...held },
+    { text: "done" },
+  ])
+  const ada = await RawClient.connect(server.home.socket)
+  const bo = await RawClient.connect(server.home.socket)
+  const conversation = (
+    await ada.call("conversation/start", { cwd: server.home.dir, id: "shared", author: person("ada") })
+  ).result.conversation as string
+  const view = watchView(bo, conversation)
+  await submit(ada, conversation, long, undefined, person("ada"))
+  await view.until(settled(1))
+  await submit(bo, conversation, long, undefined, person("bo"))
+  await view.until(settled(2))
+  expect((await ada.call("conversation/compact", { conversation, author: person("ada") })).result).toEqual({
+    outcome: "compacted",
+  })
+  // The run waits on its approval, so bo's prompt waits in the queue until ada withdraws it, and bo interrupts.
+  await submit(ada, conversation, "go", undefined, person("ada"))
+  await waitingApproval(view)
+  const queued = (await submit(bo, conversation, "later", "later", person("bo"))).result as { submission: number }
+  const withdrawn = await ada.call("submission/withdraw", {
+    conversation,
+    submission: queued.submission,
+    author: person("ada"),
+  })
+  expect(withdrawn.result).toEqual({ result: "withdrawn" })
+  await bo.call("conversation/interrupt", { conversation, author: person("bo") })
+  await view.until(settled(3))
+  expect((await ada.call("conversation/continue", { conversation, author: person("ada") })).error).toBe(undefined)
+  const approval = await waitingApproval(view)
+  await bo.call("approval/resolve", { conversation, approval, author: person("bo"), allow: true })
+  await view.until(settled(4))
+  await bo.call("conversation/select_model", { conversation, author: person("bo"), selection: { provider: "script" } })
+  const last = view.seen().at(-1)!.id
+  const fork = (await bo.call("conversation/fork", { conversation, at: last, author: person("bo") })).result
+    .conversation as string
+
+  // A client that saw none of it reads who did what from the committed transcript.
+  const reader = await RawClient.connect(server.home.socket)
+  const authored = async (id: string) => {
+    const page = await reader.call("conversation/entries", { conversation: id, order: "ascending", limit: 200 })
+    return (page.result.entries as ReadonlyArray<EntryRecord>).flatMap((entry) => {
+      const author = (entry.data as { author?: unknown } | undefined)?.author
+      return author === undefined ? [] : [{ kind: entry.kind, author }]
+    })
+  }
+  const changes = [
+    { kind: "sigma.started", author: person("ada") },
+    { kind: "sigma.user", author: person("ada") },
+    { kind: "sigma.user", author: person("bo") },
+    { kind: "pi.compaction", author: person("ada") },
+    { kind: "sigma.user", author: person("ada") },
+    { kind: "sigma.withdrawn", author: person("ada") },
+    { kind: "sigma.interrupted", author: person("bo") },
+    { kind: "sigma.continued", author: person("ada") },
+    { kind: "sigma.approval", author: person("bo") },
+    { kind: "sigma.model", author: person("bo") },
+  ]
+  expect(await authored(conversation)).toEqual(changes)
+  expect(await authored(fork)).toEqual([...changes, { kind: "sigma.forked", author: person("bo") }])
+  ada.close()
+  bo.close()
+  reader.close()
+})
+
 test("configure-rpc, run-turn-limit: changed instructions reach the model and the transcript says who changed them; a turn limit ends a looping run by name", async () => {
   const echo = { tool: { name: "bash", input: { command: "echo again" } } }
   await using server = await runningServer([{ text: "a" }, echo, echo, echo, { text: "b" }])
   const client = await RawClient.connect(server.home.socket)
-  const reply = await client.call("conversation/start", { cwd: server.home.dir, approvals: "auto" })
+  const reply = await client.call("conversation/start", {
+    author: person("ada"),
+    cwd: server.home.dir,
+    approvals: "auto",
+  })
   const conversation = (reply.result as { conversation: string }).conversation
   const view = watchView(client, conversation)
   const configure = (settings: Record<string, unknown>) =>
-    client.call("conversation/configure", { conversation, author: "bo", ...settings })
+    client.call("conversation/configure", { conversation, author: person("bo"), ...settings })
   /** The instructions the newest system message gives the model. */
   const instructions = async () => {
     const reply = await client.call("conversation/context", { conversation })
@@ -2322,8 +2459,8 @@ test("configure-rpc, run-turn-limit: changed instructions reach the model and th
   expect(end).toEqual({ outcome: "failed", message: "reached the turn limit of 1 turn" })
   const configured = view.seen().filter((entry) => entry.kind === "sigma.configured")
   expect(configured.map((entry) => entry.data)).toEqual([
-    { author: "bo", instructions: "answer in French" },
-    { author: "bo", maxTurns: 1 },
+    { author: person("bo"), instructions: "answer in French" },
+    { author: person("bo"), maxTurns: 1 },
   ])
   expect((await configure({ instructions: null, maxTurns: null })).error).toBe(undefined)
   await submit(client, conversation, "two")
@@ -2366,8 +2503,9 @@ test("usage-rpc, usage-per-model, usage-total: a client reads the tokens each co
 test("task-graph-rpc: a client watches the home's live work, a run and the call it waits on, until it is done, and the list names the conversation each works in", async () => {
   await using server = await runningServer(ECHO)
   const client = await RawClient.connect(server.home.socket)
-  const conversation = (await client.call("conversation/start", { cwd: server.home.dir, id: "talk" })).result
-    .conversation as string
+  const conversation = (
+    await client.call("conversation/start", { author: person("ada"), cwd: server.home.dir, id: "talk" })
+  ).result.conversation as string
   const view = watchView(client, conversation)
   type Graph = { tasks: Record<string, { kind: string; conversationId: number; state: { status: string } }> }
   const watch = client.watch<{ _tag: "graph"; graph: Graph } | { _tag: "change"; ops: ReadonlyArray<Op> }>(
@@ -2400,7 +2538,7 @@ test("task-graph-rpc: a client watches the home's live work, a run and the call 
     expect.objectContaining({ id: "talk", title: "check it" }),
   ])
   const approval = Object.keys((view.view().docs["sigma.approvals"] as { requests: object }).requests)[0]!
-  await client.call("approval/resolve", { conversation, approval, author: "ada", allow: true })
+  await client.call("approval/resolve", { conversation, approval, author: person("ada"), allow: true })
   await view.until(settled(1))
   await watch.until(() => Object.keys(current().tasks).length === 0)
   client.close()
@@ -2417,7 +2555,7 @@ test("run-retry-live: a provider hiccup shows its retry and when it comes, and s
   expect(retry.error).toContain("503")
   // When the retry comes is still ahead when a client first sees it.
   expect(retry.at).toBeGreaterThan(Date.now())
-  await client.call("conversation/interrupt", { conversation })
+  await client.call("conversation/interrupt", { author: person("ada"), conversation })
   await view.until(settled(1))
   expect(runEnds(view.seen()).map((end) => end.outcome)).toEqual(["interrupted"])
   client.close()
@@ -2457,21 +2595,21 @@ test("serve-read-only: a read-only server shows a home's conversations without r
         [conversation],
       )
       const refused = await Promise.all([
-        client.call("conversation/start", { cwd: home.dir }),
+        client.call("conversation/start", { author: person("ada"), cwd: home.dir }),
         submit(client, conversation, "more"),
-        client.call("conversation/interrupt", { conversation }),
-        client.call("conversation/reset", { conversation, author: "bo" }),
-        client.call("conversation/configure", { conversation, author: "bo", maxTurns: 2 }),
-        client.call("conversation/fork", { conversation, at: view.seen()[0]!.id }),
+        client.call("conversation/interrupt", { author: person("ada"), conversation }),
+        client.call("conversation/reset", { conversation, author: person("bo") }),
+        client.call("conversation/configure", { conversation, author: person("bo"), maxTurns: 2 }),
+        client.call("conversation/fork", { author: person("ada"), conversation, at: view.seen()[0]!.id }),
         client.call("conversation/select_model", {
           conversation,
-          author: "bo",
+          author: person("bo"),
           selection: { provider: "script", model: "script" },
         }),
-        client.call("conversation/compact", { conversation, author: "bo" }),
-        client.call("conversation/continue", { conversation }),
-        client.call("submission/withdraw", { conversation, submission: 1 }),
-        client.call("approval/resolve", { conversation, approval: "1", author: "bo", allow: true }),
+        client.call("conversation/compact", { conversation, author: person("bo") }),
+        client.call("conversation/continue", { author: person("ada"), conversation }),
+        client.call("submission/withdraw", { author: person("ada"), conversation, submission: 1 }),
+        client.call("approval/resolve", { conversation, approval: "1", author: person("bo"), allow: true }),
         client.call("auth/start", { provider: "openai" }),
         client.call("auth/logout", { provider: "openai" }),
       ])

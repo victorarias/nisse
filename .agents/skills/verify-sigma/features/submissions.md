@@ -42,8 +42,8 @@ never runs.
 
 ### Agents
 
-- Call `conversation/continue` with `conversation`; it answers the run's `submission`.
-- Call `submission/withdraw` with `conversation` and `submission` (an id from `conversation/submit`'s answer or the view's `pi.inbox` items); it answers `withdrawn`, `already_placed` or `settled`.
+- Call `conversation/continue` with `conversation` and `author`; it answers the run's `submission`.
+- Call `submission/withdraw` with `conversation`, `author` and `submission` (an id from `conversation/submit`'s answer or the view's `pi.inbox` items); it answers `withdrawn`, `already_placed` or `settled`.
 
 ## Driving it with drive.ts
 
@@ -64,12 +64,12 @@ Preconditions:
   between them.
 - **Continue while busy.** Type `first` and `Enter`, `drive.ts r tui wait slow`,
   and while it streams run
-  `drive.ts r rpc conversation/continue '{"conversation": "talk"}'`: it fails
+  `drive.ts r rpc conversation/continue '{"author": {"id": "ada", "name": "ada"}, "conversation": "talk"}'`: it fails
   `ConversationBusy`.
 - **Nothing to continue.** In a new conversation type `/continue` and `Enter`:
   `✗ no run has ended here yet; send a message to start one` shows above the
   prompt. After an answered run,
-  `drive.ts r rpc conversation/continue '{"conversation": "talk"}'` fails
+  `drive.ts r rpc conversation/continue '{"author": {"id": "ada", "name": "ada"}, "conversation": "talk"}'` fails
   `NothingToContinue`, `the last run answered; send a message to go on`.
 - **Withdraw from the TUI.** While `first` still streams, type `second` and
   `Enter`, `drive.ts r tui wait 'queued · second'`, then type `/withdraw` and
@@ -78,9 +78,9 @@ Preconditions:
   `eight` and `READY` show, the transcript has no `second` and no
   `You said: second`.
 - **Withdraw over the wire.** Run
-  `drive.ts r rpc conversation/submit '{"conversation": "talk", "requestId": "three", "author": "bo", "text": "three"}'`:
+  `drive.ts r rpc conversation/submit '{"conversation": "talk", "requestId": "three", "author": {"id": "bo", "name": "bo"}, "text": "three"}'`:
   `"result": {"submission": <n>}`. Once `You said: three` shows,
-  `drive.ts r rpc submission/withdraw '{"conversation": "talk", "submission": <n>}'`
+  `drive.ts r rpc submission/withdraw '{"author": {"id": "ada", "name": "ada"}, "conversation": "talk", "submission": <n>}'`
   answers `"result": "settled"`, and `"submission": 9999` fails
   `NoSuchSubmission`.
 

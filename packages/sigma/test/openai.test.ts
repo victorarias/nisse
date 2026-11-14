@@ -8,7 +8,16 @@ import type { Home } from "../src/home.ts"
 import { homeWithExtensions } from "./support/extensions.ts"
 import { accessToken, ACCOUNT, FakeOpenAi, matches, signIn } from "./support/openai.ts"
 import { deadline, RawClient } from "./support/raw.ts"
-import { runningServer, settled, submit, transcript, type ViewWatch, watchView, tempHome } from "./support/server.ts"
+import {
+  person,
+  runningServer,
+  settled,
+  submit,
+  transcript,
+  type ViewWatch,
+  watchView,
+  tempHome,
+} from "./support/server.ts"
 import { png } from "./support/png.ts"
 import { imageDimensions } from "@sigma/tools"
 
@@ -34,6 +43,7 @@ const conversationWith = async (
   if (options.signedIn ?? true) await signIn(server.home)
   const client = await RawClient.connect(server.home.socket)
   const started = await client.call("conversation/start", {
+    author: person("ada"),
     cwd: options.cwd?.(server.home.dir) ?? server.home.dir,
     ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
     provider: "openai",
@@ -147,7 +157,7 @@ test("openai-tools, telemetry-identity: a call the person denies reaches the mod
   await session.client.call("approval/resolve", {
     conversation: session.conversation,
     approval,
-    author: "ada",
+    author: person("ada"),
     allow: false,
   })
   await session.view.until(settled(1))
@@ -157,7 +167,7 @@ test("openai-tools, telemetry-identity: a call the person denies reaches the mod
   expectRequests(fake, expected)
   expect(session.said().at(-2)).toBe("assistant: I was not allowed to run it.")
   const answer = session.view.seen().find((entry) => entry.kind === "sigma.approval")
-  expect(answer?.data).toMatchObject({ approval, author: "ada", allow: false })
+  expect(answer?.data).toMatchObject({ approval, author: person("ada"), allow: false })
 })
 
 test("steer-openai: a steer sent while calls run reaches the model after all of them, before its next answer", async () => {
@@ -169,13 +179,13 @@ test("steer-openai: a steer sent while calls run reaches the model after all of 
     session.client.call("approval/resolve", {
       conversation: session.conversation,
       approval,
-      author: "ada",
+      author: person("ada"),
       allow: true,
     })
   await session.view.until((watch) => pending(watch).length > 0)
   const [first] = pending(session.view)
   await allow(first!)
-  await submit(session.client, session.conversation, "and three", undefined, "ada", true)
+  await submit(session.client, session.conversation, "and three", undefined, person("ada"), true)
   await session.view.until((watch) => pending(watch).some((approval) => approval !== first))
   await allow(pending(session.view).find((approval) => approval !== first)!)
   await session.view.until(settled(1))
@@ -281,7 +291,7 @@ test("interrupt-wire: a ChatGPT answer streams live, and interrupting it closes 
   await using session = await conversationWith(fake)
   await session.submit("hello")
   await session.view.until((watch) => JSON.stringify(watch.view().docs["pi.live"] ?? {}).includes("Thinking about"))
-  await session.client.call("conversation/interrupt", { conversation: session.conversation })
+  await session.client.call("conversation/interrupt", { author: person("ada"), conversation: session.conversation })
   await session.view.until(settled(1))
   await deadline(fake.heldStreamAbandoned, 5000, "the request closed")
   expect(session.said()).toEqual([
@@ -679,7 +689,7 @@ test("image-attach: images sent with a prompt reach the model after its text, on
   const sent = await session.client.call("conversation/submit", {
     conversation: session.conversation,
     requestId: crypto.randomUUID(),
-    author: "ada",
+    author: person("ada"),
     text: "what differs?",
     images: [image("small.png", png(4, 4)), image("wide.png", png(3000, 40))],
   })
@@ -706,7 +716,7 @@ test("image-attach: an image the server cannot decode is refused by name, and no
   const refused = await session.client.call("conversation/submit", {
     conversation: session.conversation,
     requestId: crypto.randomUUID(),
-    author: "ada",
+    author: person("ada"),
     text: "look",
     images: [{ name: "broken.png", data: Buffer.from("not a picture").toString("base64"), mimeType: "image/png" }],
   })
@@ -722,8 +732,9 @@ test("image-attach: an image the server cannot decode is refused by name, and no
 test("skills-list: a conversation on a provider that finds its own skills lists none, and an unknown one is refused", async () => {
   await using server = await runningServer([])
   const client = await RawClient.connect(server.home.socket)
-  const conversation = (await client.call("conversation/start", { cwd: project(server.home.dir) })).result
-    .conversation as string
+  const conversation = (
+    await client.call("conversation/start", { author: person("ada"), cwd: project(server.home.dir) })
+  ).result.conversation as string
   expect((await client.call("skills/list", { conversation })).result).toEqual([])
   const unknown = await client.call("skills/list", { conversation: "nowhere" })
   expect(unknown.error?.data[0]?.error?._tag).toBe("NoSuchConversation")

@@ -301,6 +301,7 @@ export class Submissions {
   abort(
     id: SubmissionId,
     conversationId?: ConversationId,
+    data?: JsonObject,
   ): Effect.Effect<AbortResult | "not_found", ReadFailure | CommitError> {
     const withdrawn = this.#inputWithdrawn
     return this.#session.commit((tx) =>
@@ -310,7 +311,7 @@ export class Submissions {
           return "not_found" as const
         }
         if (record.status === "queued") {
-          yield* withdrawQueued(tx, record.conversationId, id, withdrawn)
+          yield* withdrawQueued(tx, record.conversationId, id, withdrawn, data)
           return "aborted" as const
         }
         return record.status === "placed" ? ("already_placed" as const) : ("settled" as const)

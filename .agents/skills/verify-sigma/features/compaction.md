@@ -63,7 +63,7 @@ Preconditions:
 - A summary keeps the newest 20,000 tokens as they are, so a context only
   compacts once it is past that. Send the long turns over the wire: set
   `LONG=$(python3 -c 'print("word "*20000)')`, 100,000 characters, and submit
-  with `drive.ts r rpc conversation/submit "{\"conversation\": \"talk\", \"requestId\": \"long-1\", \"author\": \"ada\", \"text\": \"$LONG\"}"`,
+  with `drive.ts r rpc conversation/submit "{\"conversation\": \"talk\", \"requestId\": \"long-1\", \"author\": {\"id\": \"ada\", \"name\": \"ada\"}, \"text\": \"$LONG\"}"`,
   a new `requestId` each time.
 
 - **Nothing to compact.** Run `drive.ts r tui start --conversation talk`,
@@ -86,7 +86,7 @@ Preconditions:
   from the context and still on the screen.
 - **A failed compaction.** Submit the long text a third time and wait for
   `answer three` and `READY`. Run
-  `drive.ts r rpc conversation/compact '{"conversation": "talk", "author": "ada", "instructions": "keep the numbers"}'`:
+  `drive.ts r rpc conversation/compact '{"conversation": "talk", "author": {"id": "ada", "name": "ada"}, "instructions": "keep the numbers"}'`:
   `"outcome": "failed", "message": "Summarization failed: the summary model is gone"`,
   and the TUI shows
   `✗ compaction failed: the summary model is gone` above the prompt: the
@@ -103,7 +103,7 @@ Preconditions:
   the process's third user message. Over the wire, in another fresh run with
   the same recording, `conversation/start` `talk` with `"provider": "claude"`,
   submit the two prompts, then
-  `drive.ts r rpc conversation/compact '{"conversation": "talk", "author": "ada", "instructions": "keep the numbers"}'`:
+  `drive.ts r rpc conversation/compact '{"conversation": "talk", "author": {"id": "ada", "name": "ada"}, "instructions": "keep the numbers"}'`:
   `"outcome": "compacted"`, the log's third user message is
   `/compact keep the numbers`, and the transcript holds that `sigma.user` by
   `ada`, then a `pi.compaction`.

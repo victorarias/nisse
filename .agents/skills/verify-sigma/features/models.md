@@ -70,7 +70,7 @@ Preconditions:
   `drive.ts r tui wait 'switched to'`: `◆ ada switched to claude · sonnet · low`
   in the transcript and `claude · sonnet · low` in the status bar.
   `drive.ts r watch <id> --save switched` shows one `sigma.model` entry
-  `{"author": "ada", "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}`,
+  `{"author": {"id": "ada", "name": "ada"}, "selection": {"provider": "claude", "model": "sonnet", "effort": "low"}}`,
   and the view's `pi.agent` holds that model as
   `"model": {"provider": "claude", "modelId": "sonnet"}` with the effort as
   `thinkingLevel`. `drive.ts r rpc conversation/list` shows the same
@@ -82,7 +82,7 @@ Preconditions:
   `drive.ts r tui wait --gone ' MODEL '`: `watch <id>` still shows one
   `sigma.model` entry.
 - **Switch over the wire.** With a TUI open on a conversation, run
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "bo", "selection": {"provider": "claude", "model": "opus", "effort": "max"}}'`:
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": {"id": "bo", "name": "bo"}, "selection": {"provider": "claude", "model": "opus", "effort": "max"}}'`:
   `"result": null`, and the TUI shows `◆ bo switched to claude · opus · max`
   and `claude · opus · max` in its status bar. With
   `"selection": {"provider": "nope"}` it exits 1 with `UnknownProvider` and
@@ -92,14 +92,14 @@ Preconditions:
   `drive.ts r tui start --provider claude --model haiku --effort high` and
   `drive.ts r tui wait READY`: the status bar shows `claude · haiku · high`,
   and `/model` opens on `claude · Haiku ‹ high ›`.
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "openai", "effort": "low"}'`
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp", "provider": "openai", "effort": "low"}'`
   answers `"model": {"provider": "openai", "model": "gpt-5.5", "effort": "low"}`,
   the provider's default model filled in. `'{"cwd": "/tmp", "effort": "loud"}'`
   fails `UnknownEffort` with the efforts sigma knows, `minimal` to `max`.
   `drive.ts r sigma exec --effort lots hi` exits 1 with
   `sigma knows no effort named lots; it knows minimal, low, medium, high, xhigh, max`.
 - **Chosen last.** In a fresh run, `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` answers a
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'` answers a
   `conversation` and `"model": {"provider": "script", "model": "script"}`.
   After a start or a switch to `{"provider": "openai", "effort": "low"}`, the
   same call answers `{"provider": "openai", "model": "gpt-5.5", "effort": "low"}`,
@@ -115,7 +115,7 @@ Preconditions:
   `default_model = { provider = "script", effort = "low" }` to
   `/tmp/sigma-verify/r/project/.sigma/config.toml`, and make
   `/tmp/sigma-verify/r/project/src`. Run `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`:
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`:
   `{"provider": "openai", "model": "gpt-5.5", "effort": "high"}`;
   `'{"cwd": "/tmp/sigma-verify/r/project/src"}'`:
   `{"provider": "script", "model": "script", "effort": "low"}`;
@@ -125,7 +125,7 @@ Preconditions:
 - **Switch providers.** `drive.ts r up --fake-claude text`, run
   `drive.ts r sigma exec --provider script 'The code word is pelican.'`, take
   the conversation's id from `drive.ts r rpc conversation/list`, run
-  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": "bo", "selection": {"provider": "claude", "model": "haiku"}}'`,
+  `drive.ts r rpc conversation/select_model '{"conversation": "<id>", "author": {"id": "bo", "name": "bo"}, "selection": {"provider": "claude", "model": "haiku"}}'`,
   then
   `drive.ts r sigma exec --conversation <id> 'What code word did I give you earlier in this conversation? Reply with the word only.'`:
   exit 0. The `text` recording stands in for Claude Code here: its user sent

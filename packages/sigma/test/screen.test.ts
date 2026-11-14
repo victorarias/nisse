@@ -100,6 +100,32 @@ test("answer-author: without USER the TUI names a person's message after the sys
   await quit(session)
 })
 
+test("author-launch: a TUI started for someone sends as them, by the name shown and the id the transcript keeps", async () => {
+  const sigmaHome = home()
+  const erika = { id: "person:p-7k3f9m", name: "Erika" }
+  const session = await open([{ text: "hello erika" }], ["-c", "shared"], sigmaHome, {
+    SIGMA_AUTHOR_ID: erika.id,
+    SIGMA_AUTHOR_NAME: erika.name,
+  })
+  await session.waitFor((screen) => screen.includes("READY"))
+  session.type("who am i\r")
+  const screen = await session.waitFor((screen) => screen.includes("hello erika") && screen.includes("READY"))
+  expect(screen).toContain("◆ erika started the conversation")
+  expect(screen).toContain("ERIKA")
+  expect(screen).not.toContain("ADA")
+  const client = await RawClient.connect(sigmaHome.socket)
+  const page = await client.call("conversation/entries", { conversation: "shared", order: "ascending", limit: 10 })
+  const authors = (page.result.entries as Array<{ kind: string; data?: { author?: unknown } }>).flatMap((entry) =>
+    entry.data?.author === undefined ? [] : [{ kind: entry.kind, author: entry.data.author }],
+  )
+  expect(authors).toEqual([
+    { kind: "sigma.started", author: erika },
+    { kind: "sigma.user", author: erika },
+  ])
+  client.close()
+  await quit(session)
+})
+
 test("answer-newline: alt+enter adds a line to the prompt, and enter sends every line as one message", async () => {
   const session = await open([{ text: "got both" }])
   await session.waitFor((screen) => screen.includes("READY"))

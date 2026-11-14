@@ -56,14 +56,14 @@ Preconditions:
 - No `auth/openai.json` in the run's home, which a fresh run never has.
 
 - **Choose over the wire.** Run `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`:
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`:
   `"model": {"provider": "script", "model": "script"}`. Then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "openai"}'`:
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp", "provider": "openai"}'`:
   `"model": {"provider": "openai", "model": "gpt-5.5"}`, the provider's
   default model filled in. Run the first again: it now starts with `openai`,
   the provider chosen last.
 - **Unknown over the wire.** Run
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp", "provider": "nope"}'`.
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp", "provider": "nope"}'`.
   It exits 1 with an `error` whose data holds
   `{"_tag": "UnknownProvider", "provider": "nope"}`, and
   `rpc conversation/list` shows no new conversation.
@@ -115,7 +115,7 @@ Preconditions:
   `● claude-alt` in the list, and the status bar ends with `openai-work`,
   the provider chosen last. With
   `default_model = { provider = "openai-work", model = "gpt-5.5", effort = "high" }`
-  at the file's top, `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'`
+  at the file's top, `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'`
   answers `"model": {"provider": "openai-work", "model": "gpt-5.5", "effort": "high"}`.
 
 - **Binary, env and args.** In a fresh run made with

@@ -21,11 +21,12 @@ printing the answer and exiting 0, or 1 when the run fails.
 - `answer-wire` submits over the protocol and sees the `sigma.user` entry, live
   text, the `pi.assistant` entry and the `sigma.run_end` entry as changes.
 - `answer-shared` shows a run started in the TUI to a second client.
-- `submit-author` names who wrote each prompt: the `author` of
+- `submit-author` names who wrote each prompt: the `author`, `{id, name}`, of
   `conversation/submit` is on the prompt while it waits in the queue and on its
   entry once it runs, for every client.
-- `answer-author` names the TUI's and `exec`'s messages after `USER`, or the
-  system's user name when `USER` is not set.
+- `answer-author` names the TUI's and `exec`'s messages after
+  `SIGMA_AUTHOR_NAME`, else `USER`, or the system's user name when neither is
+  set ([Authors](./authors.md)).
 - `answer-scroll` scrolls the transcript with the mouse wheel.
 
 ## How to get to it
@@ -92,7 +93,7 @@ Preconditions:
   committed under its `requestId` (`sigma.user`, then that run's
   `sigma.run_end`, or `sigma.withdrawn`), also after it watches again.
 - **Wire.** Run `drive.ts r serve`, then
-  `drive.ts r rpc conversation/start '{"cwd": "/tmp"}'` and take its `id`, then
+  `drive.ts r rpc conversation/start '{"author": {"id": "ada", "name": "ada"}, "cwd": "/tmp"}'` and take its `id`, then
   `drive.ts r watch <id> --submit 'tell me about the queue and the steering' --until run_end --save wire`.
   The lines show the view, then the submit reply and one `change` per commit:
   `sigma.user` spliced into `entries`, live words as `"a"` ops on

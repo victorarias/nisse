@@ -186,10 +186,12 @@ export interface Conversation {
   reset(handoff?: string, data?: JsonObject): Effect.Effect<void, ReadError | CommitError>
   /**
    * Starts a manual compaction of the conversation, focused by `instructions` (spec 8.7). It never takes run control:
-   * its summary is placed like a write. `Conversation.abort()` aborts it.
+   * its summary is placed like a write. `Conversation.abort()` aborts it. `data` goes on the `pi.compaction` entry,
+   * such as who asked.
    */
   compact(
     instructions?: string,
+    data?: JsonObject,
   ): Effect.Effect<TaskId<CompactionResult>, CommitError | ReadOnlySession | CompactionRefused>
   /** Admits a submission in its own commit (spec 6). */
   submit(draft: SubmissionDraft): Effect.Effect<Submission, AdmissionError | ReadError | CommitError>
@@ -247,10 +249,14 @@ export interface Harness<T extends ToolRegistration = ToolRegistration> {
   readonly inspect: Effect.Effect<HarnessInspection, ReadFailure>
   /** The handle of an existing submission. */
   submission(id: SubmissionId): Effect.Effect<Submission | undefined, ReadFailure>
-  /** Withdraws a queued submission; `conversationId` limits it to that conversation's submissions. */
+  /**
+   * Withdraws a queued submission; `conversationId` limits it to that conversation's submissions. `data` reaches the
+   * host's `inputWithdrawn`, such as who withdrew it.
+   */
   abortSubmission(
     id: SubmissionId,
     conversationId?: ConversationId,
+    data?: JsonObject,
   ): Effect.Effect<AbortResult | "not_found", ReadFailure | CommitError>
   /** Every conversation's committed `pi.usage`, summed. */
   readonly usage: Effect.Effect<UsageState, ReadFailure>
@@ -591,8 +597,9 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
   abortSubmission(
     id: SubmissionId,
     conversationId?: ConversationId,
+    data?: JsonObject,
   ): Effect.Effect<AbortResult | "not_found", ReadFailure | CommitError> {
-    return this.submissions.abort(id, conversationId)
+    return this.submissions.abort(id, conversationId, data)
   }
 
   /** Every conversation's committed `pi.usage`, summed. Each document is read at its own point; totals only grow. */
@@ -665,8 +672,12 @@ class HarnessHost<T extends ToolRegistration> implements Harness<T> {
       },
       configure: (change) => this.session.commit((tx) => configure(tx, id, change)) as Effect.Effect<void, CommitError>,
       reset: (handoff, data) => this.#reset(id, handoff, data),
-      compact: (instructions) => {
-        const input = { reason: "manual" as const, ...(instructions === undefined ? {} : { instructions }) }
+      compact: (instructions, data) => {
+        const input = {
+          reason: "manual" as const,
+          ...(instructions === undefined ? {} : { instructions }),
+          ...(data === undefined ? {} : { data }),
+        }
         return Effect.andThen(
           this.resume,
           commitIn(this.session, { conversationId: id }, (tx) =>

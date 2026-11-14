@@ -58,10 +58,10 @@ Preconditions:
 - **Malformed.** Run `drive.ts r rpc initialize '{"client": "verify"}'`: exit
   1, and an `error` whose message names `version`.
 - **Errors.** With the server up, run
-  `drive.ts r rpc conversation/continue '{"conversation": "nope"}'`: an
+  `drive.ts r rpc conversation/continue '{"author": {"id": "ada", "name": "ada"}, "conversation": "nope"}'`: an
   `error` whose `message` is `no conversation nope` and whose `data` holds the
   `NoSuchConversation` failure.
-  `drive.ts r rpc conversation/configure '{"conversation": "nope", "author": "ada", "maxTurns": 0}'`:
+  `drive.ts r rpc conversation/configure '{"conversation": "nope", "author": {"id": "ada", "name": "ada"}, "maxTurns": 0}'`:
   `"message": "Expected a value greater than or equal to 1\n  at [\"maxTurns\"]"`.
   `drive.ts r rpc conversation/frobnicate '{}'`:
   `"message": "Unknown request tag: conversation/frobnicate"`. No message is
