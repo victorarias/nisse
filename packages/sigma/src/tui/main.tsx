@@ -107,7 +107,13 @@ type Live = {
 type Approval = { readonly callId: string; readonly answer?: unknown }
 type Approvals = { readonly requests?: Readonly<Record<string, Approval>> }
 type InboxItem = { readonly id: number; readonly mode: string; readonly content?: Message["content"] }
-type Usage = { readonly totalTokens: number; readonly input: number; readonly output: number }
+type Usage = {
+  readonly totalTokens: number
+  readonly input: number
+  readonly output: number
+  readonly cacheRead: number
+  readonly cacheWrite: number
+}
 type UsageLedger = {
   readonly models?: Readonly<Record<string, Usage>>
   readonly tools?: Readonly<Record<string, Usage>>
@@ -1213,10 +1219,16 @@ const conversationScreen = Effect.fnUntraced(function* (
     return [
       "",
       `${title}: ${tokens(total)} tokens`,
-      ...rows.map(
-        ({ name, usage }) =>
-          `  ${name}  ${tokens(usage.totalTokens)} (${tokens(usage.input)} in, ${tokens(usage.output)} out)`,
-      ),
+      ...rows.map(({ name, usage }) => {
+        // `in` is what the provider did not read from its prompt cache; Claude also bills what it writes to it.
+        const parts = [
+          `${tokens(usage.input)} in`,
+          `${tokens(usage.cacheRead)} cached`,
+          ...(usage.cacheWrite > 0 ? [`${tokens(usage.cacheWrite)} cache write`] : []),
+          `${tokens(usage.output)} out`,
+        ]
+        return `  ${name}  ${tokens(usage.totalTokens)} (${parts.join(", ")})`
+      }),
     ]
   }
   const commands: Readonly<Record<string, (argument: string) => void>> = {

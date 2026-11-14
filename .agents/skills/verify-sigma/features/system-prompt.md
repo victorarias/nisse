@@ -1,6 +1,6 @@
 # System prompt and sections
 
-Extensions contribute named prompt sections, and what the model was told is recorded in place so later changes keep the provider's cache.
+Extensions contribute named prompt sections, and what the model was told is recorded in place so later changes keep the provider's cache, in [Prompt cache](./prompt-cache.md).
 
 ## Sub-features
 

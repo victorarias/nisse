@@ -53,7 +53,8 @@ read the whole context again.
   starts first moves the compaction to its own cache's expiry; a conversation
   that is busy then is not compacted. `claude_idle_compaction = false` in
   `config.toml` turns it off. Claude Code's own idle compaction is always off
-  in sigma's sessions (`"idleCompaction": false`).
+  in sigma's sessions (`"idleCompaction": false`). What the cache saves is in
+  [Prompt cache](./prompt-cache.md).
 - `claude-resume` continues Claude Code's session in each run that starts a
   process: after an idle release, after the process exited, and after the
   server restarted.

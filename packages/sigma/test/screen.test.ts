@@ -853,19 +853,19 @@ test("configure-rpc, run-turn-limit: /instructions and /max-turns show who chang
   await quit(session)
 })
 
-test("usage-rpc, usage-context-live: the status bar counts tokens and the context, and /usage lists them by model", async () => {
+test("usage-rpc, usage-context-live, cache-shown: the status bar counts tokens and the context, and /usage lists them by model with cached input apart", async () => {
   const { session, client } = await openTalk([
     { text: "answer one", usage: { input: 1200, output: 300 } },
-    { text: "answer two", usage: { input: 2000, output: 500 } },
+    { text: "answer two", usage: { input: 2000, output: 500, cacheRead: 1000, cacheWrite: 200 } },
   ])
   await converse(client, "talk", 1)
   await session.waitFor((screen) => screen.includes("1.5k tokens · context 1.5k"))
   await converse(client, "talk", 1, 2)
-  await session.waitFor((screen) => screen.includes("4.0k tokens · context 2.5k"))
+  await session.waitFor((screen) => screen.includes("5.2k tokens · context 3.7k"))
   session.type("/usage\r")
   const screen = await session.waitFor((screen) => screen.includes("USAGE") && screen.includes("every conversation"))
-  expect(screen).toContain("this conversation: 4.0k tokens")
-  expect(screen).toContain("script/script  4.0k (3.2k in, 800 out)")
+  expect(screen).toContain("this conversation: 5.2k tokens")
+  expect(screen).toContain("script/script  5.2k (3.2k in, 1.0k cached, 200 cache write, 800 out)")
   session.type("\x1b")
   await session.waitFor((screen) => !screen.includes("USAGE") && screen.includes("answer two"))
   client.close()

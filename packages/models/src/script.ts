@@ -17,8 +17,15 @@ export const ScriptStep = Schema.Struct({
   fail: Schema.optionalKey(Schema.String),
   delayMs: Schema.optionalKey(Schema.Int),
   agent: Schema.optionalKey(Schema.String),
-  /** The tokens the answer reports it used; none by default. */
-  usage: Schema.optionalKey(Schema.Struct({ input: Schema.Int, output: Schema.Int })),
+  /** The tokens the answer reports it used; none by default. `input` is the part not read from the prompt cache. */
+  usage: Schema.optionalKey(
+    Schema.Struct({
+      input: Schema.Int,
+      output: Schema.Int,
+      cacheRead: Schema.optionalKey(Schema.Int),
+      cacheWrite: Schema.optionalKey(Schema.Int),
+    }),
+  ),
 })
 export type ScriptStep = typeof ScriptStep.Type
 
@@ -58,6 +65,11 @@ export const SCRIPT_CODE_MODE_MODEL: Model<"script"> = {
 
 const SCRIPT_MODELS = [SCRIPT_MODEL, SCRIPT_CODE_MODE_MODEL]
 
+const usageOf = (reported: NonNullable<ScriptStep["usage"]>): Usage => {
+  const usage = { ...ZERO, ...reported }
+  return { ...usage, totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite }
+}
+
 const words = (text: string) => text.match(/\S+\s*|\s+/g) ?? []
 
 const lastUserText = (context: TranscriptContext) => {
@@ -73,8 +85,7 @@ const answer = (step: ScriptStep, model: Model<string>): AssistantMessage => {
     api: model.api,
     provider: model.provider,
     model: model.id,
-    usage:
-      step.usage === undefined ? ZERO : { ...ZERO, ...step.usage, totalTokens: step.usage.input + step.usage.output },
+    usage: step.usage === undefined ? ZERO : usageOf(step.usage),
     stopReason: "stop",
     timestamp: Date.now(),
   }

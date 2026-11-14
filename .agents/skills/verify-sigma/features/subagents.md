@@ -9,7 +9,9 @@ last did and whether it works, waits on a person or ended; a call the subagent
 asks about shows on its card and `^Y` or `^N` answers it from the parent. A
 subagent's last message of each run reaches its parent. `Esc` stops the run
 and every subagent's under it. On Claude, Claude Code runs its own subagents,
-and sigma commits each into a conversation of its own the same way.
+and sigma commits each into a conversation of its own the same way. What a
+subagent's requests keep of the prompt cache is in
+[Prompt cache](./prompt-cache.md).
 
 ## Sub-features
 

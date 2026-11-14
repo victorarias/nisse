@@ -180,6 +180,10 @@ lists when a change touches them.
   to an OpenAI model, and show a status line and toasts, on every provider and
   on Claude through Claude Code; failing or slow hooks and loads become toasts
   and `failed`; `sigma extensions` lists them and `reload` reloads them.
+- [Prompt cache](./prompt-cache.md) (people, agents): ChatGPT requests repeat
+  the one before and add to its end, a subagent's under its own key; Claude
+  runs share a process or reopen it as it was, forks fork Claude Code's
+  session; `/usage` and `usage/get` show cached input.
 - [Slash commands](./commands.md) (people): `/help` lists the TUI's commands in
   a panel; a line naming no command goes to the model.
 - [Status and chosen ids](./status.md) (agents): `status/watch` follows every tree's
